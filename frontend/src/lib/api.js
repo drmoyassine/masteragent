@@ -33,6 +33,8 @@ api.interceptors.response.use(
 
 // Auth
 export const getAuthStatus = () => api.get('/auth/status');
+export const signup = (data) => api.post('/auth/signup', data);
+export const login = (data) => api.post('/auth/login', data);
 export const getGitHubLoginUrl = () => api.get('/auth/github/login');
 export const logout = () => {
     localStorage.removeItem('auth_token');

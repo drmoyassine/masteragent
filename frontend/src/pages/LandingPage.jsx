@@ -15,24 +15,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/context/AuthContext";
-import { getGitHubLoginUrl } from "@/lib/api";
-import { toast } from "sonner";
 
 export default function LandingPage() {
     const navigate = useNavigate();
     const { isAuthenticated } = useAuth();
-    const [loading, setLoading] = useState(false);
-
-    const handleGitHubLogin = async () => {
-        setLoading(true);
-        try {
-            const response = await getGitHubLoginUrl();
-            window.location.href = response.data.auth_url;
-        } catch (error) {
-            toast.error("Failed to initiate GitHub login");
-            setLoading(false);
-        }
-    };
 
     const features = [
         {
@@ -127,15 +113,23 @@ export default function LandingPage() {
                                     <ArrowRight className="w-4 h-4 ml-2" />
                                 </Button>
                             ) : (
-                                <Button
-                                    onClick={handleGitHubLogin}
-                                    disabled={loading}
-                                    className="font-mono uppercase tracking-wider"
-                                    data-testid="sign-in-btn"
-                                >
-                                    <Github className="w-4 h-4 mr-2" />
-                                    {loading ? "Connecting..." : "Sign in with GitHub"}
-                                </Button>
+                                <>
+                                    <Button
+                                        variant="ghost"
+                                        onClick={() => navigate('/auth')}
+                                        className="font-mono"
+                                        data-testid="sign-in-btn"
+                                    >
+                                        Sign In
+                                    </Button>
+                                    <Button
+                                        onClick={() => navigate('/auth')}
+                                        className="font-mono uppercase tracking-wider"
+                                        data-testid="get-started-btn"
+                                    >
+                                        Get Started
+                                    </Button>
+                                </>
                             )}
                         </div>
                     </div>
@@ -161,13 +155,12 @@ export default function LandingPage() {
                         <div className="flex flex-col sm:flex-row gap-4">
                             <Button
                                 size="lg"
-                                onClick={handleGitHubLogin}
-                                disabled={loading}
+                                onClick={() => navigate('/auth')}
                                 className="font-mono uppercase tracking-wider"
                                 data-testid="hero-sign-up-btn"
                             >
-                                <Github className="w-5 h-5 mr-2" />
-                                {loading ? "Connecting..." : "Start Free with GitHub"}
+                                Start Free
+                                <ArrowRight className="w-5 h-5 ml-2" />
                             </Button>
                             <Button
                                 size="lg"
@@ -287,8 +280,7 @@ curl -X POST "/api/prompts/`}<span className="text-primary">{`{id}`}</span>{`/ma
                                 </ul>
 
                                 <Button
-                                    onClick={handleGitHubLogin}
-                                    disabled={loading}
+                                    onClick={() => navigate('/auth')}
                                     variant={plan.popular ? "default" : "outline"}
                                     className="w-full font-mono uppercase tracking-wider"
                                     data-testid={`pricing-${plan.name.toLowerCase()}-btn`}
@@ -312,13 +304,12 @@ curl -X POST "/api/prompts/`}<span className="text-primary">{`{id}`}</span>{`/ma
                     </p>
                     <Button
                         size="lg"
-                        onClick={handleGitHubLogin}
-                        disabled={loading}
+                        onClick={() => navigate('/auth')}
                         className="font-mono uppercase tracking-wider"
                         data-testid="cta-sign-up-btn"
                     >
-                        <Github className="w-5 h-5 mr-2" />
                         Get Started Free
+                        <ArrowRight className="w-5 h-5 ml-2" />
                     </Button>
                 </div>
             </section>

@@ -7,6 +7,7 @@ import { getSettings } from "@/lib/api";
 
 // Pages
 import LandingPage from "@/pages/LandingPage";
+import AuthPage from "@/pages/AuthPage";
 import AuthCallbackPage from "@/pages/AuthCallbackPage";
 import SetupPage from "@/pages/SetupPage";
 import DashboardPage from "@/pages/DashboardPage";
@@ -82,6 +83,7 @@ const AppContent = () => {
     <Routes>
       {/* Public Routes */}
       <Route path="/" element={<LandingPage />} />
+      <Route path="/auth" element={<AuthPage />} />
       <Route path="/auth/callback" element={<AuthCallbackPage />} />
 
       {/* Protected Routes */}
