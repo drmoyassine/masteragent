@@ -81,6 +81,204 @@ class PromptManagerAPITester:
             self.log_test("GitHub Login URL", False, str(e))
             return False
 
+    def test_signup_new_user(self):
+        """Test user signup with email/password"""
+        try:
+            # Create unique test user
+            timestamp = datetime.now().strftime('%H%M%S')
+            test_user = {
+                "email": f"test{timestamp}@example.com",
+                "password": "password123",
+                "username": f"testuser{timestamp}"
+            }
+            
+            response = requests.post(f"{self.api_base}/auth/signup", json=test_user, timeout=10)
+            success = response.status_code == 200
+            details = f"Status: {response.status_code}"
+            
+            if success:
+                data = response.json()
+                required_fields = ['token', 'user']
+                has_fields = all(field in data for field in required_fields)
+                user_data = data.get('user', {})
+                user_fields = ['id', 'username', 'email']
+                has_user_fields = all(field in user_data for field in user_fields)
+                success = has_fields and has_user_fields and user_data.get('email') == test_user['email']
+                details += f", Has required fields: {has_fields}, User fields: {has_user_fields}"
+                
+                # Store for login test
+                self.test_user = test_user
+                self.test_token = data.get('token')
+            
+            self.log_test("Signup New User", success, details)
+            return success
+        except Exception as e:
+            self.log_test("Signup New User", False, str(e))
+            return False
+
+    def test_signup_existing_email(self):
+        """Test signup with existing email (should fail)"""
+        if not hasattr(self, 'test_user'):
+            self.log_test("Signup Existing Email", False, "No test user created in previous test")
+            return False
+            
+        try:
+            # Try to signup with same email but different username
+            duplicate_user = {
+                "email": self.test_user['email'],  # Same email
+                "password": "differentpass",
+                "username": "differentuser"
+            }
+            
+            response = requests.post(f"{self.api_base}/auth/signup", json=duplicate_user, timeout=10)
+            success = response.status_code == 400  # Should fail with 400
+            details = f"Status: {response.status_code} (Expected 400 for duplicate email)"
+            
+            if response.status_code == 400:
+                data = response.json()
+                error_message = data.get('detail', '')
+                success = 'email' in error_message.lower() or 'already' in error_message.lower()
+                details += f", Error message contains 'email' or 'already': {success}"
+            
+            self.log_test("Signup Existing Email (Should Fail)", success, details)
+            return success
+        except Exception as e:
+            self.log_test("Signup Existing Email (Should Fail)", False, str(e))
+            return False
+
+    def test_login_valid_credentials(self):
+        """Test login with valid email/password"""
+        if not hasattr(self, 'test_user'):
+            self.log_test("Login Valid Credentials", False, "No test user available")
+            return False
+            
+        try:
+            login_data = {
+                "email": self.test_user['email'],
+                "password": self.test_user['password']
+            }
+            
+            response = requests.post(f"{self.api_base}/auth/login", json=login_data, timeout=10)
+            success = response.status_code == 200
+            details = f"Status: {response.status_code}"
+            
+            if success:
+                data = response.json()
+                required_fields = ['token', 'user']
+                has_fields = all(field in data for field in required_fields)
+                user_data = data.get('user', {})
+                success = has_fields and user_data.get('email') == self.test_user['email']
+                details += f", Has required fields: {has_fields}, Email matches: {success}"
+                
+                # Store token for authenticated tests
+                self.auth_token = data.get('token')
+            
+            self.log_test("Login Valid Credentials", success, details)
+            return success
+        except Exception as e:
+            self.log_test("Login Valid Credentials", False, str(e))
+            return False
+
+    def test_login_invalid_password(self):
+        """Test login with wrong password (should fail)"""
+        if not hasattr(self, 'test_user'):
+            self.log_test("Login Invalid Password", False, "No test user available")
+            return False
+            
+        try:
+            login_data = {
+                "email": self.test_user['email'],
+                "password": "wrongpassword123"
+            }
+            
+            response = requests.post(f"{self.api_base}/auth/login", json=login_data, timeout=10)
+            success = response.status_code == 401  # Should fail with 401
+            details = f"Status: {response.status_code} (Expected 401 for wrong password)"
+            
+            if response.status_code == 401:
+                data = response.json()
+                error_message = data.get('detail', '')
+                success = 'password' in error_message.lower() or 'invalid' in error_message.lower()
+                details += f", Error message contains 'password' or 'invalid': {success}"
+            
+            self.log_test("Login Invalid Password (Should Fail)", success, details)
+            return success
+        except Exception as e:
+            self.log_test("Login Invalid Password (Should Fail)", False, str(e))
+            return False
+
+    def test_login_nonexistent_email(self):
+        """Test login with non-existent email (should fail)"""
+        try:
+            login_data = {
+                "email": "nonexistent@example.com",
+                "password": "somepassword"
+            }
+            
+            response = requests.post(f"{self.api_base}/auth/login", json=login_data, timeout=10)
+            success = response.status_code == 401  # Should fail with 401
+            details = f"Status: {response.status_code} (Expected 401 for non-existent email)"
+            
+            self.log_test("Login Non-existent Email (Should Fail)", success, details)
+            return success
+        except Exception as e:
+            self.log_test("Login Non-existent Email (Should Fail)", False, str(e))
+            return False
+
+    def test_auth_status_authenticated(self):
+        """Test auth status endpoint when authenticated"""
+        if not hasattr(self, 'auth_token'):
+            self.log_test("Auth Status (Authenticated)", False, "No auth token available")
+            return False
+            
+        try:
+            headers = {"Authorization": f"Bearer {self.auth_token}"}
+            response = requests.get(f"{self.api_base}/auth/status", headers=headers, timeout=10)
+            success = response.status_code == 200
+            details = f"Status: {response.status_code}"
+            
+            if success:
+                data = response.json()
+                expected_fields = ['authenticated', 'user']
+                has_fields = all(field in data for field in expected_fields)
+                is_authenticated = data.get('authenticated') == True
+                user_data = data.get('user', {})
+                has_user_data = bool(user_data)
+                success = has_fields and is_authenticated and has_user_data
+                details += f", Authenticated: {is_authenticated}, Has user data: {has_user_data}"
+            
+            self.log_test("Auth Status (Authenticated)", success, details)
+            return success
+        except Exception as e:
+            self.log_test("Auth Status (Authenticated)", False, str(e))
+            return False
+
+    def test_protected_endpoint_with_auth(self):
+        """Test accessing protected endpoint with valid token"""
+        if not hasattr(self, 'auth_token'):
+            self.log_test("Protected Endpoint (With Auth)", False, "No auth token available")
+            return False
+            
+        try:
+            headers = {"Authorization": f"Bearer {self.auth_token}"}
+            response = requests.get(f"{self.api_base}/settings", headers=headers, timeout=10)
+            success = response.status_code == 200
+            details = f"Status: {response.status_code}"
+            
+            if success:
+                data = response.json()
+                # Should return settings data structure
+                expected_fields = ['id', 'is_configured']
+                has_fields = all(field in data for field in expected_fields)
+                success = has_fields
+                details += f", Has required fields: {has_fields}"
+            
+            self.log_test("Protected Endpoint (With Auth)", success, details)
+            return success
+        except Exception as e:
+            self.log_test("Protected Endpoint (With Auth)", False, str(e))
+            return False
+
     def test_get_settings(self):
         """Test get settings endpoint (should require auth)"""
         try:
