@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  promptsrc:
+    build:
+      context: .
+      args:
+        REACT_APP_BACKEND_URL: ${REACT_APP_BACKEND_URL:-http://localhost}
+    ports:
+      - "80:80"
+    environment:
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-change_this_secret_in_production}
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
+      - GITHUB_REDIRECT_URI=${GITHUB_REDIRECT_URI:-http://localhost/api/auth/github/callback}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost}
+    volumes:
+      - promptsrc_data:/app/backend
+    restart: unless-stopped
+
+volumes:
+  promptsrc_data:
