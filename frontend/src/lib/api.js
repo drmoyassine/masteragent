@@ -10,6 +10,35 @@ const api = axios.create({
     },
 });
 
+// Add auth token to requests
+api.interceptors.request.use((config) => {
+    const token = localStorage.getItem('auth_token');
+    if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+});
+
+// Handle 401 responses
+api.interceptors.response.use(
+    (response) => response,
+    (error) => {
+        if (error.response?.status === 401) {
+            localStorage.removeItem('auth_token');
+            window.location.href = '/';
+        }
+        return Promise.reject(error);
+    }
+);
+
+// Auth
+export const getAuthStatus = () => api.get('/auth/status');
+export const getGitHubLoginUrl = () => api.get('/auth/github/login');
+export const logout = () => {
+    localStorage.removeItem('auth_token');
+    return api.post('/auth/logout');
+};
+
 // Settings
 export const getSettings = () => api.get('/settings');
 export const saveSettings = (data) => api.post('/settings', data);
