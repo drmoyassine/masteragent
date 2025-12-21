@@ -320,6 +320,7 @@ class SettingsCreate(BaseModel):
     github_token: str
     github_repo: str
     github_owner: str
+    create_repo: bool = False  # If true, create the repo
 
 class SettingsResponse(BaseModel):
     id: int
@@ -665,18 +666,41 @@ async def get_settings(user: dict = Depends(require_auth)):
 async def save_settings(settings_data: SettingsCreate, user: dict = Depends(require_auth)):
     now = datetime.now(timezone.utc).isoformat()
     
-    # Validate GitHub connection
     headers = {
         "Authorization": f"token {settings_data.github_token}",
         "Accept": "application/vnd.github.v3+json"
     }
+    
     async with httpx.AsyncClient() as client:
+        if settings_data.create_repo:
+            # Create new repository
+            create_response = await client.post(
+                "https://api.github.com/user/repos",
+                headers=headers,
+                json={
+                    "name": settings_data.github_repo,
+                    "description": "Prompt Manager - AI prompt versioning repository",
+                    "private": False,
+                    "auto_init": True  # Initialize with README
+                }
+            )
+            if create_response.status_code == 201:
+                repo_data = create_response.json()
+                # Update owner from response (in case user belongs to org)
+                settings_data.github_owner = repo_data["owner"]["login"]
+            elif create_response.status_code == 422:
+                # Repo already exists, try to use it
+                pass
+            else:
+                raise HTTPException(status_code=400, detail=f"Failed to create repository: {create_response.text}")
+        
+        # Validate GitHub connection
         response = await client.get(
             f"https://api.github.com/repos/{settings_data.github_owner}/{settings_data.github_repo}",
             headers=headers
         )
         if response.status_code != 200:
-            raise HTTPException(status_code=400, detail="Invalid GitHub credentials or repository")
+            raise HTTPException(status_code=400, detail="Invalid GitHub credentials or repository not found")
     
     with get_db_context() as conn:
         cursor = conn.cursor()
@@ -702,6 +726,19 @@ async def save_settings(settings_data: SettingsCreate, user: dict = Depends(requ
         github_owner=settings_data.github_owner,
         is_configured=True
     )
+
+@api_router.get("/github/user")
+async def get_github_user(token: str):
+    """Get GitHub user info from token"""
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    async with httpx.AsyncClient() as client:
+        response = await client.get("https://api.github.com/user", headers=headers)
+        if response.status_code != 200:
+            raise HTTPException(status_code=400, detail="Invalid GitHub token")
+        return response.json()
 
 @api_router.delete("/settings")
 async def delete_settings(user: dict = Depends(require_auth)):
