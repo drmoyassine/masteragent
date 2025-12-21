@@ -199,6 +199,27 @@ def init_db():
 
 init_db()
 
+# Seed admin user for testing
+def seed_admin_user():
+    admin_email = "admin@promptsrc.com"
+    admin_password = "admin123"
+    admin_username = "admin"
+    
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM users WHERE email = ?", (admin_email,))
+        if not cursor.fetchone():
+            now = datetime.now(timezone.utc).isoformat()
+            admin_id = str(uuid.uuid4())
+            password_hash = hash_password(admin_password)
+            cursor.execute("""
+                INSERT INTO users (id, username, email, password_hash, plan, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 'pro', ?, ?)
+            """, (admin_id, admin_username, admin_email, password_hash, now, now))
+            logging.info(f"Admin user created: {admin_email}")
+
+seed_admin_user()
+
 # Create the main app
 app = FastAPI(title="Prompt Manager API")
 
