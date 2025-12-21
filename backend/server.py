@@ -17,6 +17,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from contextlib import contextmanager
 from jose import jwt, JWTError
+import bcrypt
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -31,6 +32,13 @@ GITHUB_CLIENT_ID = os.environ.get('GITHUB_CLIENT_ID', '')
 GITHUB_CLIENT_SECRET = os.environ.get('GITHUB_CLIENT_SECRET', '')
 GITHUB_REDIRECT_URI = os.environ.get('GITHUB_REDIRECT_URI', '')
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
+
+# Password hashing
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+def verify_password(password: str, hashed: str) -> bool:
+    return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
 
 # SQLite Database Setup
 DB_PATH = ROOT_DIR / "prompt_manager.db"
@@ -57,9 +65,10 @@ def init_db():
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
-                github_id INTEGER UNIQUE NOT NULL,
+                github_id INTEGER UNIQUE,
                 username TEXT NOT NULL,
-                email TEXT,
+                email TEXT UNIQUE,
+                password_hash TEXT,
                 avatar_url TEXT,
                 github_url TEXT,
                 github_token TEXT,
@@ -258,9 +267,18 @@ async def verify_api_key(api_key: str = Security(api_key_header)):
 
 # Pydantic Models
 # Auth Models
+class UserCreate(BaseModel):
+    email: str
+    password: str
+    username: str
+
+class UserLogin(BaseModel):
+    email: str
+    password: str
+
 class UserResponse(BaseModel):
     id: str
-    github_id: int
+    github_id: Optional[int] = None
     username: str
     email: Optional[str] = None
     avatar_url: Optional[str] = None
@@ -272,6 +290,10 @@ class UserResponse(BaseModel):
 class AuthStatusResponse(BaseModel):
     authenticated: bool
     user: Optional[UserResponse] = None
+
+class AuthResponse(BaseModel):
+    token: str
+    user: UserResponse
 
 class SettingsCreate(BaseModel):
     github_token: str
@@ -353,6 +375,78 @@ def get_github_settings(user_id: str = None):
         if row:
             return dict(row)
     return None
+
+def user_to_response(user: dict) -> UserResponse:
+    return UserResponse(
+        id=user["id"],
+        github_id=user.get("github_id"),
+        username=user["username"],
+        email=user.get("email"),
+        avatar_url=user.get("avatar_url"),
+        github_url=user.get("github_url"),
+        plan=user.get("plan", "free"),
+        created_at=user["created_at"],
+        updated_at=user["updated_at"]
+    )
+
+# Email/Password Auth Endpoints
+@api_router.post("/auth/signup", response_model=AuthResponse)
+async def signup(user_data: UserCreate):
+    """Register a new user with email/password"""
+    now = datetime.now(timezone.utc).isoformat()
+    
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        
+        # Check if email already exists
+        cursor.execute("SELECT id FROM users WHERE email = ?", (user_data.email,))
+        if cursor.fetchone():
+            raise HTTPException(status_code=400, detail="Email already registered")
+        
+        # Check if username already exists
+        cursor.execute("SELECT id FROM users WHERE username = ?", (user_data.username,))
+        if cursor.fetchone():
+            raise HTTPException(status_code=400, detail="Username already taken")
+        
+        user_id = str(uuid.uuid4())
+        password_hash = hash_password(user_data.password)
+        
+        cursor.execute("""
+            INSERT INTO users (id, username, email, password_hash, plan, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 'free', ?, ?)
+        """, (user_id, user_data.username, user_data.email, password_hash, now, now))
+        
+        cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+        user = dict(cursor.fetchone())
+    
+    token = create_access_token(data={"sub": user_id})
+    return AuthResponse(token=token, user=user_to_response(user))
+
+@api_router.post("/auth/login", response_model=AuthResponse)
+async def login(credentials: UserLogin):
+    """Login with email/password"""
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE email = ?", (credentials.email,))
+        user = cursor.fetchone()
+        
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+        
+        user = dict(user)
+        
+        if not user.get("password_hash"):
+            raise HTTPException(status_code=401, detail="This account uses GitHub login. Please sign in with GitHub.")
+        
+        if not verify_password(credentials.password, user["password_hash"]):
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+        
+        # Update last login
+        now = datetime.now(timezone.utc).isoformat()
+        cursor.execute("UPDATE users SET updated_at = ? WHERE id = ?", (now, user["id"]))
+    
+    token = create_access_token(data={"sub": user["id"]})
+    return AuthResponse(token=token, user=user_to_response(user))
 
 # GitHub OAuth Endpoints
 @api_router.get("/auth/github/login")
@@ -472,17 +566,7 @@ async def auth_status(user: dict = Depends(get_current_user)):
     
     return AuthStatusResponse(
         authenticated=True,
-        user=UserResponse(
-            id=user["id"],
-            github_id=user["github_id"],
-            username=user["username"],
-            email=user.get("email"),
-            avatar_url=user.get("avatar_url"),
-            github_url=user.get("github_url"),
-            plan=user.get("plan", "free"),
-            created_at=user["created_at"],
-            updated_at=user["updated_at"]
-        )
+        user=user_to_response(user)
     )
 
 @api_router.post("/auth/logout")
