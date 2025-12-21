@@ -420,15 +420,30 @@ class PromptManagerAPITester:
         self.test_health_check()
         self.test_root_endpoint()
         
-        # Test auth endpoints
+        # Test unauthenticated auth endpoints
         self.test_auth_status_unauthenticated()
         self.test_github_login_url()
-        self.test_get_settings()
+        self.test_get_settings()  # Should require auth
         
-        # Test templates
+        # Test email/password authentication flow
+        print("\n🔐 Testing Email/Password Authentication...")
+        self.test_signup_new_user()
+        self.test_signup_existing_email()  # Should fail
+        self.test_login_valid_credentials()
+        self.test_login_invalid_password()  # Should fail
+        self.test_login_nonexistent_email()  # Should fail
+        
+        # Test authenticated endpoints
+        print("\n🔒 Testing Authenticated Endpoints...")
+        self.test_auth_status_authenticated()
+        self.test_protected_endpoint_with_auth()
+        
+        # Test templates (public endpoint)
+        print("\n📋 Testing Templates...")
         templates_success, templates_data = self.test_get_templates()
         
-        # Test API keys CRUD
+        # Test API keys CRUD (public endpoints)
+        print("\n🔑 Testing API Keys...")
         self.test_create_api_key()
         keys_success, keys_data = self.test_get_api_keys()
         if keys_success and keys_data:
