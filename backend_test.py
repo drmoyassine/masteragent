@@ -221,6 +221,10 @@ class PromptManagerAPITester:
         # Test basic endpoints
         self.test_health_check()
         self.test_root_endpoint()
+        
+        # Test auth endpoints
+        self.test_auth_status_unauthenticated()
+        self.test_github_login_url()
         self.test_get_settings()
         
         # Test templates
