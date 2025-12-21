@@ -626,12 +626,12 @@ async def get_template(template_id: str):
         template["sections"] = json.loads(template["sections"])
         return template
 
-# Prompts Endpoints
+# Prompts Endpoints (protected)
 @api_router.get("/prompts")
-async def get_prompts():
+async def get_prompts(user: dict = Depends(require_auth)):
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM prompts ORDER BY updated_at DESC")
+        cursor.execute("SELECT * FROM prompts WHERE user_id = ? ORDER BY updated_at DESC", (user["id"],))
         prompts = [dict(row) for row in cursor.fetchall()]
         
         for prompt in prompts:
@@ -641,12 +641,20 @@ async def get_prompts():
         return prompts
 
 @api_router.post("/prompts", response_model=PromptResponse)
-async def create_prompt(prompt_data: PromptCreate):
+async def create_prompt(prompt_data: PromptCreate, user: dict = Depends(require_auth)):
+    # Check plan limits
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) as count FROM prompts WHERE user_id = ?", (user["id"],))
+        count = cursor.fetchone()["count"]
+        if user.get("plan") == "free" and count >= 1:
+            raise HTTPException(status_code=403, detail="Free plan limited to 1 prompt. Upgrade to Pro for unlimited prompts.")
+    
     prompt_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
     folder_path = f"prompts/{slugify(prompt_data.name)}"
     
-    settings = get_github_settings()
+    settings = get_github_settings(user["id"])
     if not settings:
         raise HTTPException(status_code=400, detail="GitHub not configured")
     
@@ -654,9 +662,9 @@ async def create_prompt(prompt_data: PromptCreate):
     with get_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO prompts (id, name, description, folder_path, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (prompt_id, prompt_data.name, prompt_data.description or "", folder_path, now, now))
+            INSERT INTO prompts (id, user_id, name, description, folder_path, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (prompt_id, user["id"], prompt_data.name, prompt_data.description or "", folder_path, now, now))
         
         # Create default version
         version_id = str(uuid.uuid4())
@@ -690,7 +698,7 @@ async def create_prompt(prompt_data: PromptCreate):
     await github_api_request("PUT", f"/contents/{folder_path}/manifest.json", {
         "message": f"Create prompt: {prompt_data.name}",
         "content": manifest_content
-    })
+    }, user["id"])
     
     # Create sections from template
     for section in sections_to_create:
@@ -699,7 +707,7 @@ async def create_prompt(prompt_data: PromptCreate):
         await github_api_request("PUT", f"/contents/{folder_path}/{section_filename}", {
             "message": f"Add section: {section['title']}",
             "content": section_content
-        })
+        }, user["id"])
         manifest["sections"].append(section_filename)
         
         # Extract variables from section
@@ -710,13 +718,13 @@ async def create_prompt(prompt_data: PromptCreate):
     
     # Update manifest with sections
     if sections_to_create:
-        manifest_response = await github_api_request("GET", f"/contents/{folder_path}/manifest.json")
+        manifest_response = await github_api_request("GET", f"/contents/{folder_path}/manifest.json", user_id=user["id"])
         manifest_content = base64.b64encode(json.dumps(manifest, indent=2).encode()).decode()
         await github_api_request("PUT", f"/contents/{folder_path}/manifest.json", {
             "message": "Update manifest with sections",
             "content": manifest_content,
             "sha": manifest_response["sha"]
-        })
+        }, user["id"])
     
     return PromptResponse(
         id=prompt_id,
@@ -729,10 +737,10 @@ async def create_prompt(prompt_data: PromptCreate):
     )
 
 @api_router.get("/prompts/{prompt_id}")
-async def get_prompt(prompt_id: str):
+async def get_prompt(prompt_id: str, user: dict = Depends(require_auth)):
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM prompts WHERE id = ?", (prompt_id,))
+        cursor.execute("SELECT * FROM prompts WHERE id = ? AND user_id = ?", (prompt_id, user["id"]))
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Prompt not found")
@@ -744,12 +752,12 @@ async def get_prompt(prompt_id: str):
         return prompt
 
 @api_router.put("/prompts/{prompt_id}")
-async def update_prompt(prompt_id: str, prompt_data: PromptUpdate):
+async def update_prompt(prompt_id: str, prompt_data: PromptUpdate, user: dict = Depends(require_auth)):
     now = datetime.now(timezone.utc).isoformat()
     
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM prompts WHERE id = ?", (prompt_id,))
+        cursor.execute("SELECT * FROM prompts WHERE id = ? AND user_id = ?", (prompt_id, user["id"]))
         if not cursor.fetchone():
             raise HTTPException(status_code=404, detail="Prompt not found")
         
@@ -767,13 +775,13 @@ async def update_prompt(prompt_id: str, prompt_data: PromptUpdate):
         
         cursor.execute(f"UPDATE prompts SET {', '.join(updates)} WHERE id = ?", params)
     
-    return await get_prompt(prompt_id)
+    return await get_prompt(prompt_id, user)
 
 @api_router.delete("/prompts/{prompt_id}")
-async def delete_prompt(prompt_id: str):
+async def delete_prompt(prompt_id: str, user: dict = Depends(require_auth)):
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT folder_path FROM prompts WHERE id = ?", (prompt_id,))
+        cursor.execute("SELECT folder_path FROM prompts WHERE id = ? AND user_id = ?", (prompt_id, user["id"]))
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Prompt not found")
