@@ -782,7 +782,7 @@ async def get_prompts(user: dict = Depends(require_auth)):
         prompts = [dict(row) for row in cursor.fetchall()]
         
         for prompt in prompts:
-            cursor.execute("SELECT * FROM prompt_versions WHERE prompt_id = ?", (prompt["id"],))
+            cursor.execute("SELECT * FROM prompt_versions WHERE prompt_id = ? ORDER BY created_at", (prompt["id"],))
             prompt["versions"] = [dict(v) for v in cursor.fetchall()]
         
         return prompts
@@ -799,7 +799,9 @@ async def create_prompt(prompt_data: PromptCreate, user: dict = Depends(require_
     
     prompt_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
-    folder_path = f"prompts/{slugify(prompt_data.name)}"
+    prompt_slug = slugify(prompt_data.name)
+    # Folder structure: prompts/{prompt_name}/v1/
+    folder_path = f"prompts/{prompt_slug}"
     
     settings = get_github_settings(user["id"])
     if not settings:
@@ -813,12 +815,12 @@ async def create_prompt(prompt_data: PromptCreate, user: dict = Depends(require_
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (prompt_id, user["id"], prompt_data.name, prompt_data.description or "", folder_path, now, now))
         
-        # Create default version
+        # Create default version (v1) - now folder-based
         version_id = str(uuid.uuid4())
         cursor.execute("""
             INSERT INTO prompt_versions (id, prompt_id, version_name, branch_name, is_default, created_at)
             VALUES (?, ?, ?, ?, 1, ?)
-        """, (version_id, prompt_id, "main", "main", now))
+        """, (version_id, prompt_id, "v1", "v1", now))
     
     # Get template sections if template_id provided
     sections_to_create = []
@@ -830,28 +832,30 @@ async def create_prompt(prompt_data: PromptCreate, user: dict = Depends(require_
             if template_row:
                 sections_to_create = json.loads(template_row["sections"])
     
-    # Create manifest and sections in GitHub
+    # Create manifest and sections in GitHub (in v1 folder)
+    version_path = f"{folder_path}/v1"
     manifest = {
-        "prompt_id": slugify(prompt_data.name),
+        "prompt_id": prompt_slug,
         "name": prompt_data.name,
         "description": prompt_data.description or "",
+        "version": "v1",
         "sections": [],
         "variables": {}
     }
     
-    # Create manifest file
+    # Create manifest file in version folder
     import base64
     manifest_content = base64.b64encode(json.dumps(manifest, indent=2).encode()).decode()
-    await github_api_request("PUT", f"/contents/{folder_path}/manifest.json", {
-        "message": f"Create prompt: {prompt_data.name}",
+    await github_api_request("PUT", f"/contents/{version_path}/manifest.json", {
+        "message": f"Create prompt: {prompt_data.name} (v1)",
         "content": manifest_content
     }, user["id"])
     
-    # Create sections from template
+    # Create sections from template in version folder
     for section in sections_to_create:
         section_filename = f"{str(section['order']).zfill(2)}_{section['name']}.md"
         section_content = base64.b64encode(section["content"].encode()).decode()
-        await github_api_request("PUT", f"/contents/{folder_path}/{section_filename}", {
+        await github_api_request("PUT", f"/contents/{version_path}/{section_filename}", {
             "message": f"Add section: {section['title']}",
             "content": section_content
         }, user["id"])
@@ -865,9 +869,9 @@ async def create_prompt(prompt_data: PromptCreate, user: dict = Depends(require_
     
     # Update manifest with sections
     if sections_to_create:
-        manifest_response = await github_api_request("GET", f"/contents/{folder_path}/manifest.json", user_id=user["id"])
+        manifest_response = await github_api_request("GET", f"/contents/{version_path}/manifest.json", user_id=user["id"])
         manifest_content = base64.b64encode(json.dumps(manifest, indent=2).encode()).decode()
-        await github_api_request("PUT", f"/contents/{folder_path}/manifest.json", {
+        await github_api_request("PUT", f"/contents/{version_path}/manifest.json", {
             "message": "Update manifest with sections",
             "content": manifest_content,
             "sha": manifest_response["sha"]
@@ -880,7 +884,7 @@ async def create_prompt(prompt_data: PromptCreate, user: dict = Depends(require_
         folder_path=folder_path,
         created_at=now,
         updated_at=now,
-        versions=[{"id": version_id, "version_name": "main", "branch_name": "main", "is_default": True}]
+        versions=[{"id": version_id, "version_name": "v1", "branch_name": "v1", "is_default": True}]
     )
 
 @api_router.get("/prompts/{prompt_id}")
