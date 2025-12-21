@@ -1,70 +1,897 @@
-from fastapi import FastAPI, APIRouter
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Header, Security
+from fastapi.security import APIKeyHeader
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
+import sqlite3
+import json
+import re
+import secrets
+import httpx
 from pathlib import Path
-from pydantic import BaseModel, Field, ConfigDict
-from typing import List
+from pydantic import BaseModel, Field
+from typing import List, Optional, Dict, Any
 import uuid
 from datetime import datetime, timezone
-
+from contextlib import contextmanager
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-# MongoDB connection
-mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+# SQLite Database Setup
+DB_PATH = ROOT_DIR / "prompt_manager.db"
 
-# Create the main app without a prefix
-app = FastAPI()
+def get_db():
+    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+@contextmanager
+def get_db_context():
+    conn = get_db()
+    try:
+        yield conn
+        conn.commit()
+    finally:
+        conn.close()
+
+def init_db():
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        
+        # Settings table for GitHub config
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                id INTEGER PRIMARY KEY,
+                github_token TEXT,
+                github_repo TEXT,
+                github_owner TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            )
+        """)
+        
+        # Prompts metadata table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS prompts (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                folder_path TEXT NOT NULL,
+                created_at TEXT,
+                updated_at TEXT
+            )
+        """)
+        
+        # Prompt versions table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS prompt_versions (
+                id TEXT PRIMARY KEY,
+                prompt_id TEXT NOT NULL,
+                version_name TEXT NOT NULL,
+                branch_name TEXT NOT NULL,
+                is_default INTEGER DEFAULT 0,
+                created_at TEXT,
+                FOREIGN KEY (prompt_id) REFERENCES prompts(id)
+            )
+        """)
+        
+        # Templates table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS templates (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                sections TEXT NOT NULL,
+                created_at TEXT
+            )
+        """)
+        
+        # API Keys table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS api_keys (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                key_hash TEXT NOT NULL,
+                key_preview TEXT NOT NULL,
+                created_at TEXT,
+                last_used TEXT
+            )
+        """)
+        
+        # Insert default templates
+        cursor.execute("SELECT COUNT(*) FROM templates")
+        if cursor.fetchone()[0] == 0:
+            default_templates = [
+                {
+                    "id": str(uuid.uuid4()),
+                    "name": "Agent Persona",
+                    "description": "Complete AI agent persona with identity, context, and capabilities",
+                    "sections": json.dumps([
+                        {"order": 1, "name": "identity", "title": "Identity", "content": "# Identity\n\nYou are {{agent_name}}, a {{agent_role}}.\n\n## Core Traits\n- Professional and helpful\n- Clear and concise communication\n- Empathetic and understanding"},
+                        {"order": 2, "name": "context", "title": "Context", "content": "# Context\n\n## Company: {{company_name}}\n\n{{company_description}}\n\n## Your Role\nYou serve as the primary point of contact for {{use_case}}."},
+                        {"order": 3, "name": "role", "title": "Role & Responsibilities", "content": "# Role & Responsibilities\n\n## Primary Responsibilities\n1. Assist users with their inquiries\n2. Provide accurate information\n3. Escalate complex issues when necessary\n\n## Boundaries\n- Never share confidential information\n- Stay within your area of expertise"},
+                        {"order": 4, "name": "skills", "title": "Skills & Capabilities", "content": "# Skills & Capabilities\n\n## Core Skills\n- Natural language understanding\n- Context retention\n- Multi-turn conversation\n\n## Tools Available\n{{#tools}}\n- {{name}}: {{description}}\n{{/tools}}"},
+                        {"order": 5, "name": "guidelines", "title": "Operating Guidelines", "content": "# Operating Guidelines\n\n## Communication Style\n- Tone: {{tone}}\n- Language: {{language}}\n\n## Response Format\n- Keep responses concise but complete\n- Use formatting for clarity\n- Ask clarifying questions when needed"}
+                    ]),
+                    "created_at": datetime.now(timezone.utc).isoformat()
+                },
+                {
+                    "id": str(uuid.uuid4()),
+                    "name": "Task Executor",
+                    "description": "Focused task execution agent with clear instructions",
+                    "sections": json.dumps([
+                        {"order": 1, "name": "objective", "title": "Objective", "content": "# Objective\n\nYour primary objective is to {{task_objective}}.\n\n## Success Criteria\n{{success_criteria}}"},
+                        {"order": 2, "name": "instructions", "title": "Instructions", "content": "# Instructions\n\n## Step-by-Step Process\n1. Analyze the input\n2. Plan your approach\n3. Execute the task\n4. Validate results\n\n## Constraints\n{{constraints}}"},
+                        {"order": 3, "name": "output", "title": "Output Format", "content": "# Output Format\n\n## Expected Output\n{{output_format}}\n\n## Examples\n{{#examples}}\n### Example {{index}}\nInput: {{input}}\nOutput: {{output}}\n{{/examples}}"}
+                    ]),
+                    "created_at": datetime.now(timezone.utc).isoformat()
+                },
+                {
+                    "id": str(uuid.uuid4()),
+                    "name": "Knowledge Expert",
+                    "description": "Domain-specific knowledge base agent",
+                    "sections": json.dumps([
+                        {"order": 1, "name": "domain", "title": "Domain Expertise", "content": "# Domain Expertise\n\nYou are an expert in {{domain}}.\n\n## Knowledge Areas\n{{#knowledge_areas}}\n- {{name}}\n{{/knowledge_areas}}"},
+                        {"order": 2, "name": "wisdom", "title": "Trade Knowledge", "content": "# Trade Knowledge & Wisdom\n\n## Best Practices\n{{best_practices}}\n\n## Common Pitfalls\n{{common_pitfalls}}\n\n## Lessons Learned\n{{lessons_learned}}"},
+                        {"order": 3, "name": "responses", "title": "Response Guidelines", "content": "# Response Guidelines\n\n## When answering questions:\n1. Draw from your expertise\n2. Provide practical examples\n3. Cite sources when applicable\n\n## Handling uncertainty:\n- Acknowledge limitations\n- Suggest alternatives\n- Recommend expert consultation when needed"}
+                    ]),
+                    "created_at": datetime.now(timezone.utc).isoformat()
+                },
+                {
+                    "id": str(uuid.uuid4()),
+                    "name": "Minimal Prompt",
+                    "description": "Simple single-section prompt for quick tasks",
+                    "sections": json.dumps([
+                        {"order": 1, "name": "prompt", "title": "Main Prompt", "content": "# {{title}}\n\n{{instructions}}\n\n## Input\n{{input}}\n\n## Output\nProvide your response below:"}
+                    ]),
+                    "created_at": datetime.now(timezone.utc).isoformat()
+                }
+            ]
+            for template in default_templates:
+                cursor.execute(
+                    "INSERT INTO templates (id, name, description, sections, created_at) VALUES (?, ?, ?, ?, ?)",
+                    (template["id"], template["name"], template["description"], template["sections"], template["created_at"])
+                )
+
+init_db()
+
+# Create the main app
+app = FastAPI(title="Prompt Manager API")
 
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
 
+# API Key Security
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
-# Define Models
-class StatusCheck(BaseModel):
-    model_config = ConfigDict(extra="ignore")  # Ignore MongoDB's _id field
+async def verify_api_key(api_key: str = Security(api_key_header)):
+    if not api_key:
+        return None
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        # Check all keys (we store hashed, but for simplicity we'll use preview matching)
+        cursor.execute("SELECT * FROM api_keys WHERE key_hash = ?", (api_key,))
+        key_row = cursor.fetchone()
+        if key_row:
+            cursor.execute("UPDATE api_keys SET last_used = ? WHERE id = ?", 
+                          (datetime.now(timezone.utc).isoformat(), key_row["id"]))
+            return dict(key_row)
+    return None
+
+# Pydantic Models
+class SettingsCreate(BaseModel):
+    github_token: str
+    github_repo: str
+    github_owner: str
+
+class SettingsResponse(BaseModel):
+    id: int
+    github_repo: Optional[str] = None
+    github_owner: Optional[str] = None
+    is_configured: bool = False
+
+class PromptCreate(BaseModel):
+    name: str
+    description: Optional[str] = ""
+    template_id: Optional[str] = None
+
+class PromptUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+class PromptResponse(BaseModel):
+    id: str
+    name: str
+    description: Optional[str]
+    folder_path: str
+    created_at: str
+    updated_at: str
+    versions: List[Dict[str, Any]] = []
+
+class SectionCreate(BaseModel):
+    name: str
+    title: str
+    content: str
+    order: Optional[int] = None
+    parent_path: Optional[str] = None
+
+class SectionUpdate(BaseModel):
+    content: str
+
+class SectionReorder(BaseModel):
+    sections: List[Dict[str, Any]]
+
+class VersionCreate(BaseModel):
+    version_name: str
+    source_version: Optional[str] = None
+
+class RenderRequest(BaseModel):
+    variables: Optional[Dict[str, Any]] = {}
+
+class RenderResponse(BaseModel):
+    prompt_id: str
+    version: str
+    compiled_prompt: str
+    sections_used: List[str]
+
+class APIKeyCreate(BaseModel):
+    name: str
+
+class APIKeyResponse(BaseModel):
+    id: str
+    name: str
+    key_preview: str
+    created_at: str
+    last_used: Optional[str] = None
+
+class APIKeyCreateResponse(APIKeyResponse):
+    key: str  # Full key only shown on creation
+
+# Helper Functions
+def get_github_settings():
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM settings WHERE id = 1")
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+    return None
+
+async def github_api_request(method: str, endpoint: str, data: dict = None):
+    settings = get_github_settings()
+    if not settings or not settings.get("github_token"):
+        raise HTTPException(status_code=400, detail="GitHub not configured")
     
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    client_name: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    headers = {
+        "Authorization": f"token {settings['github_token']}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    
+    base_url = f"https://api.github.com/repos/{settings['github_owner']}/{settings['github_repo']}"
+    url = f"{base_url}{endpoint}"
+    
+    async with httpx.AsyncClient() as client:
+        if method == "GET":
+            response = await client.get(url, headers=headers)
+        elif method == "PUT":
+            response = await client.put(url, headers=headers, json=data)
+        elif method == "POST":
+            response = await client.post(url, headers=headers, json=data)
+        elif method == "DELETE":
+            response = await client.delete(url, headers=headers)
+        else:
+            raise ValueError(f"Unsupported method: {method}")
+        
+        if response.status_code == 404:
+            return None
+        if response.status_code >= 400:
+            raise HTTPException(status_code=response.status_code, detail=response.text)
+        
+        if response.status_code == 204:
+            return {}
+        return response.json()
 
-class StatusCheckCreate(BaseModel):
-    client_name: str
+def slugify(text: str) -> str:
+    text = text.lower().strip()
+    text = re.sub(r'[^\w\s-]', '', text)
+    text = re.sub(r'[-\s]+', '_', text)
+    return text
 
-# Add your routes to the router instead of directly to app
+def inject_variables(content: str, variables: dict) -> str:
+    """Simple Mustache-style variable injection"""
+    result = content
+    for key, value in variables.items():
+        # Simple variable replacement {{variable}}
+        result = re.sub(r'\{\{\s*' + re.escape(key) + r'\s*\}\}', str(value), result)
+    return result
+
+def extract_variables(content: str) -> List[str]:
+    """Extract variable names from content"""
+    pattern = r'\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}'
+    return list(set(re.findall(pattern, content)))
+
+# Settings Endpoints
+@api_router.get("/settings", response_model=SettingsResponse)
+async def get_settings():
+    settings = get_github_settings()
+    if settings:
+        return SettingsResponse(
+            id=settings["id"],
+            github_repo=settings.get("github_repo"),
+            github_owner=settings.get("github_owner"),
+            is_configured=bool(settings.get("github_token"))
+        )
+    return SettingsResponse(id=0, is_configured=False)
+
+@api_router.post("/settings", response_model=SettingsResponse)
+async def save_settings(settings: SettingsCreate):
+    now = datetime.now(timezone.utc).isoformat()
+    
+    # Validate GitHub connection
+    headers = {
+        "Authorization": f"token {settings.github_token}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"https://api.github.com/repos/{settings.github_owner}/{settings.github_repo}",
+            headers=headers
+        )
+        if response.status_code != 200:
+            raise HTTPException(status_code=400, detail="Invalid GitHub credentials or repository")
+    
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM settings WHERE id = 1")
+        existing = cursor.fetchone()
+        
+        if existing:
+            cursor.execute("""
+                UPDATE settings SET github_token = ?, github_repo = ?, github_owner = ?, updated_at = ?
+                WHERE id = 1
+            """, (settings.github_token, settings.github_repo, settings.github_owner, now))
+        else:
+            cursor.execute("""
+                INSERT INTO settings (id, github_token, github_repo, github_owner, created_at, updated_at)
+                VALUES (1, ?, ?, ?, ?, ?)
+            """, (settings.github_token, settings.github_repo, settings.github_owner, now, now))
+    
+    return SettingsResponse(
+        id=1,
+        github_repo=settings.github_repo,
+        github_owner=settings.github_owner,
+        is_configured=True
+    )
+
+@api_router.delete("/settings")
+async def delete_settings():
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM settings WHERE id = 1")
+    return {"message": "Settings deleted"}
+
+# Templates Endpoints
+@api_router.get("/templates")
+async def get_templates():
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM templates ORDER BY created_at")
+        rows = cursor.fetchall()
+        templates = []
+        for row in rows:
+            template = dict(row)
+            template["sections"] = json.loads(template["sections"])
+            templates.append(template)
+        return templates
+
+@api_router.get("/templates/{template_id}")
+async def get_template(template_id: str):
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM templates WHERE id = ?", (template_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Template not found")
+        template = dict(row)
+        template["sections"] = json.loads(template["sections"])
+        return template
+
+# Prompts Endpoints
+@api_router.get("/prompts")
+async def get_prompts():
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM prompts ORDER BY updated_at DESC")
+        prompts = [dict(row) for row in cursor.fetchall()]
+        
+        for prompt in prompts:
+            cursor.execute("SELECT * FROM prompt_versions WHERE prompt_id = ?", (prompt["id"],))
+            prompt["versions"] = [dict(v) for v in cursor.fetchall()]
+        
+        return prompts
+
+@api_router.post("/prompts", response_model=PromptResponse)
+async def create_prompt(prompt_data: PromptCreate):
+    prompt_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    folder_path = f"prompts/{slugify(prompt_data.name)}"
+    
+    settings = get_github_settings()
+    if not settings:
+        raise HTTPException(status_code=400, detail="GitHub not configured")
+    
+    # Create prompt in DB
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO prompts (id, name, description, folder_path, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (prompt_id, prompt_data.name, prompt_data.description or "", folder_path, now, now))
+        
+        # Create default version
+        version_id = str(uuid.uuid4())
+        cursor.execute("""
+            INSERT INTO prompt_versions (id, prompt_id, version_name, branch_name, is_default, created_at)
+            VALUES (?, ?, ?, ?, 1, ?)
+        """, (version_id, prompt_id, "main", "main", now))
+    
+    # Get template sections if template_id provided
+    sections_to_create = []
+    if prompt_data.template_id:
+        with get_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT sections FROM templates WHERE id = ?", (prompt_data.template_id,))
+            template_row = cursor.fetchone()
+            if template_row:
+                sections_to_create = json.loads(template_row["sections"])
+    
+    # Create manifest and sections in GitHub
+    manifest = {
+        "prompt_id": slugify(prompt_data.name),
+        "name": prompt_data.name,
+        "description": prompt_data.description or "",
+        "sections": [],
+        "variables": {}
+    }
+    
+    # Create manifest file
+    import base64
+    manifest_content = base64.b64encode(json.dumps(manifest, indent=2).encode()).decode()
+    await github_api_request("PUT", f"/contents/{folder_path}/manifest.json", {
+        "message": f"Create prompt: {prompt_data.name}",
+        "content": manifest_content
+    })
+    
+    # Create sections from template
+    for section in sections_to_create:
+        section_filename = f"{str(section['order']).zfill(2)}_{section['name']}.md"
+        section_content = base64.b64encode(section["content"].encode()).decode()
+        await github_api_request("PUT", f"/contents/{folder_path}/{section_filename}", {
+            "message": f"Add section: {section['title']}",
+            "content": section_content
+        })
+        manifest["sections"].append(section_filename)
+        
+        # Extract variables from section
+        vars_in_section = extract_variables(section["content"])
+        for var in vars_in_section:
+            if var not in manifest["variables"]:
+                manifest["variables"][var] = {"required": True}
+    
+    # Update manifest with sections
+    if sections_to_create:
+        manifest_response = await github_api_request("GET", f"/contents/{folder_path}/manifest.json")
+        manifest_content = base64.b64encode(json.dumps(manifest, indent=2).encode()).decode()
+        await github_api_request("PUT", f"/contents/{folder_path}/manifest.json", {
+            "message": "Update manifest with sections",
+            "content": manifest_content,
+            "sha": manifest_response["sha"]
+        })
+    
+    return PromptResponse(
+        id=prompt_id,
+        name=prompt_data.name,
+        description=prompt_data.description,
+        folder_path=folder_path,
+        created_at=now,
+        updated_at=now,
+        versions=[{"id": version_id, "version_name": "main", "branch_name": "main", "is_default": True}]
+    )
+
+@api_router.get("/prompts/{prompt_id}")
+async def get_prompt(prompt_id: str):
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM prompts WHERE id = ?", (prompt_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Prompt not found")
+        
+        prompt = dict(row)
+        cursor.execute("SELECT * FROM prompt_versions WHERE prompt_id = ?", (prompt_id,))
+        prompt["versions"] = [dict(v) for v in cursor.fetchall()]
+        
+        return prompt
+
+@api_router.put("/prompts/{prompt_id}")
+async def update_prompt(prompt_id: str, prompt_data: PromptUpdate):
+    now = datetime.now(timezone.utc).isoformat()
+    
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM prompts WHERE id = ?", (prompt_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Prompt not found")
+        
+        updates = []
+        params = []
+        if prompt_data.name:
+            updates.append("name = ?")
+            params.append(prompt_data.name)
+        if prompt_data.description is not None:
+            updates.append("description = ?")
+            params.append(prompt_data.description)
+        updates.append("updated_at = ?")
+        params.append(now)
+        params.append(prompt_id)
+        
+        cursor.execute(f"UPDATE prompts SET {', '.join(updates)} WHERE id = ?", params)
+    
+    return await get_prompt(prompt_id)
+
+@api_router.delete("/prompts/{prompt_id}")
+async def delete_prompt(prompt_id: str):
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT folder_path FROM prompts WHERE id = ?", (prompt_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Prompt not found")
+        
+        # Delete from DB
+        cursor.execute("DELETE FROM prompt_versions WHERE prompt_id = ?", (prompt_id,))
+        cursor.execute("DELETE FROM prompts WHERE id = ?", (prompt_id,))
+    
+    # Note: GitHub files should be deleted separately or kept for history
+    return {"message": "Prompt deleted"}
+
+# Sections Endpoints
+@api_router.get("/prompts/{prompt_id}/sections")
+async def get_prompt_sections(prompt_id: str, version: str = "main"):
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT folder_path FROM prompts WHERE id = ?", (prompt_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Prompt not found")
+        folder_path = row["folder_path"]
+    
+    try:
+        # Get files from GitHub
+        contents = await github_api_request("GET", f"/contents/{folder_path}?ref={version}")
+        if not contents:
+            return []
+        
+        sections = []
+        for item in contents:
+            if item["name"].endswith(".md"):
+                # Parse order from filename
+                match = re.match(r'^(\d+)_(.+)\.md$', item["name"])
+                if match:
+                    order = int(match.group(1))
+                    name = match.group(2)
+                else:
+                    order = 99
+                    name = item["name"].replace(".md", "")
+                
+                sections.append({
+                    "filename": item["name"],
+                    "name": name,
+                    "order": order,
+                    "path": item["path"],
+                    "sha": item["sha"],
+                    "type": "file"
+                })
+        
+        sections.sort(key=lambda x: x["order"])
+        return sections
+    except Exception as e:
+        logging.error(f"Error fetching sections: {e}")
+        return []
+
+@api_router.get("/prompts/{prompt_id}/sections/{filename}")
+async def get_section_content(prompt_id: str, filename: str, version: str = "main"):
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT folder_path FROM prompts WHERE id = ?", (prompt_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Prompt not found")
+        folder_path = row["folder_path"]
+    
+    import base64
+    file_data = await github_api_request("GET", f"/contents/{folder_path}/{filename}?ref={version}")
+    if not file_data:
+        raise HTTPException(status_code=404, detail="Section not found")
+    
+    content = base64.b64decode(file_data["content"]).decode("utf-8")
+    return {
+        "filename": filename,
+        "content": content,
+        "sha": file_data["sha"],
+        "variables": extract_variables(content)
+    }
+
+@api_router.post("/prompts/{prompt_id}/sections")
+async def create_section(prompt_id: str, section_data: SectionCreate, version: str = "main"):
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT folder_path FROM prompts WHERE id = ?", (prompt_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Prompt not found")
+        folder_path = row["folder_path"]
+    
+    # Get existing sections to determine order
+    sections = await get_prompt_sections(prompt_id, version)
+    order = section_data.order if section_data.order else (max([s["order"] for s in sections], default=0) + 1)
+    
+    filename = f"{str(order).zfill(2)}_{slugify(section_data.name)}.md"
+    
+    import base64
+    content = base64.b64encode(section_data.content.encode()).decode()
+    
+    await github_api_request("PUT", f"/contents/{folder_path}/{filename}", {
+        "message": f"Add section: {section_data.title}",
+        "content": content,
+        "branch": version
+    })
+    
+    # Update timestamp
+    now = datetime.now(timezone.utc).isoformat()
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE prompts SET updated_at = ? WHERE id = ?", (now, prompt_id))
+    
+    return {"filename": filename, "message": "Section created"}
+
+@api_router.put("/prompts/{prompt_id}/sections/{filename}")
+async def update_section(prompt_id: str, filename: str, section_data: SectionUpdate, version: str = "main"):
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT folder_path FROM prompts WHERE id = ?", (prompt_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Prompt not found")
+        folder_path = row["folder_path"]
+    
+    # Get current file SHA
+    file_data = await github_api_request("GET", f"/contents/{folder_path}/{filename}?ref={version}")
+    if not file_data:
+        raise HTTPException(status_code=404, detail="Section not found")
+    
+    import base64
+    content = base64.b64encode(section_data.content.encode()).decode()
+    
+    await github_api_request("PUT", f"/contents/{folder_path}/{filename}", {
+        "message": f"Update section: {filename}",
+        "content": content,
+        "sha": file_data["sha"],
+        "branch": version
+    })
+    
+    # Update timestamp
+    now = datetime.now(timezone.utc).isoformat()
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE prompts SET updated_at = ? WHERE id = ?", (now, prompt_id))
+    
+    return {"filename": filename, "message": "Section updated"}
+
+@api_router.delete("/prompts/{prompt_id}/sections/{filename}")
+async def delete_section(prompt_id: str, filename: str, version: str = "main"):
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT folder_path FROM prompts WHERE id = ?", (prompt_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Prompt not found")
+        folder_path = row["folder_path"]
+    
+    # Get current file SHA
+    file_data = await github_api_request("GET", f"/contents/{folder_path}/{filename}?ref={version}")
+    if not file_data:
+        raise HTTPException(status_code=404, detail="Section not found")
+    
+    await github_api_request("DELETE", f"/contents/{folder_path}/{filename}", {
+        "message": f"Delete section: {filename}",
+        "sha": file_data["sha"],
+        "branch": version
+    })
+    
+    return {"message": "Section deleted"}
+
+@api_router.post("/prompts/{prompt_id}/sections/reorder")
+async def reorder_sections(prompt_id: str, reorder_data: SectionReorder, version: str = "main"):
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT folder_path FROM prompts WHERE id = ?", (prompt_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Prompt not found")
+        folder_path = row["folder_path"]
+    
+    import base64
+    
+    for i, section in enumerate(reorder_data.sections):
+        old_filename = section["filename"]
+        name = section.get("name", old_filename.split("_", 1)[1].replace(".md", ""))
+        new_filename = f"{str(i + 1).zfill(2)}_{name}.md"
+        
+        if old_filename != new_filename:
+            # Get current content
+            file_data = await github_api_request("GET", f"/contents/{folder_path}/{old_filename}?ref={version}")
+            if file_data:
+                # Create new file
+                await github_api_request("PUT", f"/contents/{folder_path}/{new_filename}", {
+                    "message": f"Rename section: {old_filename} -> {new_filename}",
+                    "content": file_data["content"],
+                    "branch": version
+                })
+                # Delete old file
+                await github_api_request("DELETE", f"/contents/{folder_path}/{old_filename}", {
+                    "message": f"Remove old file: {old_filename}",
+                    "sha": file_data["sha"],
+                    "branch": version
+                })
+    
+    return {"message": "Sections reordered"}
+
+# Versions Endpoints
+@api_router.get("/prompts/{prompt_id}/versions")
+async def get_prompt_versions(prompt_id: str):
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM prompt_versions WHERE prompt_id = ? ORDER BY created_at DESC", (prompt_id,))
+        return [dict(row) for row in cursor.fetchall()]
+
+@api_router.post("/prompts/{prompt_id}/versions")
+async def create_version(prompt_id: str, version_data: VersionCreate):
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM prompts WHERE id = ?", (prompt_id,))
+        prompt = cursor.fetchone()
+        if not prompt:
+            raise HTTPException(status_code=404, detail="Prompt not found")
+    
+    branch_name = slugify(version_data.version_name)
+    source_branch = version_data.source_version or "main"
+    
+    # Get source branch SHA
+    ref_data = await github_api_request("GET", f"/git/refs/heads/{source_branch}")
+    if not ref_data:
+        raise HTTPException(status_code=400, detail=f"Source branch '{source_branch}' not found")
+    
+    # Create new branch
+    await github_api_request("POST", "/git/refs", {
+        "ref": f"refs/heads/{branch_name}",
+        "sha": ref_data["object"]["sha"]
+    })
+    
+    # Save version to DB
+    version_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO prompt_versions (id, prompt_id, version_name, branch_name, is_default, created_at)
+            VALUES (?, ?, ?, ?, 0, ?)
+        """, (version_id, prompt_id, version_data.version_name, branch_name, now))
+    
+    return {"id": version_id, "version_name": version_data.version_name, "branch_name": branch_name}
+
+# Render Endpoint
+@api_router.post("/prompts/{prompt_id}/{version}/render", response_model=RenderResponse)
+async def render_prompt(prompt_id: str, version: str, render_data: RenderRequest, api_key: dict = Depends(verify_api_key)):
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM prompts WHERE id = ?", (prompt_id,))
+        prompt = cursor.fetchone()
+        if not prompt:
+            raise HTTPException(status_code=404, detail="Prompt not found")
+        folder_path = prompt["folder_path"]
+    
+    # Get sections
+    sections = await get_prompt_sections(prompt_id, version)
+    if not sections:
+        raise HTTPException(status_code=404, detail="No sections found")
+    
+    import base64
+    compiled_parts = []
+    sections_used = []
+    all_variables = set()
+    
+    for section in sections:
+        file_data = await github_api_request("GET", f"/contents/{folder_path}/{section['filename']}?ref={version}")
+        if file_data:
+            content = base64.b64decode(file_data["content"]).decode("utf-8")
+            all_variables.update(extract_variables(content))
+            
+            # Inject variables
+            if render_data.variables:
+                content = inject_variables(content, render_data.variables)
+            
+            compiled_parts.append(content)
+            sections_used.append(section["filename"])
+    
+    # Check for missing required variables (still have {{var}} in output)
+    compiled_prompt = "\n\n---\n\n".join(compiled_parts)
+    remaining_vars = extract_variables(compiled_prompt)
+    if remaining_vars:
+        raise HTTPException(
+            status_code=400, 
+            detail={
+                "error": "Missing required variables",
+                "missing": remaining_vars
+            }
+        )
+    
+    return RenderResponse(
+        prompt_id=prompt_id,
+        version=version,
+        compiled_prompt=compiled_prompt,
+        sections_used=sections_used
+    )
+
+# API Keys Endpoints
+@api_router.get("/keys", response_model=List[APIKeyResponse])
+async def get_api_keys():
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, name, key_preview, created_at, last_used FROM api_keys ORDER BY created_at DESC")
+        return [dict(row) for row in cursor.fetchall()]
+
+@api_router.post("/keys", response_model=APIKeyCreateResponse)
+async def create_api_key(key_data: APIKeyCreate):
+    key_id = str(uuid.uuid4())
+    full_key = f"pm_{secrets.token_urlsafe(32)}"
+    key_preview = f"{full_key[:7]}...{full_key[-4:]}"
+    now = datetime.now(timezone.utc).isoformat()
+    
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO api_keys (id, name, key_hash, key_preview, created_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, (key_id, key_data.name, full_key, key_preview, now))
+    
+    return APIKeyCreateResponse(
+        id=key_id,
+        name=key_data.name,
+        key=full_key,
+        key_preview=key_preview,
+        created_at=now
+    )
+
+@api_router.delete("/keys/{key_id}")
+async def delete_api_key(key_id: str):
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM api_keys WHERE id = ?", (key_id,))
+    return {"message": "API key deleted"}
+
+# Health check
+@api_router.get("/health")
+async def health_check():
+    return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+# Root endpoint
 @api_router.get("/")
 async def root():
-    return {"message": "Hello World"}
-
-@api_router.post("/status", response_model=StatusCheck)
-async def create_status_check(input: StatusCheckCreate):
-    status_dict = input.model_dump()
-    status_obj = StatusCheck(**status_dict)
-    
-    # Convert to dict and serialize datetime to ISO string for MongoDB
-    doc = status_obj.model_dump()
-    doc['timestamp'] = doc['timestamp'].isoformat()
-    
-    _ = await db.status_checks.insert_one(doc)
-    return status_obj
-
-@api_router.get("/status", response_model=List[StatusCheck])
-async def get_status_checks():
-    # Exclude MongoDB's _id field from the query results
-    status_checks = await db.status_checks.find({}, {"_id": 0}).to_list(1000)
-    
-    # Convert ISO string timestamps back to datetime objects
-    for check in status_checks:
-        if isinstance(check['timestamp'], str):
-            check['timestamp'] = datetime.fromisoformat(check['timestamp'])
-    
-    return status_checks
+    return {"message": "Prompt Manager API", "version": "1.0.0"}
 
 # Include the router in the main app
 app.include_router(api_router)
@@ -83,7 +910,3 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()

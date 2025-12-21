@@ -1,52 +1,91 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import "@/App.css";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import axios from "axios";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { Toaster } from "@/components/ui/sonner";
+import { getSettings } from "@/lib/api";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
+// Pages
+import SetupPage from "@/pages/SetupPage";
+import DashboardPage from "@/pages/DashboardPage";
+import PromptEditorPage from "@/pages/PromptEditorPage";
+import TemplatesPage from "@/pages/TemplatesPage";
+import ApiKeysPage from "@/pages/ApiKeysPage";
+import SettingsPage from "@/pages/SettingsPage";
 
-const Home = () => {
-  const helloWorldApi = async () => {
+// Layout
+import MainLayout from "@/components/layout/MainLayout";
+
+function App() {
+  const [isConfigured, setIsConfigured] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    checkConfiguration();
+  }, []);
+
+  const checkConfiguration = async () => {
     try {
-      const response = await axios.get(`${API}/`);
-      console.log(response.data.message);
-    } catch (e) {
-      console.error(e, `errored out requesting / api`);
+      const response = await getSettings();
+      setIsConfigured(response.data.is_configured);
+    } catch (error) {
+      console.error("Error checking configuration:", error);
+      setIsConfigured(false);
+    } finally {
+      setLoading(false);
     }
   };
 
-  useEffect(() => {
-    helloWorldApi();
-  }, []);
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+          <span className="text-muted-foreground font-mono text-sm">INITIALIZING...</span>
+        </div>
+      </div>
+    );
+  }
 
-  return (
-    <div>
-      <header className="App-header">
-        <a
-          className="App-link"
-          href="https://emergent.sh"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <img src="https://avatars.githubusercontent.com/in/1201222?s=120&u=2686cf91179bbafbc7a71bfbc43004cf9ae1acea&v=4" />
-        </a>
-        <p className="mt-5">Building something incredible ~!</p>
-      </header>
-    </div>
-  );
-};
-
-function App() {
   return (
     <div className="App">
       <BrowserRouter>
         <Routes>
-          <Route path="/" element={<Home />}>
-            <Route index element={<Home />} />
-          </Route>
+          <Route 
+            path="/setup" 
+            element={
+              <SetupPage onConfigured={() => setIsConfigured(true)} />
+            } 
+          />
+          <Route 
+            path="/*" 
+            element={
+              isConfigured ? (
+                <MainLayout>
+                  <Routes>
+                    <Route path="/" element={<DashboardPage />} />
+                    <Route path="/prompts/:promptId" element={<PromptEditorPage />} />
+                    <Route path="/templates" element={<TemplatesPage />} />
+                    <Route path="/api-keys" element={<ApiKeysPage />} />
+                    <Route path="/settings" element={<SettingsPage onDisconnect={() => setIsConfigured(false)} />} />
+                  </Routes>
+                </MainLayout>
+              ) : (
+                <Navigate to="/setup" replace />
+              )
+            } 
+          />
         </Routes>
       </BrowserRouter>
+      <Toaster 
+        position="bottom-right"
+        toastOptions={{
+          style: {
+            background: 'hsl(240 10% 3.9%)',
+            border: '1px solid hsl(240 4% 16%)',
+            color: 'hsl(0 0% 98%)',
+          },
+        }}
+      />
     </div>
   );
 }
