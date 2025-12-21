@@ -64,6 +64,7 @@ export default function AuthPage() {
         } catch (err) {
             const message = err.response?.data?.detail || "Authentication failed";
             setError(message);
+            toast.error(message);
         } finally {
             setLoading(false);
         }
