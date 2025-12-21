@@ -358,8 +358,11 @@ def get_github_settings(user_id: str = None):
 @api_router.get("/auth/github/login")
 async def github_login():
     """Redirect to GitHub OAuth"""
-    if not GITHUB_CLIENT_ID:
-        raise HTTPException(status_code=500, detail="GitHub OAuth not configured")
+    if not GITHUB_CLIENT_ID or not GITHUB_CLIENT_SECRET:
+        raise HTTPException(
+            status_code=503, 
+            detail="GitHub OAuth not configured. Please set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET environment variables."
+        )
     
     state = secrets.token_urlsafe(16)
     github_auth_url = (
