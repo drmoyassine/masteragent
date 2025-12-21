@@ -39,23 +39,59 @@ class PromptManagerAPITester:
             self.log_test("Health Check", False, str(e))
             return False
 
-    def test_get_settings(self):
-        """Test get settings endpoint"""
+    def test_auth_status_unauthenticated(self):
+        """Test auth status endpoint when not authenticated"""
         try:
-            response = requests.get(f"{self.api_base}/settings", timeout=10)
+            response = requests.get(f"{self.api_base}/auth/status", timeout=10)
             success = response.status_code == 200
             details = f"Status: {response.status_code}"
+            
             if success:
                 data = response.json()
-                # Should return unconfigured state initially
-                expected_fields = ['id', 'is_configured']
+                expected_fields = ['authenticated']
                 has_fields = all(field in data for field in expected_fields)
-                success = has_fields and data['is_configured'] == False
-                details += f", Configured: {data.get('is_configured')}, Has required fields: {has_fields}"
-            self.log_test("Get Settings (Unconfigured)", success, details)
+                success = has_fields and data['authenticated'] == False
+                details += f", Authenticated: {data.get('authenticated')}, Has required fields: {has_fields}"
+            
+            self.log_test("Auth Status (Unauthenticated)", success, details)
             return success
         except Exception as e:
-            self.log_test("Get Settings (Unconfigured)", False, str(e))
+            self.log_test("Auth Status (Unauthenticated)", False, str(e))
+            return False
+
+    def test_github_login_url(self):
+        """Test GitHub OAuth login URL endpoint"""
+        try:
+            response = requests.get(f"{self.api_base}/auth/github/login", timeout=10)
+            success = response.status_code == 200
+            details = f"Status: {response.status_code}"
+            
+            if success:
+                data = response.json()
+                expected_fields = ['auth_url']
+                has_fields = all(field in data for field in expected_fields)
+                auth_url = data.get('auth_url', '')
+                is_github_url = 'github.com/login/oauth/authorize' in auth_url
+                success = has_fields and is_github_url
+                details += f", Has auth_url: {has_fields}, Is GitHub URL: {is_github_url}"
+            
+            self.log_test("GitHub Login URL", success, details)
+            return success
+        except Exception as e:
+            self.log_test("GitHub Login URL", False, str(e))
+            return False
+
+    def test_get_settings(self):
+        """Test get settings endpoint (should require auth)"""
+        try:
+            response = requests.get(f"{self.api_base}/settings", timeout=10)
+            # Should return 401 when not authenticated
+            success = response.status_code == 401
+            details = f"Status: {response.status_code} (Expected 401 for unauthenticated request)"
+            self.log_test("Get Settings (Requires Auth)", success, details)
+            return success
+        except Exception as e:
+            self.log_test("Get Settings (Requires Auth)", False, str(e))
             return False
 
     def test_get_templates(self):
