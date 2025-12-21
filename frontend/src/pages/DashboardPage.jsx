@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { 
+import {
+  AlertCircle,
   Plus, 
   FileText, 
   GitBranch, 
@@ -28,6 +29,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { getPrompts, createPrompt, deletePrompt, getTemplates } from "@/lib/api";
 import { toast } from "sonner";
 
@@ -41,6 +43,7 @@ export default function DashboardPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [selectedPrompt, setSelectedPrompt] = useState(null);
   const [creating, setCreating] = useState(false);
+  const [limitError, setLimitError] = useState(null);
   const [newPrompt, setNewPrompt] = useState({
     name: "",
     description: "",
@@ -73,14 +76,19 @@ export default function DashboardPage() {
     }
 
     setCreating(true);
+    setLimitError(null);
     try {
       const response = await createPrompt(newPrompt);
       toast.success("Prompt created successfully!");
       setCreateDialogOpen(false);
       setNewPrompt({ name: "", description: "", template_id: null });
-      navigate(`/prompts/${response.data.id}`);
+      navigate(`/app/prompts/${response.data.id}`);
     } catch (error) {
-      toast.error(error.response?.data?.detail || "Failed to create prompt");
+      if (error.response?.status === 403) {
+        setLimitError(error.response.data.detail);
+      } else {
+        toast.error(error.response?.data?.detail || "Failed to create prompt");
+      }
     } finally {
       setCreating(false);
     }
@@ -191,7 +199,7 @@ export default function DashboardPage() {
               <div
                 key={prompt.id}
                 className="prompt-card group"
-                onClick={() => navigate(`/prompts/${prompt.id}`)}
+                onClick={() => navigate(`/app/prompts/${prompt.id}`)}
                 data-testid={`prompt-card-${prompt.id}`}
               >
                 <div className="flex items-start justify-between mb-3">
@@ -218,7 +226,7 @@ export default function DashboardPage() {
                       <DropdownMenuItem
                         onClick={(e) => {
                           e.stopPropagation();
-                          navigate(`/prompts/${prompt.id}`);
+                          navigate(`/app/prompts/${prompt.id}`);
                         }}
                       >
                         <Edit className="w-4 h-4 mr-2" />
@@ -272,6 +280,12 @@ export default function DashboardPage() {
           </DialogHeader>
 
           <div className="space-y-4 py-4">
+            {limitError && (
+              <Alert variant="destructive" className="bg-destructive/10 border-destructive/20">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>{limitError}</AlertDescription>
+              </Alert>
+            )}
             <div className="space-y-2">
               <Label htmlFor="name" className="font-mono text-sm">
                 NAME
