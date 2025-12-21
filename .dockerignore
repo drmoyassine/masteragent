@@ -1,0 +1,39 @@
+# Dependencies
+frontend/node_modules
+backend/__pycache__
+backend/*.pyc
+backend/*.pyo
+
+# Build outputs
+frontend/build
+
+# Database
+backend/*.db
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Git
+.git
+.gitignore
+
+# Logs
+*.log
+/var/log
+
+# Test reports
+test_reports/
+
+# Environment files (will be set via docker env)
+# .env files should be handled carefully in production
+
+# Documentation
+*.md
+!requirements.md
+
+# OS files
+.DS_Store
+Thumbs.db
