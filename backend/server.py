@@ -944,20 +944,23 @@ async def delete_prompt(prompt_id: str, user: dict = Depends(require_auth)):
     # Note: GitHub files should be deleted separately or kept for history
     return {"message": "Prompt deleted"}
 
-# Sections Endpoints
+# Sections Endpoints (folder-based versioning)
 @api_router.get("/prompts/{prompt_id}/sections")
-async def get_prompt_sections(prompt_id: str, version: str = "main"):
+async def get_prompt_sections(prompt_id: str, version: str = "v1", user: dict = Depends(require_auth)):
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT folder_path FROM prompts WHERE id = ?", (prompt_id,))
+        cursor.execute("SELECT folder_path FROM prompts WHERE id = ? AND user_id = ?", (prompt_id, user["id"]))
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Prompt not found")
         folder_path = row["folder_path"]
     
+    # Version is now a folder: prompts/{prompt_name}/{version}/
+    version_path = f"{folder_path}/{version}"
+    
     try:
-        # Get files from GitHub
-        contents = await github_api_request("GET", f"/contents/{folder_path}?ref={version}")
+        # Get files from GitHub (from version folder)
+        contents = await github_api_request("GET", f"/contents/{version_path}", user_id=user["id"])
         if not contents:
             return []
         
@@ -989,17 +992,19 @@ async def get_prompt_sections(prompt_id: str, version: str = "main"):
         return []
 
 @api_router.get("/prompts/{prompt_id}/sections/{filename}")
-async def get_section_content(prompt_id: str, filename: str, version: str = "main"):
+async def get_section_content(prompt_id: str, filename: str, version: str = "v1", user: dict = Depends(require_auth)):
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT folder_path FROM prompts WHERE id = ?", (prompt_id,))
+        cursor.execute("SELECT folder_path FROM prompts WHERE id = ? AND user_id = ?", (prompt_id, user["id"]))
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Prompt not found")
         folder_path = row["folder_path"]
     
+    version_path = f"{folder_path}/{version}"
+    
     import base64
-    file_data = await github_api_request("GET", f"/contents/{folder_path}/{filename}?ref={version}")
+    file_data = await github_api_request("GET", f"/contents/{version_path}/{filename}", user_id=user["id"])
     if not file_data:
         raise HTTPException(status_code=404, detail="Section not found")
     
@@ -1012,17 +1017,19 @@ async def get_section_content(prompt_id: str, filename: str, version: str = "mai
     }
 
 @api_router.post("/prompts/{prompt_id}/sections")
-async def create_section(prompt_id: str, section_data: SectionCreate, version: str = "main"):
+async def create_section(prompt_id: str, section_data: SectionCreate, version: str = "v1", user: dict = Depends(require_auth)):
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT folder_path FROM prompts WHERE id = ?", (prompt_id,))
+        cursor.execute("SELECT folder_path FROM prompts WHERE id = ? AND user_id = ?", (prompt_id, user["id"]))
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Prompt not found")
         folder_path = row["folder_path"]
     
+    version_path = f"{folder_path}/{version}"
+    
     # Get existing sections to determine order
-    sections = await get_prompt_sections(prompt_id, version)
+    sections = await get_prompt_sections(prompt_id, version, user)
     order = section_data.order if section_data.order else (max([s["order"] for s in sections], default=0) + 1)
     
     filename = f"{str(order).zfill(2)}_{slugify(section_data.name)}.md"
@@ -1030,11 +1037,10 @@ async def create_section(prompt_id: str, section_data: SectionCreate, version: s
     import base64
     content = base64.b64encode(section_data.content.encode()).decode()
     
-    await github_api_request("PUT", f"/contents/{folder_path}/{filename}", {
+    await github_api_request("PUT", f"/contents/{version_path}/{filename}", {
         "message": f"Add section: {section_data.title}",
-        "content": content,
-        "branch": version
-    })
+        "content": content
+    }, user["id"])
     
     # Update timestamp
     now = datetime.now(timezone.utc).isoformat()
@@ -1045,29 +1051,30 @@ async def create_section(prompt_id: str, section_data: SectionCreate, version: s
     return {"filename": filename, "message": "Section created"}
 
 @api_router.put("/prompts/{prompt_id}/sections/{filename}")
-async def update_section(prompt_id: str, filename: str, section_data: SectionUpdate, version: str = "main"):
+async def update_section(prompt_id: str, filename: str, section_data: SectionUpdate, version: str = "v1", user: dict = Depends(require_auth)):
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT folder_path FROM prompts WHERE id = ?", (prompt_id,))
+        cursor.execute("SELECT folder_path FROM prompts WHERE id = ? AND user_id = ?", (prompt_id, user["id"]))
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Prompt not found")
         folder_path = row["folder_path"]
     
+    version_path = f"{folder_path}/{version}"
+    
     # Get current file SHA
-    file_data = await github_api_request("GET", f"/contents/{folder_path}/{filename}?ref={version}")
+    file_data = await github_api_request("GET", f"/contents/{version_path}/{filename}", user_id=user["id"])
     if not file_data:
         raise HTTPException(status_code=404, detail="Section not found")
     
     import base64
     content = base64.b64encode(section_data.content.encode()).decode()
     
-    await github_api_request("PUT", f"/contents/{folder_path}/{filename}", {
+    await github_api_request("PUT", f"/contents/{version_path}/{filename}", {
         "message": f"Update section: {filename}",
         "content": content,
-        "sha": file_data["sha"],
-        "branch": version
-    })
+        "sha": file_data["sha"]
+    }, user["id"])
     
     # Update timestamp
     now = datetime.now(timezone.utc).isoformat()
@@ -1078,25 +1085,26 @@ async def update_section(prompt_id: str, filename: str, section_data: SectionUpd
     return {"filename": filename, "message": "Section updated"}
 
 @api_router.delete("/prompts/{prompt_id}/sections/{filename}")
-async def delete_section(prompt_id: str, filename: str, version: str = "main"):
+async def delete_section(prompt_id: str, filename: str, version: str = "v1", user: dict = Depends(require_auth)):
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT folder_path FROM prompts WHERE id = ?", (prompt_id,))
+        cursor.execute("SELECT folder_path FROM prompts WHERE id = ? AND user_id = ?", (prompt_id, user["id"]))
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Prompt not found")
         folder_path = row["folder_path"]
     
+    version_path = f"{folder_path}/{version}"
+    
     # Get current file SHA
-    file_data = await github_api_request("GET", f"/contents/{folder_path}/{filename}?ref={version}")
+    file_data = await github_api_request("GET", f"/contents/{version_path}/{filename}", user_id=user["id"])
     if not file_data:
         raise HTTPException(status_code=404, detail="Section not found")
     
-    await github_api_request("DELETE", f"/contents/{folder_path}/{filename}", {
+    await github_api_request("DELETE", f"/contents/{version_path}/{filename}", {
         "message": f"Delete section: {filename}",
-        "sha": file_data["sha"],
-        "branch": version
-    })
+        "sha": file_data["sha"]
+    }, user["id"])
     
     return {"message": "Section deleted"}
 
