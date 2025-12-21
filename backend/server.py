@@ -1,5 +1,6 @@
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Header, Security
 from fastapi.security import APIKeyHeader
+from fastapi.responses import RedirectResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 import os
@@ -13,11 +14,23 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from contextlib import contextmanager
+from jose import jwt, JWTError
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
+
+# JWT Configuration
+SECRET_KEY = os.environ.get('JWT_SECRET_KEY', secrets.token_urlsafe(32))
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_DAYS = 30
+
+# GitHub OAuth Configuration
+GITHUB_CLIENT_ID = os.environ.get('GITHUB_CLIENT_ID', '')
+GITHUB_CLIENT_SECRET = os.environ.get('GITHUB_CLIENT_SECRET', '')
+GITHUB_REDIRECT_URI = os.environ.get('GITHUB_REDIRECT_URI', '')
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
 
 # SQLite Database Setup
 DB_PATH = ROOT_DIR / "prompt_manager.db"
@@ -40,15 +53,33 @@ def init_db():
     with get_db_context() as conn:
         cursor = conn.cursor()
         
-        # Settings table for GitHub config
+        # Users table for authentication
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY,
+                github_id INTEGER UNIQUE NOT NULL,
+                username TEXT NOT NULL,
+                email TEXT,
+                avatar_url TEXT,
+                github_url TEXT,
+                github_token TEXT,
+                plan TEXT DEFAULT 'free',
+                created_at TEXT,
+                updated_at TEXT
+            )
+        """)
+        
+        # Settings table for GitHub config (per user)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS settings (
                 id INTEGER PRIMARY KEY,
+                user_id TEXT,
                 github_token TEXT,
                 github_repo TEXT,
                 github_owner TEXT,
                 created_at TEXT,
-                updated_at TEXT
+                updated_at TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(id)
             )
         """)
         
@@ -166,6 +197,49 @@ api_router = APIRouter(prefix="/api")
 # API Key Security
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
+# JWT Token Utilities
+def create_access_token(data: dict, expires_delta: timedelta = None):
+    to_encode = data.copy()
+    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(days=ACCESS_TOKEN_EXPIRE_DAYS))
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+def verify_jwt_token(token: str):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = payload.get("sub")
+        if user_id is None:
+            return None
+        return user_id
+    except JWTError:
+        return None
+
+def get_current_user(authorization: str = Header(None)):
+    if not authorization:
+        return None
+    try:
+        scheme, token = authorization.split()
+        if scheme.lower() != "bearer":
+            return None
+        user_id = verify_jwt_token(token)
+        if not user_id:
+            return None
+        with get_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+            user = cursor.fetchone()
+            if user:
+                return dict(user)
+    except Exception:
+        pass
+    return None
+
+def require_auth(authorization: str = Header(None)):
+    user = get_current_user(authorization)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return user
+
 async def verify_api_key(api_key: str = Security(api_key_header)):
     if not api_key:
         return None
@@ -181,6 +255,22 @@ async def verify_api_key(api_key: str = Security(api_key_header)):
     return None
 
 # Pydantic Models
+# Auth Models
+class UserResponse(BaseModel):
+    id: str
+    github_id: int
+    username: str
+    email: Optional[str] = None
+    avatar_url: Optional[str] = None
+    github_url: Optional[str] = None
+    plan: str = "free"
+    created_at: str
+    updated_at: str
+
+class AuthStatusResponse(BaseModel):
+    authenticated: bool
+    user: Optional[UserResponse] = None
+
 class SettingsCreate(BaseModel):
     github_token: str
     github_repo: str
@@ -250,17 +340,153 @@ class APIKeyCreateResponse(APIKeyResponse):
     key: str  # Full key only shown on creation
 
 # Helper Functions
-def get_github_settings():
+def get_github_settings(user_id: str = None):
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM settings WHERE id = 1")
+        if user_id:
+            cursor.execute("SELECT * FROM settings WHERE user_id = ?", (user_id,))
+        else:
+            cursor.execute("SELECT * FROM settings WHERE id = 1")
         row = cursor.fetchone()
         if row:
             return dict(row)
     return None
 
-async def github_api_request(method: str, endpoint: str, data: dict = None):
-    settings = get_github_settings()
+# GitHub OAuth Endpoints
+@api_router.get("/auth/github/login")
+async def github_login():
+    """Redirect to GitHub OAuth"""
+    if not GITHUB_CLIENT_ID:
+        raise HTTPException(status_code=500, detail="GitHub OAuth not configured")
+    
+    state = secrets.token_urlsafe(16)
+    github_auth_url = (
+        f"https://github.com/login/oauth/authorize?"
+        f"client_id={GITHUB_CLIENT_ID}&"
+        f"redirect_uri={GITHUB_REDIRECT_URI}&"
+        f"scope=user:email,repo&"
+        f"state={state}"
+    )
+    return {"auth_url": github_auth_url}
+
+@api_router.get("/auth/github/callback")
+async def github_callback(code: str, state: str = None):
+    """Handle GitHub OAuth callback"""
+    if not code:
+        raise HTTPException(status_code=400, detail="No authorization code provided")
+    
+    try:
+        # Exchange code for access token
+        async with httpx.AsyncClient() as client:
+            token_response = await client.post(
+                "https://github.com/login/oauth/access_token",
+                data={
+                    "client_id": GITHUB_CLIENT_ID,
+                    "client_secret": GITHUB_CLIENT_SECRET,
+                    "code": code,
+                },
+                headers={"Accept": "application/json"}
+            )
+            token_data = token_response.json()
+        
+        github_token = token_data.get("access_token")
+        if not github_token:
+            error = token_data.get("error_description", "Failed to get access token")
+            return RedirectResponse(url=f"{FRONTEND_URL}/auth/callback?error={error}")
+        
+        # Get user info from GitHub
+        async with httpx.AsyncClient() as client:
+            user_response = await client.get(
+                "https://api.github.com/user",
+                headers={
+                    "Authorization": f"Bearer {github_token}",
+                    "Accept": "application/json"
+                }
+            )
+            github_user = user_response.json()
+            
+            # Get user emails
+            emails_response = await client.get(
+                "https://api.github.com/user/emails",
+                headers={
+                    "Authorization": f"Bearer {github_token}",
+                    "Accept": "application/json"
+                }
+            )
+            emails = emails_response.json()
+        
+        # Find primary email
+        primary_email = None
+        for email in emails:
+            if email.get("primary"):
+                primary_email = email.get("email")
+                break
+        if not primary_email and emails:
+            primary_email = emails[0].get("email")
+        
+        now = datetime.now(timezone.utc).isoformat()
+        
+        # Check if user exists
+        with get_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM users WHERE github_id = ?", (github_user["id"],))
+            existing_user = cursor.fetchone()
+            
+            if existing_user:
+                user_id = existing_user["id"]
+                # Update user info and token
+                cursor.execute("""
+                    UPDATE users SET 
+                        username = ?, email = ?, avatar_url = ?, github_token = ?, updated_at = ?
+                    WHERE id = ?
+                """, (github_user["login"], primary_email, github_user.get("avatar_url"), 
+                      github_token, now, user_id))
+            else:
+                user_id = str(uuid.uuid4())
+                cursor.execute("""
+                    INSERT INTO users (id, github_id, username, email, avatar_url, github_url, github_token, plan, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'free', ?, ?)
+                """, (user_id, github_user["id"], github_user["login"], primary_email,
+                      github_user.get("avatar_url"), github_user.get("html_url"), github_token, now, now))
+        
+        # Create JWT token
+        jwt_token = create_access_token(data={"sub": user_id})
+        
+        # Redirect to frontend with token
+        return RedirectResponse(url=f"{FRONTEND_URL}/auth/callback?token={jwt_token}")
+    
+    except Exception as e:
+        logging.error(f"GitHub OAuth error: {e}")
+        return RedirectResponse(url=f"{FRONTEND_URL}/auth/callback?error=Authentication failed")
+
+@api_router.get("/auth/status", response_model=AuthStatusResponse)
+async def auth_status(user: dict = Depends(get_current_user)):
+    """Check authentication status"""
+    if not user:
+        return AuthStatusResponse(authenticated=False)
+    
+    return AuthStatusResponse(
+        authenticated=True,
+        user=UserResponse(
+            id=user["id"],
+            github_id=user["github_id"],
+            username=user["username"],
+            email=user.get("email"),
+            avatar_url=user.get("avatar_url"),
+            github_url=user.get("github_url"),
+            plan=user.get("plan", "free"),
+            created_at=user["created_at"],
+            updated_at=user["updated_at"]
+        )
+    )
+
+@api_router.post("/auth/logout")
+async def logout():
+    """Logout user"""
+    return {"message": "Logged out successfully"}
+
+async def github_api_request(method: str, endpoint: str, data: dict = None, user_id: str = None):
+    settings = get_github_settings(user_id)
     if not settings or not settings.get("github_token"):
         raise HTTPException(status_code=400, detail="GitHub not configured")
     
@@ -312,10 +538,10 @@ def extract_variables(content: str) -> List[str]:
     pattern = r'\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}'
     return list(set(re.findall(pattern, content)))
 
-# Settings Endpoints
+# Settings Endpoints (protected)
 @api_router.get("/settings", response_model=SettingsResponse)
-async def get_settings():
-    settings = get_github_settings()
+async def get_settings(user: dict = Depends(require_auth)):
+    settings = get_github_settings(user["id"])
     if settings:
         return SettingsResponse(
             id=settings["id"],
@@ -326,17 +552,17 @@ async def get_settings():
     return SettingsResponse(id=0, is_configured=False)
 
 @api_router.post("/settings", response_model=SettingsResponse)
-async def save_settings(settings: SettingsCreate):
+async def save_settings(settings_data: SettingsCreate, user: dict = Depends(require_auth)):
     now = datetime.now(timezone.utc).isoformat()
     
     # Validate GitHub connection
     headers = {
-        "Authorization": f"token {settings.github_token}",
+        "Authorization": f"token {settings_data.github_token}",
         "Accept": "application/vnd.github.v3+json"
     }
     async with httpx.AsyncClient() as client:
         response = await client.get(
-            f"https://api.github.com/repos/{settings.github_owner}/{settings.github_repo}",
+            f"https://api.github.com/repos/{settings_data.github_owner}/{settings_data.github_repo}",
             headers=headers
         )
         if response.status_code != 200:
@@ -344,32 +570,34 @@ async def save_settings(settings: SettingsCreate):
     
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT id FROM settings WHERE id = 1")
+        cursor.execute("SELECT id FROM settings WHERE user_id = ?", (user["id"],))
         existing = cursor.fetchone()
         
         if existing:
             cursor.execute("""
                 UPDATE settings SET github_token = ?, github_repo = ?, github_owner = ?, updated_at = ?
-                WHERE id = 1
-            """, (settings.github_token, settings.github_repo, settings.github_owner, now))
+                WHERE user_id = ?
+            """, (settings_data.github_token, settings_data.github_repo, settings_data.github_owner, now, user["id"]))
+            settings_id = existing["id"]
         else:
             cursor.execute("""
-                INSERT INTO settings (id, github_token, github_repo, github_owner, created_at, updated_at)
-                VALUES (1, ?, ?, ?, ?, ?)
-            """, (settings.github_token, settings.github_repo, settings.github_owner, now, now))
+                INSERT INTO settings (user_id, github_token, github_repo, github_owner, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (user["id"], settings_data.github_token, settings_data.github_repo, settings_data.github_owner, now, now))
+            settings_id = cursor.lastrowid
     
     return SettingsResponse(
-        id=1,
-        github_repo=settings.github_repo,
-        github_owner=settings.github_owner,
+        id=settings_id,
+        github_repo=settings_data.github_repo,
+        github_owner=settings_data.github_owner,
         is_configured=True
     )
 
 @api_router.delete("/settings")
-async def delete_settings():
+async def delete_settings(user: dict = Depends(require_auth)):
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM settings WHERE id = 1")
+        cursor.execute("DELETE FROM settings WHERE user_id = ?", (user["id"],))
     return {"message": "Settings deleted"}
 
 # Templates Endpoints
