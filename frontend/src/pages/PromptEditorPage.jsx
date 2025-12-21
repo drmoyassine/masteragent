@@ -118,7 +118,7 @@ export default function PromptEditorPage() {
       setVersions(versionsRes.data);
     } catch (error) {
       toast.error("Failed to load prompt");
-      navigate("/");
+      navigate("/app");
     } finally {
       setLoading(false);
     }
@@ -297,7 +297,7 @@ export default function PromptEditorPage() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => navigate("/")}
+            onClick={() => navigate("/app")}
             className="font-mono"
             data-testid="back-btn"
           >

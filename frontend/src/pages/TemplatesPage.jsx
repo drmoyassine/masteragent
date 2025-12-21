@@ -77,7 +77,7 @@ export default function TemplatesPage() {
       });
       toast.success("Prompt created from template!");
       setCreateDialog(false);
-      navigate(`/prompts/${response.data.id}`);
+      navigate(`/app/prompts/${response.data.id}`);
     } catch (error) {
       toast.error(error.response?.data?.detail || "Failed to create prompt");
     } finally {
