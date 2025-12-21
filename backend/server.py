@@ -87,11 +87,13 @@ def init_db():
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS prompts (
                 id TEXT PRIMARY KEY,
+                user_id TEXT,
                 name TEXT NOT NULL,
                 description TEXT,
                 folder_path TEXT NOT NULL,
                 created_at TEXT,
-                updated_at TEXT
+                updated_at TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(id)
             )
         """)
         
