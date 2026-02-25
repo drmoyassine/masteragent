@@ -102,6 +102,7 @@ const AppContent = () => {
                   <Route path="templates" element={<TemplatesPage />} />
                   <Route path="api-keys" element={<ApiKeysPage />} />
                   <Route path="settings" element={<SettingsPage onDisconnect={() => setIsConfigured(false)} />} />
+                  <Route path="memory" element={<MemorySettingsPage />} />
                   <Route path="setup" element={<SetupPage onConfigured={() => setIsConfigured(true)} />} />
                 </Routes>
               </MainLayout>
