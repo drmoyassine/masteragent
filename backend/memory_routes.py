@@ -1443,7 +1443,75 @@ async def update_lesson_admin(lesson_id: str, data: LessonUpdate, user: dict = D
             updates.append("lesson_type = ?")
             params.append(data.lesson_type)
         if data.status is not None:
+            updates.append("status = ?")
+            params.append(data.status)
+        
+        params.append(lesson_id)
+        cursor.execute(f"UPDATE memory_lessons SET {', '.join(updates)} WHERE id = ?", params)
+        
+        cursor.execute("SELECT * FROM memory_lessons WHERE id = ?", (lesson_id,))
+        updated = dict(cursor.fetchone())
+    
+    return updated
 
+@memory_router.delete("/admin/lessons/{lesson_id}")
+async def delete_lesson_admin(lesson_id: str, user: dict = Depends(require_admin_auth)):
+    """Delete a lesson from admin UI"""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM memory_lessons WHERE id = ?", (lesson_id,))
+    
+    # Also delete from vector store
+    await delete_vector("memory_lessons", lesson_id)
+    
+    return {"message": "Deleted"}
+
+@memory_router.get("/admin/timeline/{entity_type}/{entity_id}")
+async def get_timeline_admin(
+    entity_type: str,
+    entity_id: str,
+    user: dict = Depends(require_admin_auth)
+):
+    """Get timeline for admin UI (JWT auth)"""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        
+        # Search for entity in entities_json
+        cursor.execute("""
+            SELECT id, timestamp, channel, raw_text, summary_text, has_documents
+            FROM memories
+            WHERE entities_json LIKE ?
+            ORDER BY timestamp DESC
+            LIMIT 100
+        """, (f'%"{entity_id}"%',))
+        
+        entries = []
+        for row in cursor.fetchall():
+            entries.append({
+                "id": row["id"],
+                "timestamp": row["timestamp"],
+                "channel": row["channel"],
+                "summary_text": row["summary_text"],
+                "raw_text": row["raw_text"],
+                "has_documents": bool(row["has_documents"])
+            })
+        
+        return entries
+
+# ============================================
+# Health & Init
+# ============================================
+
+@memory_router.get("/health")
+async def memory_health():
+    """Memory system health check"""
+    return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+@memory_router.post("/init")
+async def init_memory_system():
+    """Initialize Qdrant collections"""
+    await init_qdrant_collections()
+    return {"message": "Memory system initialized"}
 
 # ============================================
 # Admin UI - Stats & Background Tasks
