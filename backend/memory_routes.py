@@ -746,10 +746,27 @@ async def ingest_interaction(
     # Generate embeddings for chunks
     embeddings = await generate_embeddings_batch(chunks) if chunks else []
     
+    # PII Scrubbing for shared memory (if enabled)
+    pii_scrubbed_text = None
+    pii_scrubbed_summary = None
+    scrubbed_chunks = []
+    scrubbed_embeddings = []
+    
+    if settings.get("pii_scrubbing_enabled", False):
+        pii_scrubbed_text = await scrub_pii(all_text)
+        pii_scrubbed_summary = await scrub_pii(summary) if summary else ""
+        scrubbed_chunks = chunk_text(
+            pii_scrubbed_text,
+            chunk_size=settings.get("chunk_size", 400),
+            chunk_overlap=settings.get("chunk_overlap", 80)
+        )
+        scrubbed_embeddings = await generate_embeddings_batch(scrubbed_chunks) if scrubbed_chunks else []
+    
     # Store memory in database
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         
+        # Store private memory
         cursor.execute("""
             INSERT INTO memories (id, timestamp, channel, raw_text, summary_text, has_documents, 
                                   is_shared, entities_json, metadata_json, created_at, updated_at)
@@ -767,8 +784,40 @@ async def ingest_interaction(
                 INSERT INTO memory_documents (id, memory_id, filename, file_type, file_size, parsed_text, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (doc["id"], memory_id, doc["filename"], doc["file_type"], doc["file_size"], doc["parsed_text"], now))
+        
+        # Store PII-scrubbed shared memory (if enabled and auto-share is on)
+        if settings.get("pii_scrubbing_enabled") and settings.get("auto_share_scrubbed"):
+            shared_memory_id = str(uuid.uuid4())
+            cursor.execute("""
+                INSERT INTO memories_shared (id, original_memory_id, timestamp, channel, scrubbed_text, 
+                                            summary_text, has_documents, entities_json, metadata_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                shared_memory_id, memory_id, now, channel, pii_scrubbed_text, pii_scrubbed_summary,
+                1 if parsed_docs else 0,
+                json.dumps(entities_list), json.dumps(metadata_dict), now
+            ))
+            
+            # Store scrubbed vectors in Qdrant shared collection
+            for i, (chunk, embedding) in enumerate(zip(scrubbed_chunks, scrubbed_embeddings)):
+                if embedding:
+                    vector_id = f"{shared_memory_id}_{i}"
+                    await upsert_vector(
+                        "memory_shared",
+                        vector_id,
+                        embedding,
+                        {
+                            "memory_id": shared_memory_id,
+                            "original_memory_id": memory_id,
+                            "chunk_index": i,
+                            "channel": channel,
+                            "timestamp": now,
+                            "entities": entities_list,
+                            "is_shared": True
+                        }
+                    )
     
-    # Store vectors in Qdrant
+    # Store private vectors in Qdrant
     for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
         if embedding:
             vector_id = f"{memory_id}_{i}"
