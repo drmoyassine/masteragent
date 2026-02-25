@@ -17,14 +17,15 @@ Build a **Prompt Manager** (prompt versioning as code using GitHub) extended wit
 ### Module 2: Agent-Facing Memory System (In Progress)
 **Architecture**: API-first microservice where agents push data, UI for configuration and exploration
 
-**Admin Configuration (Complete)**:
+**Admin Configuration (✅ Complete)**:
 - Dynamic schema: Entity types/subtypes, lesson types, channel types
 - Agent credentials with API keys
 - LLM API configurations per task (summarization, embedding, vision, NER, PII)
 - System prompts for LLM operations
 - General settings (chunking, lessons, PII, rate limits)
+- **JWT Authentication** on all admin config endpoints
 
-**Ingestion APIs (Pending)**:
+**Ingestion APIs (✅ Complete)**:
 - `POST /api/memory/interactions` - Agent submits interaction with text and documents
 - Document parsing using vision LLM
 - Text chunking (OpenClaw-style)
@@ -32,9 +33,10 @@ Build a **Prompt Manager** (prompt versioning as code using GitHub) extended wit
 - Entity extraction using GLiNER2
 - Summarization using configured LLM
 - PII scrubbing for shared data
+- **Agent API Key Authentication** (X-API-Key header)
 
-**Retrieval APIs (Pending)**:
-- `GET/POST /api/memory/search` - Hybrid semantic search
+**Retrieval APIs (Implemented)**:
+- `POST /api/memory/search` - Hybrid semantic search
 - `GET /api/memory/timeline/{entity_type}/{entity_id}` - Entity history
 - `GET/POST /api/memory/lessons` - Curated lessons
 
@@ -55,6 +57,7 @@ Build a **Prompt Manager** (prompt versioning as code using GitHub) extended wit
 - **NER**: GLiNER2 (docker service)
 - **LLM**: Admin-configurable (OpenAI, Anthropic, Gemini, custom)
 - **PII**: Admin-configurable (Zendata or other)
+- **Auth**: JWT for admin, API keys for agents
 
 ### Frontend
 - **Framework**: React
@@ -69,7 +72,7 @@ Build a **Prompt Manager** (prompt versioning as code using GitHub) extended wit
 
 ---
 
-## What's Implemented (December 2025)
+## What's Implemented (February 2026)
 
 ### ✅ Complete
 1. **Prompt Manager Application**
@@ -89,6 +92,7 @@ Build a **Prompt Manager** (prompt versioning as code using GitHub) extended wit
    - Memory router integrated into main app
    - Default data seeding (entity types, lesson types, channels, LLM configs)
    - All config API endpoints working
+   - **JWT authentication on admin config endpoints**
 
 4. **Memory System - Admin Configuration UI**
    - LLM APIs tab - Configure API keys for each task
@@ -98,14 +102,21 @@ Build a **Prompt Manager** (prompt versioning as code using GitHub) extended wit
    - Agents tab - Create agents with API keys
    - General tab - Chunking, PII, rate limiting settings
 
-5. **Docker Deployment**
+5. **Memory System - Ingestion Pipeline**
+   - `POST /api/memory/interactions` endpoint
+   - Agent authentication via X-API-Key header
+   - Document parsing (text + file attachments)
+   - Text chunking (configurable size/overlap)
+   - Entity extraction (GLiNER2 or LLM fallback)
+   - Summary generation (LLM-powered)
+   - Embedding generation and Qdrant storage
+   - PII scrubbing for shared memories (when enabled)
+   - Audit logging
+
+6. **Docker Deployment**
    - Dockerfile and docker-compose.yml
    - Qdrant service
    - GLiNER2 service
-
-### 🔄 In Progress
-- Agent API endpoints for ingestion (interactions)
-- Agent API endpoints for retrieval (search, timeline, lessons)
 
 ### ⏳ Pending
 - Memory Explorer UI
@@ -125,7 +136,7 @@ Build a **Prompt Manager** (prompt versioning as code using GitHub) extended wit
 - `/api/keys/*` - API keys
 - `/api/settings` - GitHub config
 
-### Memory System - Config (Complete)
+### Memory System - Config (✅ Complete - JWT Auth Required)
 - `/api/memory/config/entity-types` - Entity type CRUD
 - `/api/memory/config/entity-subtypes` - Subtype CRUD
 - `/api/memory/config/lesson-types` - Lesson type CRUD
@@ -135,7 +146,7 @@ Build a **Prompt Manager** (prompt versioning as code using GitHub) extended wit
 - `/api/memory/config/system-prompts` - System prompts
 - `/api/memory/config/settings` - General settings
 
-### Memory System - Agent APIs (Pending full implementation)
+### Memory System - Agent APIs (✅ Complete - API Key Auth Required)
 - `POST /api/memory/interactions` - Ingest interaction
 - `POST /api/memory/search` - Semantic search
 - `GET /api/memory/timeline/{type}/{id}` - Entity timeline
@@ -143,41 +154,10 @@ Build a **Prompt Manager** (prompt versioning as code using GitHub) extended wit
 
 ---
 
-## Database Schema
-
-### Existing (Prompt Manager)
-- `users` - User accounts
-- `settings` - GitHub config per user
-- `prompts` - Prompt metadata
-- `prompt_versions` - Version tracking
-- `templates` - Prompt templates
-- `api_keys` - API keys
-
-### New (Memory System)
-**Configuration Tables**:
-- `memory_entity_types` - Entity type definitions
-- `memory_entity_subtypes` - Subtype definitions
-- `memory_lesson_types` - Lesson categories
-- `memory_channel_types` - Communication channels
-- `memory_agents` - Agent credentials
-- `memory_llm_configs` - LLM API settings per task
-- `memory_system_prompts` - LLM prompts
-- `memory_settings` - Global settings
-
-**Data Tables**:
-- `memories` - Private interaction records
-- `memory_documents` - Parsed attachments
-- `memory_document_chunks` - Text chunks
-- `memory_lessons` - Curated lessons
-- `memories_shared` - PII-scrubbed shared data
-- `memory_lessons_shared` - Shared lessons
-- `memory_audit_log` - Agent activity
-
----
-
 ## Test Credentials
-- **Email**: admin@promptsrc.com
-- **Password**: admin123
+- **Admin Email**: admin@promptsrc.com
+- **Admin Password**: admin123
+- **Agent API Key**: mem_YhZtU7wjp8-gFQKAjyT7ZwKzTC3L7R7I6cqHM3oJbYA
 
 ---
 
@@ -188,10 +168,11 @@ Build a **Prompt Manager** (prompt versioning as code using GitHub) extended wit
 │   ├── server.py             # Main FastAPI app
 │   ├── memory_db.py          # Memory system DB
 │   ├── memory_models.py      # Pydantic models
-│   ├── memory_routes.py      # Memory API routes
+│   ├── memory_routes.py      # Memory API routes (with auth)
 │   ├── memory_services.py    # LLM/Vector services
 │   └── tests/
-│       └── test_memory_system.py
+│       ├── test_memory_system.py
+│       └── test_memory_auth.py
 ├── frontend/
 │   ├── src/
 │   │   ├── pages/
