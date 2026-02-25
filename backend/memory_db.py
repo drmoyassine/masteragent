@@ -421,6 +421,76 @@ Return a JSON array of entities:
                     INSERT INTO memory_system_prompts (id, prompt_type, name, prompt_text, is_active, created_at, updated_at)
                     VALUES (?, ?, ?, ?, 1, ?, ?)
                 """, (str(uuid.uuid4()), prompt_type, name, prompt_text, now, now))
+        
+        # Default LLM Configurations
+        default_llm_configs = [
+            # Entity Extraction using GLiNER (default NER)
+            {
+                "task_type": "entity_extraction",
+                "provider": "gliner",
+                "name": "GLiNER2 NER (Default)",
+                "api_base_url": "http://gliner:8002",
+                "model_name": "urchade/gliner_multi",
+                "extra_config": {"threshold": 0.5}
+            },
+            # Summarization placeholder (admin configures)
+            {
+                "task_type": "summarization",
+                "provider": "openai",
+                "name": "OpenAI Summarizer (Configure)",
+                "api_base_url": "https://api.openai.com/v1",
+                "model_name": "gpt-4o-mini",
+                "extra_config": {}
+            },
+            # Embedding placeholder (admin configures)
+            {
+                "task_type": "embedding",
+                "provider": "openai",
+                "name": "OpenAI Embeddings (Configure)",
+                "api_base_url": "https://api.openai.com/v1",
+                "model_name": "text-embedding-3-small",
+                "extra_config": {}
+            },
+            # Vision/Document parsing placeholder
+            {
+                "task_type": "vision",
+                "provider": "openai",
+                "name": "OpenAI Vision (Configure)",
+                "api_base_url": "https://api.openai.com/v1",
+                "model_name": "gpt-4o",
+                "extra_config": {}
+            },
+            # PII Scrubbing placeholder
+            {
+                "task_type": "pii_scrubbing",
+                "provider": "zendata",
+                "name": "Zendata PII Scrubber (Configure)",
+                "api_base_url": "",
+                "model_name": "",
+                "extra_config": {}
+            },
+        ]
+        
+        for config in default_llm_configs:
+            cursor.execute("""
+                SELECT id FROM memory_llm_configs 
+                WHERE task_type = ?
+            """, (config["task_type"],))
+            if not cursor.fetchone():
+                now = datetime.now(timezone.utc).isoformat()
+                cursor.execute("""
+                    INSERT INTO memory_llm_configs (id, task_type, provider, name, api_base_url, model_name, is_active, extra_config_json, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+                """, (
+                    str(uuid.uuid4()),
+                    config["task_type"],
+                    config["provider"],
+                    config["name"],
+                    config["api_base_url"],
+                    config["model_name"],
+                    json.dumps(config["extra_config"]),
+                    now, now
+                ))
 
 # Initialize on import
 init_memory_db()
