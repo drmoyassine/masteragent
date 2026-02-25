@@ -342,12 +342,12 @@ export default function MemoryExplorerPage() {
               <div className="flex flex-wrap gap-3 items-end">
                 <div className="space-y-1">
                   <Label className="text-xs">Channel</Label>
-                  <Select value={searchFilters.channel} onValueChange={(v) => setSearchFilters({...searchFilters, channel: v})}>
+                  <Select value={searchFilters.channel || "all"} onValueChange={(v) => setSearchFilters({...searchFilters, channel: v === "all" ? "" : v})}>
                     <SelectTrigger className="w-32">
                       <SelectValue placeholder="Any" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">Any</SelectItem>
+                      <SelectItem value="all">Any</SelectItem>
                       {channelTypes.map(c => (
                         <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>
                       ))}
@@ -356,12 +356,12 @@ export default function MemoryExplorerPage() {
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Entity Type</Label>
-                  <Select value={searchFilters.entity_type} onValueChange={(v) => setSearchFilters({...searchFilters, entity_type: v})}>
+                  <Select value={searchFilters.entity_type || "all"} onValueChange={(v) => setSearchFilters({...searchFilters, entity_type: v === "all" ? "" : v})}>
                     <SelectTrigger className="w-32">
                       <SelectValue placeholder="Any" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">Any</SelectItem>
+                      <SelectItem value="all">Any</SelectItem>
                       {entityTypes.map(e => (
                         <SelectItem key={e.id} value={e.name}>{e.name}</SelectItem>
                       ))}
