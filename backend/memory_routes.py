@@ -286,7 +286,7 @@ async def create_channel_type(data: ChannelTypeCreate, user: dict = Depends(requ
         return dict(cursor.fetchone())
 
 @memory_router.delete("/config/channel-types/{type_id}")
-async def delete_channel_type(type_id: str):
+async def delete_channel_type(type_id: str, user: dict = Depends(require_admin_auth)):
     """Delete a channel type"""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
