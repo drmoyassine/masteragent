@@ -1293,10 +1293,13 @@ async def health_check():
 # Root endpoint
 @api_router.get("/")
 async def root():
-    return {"message": "Prompt Manager API", "version": "1.0.0"}
+    return {"message": "Prompt Manager & Memory System API", "version": "1.0.0"}
 
 # Include the router in the main app
 app.include_router(api_router)
+
+# Include Memory System Router
+app.include_router(memory_router)
 
 app.add_middleware(
     CORSMiddleware,
