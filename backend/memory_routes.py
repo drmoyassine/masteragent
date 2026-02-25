@@ -410,7 +410,7 @@ async def create_system_prompt(data: SystemPromptCreate, user: dict = Depends(re
         return result
 
 @memory_router.put("/config/system-prompts/{prompt_id}", response_model=SystemPromptResponse)
-async def update_system_prompt(prompt_id: str, data: SystemPromptCreate):
+async def update_system_prompt(prompt_id: str, data: SystemPromptCreate, user: dict = Depends(require_admin_auth)):
     """Update a system prompt"""
     now = datetime.now(timezone.utc).isoformat()
     
@@ -443,7 +443,7 @@ async def update_system_prompt(prompt_id: str, data: SystemPromptCreate):
         return result
 
 @memory_router.delete("/config/system-prompts/{prompt_id}")
-async def delete_system_prompt(prompt_id: str):
+async def delete_system_prompt(prompt_id: str, user: dict = Depends(require_admin_auth)):
     """Delete a system prompt"""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -455,7 +455,7 @@ async def delete_system_prompt(prompt_id: str):
 # ============================================
 
 @memory_router.get("/config/llm-configs", response_model=List[LLMConfigResponse])
-async def list_llm_configs():
+async def list_llm_configs(user: dict = Depends(require_admin_auth)):
     """List all LLM configurations"""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -479,7 +479,7 @@ async def list_llm_configs():
         return configs
 
 @memory_router.get("/config/llm-configs/{task_type}", response_model=LLMConfigResponse)
-async def get_llm_config_by_task(task_type: str):
+async def get_llm_config_by_task(task_type: str, user: dict = Depends(require_admin_auth)):
     """Get active LLM config for a task type"""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -508,7 +508,7 @@ async def get_llm_config_by_task(task_type: str):
         )
 
 @memory_router.post("/config/llm-configs", response_model=LLMConfigResponse)
-async def create_llm_config(data: LLMConfigCreate):
+async def create_llm_config(data: LLMConfigCreate, user: dict = Depends(require_admin_auth)):
     """Create a new LLM configuration"""
     now = datetime.now(timezone.utc).isoformat()
     config_id = str(uuid.uuid4())
@@ -553,7 +553,7 @@ async def create_llm_config(data: LLMConfigCreate):
         )
 
 @memory_router.put("/config/llm-configs/{config_id}", response_model=LLMConfigResponse)
-async def update_llm_config(config_id: str, data: LLMConfigUpdate):
+async def update_llm_config(config_id: str, data: LLMConfigUpdate, user: dict = Depends(require_admin_auth)):
     """Update an LLM configuration"""
     now = datetime.now(timezone.utc).isoformat()
     
