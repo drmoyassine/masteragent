@@ -44,7 +44,7 @@ memory_router = APIRouter(prefix="/api/memory", tags=["Memory"])
 # ============================================
 
 ROOT_DIR = Path(__file__).parent
-SECRET_KEY = os.environ.get('JWT_SECRET_KEY', 'change_this_secret_in_production')
+SECRET_KEY = os.environ.get('JWT_SECRET_KEY', 'promptsrc_secret_key_change_in_production_2024')
 ALGORITHM = "HS256"
 DB_PATH = ROOT_DIR / "prompt_manager.db"
 
