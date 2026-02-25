@@ -15,20 +15,15 @@ from memory_models import RelatedEntity
 logger = logging.getLogger(__name__)
 
 # ============================================
-# Configuration
+# Configuration (Defaults - can be overridden by DB config)
 # ============================================
 
-OPENAI_API_BASE = os.environ.get('OPENAI_API_BASE', 'https://api.openai.com/v1')
-OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
-EMBEDDING_MODEL = os.environ.get('EMBEDDING_MODEL', 'text-embedding-3-small')
-LLM_MODEL = os.environ.get('LLM_MODEL', 'gpt-4o-mini')
 QDRANT_URL = os.environ.get('QDRANT_URL', 'http://localhost:6333')
 QDRANT_API_KEY = os.environ.get('QDRANT_API_KEY', '')
-ZENDATA_API_URL = os.environ.get('ZENDATA_API_URL', '')
-ZENDATA_API_KEY = os.environ.get('ZENDATA_API_KEY', '')
+GLINER_URL = os.environ.get('GLINER_URL', 'http://localhost:8002')
 
 # ============================================
-# Settings Helper
+# Settings & Config Helpers
 # ============================================
 
 def get_memory_settings() -> Dict[str, Any]:
@@ -40,6 +35,22 @@ def get_memory_settings() -> Dict[str, Any]:
         if row:
             return dict(row)
     return {}
+
+def get_llm_config(task_type: str) -> Optional[Dict[str, Any]]:
+    """Get active LLM configuration for a task type"""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM memory_llm_configs 
+            WHERE task_type = ? AND is_active = 1
+            ORDER BY updated_at DESC LIMIT 1
+        """, (task_type,))
+        row = cursor.fetchone()
+        if row:
+            config = dict(row)
+            config["extra_config"] = json.loads(config.get("extra_config_json", "{}"))
+            return config
+    return None
 
 def get_system_prompt(prompt_type: str) -> Optional[str]:
     """Get active system prompt by type"""
