@@ -1499,21 +1499,6 @@ async def get_timeline_admin(
         return entries
 
 # ============================================
-# Health & Init
-# ============================================
-
-@memory_router.get("/health")
-async def memory_health():
-    """Memory system health check"""
-    return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
-
-@memory_router.post("/init")
-async def init_memory_system():
-    """Initialize Qdrant collections"""
-    await init_qdrant_collections()
-    return {"message": "Memory system initialized"}
-
-# ============================================
 # Admin UI - Stats & Background Tasks
 # ============================================
 
@@ -1550,14 +1535,6 @@ async def trigger_lesson_mining(user: dict = Depends(require_admin_auth)):
     result = await mine_lessons()
     return result
 
-            updates.append("status = ?")
-            params.append(data.status)
-        
-        params.append(lesson_id)
-        cursor.execute(f"UPDATE memory_lessons SET {', '.join(updates)} WHERE id = ?", params)
-        
-        cursor.execute("SELECT * FROM memory_lessons WHERE id = ?", (lesson_id,))
-        updated = dict(cursor.fetchone())
     
     return updated
 
