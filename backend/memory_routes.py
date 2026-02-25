@@ -178,7 +178,7 @@ async def delete_entity_type(type_id: str, user: dict = Depends(require_admin_au
 # ============================================
 
 @memory_router.get("/config/entity-types/{type_id}/subtypes", response_model=List[EntitySubtypeResponse])
-async def list_entity_subtypes(type_id: str):
+async def list_entity_subtypes(type_id: str, user: dict = Depends(require_admin_auth)):
     """List subtypes for an entity type"""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -189,7 +189,7 @@ async def list_entity_subtypes(type_id: str):
         return [dict(row) for row in cursor.fetchall()]
 
 @memory_router.post("/config/entity-subtypes", response_model=EntitySubtypeResponse)
-async def create_entity_subtype(data: EntitySubtypeCreate):
+async def create_entity_subtype(data: EntitySubtypeCreate, user: dict = Depends(require_admin_auth)):
     """Create a new entity subtype"""
     now = datetime.now(timezone.utc).isoformat()
     subtype_id = str(uuid.uuid4())
@@ -208,7 +208,7 @@ async def create_entity_subtype(data: EntitySubtypeCreate):
         return dict(cursor.fetchone())
 
 @memory_router.delete("/config/entity-subtypes/{subtype_id}")
-async def delete_entity_subtype(subtype_id: str):
+async def delete_entity_subtype(subtype_id: str, user: dict = Depends(require_admin_auth)):
     """Delete an entity subtype"""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -220,7 +220,7 @@ async def delete_entity_subtype(subtype_id: str):
 # ============================================
 
 @memory_router.get("/config/lesson-types", response_model=List[LessonTypeResponse])
-async def list_lesson_types():
+async def list_lesson_types(user: dict = Depends(require_admin_auth)):
     """List all lesson types"""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -228,7 +228,7 @@ async def list_lesson_types():
         return [dict(row) for row in cursor.fetchall()]
 
 @memory_router.post("/config/lesson-types", response_model=LessonTypeResponse)
-async def create_lesson_type(data: LessonTypeCreate):
+async def create_lesson_type(data: LessonTypeCreate, user: dict = Depends(require_admin_auth)):
     """Create a new lesson type"""
     now = datetime.now(timezone.utc).isoformat()
     type_id = str(uuid.uuid4())
@@ -247,7 +247,7 @@ async def create_lesson_type(data: LessonTypeCreate):
         return dict(cursor.fetchone())
 
 @memory_router.delete("/config/lesson-types/{type_id}")
-async def delete_lesson_type(type_id: str):
+async def delete_lesson_type(type_id: str, user: dict = Depends(require_admin_auth)):
     """Delete a lesson type"""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -259,7 +259,7 @@ async def delete_lesson_type(type_id: str):
 # ============================================
 
 @memory_router.get("/config/channel-types", response_model=List[ChannelTypeResponse])
-async def list_channel_types():
+async def list_channel_types(user: dict = Depends(require_admin_auth)):
     """List all channel types"""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -267,7 +267,7 @@ async def list_channel_types():
         return [dict(row) for row in cursor.fetchall()]
 
 @memory_router.post("/config/channel-types", response_model=ChannelTypeResponse)
-async def create_channel_type(data: ChannelTypeCreate):
+async def create_channel_type(data: ChannelTypeCreate, user: dict = Depends(require_admin_auth)):
     """Create a new channel type"""
     now = datetime.now(timezone.utc).isoformat()
     type_id = str(uuid.uuid4())
