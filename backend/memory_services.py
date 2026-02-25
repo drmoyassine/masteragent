@@ -70,11 +70,17 @@ def get_system_prompt(prompt_type: str) -> Optional[str]:
 # OpenAI-Compatible LLM Service
 # ============================================
 
-async def call_llm(prompt: str, system_prompt: str = None, max_tokens: int = 1000) -> str:
-    """Call OpenAI-compatible LLM"""
-    if not OPENAI_API_KEY:
-        logger.warning("OpenAI API key not configured")
+async def call_llm(prompt: str, system_prompt: str = None, max_tokens: int = 1000, task_type: str = "summarization") -> str:
+    """Call OpenAI-compatible LLM using admin-configured settings"""
+    config = get_llm_config(task_type)
+    
+    if not config or not config.get("api_key_encrypted"):
+        logger.warning(f"LLM config for {task_type} not configured or missing API key")
         return ""
+    
+    api_key = config.get("api_key_encrypted", "")
+    api_base = config.get("api_base_url", "https://api.openai.com/v1")
+    model = config.get("model_name", "gpt-4o-mini")
     
     messages = []
     if system_prompt:
@@ -82,17 +88,17 @@ async def call_llm(prompt: str, system_prompt: str = None, max_tokens: int = 100
     messages.append({"role": "user", "content": prompt})
     
     headers = {
-        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
     
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
-                f"{OPENAI_API_BASE}/chat/completions",
+                f"{api_base}/chat/completions",
                 headers=headers,
                 json={
-                    "model": LLM_MODEL,
+                    "model": model,
                     "messages": messages,
                     "max_tokens": max_tokens,
                     "temperature": 0.3
@@ -110,9 +116,15 @@ async def call_llm(prompt: str, system_prompt: str = None, max_tokens: int = 100
 
 async def call_llm_vision(prompt: str, image_base64: str, mime_type: str = "image/png") -> str:
     """Call OpenAI-compatible LLM with vision for document parsing"""
-    if not OPENAI_API_KEY:
-        logger.warning("OpenAI API key not configured")
+    config = get_llm_config("vision")
+    
+    if not config or not config.get("api_key_encrypted"):
+        logger.warning("Vision LLM config not configured or missing API key")
         return ""
+    
+    api_key = config.get("api_key_encrypted", "")
+    api_base = config.get("api_base_url", "https://api.openai.com/v1")
+    model = config.get("model_name", "gpt-4o")
     
     messages = [
         {
@@ -130,17 +142,17 @@ async def call_llm_vision(prompt: str, image_base64: str, mime_type: str = "imag
     ]
     
     headers = {
-        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
     
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
             response = await client.post(
-                f"{OPENAI_API_BASE}/chat/completions",
+                f"{api_base}/chat/completions",
                 headers=headers,
                 json={
-                    "model": LLM_MODEL,
+                    "model": model,
                     "messages": messages,
                     "max_tokens": 4000,
                     "temperature": 0.1
