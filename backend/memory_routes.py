@@ -4,9 +4,12 @@ import uuid
 import json
 import secrets
 import logging
+import sqlite3
 from datetime import datetime, timezone
 from typing import List, Optional
+from pathlib import Path
 from fastapi import APIRouter, HTTPException, Depends, Header, UploadFile, File, Form, Query
+from jose import jwt, JWTError
 
 from memory_db import get_memory_db_context
 from memory_models import (
@@ -37,7 +40,56 @@ logger = logging.getLogger(__name__)
 memory_router = APIRouter(prefix="/api/memory", tags=["Memory"])
 
 # ============================================
-# Agent Authentication
+# Admin Authentication (JWT)
+# ============================================
+
+ROOT_DIR = Path(__file__).parent
+SECRET_KEY = os.environ.get('JWT_SECRET_KEY', 'change_this_secret_in_production')
+ALGORITHM = "HS256"
+DB_PATH = ROOT_DIR / "prompt_manager.db"
+
+def get_user_db():
+    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def verify_jwt_token(token: str):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = payload.get("sub")
+        return user_id
+    except JWTError:
+        return None
+
+async def require_admin_auth(authorization: str = Header(None)):
+    """Require JWT authentication for admin config endpoints"""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    try:
+        scheme, token = authorization.split()
+        if scheme.lower() != "bearer":
+            raise HTTPException(status_code=401, detail="Invalid authentication scheme")
+        
+        user_id = verify_jwt_token(token)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        
+        conn = get_user_db()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+            user = cursor.fetchone()
+            if not user:
+                raise HTTPException(status_code=401, detail="User not found")
+            return dict(user)
+        finally:
+            conn.close()
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Invalid authorization header")
+
+# ============================================
+# Agent Authentication (API Key)
 # ============================================
 
 async def verify_agent_key(x_api_key: str = Header(None, alias="X-API-Key")):
