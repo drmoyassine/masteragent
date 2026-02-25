@@ -1,0 +1,170 @@
+<analysis>**original_problem_statement**: The user initially requested a **Prompt Manager**, a standalone microservice to manage AI prompts as code. Prompts would be stored as ordered Markdown files in a GitHub repository, versioned, and rendered via an API with variable injection. The system required a minimal UI for management and used a FastAPI/SQLite/React stack.
+
+The project scope then expanded significantly to include an **Agent-Facing Memory System** as an extension of the Prompt Manager. This new system is API-first, designed to be a memory backend for AI agents.
+
+**PRODUCT REQUIREMENTS (Memory System V1):**
+- **Architecture**: Extend the existing Prompt Manager app with a new module. It's an API-first system where agents push data, and a UI is used for configuration and read-only exploration.
+- **Database**: Configurable via environment variables to use either SQLite (dev) or PostgreSQL (prod).
+- **Vector Store**: Qdrant, running in the  environment.
+- **Storage Model**: A hybrid approach using a relational DB for metadata and Qdrant for vector search. It must maintain separate, isolated tables/collections for raw private data and PII-scrubbed shared data.
+- **Admin Configuration**: A UI for admins to configure:
+    - Dynamic schema: Entity types/subtypes, lesson types, channel types.
+    - Agent credentials and access levels.
+    - System prompts for LLM tasks (summarization, lesson extraction).
+    - Integration settings (Zendata API key, OpenAI endpoint, OpenClaw sync path).
+- **Ingestion API**: An endpoint () for agents to submit interactions. The backend pipeline will:
+    - Parse attached documents (including images) using an LLM with vision (OpenAI-compatible).
+    - Chunk text using an OpenClaw-inspired method.
+    - Generate embeddings and store vectors in Qdrant.
+    - Generate a brief summary of the interaction using an LLM.
+- **PII Scrubbing**: Integrate with Zendata's API to create a PII-stripped version of memories for a shared memory domain.
+- **Retrieval APIs**: Endpoints for agents to search memories (), view entity-specific timelines (), and manage curated lessons ().
+- **Explorer UI**: A read-only/curation interface for users to search memories, view entity timelines, browse daily logs, and edit/approve lessons.
+- **OpenClaw Sync**: A background job to periodically export memories and lessons into a Markdown file structure in a configurable local or Git path.
+- **Entities**: Entities (e.g., Contacts, Organizations) are managed externally and are only referenced in this system by a .
+
+**User's preferred language**: English
+
+**what currently exists?**
+The initial Prompt Manager application is fully built. This includes a FastAPI backend, a React frontend, a landing page, and a complete authentication system supporting both email/password and GitHub OAuth. Docker files (, ) for deployment have been created and debugged.
+
+Work has just begun on the new Memory System. The  has been updated to include a Qdrant service. The foundational Python files for the memory backend (, , , ) have been created but are not yet integrated into the main application or implemented.
+
+**Last working item**:
+- **Last item agent was working**: The agent began implementing the Agent-Facing Memory System. It laid the initial groundwork by creating the necessary backend files and adding the Qdrant service to the Docker environment. The goal was to establish the core structure before implementing the business logic.
+- **Status**: IN PROGRESS
+- **Agent Testing Done**: N
+- **Which testing method agent to use?**: backend testing agent
+- **User Testing Done**: N
+
+**All Pending/In progress Issue list**:
+There are no outstanding bugs. The primary focus is on the large feature implementation that is currently in progress.
+
+**In progress Task List**:
+- **Task 1: Implement the Agent-Facing Memory System (P0)**
+    - **Where to resume**: The agent created the files , , , and . The immediate next step is to integrate the new API router from  into the main  file.
+    - **What will be achieved with this?**: This will complete the initial setup and allow the agent to start building out the API endpoints and business logic for the memory system.
+    - **Status**: IN PROGRESS
+    - **Should Test frontend/backend/both after fix?**: Both
+    - **Blocked on something**: No.
+
+**Upcoming and Future Tasks**
+**Upcoming Tasks (Memory System v1):**
+- **P0: Backend - Infrastructure**:
+    - Integrate the memory API router into .
+    - Implement the database creation logic in  for all required tables (private, shared, config), supporting both SQLite and PostgreSQL.
+    - Establish a connection to the Qdrant service in .
+- **P0: Backend & Frontend - Admin Configuration**:
+    - Implement all API endpoints for admin settings (schema, agents, system prompts, integrations).
+    - Build the corresponding Settings section in the React UI for admins to manage these configurations.
+- **P1: Backend - Ingestion & Retrieval APIs**:
+    - Implement the  endpoint with the full pipeline: document parsing, chunking, embedding, summarization, and PII scrubbing.
+    - Implement the retrieval endpoints: , , and .
+- **P2: Frontend - Memory Explorer UI**:
+    - Develop the read-only UI for searching memories, viewing entity timelines, and browsing lessons.
+
+**Future Tasks (Post-v1):**
+- Implement the background job for OpenClaw Markdown synchronization.
+- Implement the automated lesson mining background job.
+- Integrate GLiNER as an optional, high-performance entity extraction engine.
+- Build out the agent activity logging and monitoring UI.
+- Implement API rate limiting for agents.
+
+**Completed work in this session**
+- **Prompt Manager Application**: A full-stack application for managing prompts as code was created, including a UI, API, and database.
+- **Authentication and UI**: A marketing landing page, pricing tiers, and a robust authentication system (email/password + GitHub) were implemented.
+- **Deployment**:  and  were created and successfully debugged to enable containerized deployment.
+- **Architecture Pivot**: Successfully navigated a major project pivot from a simple prompt manager to a complex, API-first memory system, capturing detailed requirements and creating a final architectural plan.
+- **Memory System Foundation**: Kicked off the new memory system by adding Qdrant to the environment and creating the initial backend file structure.
+
+**Earlier issues found/mentioned but not fixed**
+- None.
+
+**Known issue recurrence from previous fork**
+- None.
+
+**Code Architecture**
+
+
+**Key Technical Concepts**
+- **Backend**: FastAPI, JWT Authentication
+- **Frontend**: React, , Tailwind CSS
+- **Databases**:
+    - **Relational**: SQLite / PostgreSQL (configurable) for metadata.
+    - **Vector**: Qdrant for semantic search.
+- **Core Architecture**: API-first microservice pattern for the memory system, integrated into the existing application.
+- **Integrations**: GitHub API, Qdrant, OpenAI-compatible API (for LLM tasks and embeddings), Zendata (for PII scrubbing).
+
+**key DB schema**
+- **Existing**: , , , , .
+- **To Be Created (Memory System)**:
+    - **Config**: , , , , , , .
+    - **Private**:  (with ), , .
+    - **Shared**:  (with ), .
+
+**changes in tech stack**
+- **Qdrant**: Added as the vector database for the new memory system.
+- **PostgreSQL**: The database is now intended to be configurable, adding official support for PostgreSQL in production.
+
+**All files of reference**
+- : Updated to add the  service.
+- : Created to define Pydantic models for the memory system.
+- : Created to manage the database schema and sessions for the memory system.
+- : Created to hold the business logic for all memory operations.
+- : Created to define the  endpoints.
+
+**key api endpoints**
+- **Existing**: , , 
+- **To Be Implemented**:
+    - : For agents to ingest new memories.
+    - : To perform hybrid search.
+    - : To get an entity's interaction history.
+    - : To retrieve and curate lessons.
+    - : For admin UI to manage all system settings.
+
+**Critical Info for New Agent**
+- The project's main focus has shifted to building the **Agent-Facing Memory System**. The original Prompt Manager is now a module within this larger application.
+- The memory system is **API-first**. Data ingestion is handled programmatically by agents, while the UI is for configuration, search, and curation only.
+- Adhere to the strict separation between private () and shared () data across both the relational database and Qdrant collections.
+- The user has approved a detailed architecture. Please follow the user stories and technical decisions outlined in the conversation history.
+
+**documents and test reports created in this job**
+- 
+- 
+- 
+- 
+
+**Last 10 User Messages and any pending HUMAN messages**
+1. **User**: Provided a detailed specification for an Agent-Facing Memory System.
+2. **Agent**: Asked clarifying questions on architecture and technology choices.
+3. **User**: Confirmed choices (extend app, Qdrant, OpenAI, Zendata) and requested user stories.
+4. **Agent**: Presented a full set of user stories based on the initial understanding.
+5. **User**: Corrected the agent, emphasizing the **API-first** nature of the system where the UI is for configuration and viewing, not data entry.
+6. **Agent**: Delivered a revised, API-first architecture and updated user stories.
+7. **User**: Provided final clarifications: configurable DB, LLM-based document parsing, separate storage for PII-scrubbed data, and confirmed entities are managed externally. Asked about GLiNER.
+8. **Agent**: Analyzed GLiNER, recommended deferring it for a later version, presented a final architecture summary, and asked for approval to start building.
+9. **User**: Confirmed all remaining details and gave the green light: **start building**.
+10. **Agent**: Acknowledged the instruction and began implementation by creating the initial files for the memory system.
+
+**Project Health Check:**
+- **Broken**: The new Memory System is non-functional, as it consists only of skeleton files.
+- **Mocked**: None.
+
+**3rd Party Integrations**
+- **GitHub API**: Used for the Prompt Manager module.
+- **Qdrant**: New vector database for the Memory System.
+- **OpenAI-compatible API**: To be used for embeddings, summarization, and vision-based document parsing. Will use the Emergent LLM Key.
+- **Zendata**: To be used for PII scrubbing. Requires a user-provided API key.
+
+**Testing status**
+- **Testing agent used after significant changes**: YES (for the original Prompt Manager).
+- **Troubleshoot agent used after agent stuck in loop**: NO
+- **Test files created**: []
+- **Known regressions**: None.
+
+**Credentials to test flow:**
+- **Email**: 
+- **Password**: 
+
+**What agent forgot to execute**
+The agent created the new backend files for the memory system (, etc.) but did not yet integrate the new API router into the main  file, which was its stated next step.</analysis>
