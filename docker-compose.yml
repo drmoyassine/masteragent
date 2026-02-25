@@ -19,21 +19,16 @@ services:
       - DATABASE_TYPE=${DATABASE_TYPE:-sqlite}
       - DATABASE_URL=${DATABASE_URL:-sqlite:///app/backend/promptsrc.db}
       - POSTGRES_URL=${POSTGRES_URL:-}
-      # OpenAI-compatible API (for embeddings & LLM)
-      - OPENAI_API_BASE=${OPENAI_API_BASE:-https://api.openai.com/v1}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
-      - LLM_MODEL=${LLM_MODEL:-gpt-4o-mini}
       # Qdrant
       - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
       - QDRANT_API_KEY=${QDRANT_API_KEY:-}
-      # Zendata PII API
-      - ZENDATA_API_URL=${ZENDATA_API_URL:-}
-      - ZENDATA_API_KEY=${ZENDATA_API_KEY:-}
+      # GLiNER2 NER Service
+      - GLINER_URL=${GLINER_URL:-http://gliner:8002}
     volumes:
       - promptsrc_data:/app/backend/data
     depends_on:
       - qdrant
+      - gliner
     restart: unless-stopped
 
   qdrant:
@@ -47,6 +42,19 @@ services:
       - QDRANT__SERVICE__GRPC_PORT=6334
     restart: unless-stopped
 
+  gliner:
+    build:
+      context: ./gliner
+      dockerfile: Dockerfile
+    ports:
+      - "8002:8002"
+    volumes:
+      - gliner_cache:/root/.cache
+    environment:
+      - MODEL_NAME=${GLINER_MODEL:-urchade/gliner_multi}
+    restart: unless-stopped
+
 volumes:
   promptsrc_data:
   qdrant_data:
+  gliner_cache:
