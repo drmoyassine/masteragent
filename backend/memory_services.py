@@ -378,24 +378,29 @@ async def delete_vector(collection: str, vector_id: str) -> bool:
     return False
 
 # ============================================
-# PII Scrubbing Service (Zendata)
+# PII Scrubbing Service (Admin Configurable)
 # ============================================
 
 async def scrub_pii(text: str) -> str:
-    """Scrub PII from text using Zendata API"""
-    if not ZENDATA_API_URL or not ZENDATA_API_KEY:
-        logger.warning("Zendata API not configured, returning original text")
+    """Scrub PII from text using admin-configured service"""
+    config = get_llm_config("pii_scrubbing")
+    
+    if not config or not config.get("api_base_url") or not config.get("api_key_encrypted"):
+        logger.warning("PII scrubbing not configured, returning original text")
         return text
     
+    api_url = config.get("api_base_url", "")
+    api_key = config.get("api_key_encrypted", "")
+    
     headers = {
-        "Authorization": f"Bearer {ZENDATA_API_KEY}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
     
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
-                f"{ZENDATA_API_URL}/redact",
+                f"{api_url}/redact",
                 headers=headers,
                 json={"text": text}
             )
@@ -403,7 +408,7 @@ async def scrub_pii(text: str) -> str:
                 data = response.json()
                 return data.get("redacted_text", text)
             else:
-                logger.error(f"Zendata API error: {response.status_code}")
+                logger.error(f"PII scrubbing API error: {response.status_code}")
     except Exception as e:
         logger.error(f"PII scrubbing error: {e}")
     
