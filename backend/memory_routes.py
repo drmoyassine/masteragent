@@ -693,6 +693,11 @@ async def ingest_interaction(
     Ingest a new interaction with optional file attachments.
     This is the main entry point for agents to push data.
     """
+    # Check rate limit
+    from memory_tasks import check_rate_limit
+    if not check_rate_limit(agent["id"]):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    
     now = datetime.now(timezone.utc).isoformat()
     memory_id = str(uuid.uuid4())
     
