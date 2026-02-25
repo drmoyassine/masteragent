@@ -619,7 +619,7 @@ async def update_llm_config(config_id: str, data: LLMConfigUpdate, user: dict = 
         )
 
 @memory_router.delete("/config/llm-configs/{config_id}")
-async def delete_llm_config(config_id: str):
+async def delete_llm_config(config_id: str, user: dict = Depends(require_admin_auth)):
     """Delete an LLM configuration"""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -631,7 +631,7 @@ async def delete_llm_config(config_id: str):
 # ============================================
 
 @memory_router.get("/config/settings", response_model=MemorySettingsResponse)
-async def get_settings():
+async def get_settings_endpoint(user: dict = Depends(require_admin_auth)):
     """Get memory system settings"""
     settings = get_memory_settings()
     return MemorySettingsResponse(
@@ -652,7 +652,7 @@ async def get_settings():
     )
 
 @memory_router.put("/config/settings", response_model=MemorySettingsResponse)
-async def update_settings(data: MemorySettingsUpdate):
+async def update_settings_endpoint(data: MemorySettingsUpdate, user: dict = Depends(require_admin_auth)):
     """Update memory system settings"""
     now = datetime.now(timezone.utc).isoformat()
     
@@ -674,7 +674,7 @@ async def update_settings(data: MemorySettingsUpdate):
             params.append(now)
             cursor.execute(f"UPDATE memory_settings SET {', '.join(updates)} WHERE id = 1", params)
     
-    return await get_settings()
+    return await get_settings_endpoint(user)
 
 # ============================================
 # Agent API - Interactions (Ingest)
