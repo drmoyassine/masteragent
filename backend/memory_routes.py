@@ -1,0 +1,915 @@
+# Memory System API Routes
+import os
+import uuid
+import json
+import secrets
+import logging
+from datetime import datetime, timezone
+from typing import List, Optional
+from fastapi import APIRouter, HTTPException, Depends, Header, UploadFile, File, Form, Query
+
+from memory_db import get_memory_db_context
+from memory_models import (
+    EntityTypeCreate, EntityTypeResponse,
+    EntitySubtypeCreate, EntitySubtypeResponse,
+    LessonTypeCreate, LessonTypeResponse,
+    ChannelTypeCreate, ChannelTypeResponse,
+    AgentCreate, AgentResponse, AgentCreateResponse,
+    SystemPromptCreate, SystemPromptResponse,
+    MemorySettingsUpdate, MemorySettingsResponse,
+    InteractionCreate, InteractionResponse, MemoryDetailResponse,
+    LessonCreate, LessonResponse, LessonUpdate,
+    SearchRequest, SearchResponse, SearchResult,
+    TimelineEntry, RelatedEntity
+)
+from memory_services import (
+    generate_embedding, generate_embeddings_batch,
+    upsert_vector, search_vectors, delete_vector,
+    init_qdrant_collections,
+    chunk_text, parse_document, summarize_text, extract_entities,
+    scrub_pii, get_memory_settings
+)
+
+logger = logging.getLogger(__name__)
+
+# Create router
+memory_router = APIRouter(prefix="/api/memory", tags=["Memory"])
+
+# ============================================
+# Agent Authentication
+# ============================================
+
+async def verify_agent_key(x_api_key: str = Header(None, alias="X-API-Key")):
+    """Verify agent API key and return agent info"""
+    if not x_api_key:
+        raise HTTPException(status_code=401, detail="API key required")
+    
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM memory_agents 
+            WHERE api_key_hash = ? AND is_active = 1
+        """, (x_api_key,))
+        agent = cursor.fetchone()
+        
+        if not agent:
+            raise HTTPException(status_code=401, detail="Invalid API key")
+        
+        # Update last used
+        now = datetime.now(timezone.utc).isoformat()
+        cursor.execute(
+            "UPDATE memory_agents SET last_used = ? WHERE id = ?",
+            (now, agent["id"])
+        )
+        
+        return dict(agent)
+
+def log_audit(agent_id: str, action: str, resource_type: str = None, resource_id: str = None, details: dict = None):
+    """Log agent activity"""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO memory_audit_log (id, agent_id, action, resource_type, resource_id, details_json, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            str(uuid.uuid4()),
+            agent_id,
+            action,
+            resource_type,
+            resource_id,
+            json.dumps(details or {}),
+            datetime.now(timezone.utc).isoformat()
+        ))
+
+# ============================================
+# Admin Config Endpoints - Entity Types
+# ============================================
+
+@memory_router.get("/config/entity-types", response_model=List[EntityTypeResponse])
+async def list_entity_types():
+    """List all entity types"""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM memory_entity_types ORDER BY name")
+        return [dict(row) for row in cursor.fetchall()]
+
+@memory_router.post("/config/entity-types", response_model=EntityTypeResponse)
+async def create_entity_type(data: EntityTypeCreate):
+    """Create a new entity type"""
+    now = datetime.now(timezone.utc).isoformat()
+    type_id = str(uuid.uuid4())
+    
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                INSERT INTO memory_entity_types (id, name, description, icon, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (type_id, data.name, data.description, data.icon, now, now))
+        except Exception as e:
+            raise HTTPException(status_code=400, detail="Entity type already exists")
+        
+        cursor.execute("SELECT * FROM memory_entity_types WHERE id = ?", (type_id,))
+        return dict(cursor.fetchone())
+
+@memory_router.delete("/config/entity-types/{type_id}")
+async def delete_entity_type(type_id: str):
+    """Delete an entity type"""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM memory_entity_types WHERE id = ?", (type_id,))
+    return {"message": "Deleted"}
+
+# ============================================
+# Admin Config Endpoints - Entity Subtypes
+# ============================================
+
+@memory_router.get("/config/entity-types/{type_id}/subtypes", response_model=List[EntitySubtypeResponse])
+async def list_entity_subtypes(type_id: str):
+    """List subtypes for an entity type"""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM memory_entity_subtypes 
+            WHERE entity_type_id = ? ORDER BY name
+        """, (type_id,))
+        return [dict(row) for row in cursor.fetchall()]
+
+@memory_router.post("/config/entity-subtypes", response_model=EntitySubtypeResponse)
+async def create_entity_subtype(data: EntitySubtypeCreate):
+    """Create a new entity subtype"""
+    now = datetime.now(timezone.utc).isoformat()
+    subtype_id = str(uuid.uuid4())
+    
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                INSERT INTO memory_entity_subtypes (id, entity_type_id, name, description, created_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (subtype_id, data.entity_type_id, data.name, data.description, now))
+        except Exception as e:
+            raise HTTPException(status_code=400, detail="Subtype already exists for this entity type")
+        
+        cursor.execute("SELECT * FROM memory_entity_subtypes WHERE id = ?", (subtype_id,))
+        return dict(cursor.fetchone())
+
+@memory_router.delete("/config/entity-subtypes/{subtype_id}")
+async def delete_entity_subtype(subtype_id: str):
+    """Delete an entity subtype"""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM memory_entity_subtypes WHERE id = ?", (subtype_id,))
+    return {"message": "Deleted"}
+
+# ============================================
+# Admin Config Endpoints - Lesson Types
+# ============================================
+
+@memory_router.get("/config/lesson-types", response_model=List[LessonTypeResponse])
+async def list_lesson_types():
+    """List all lesson types"""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM memory_lesson_types ORDER BY name")
+        return [dict(row) for row in cursor.fetchall()]
+
+@memory_router.post("/config/lesson-types", response_model=LessonTypeResponse)
+async def create_lesson_type(data: LessonTypeCreate):
+    """Create a new lesson type"""
+    now = datetime.now(timezone.utc).isoformat()
+    type_id = str(uuid.uuid4())
+    
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                INSERT INTO memory_lesson_types (id, name, description, color, created_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (type_id, data.name, data.description, data.color, now))
+        except:
+            raise HTTPException(status_code=400, detail="Lesson type already exists")
+        
+        cursor.execute("SELECT * FROM memory_lesson_types WHERE id = ?", (type_id,))
+        return dict(cursor.fetchone())
+
+@memory_router.delete("/config/lesson-types/{type_id}")
+async def delete_lesson_type(type_id: str):
+    """Delete a lesson type"""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM memory_lesson_types WHERE id = ?", (type_id,))
+    return {"message": "Deleted"}
+
+# ============================================
+# Admin Config Endpoints - Channel Types
+# ============================================
+
+@memory_router.get("/config/channel-types", response_model=List[ChannelTypeResponse])
+async def list_channel_types():
+    """List all channel types"""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM memory_channel_types ORDER BY name")
+        return [dict(row) for row in cursor.fetchall()]
+
+@memory_router.post("/config/channel-types", response_model=ChannelTypeResponse)
+async def create_channel_type(data: ChannelTypeCreate):
+    """Create a new channel type"""
+    now = datetime.now(timezone.utc).isoformat()
+    type_id = str(uuid.uuid4())
+    
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                INSERT INTO memory_channel_types (id, name, description, icon, created_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (type_id, data.name, data.description, data.icon, now))
+        except:
+            raise HTTPException(status_code=400, detail="Channel type already exists")
+        
+        cursor.execute("SELECT * FROM memory_channel_types WHERE id = ?", (type_id,))
+        return dict(cursor.fetchone())
+
+@memory_router.delete("/config/channel-types/{type_id}")
+async def delete_channel_type(type_id: str):
+    """Delete a channel type"""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM memory_channel_types WHERE id = ?", (type_id,))
+    return {"message": "Deleted"}
+
+# ============================================
+# Admin Config Endpoints - Agents
+# ============================================
+
+@memory_router.get("/config/agents", response_model=List[AgentResponse])
+async def list_agents():
+    """List all registered agents"""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM memory_agents ORDER BY created_at DESC")
+        agents = []
+        for row in cursor.fetchall():
+            agent = dict(row)
+            agent["is_active"] = bool(agent["is_active"])
+            agents.append(agent)
+        return agents
+
+@memory_router.post("/config/agents", response_model=AgentCreateResponse)
+async def create_agent(data: AgentCreate):
+    """Create a new agent and return API key"""
+    now = datetime.now(timezone.utc).isoformat()
+    agent_id = str(uuid.uuid4())
+    api_key = f"mem_{secrets.token_urlsafe(32)}"
+    api_key_preview = f"{api_key[:7]}...{api_key[-4:]}"
+    
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO memory_agents (id, name, description, api_key_hash, api_key_preview, access_level, is_active, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+        """, (agent_id, data.name, data.description, api_key, api_key_preview, data.access_level, now))
+        
+        return AgentCreateResponse(
+            id=agent_id,
+            name=data.name,
+            description=data.description,
+            api_key=api_key,
+            api_key_preview=api_key_preview,
+            access_level=data.access_level,
+            is_active=True,
+            created_at=now,
+            last_used=None
+        )
+
+@memory_router.patch("/config/agents/{agent_id}")
+async def update_agent(agent_id: str, is_active: bool = None, access_level: str = None):
+    """Update agent settings"""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        updates = []
+        params = []
+        if is_active is not None:
+            updates.append("is_active = ?")
+            params.append(1 if is_active else 0)
+        if access_level is not None:
+            updates.append("access_level = ?")
+            params.append(access_level)
+        
+        if updates:
+            params.append(agent_id)
+            cursor.execute(f"UPDATE memory_agents SET {', '.join(updates)} WHERE id = ?", params)
+    
+    return {"message": "Updated"}
+
+@memory_router.delete("/config/agents/{agent_id}")
+async def delete_agent(agent_id: str):
+    """Delete an agent"""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM memory_agents WHERE id = ?", (agent_id,))
+    return {"message": "Deleted"}
+
+# ============================================
+# Admin Config Endpoints - System Prompts
+# ============================================
+
+@memory_router.get("/config/system-prompts", response_model=List[SystemPromptResponse])
+async def list_system_prompts():
+    """List all system prompts"""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM memory_system_prompts ORDER BY prompt_type, created_at DESC")
+        prompts = []
+        for row in cursor.fetchall():
+            prompt = dict(row)
+            prompt["is_active"] = bool(prompt["is_active"])
+            prompts.append(prompt)
+        return prompts
+
+@memory_router.post("/config/system-prompts", response_model=SystemPromptResponse)
+async def create_system_prompt(data: SystemPromptCreate):
+    """Create a new system prompt"""
+    now = datetime.now(timezone.utc).isoformat()
+    prompt_id = str(uuid.uuid4())
+    
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        
+        # Deactivate other prompts of same type if this one is active
+        if data.is_active:
+            cursor.execute("""
+                UPDATE memory_system_prompts SET is_active = 0 
+                WHERE prompt_type = ?
+            """, (data.prompt_type,))
+        
+        cursor.execute("""
+            INSERT INTO memory_system_prompts (id, prompt_type, name, prompt_text, is_active, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (prompt_id, data.prompt_type, data.name, data.prompt_text, 1 if data.is_active else 0, now, now))
+        
+        cursor.execute("SELECT * FROM memory_system_prompts WHERE id = ?", (prompt_id,))
+        row = cursor.fetchone()
+        result = dict(row)
+        result["is_active"] = bool(result["is_active"])
+        return result
+
+@memory_router.put("/config/system-prompts/{prompt_id}", response_model=SystemPromptResponse)
+async def update_system_prompt(prompt_id: str, data: SystemPromptCreate):
+    """Update a system prompt"""
+    now = datetime.now(timezone.utc).isoformat()
+    
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        
+        # Get current prompt type
+        cursor.execute("SELECT prompt_type FROM memory_system_prompts WHERE id = ?", (prompt_id,))
+        current = cursor.fetchone()
+        if not current:
+            raise HTTPException(status_code=404, detail="Prompt not found")
+        
+        # Deactivate other prompts of same type if this one is active
+        if data.is_active:
+            cursor.execute("""
+                UPDATE memory_system_prompts SET is_active = 0 
+                WHERE prompt_type = ? AND id != ?
+            """, (data.prompt_type, prompt_id))
+        
+        cursor.execute("""
+            UPDATE memory_system_prompts 
+            SET prompt_type = ?, name = ?, prompt_text = ?, is_active = ?, updated_at = ?
+            WHERE id = ?
+        """, (data.prompt_type, data.name, data.prompt_text, 1 if data.is_active else 0, now, prompt_id))
+        
+        cursor.execute("SELECT * FROM memory_system_prompts WHERE id = ?", (prompt_id,))
+        row = cursor.fetchone()
+        result = dict(row)
+        result["is_active"] = bool(result["is_active"])
+        return result
+
+@memory_router.delete("/config/system-prompts/{prompt_id}")
+async def delete_system_prompt(prompt_id: str):
+    """Delete a system prompt"""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM memory_system_prompts WHERE id = ?", (prompt_id,))
+    return {"message": "Deleted"}
+
+# ============================================
+# Admin Config Endpoints - Settings
+# ============================================
+
+@memory_router.get("/config/settings", response_model=MemorySettingsResponse)
+async def get_settings():
+    """Get memory system settings"""
+    settings = get_memory_settings()
+    return MemorySettingsResponse(
+        chunk_size=settings.get("chunk_size", 400),
+        chunk_overlap=settings.get("chunk_overlap", 80),
+        auto_lesson_enabled=bool(settings.get("auto_lesson_enabled", 1)),
+        auto_lesson_threshold=settings.get("auto_lesson_threshold", 5),
+        lesson_approval_required=bool(settings.get("lesson_approval_required", 1)),
+        pii_scrubbing_enabled=bool(settings.get("pii_scrubbing_enabled", 1)),
+        auto_share_scrubbed=bool(settings.get("auto_share_scrubbed", 0)),
+        openclaw_sync_enabled=bool(settings.get("openclaw_sync_enabled", 0)),
+        openclaw_sync_path=settings.get("openclaw_sync_path", ""),
+        openclaw_sync_type=settings.get("openclaw_sync_type", "filesystem"),
+        openclaw_sync_frequency=settings.get("openclaw_sync_frequency", 5),
+        rate_limit_enabled=bool(settings.get("rate_limit_enabled", 0)),
+        rate_limit_per_minute=settings.get("rate_limit_per_minute", 60),
+        default_agent_access=settings.get("default_agent_access", "private")
+    )
+
+@memory_router.put("/config/settings", response_model=MemorySettingsResponse)
+async def update_settings(data: MemorySettingsUpdate):
+    """Update memory system settings"""
+    now = datetime.now(timezone.utc).isoformat()
+    
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        
+        updates = []
+        params = []
+        
+        for field, value in data.dict(exclude_unset=True).items():
+            if value is not None:
+                if isinstance(value, bool):
+                    value = 1 if value else 0
+                updates.append(f"{field} = ?")
+                params.append(value)
+        
+        if updates:
+            updates.append("updated_at = ?")
+            params.append(now)
+            cursor.execute(f"UPDATE memory_settings SET {', '.join(updates)} WHERE id = 1", params)
+    
+    return await get_settings()
+
+# ============================================
+# Agent API - Interactions (Ingest)
+# ============================================
+
+@memory_router.post("/interactions", response_model=InteractionResponse)
+async def ingest_interaction(
+    text: str = Form(...),
+    channel: str = Form(...),
+    entities: str = Form("[]"),  # JSON string
+    metadata: str = Form("{}"),  # JSON string
+    files: List[UploadFile] = File(default=[]),
+    agent: dict = Depends(verify_agent_key)
+):
+    """
+    Ingest a new interaction with optional file attachments.
+    This is the main entry point for agents to push data.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    memory_id = str(uuid.uuid4())
+    
+    try:
+        entities_list = json.loads(entities)
+    except:
+        entities_list = []
+    
+    try:
+        metadata_dict = json.loads(metadata)
+    except:
+        metadata_dict = {}
+    
+    settings = get_memory_settings()
+    
+    # Parse uploaded documents
+    parsed_docs = []
+    all_text = text
+    
+    for file in files:
+        content = await file.read()
+        parsed = await parse_document(content, file.filename, file.content_type)
+        
+        doc_id = str(uuid.uuid4())
+        parsed_docs.append({
+            "id": doc_id,
+            "filename": file.filename,
+            "file_type": file.content_type,
+            "file_size": len(content),
+            "parsed_text": parsed["text"]
+        })
+        
+        if parsed["text"]:
+            all_text += f"\n\n---\n[Document: {file.filename}]\n{parsed['text']}"
+    
+    # Generate summary
+    summary = await summarize_text(all_text)
+    
+    # Extract entities if not provided
+    if not entities_list:
+        extracted = await extract_entities(all_text)
+        entities_list = extracted
+    
+    # Chunk and embed
+    chunks = chunk_text(
+        all_text,
+        chunk_size=settings.get("chunk_size", 400),
+        chunk_overlap=settings.get("chunk_overlap", 80)
+    )
+    
+    # Generate embeddings for chunks
+    embeddings = await generate_embeddings_batch(chunks) if chunks else []
+    
+    # Store memory in database
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            INSERT INTO memories (id, timestamp, channel, raw_text, summary_text, has_documents, 
+                                  is_shared, entities_json, metadata_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
+        """, (
+            memory_id, now, channel, text, summary,
+            1 if parsed_docs else 0,
+            json.dumps(entities_list), json.dumps(metadata_dict),
+            now, now
+        ))
+        
+        # Store documents
+        for doc in parsed_docs:
+            cursor.execute("""
+                INSERT INTO memory_documents (id, memory_id, filename, file_type, file_size, parsed_text, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (doc["id"], memory_id, doc["filename"], doc["file_type"], doc["file_size"], doc["parsed_text"], now))
+    
+    # Store vectors in Qdrant
+    for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
+        if embedding:
+            vector_id = f"{memory_id}_{i}"
+            await upsert_vector(
+                "memory_interactions",
+                vector_id,
+                embedding,
+                {
+                    "memory_id": memory_id,
+                    "chunk_index": i,
+                    "channel": channel,
+                    "timestamp": now,
+                    "entities": entities_list,
+                    "is_shared": False
+                }
+            )
+    
+    # Log audit
+    log_audit(agent["id"], "ingest_interaction", "memory", memory_id, {"channel": channel})
+    
+    return InteractionResponse(
+        id=memory_id,
+        timestamp=now,
+        channel=channel,
+        summary_text=summary,
+        has_documents=bool(parsed_docs),
+        entities=[RelatedEntity(**e) for e in entities_list],
+        metadata=metadata_dict
+    )
+
+# ============================================
+# Agent API - Search
+# ============================================
+
+@memory_router.post("/search", response_model=SearchResponse)
+async def search_memories(
+    request: SearchRequest,
+    agent: dict = Depends(verify_agent_key)
+):
+    """Search memories and lessons using semantic search"""
+    
+    # Generate query embedding
+    query_embedding = await generate_embedding(request.query)
+    if not query_embedding:
+        return SearchResponse(results=[], total=0, query=request.query)
+    
+    results = []
+    
+    # Build Qdrant filters
+    qdrant_filter = {}
+    if request.filters:
+        must_conditions = []
+        
+        if "entity_type" in request.filters:
+            must_conditions.append({
+                "key": "entities",
+                "match": {"any": [{"entity_type": request.filters["entity_type"]}]}
+            })
+        
+        if "channel" in request.filters:
+            must_conditions.append({
+                "key": "channel",
+                "match": {"value": request.filters["channel"]}
+            })
+        
+        if "since" in request.filters:
+            must_conditions.append({
+                "key": "timestamp",
+                "range": {"gte": request.filters["since"]}
+            })
+        
+        if "until" in request.filters:
+            must_conditions.append({
+                "key": "timestamp",
+                "range": {"lte": request.filters["until"]}
+            })
+        
+        if must_conditions:
+            qdrant_filter = {"must": must_conditions}
+    
+    # Search interactions
+    if request.types in ["both", "interactions"]:
+        collection = "memory_interactions_shared" if request.shared_only else "memory_interactions"
+        interaction_results = await search_vectors(
+            collection,
+            query_embedding,
+            qdrant_filter if qdrant_filter else None,
+            limit=request.limit
+        )
+        
+        for r in interaction_results:
+            payload = r.get("payload", {})
+            results.append(SearchResult(
+                id=payload.get("memory_id", ""),
+                type="interaction",
+                score=r.get("score", 0),
+                snippet=payload.get("chunk_text", "")[:200] if payload.get("chunk_text") else "",
+                timestamp=payload.get("timestamp", ""),
+                metadata={"channel": payload.get("channel", "")}
+            ))
+    
+    # Search lessons
+    if request.types in ["both", "lessons"]:
+        collection = "memory_lessons_shared" if request.shared_only else "memory_lessons"
+        lesson_results = await search_vectors(
+            collection,
+            query_embedding,
+            qdrant_filter if qdrant_filter else None,
+            limit=request.limit
+        )
+        
+        for r in lesson_results:
+            payload = r.get("payload", {})
+            results.append(SearchResult(
+                id=payload.get("lesson_id", ""),
+                type="lesson",
+                score=r.get("score", 0),
+                snippet=payload.get("summary", "")[:200] if payload.get("summary") else "",
+                timestamp=payload.get("created_at", ""),
+                metadata={"lesson_type": payload.get("lesson_type", "")}
+            ))
+    
+    # Sort by score and limit
+    results.sort(key=lambda x: x.score, reverse=True)
+    results = results[:request.limit]
+    
+    # Log audit
+    log_audit(agent["id"], "search", None, None, {"query": request.query, "results_count": len(results)})
+    
+    return SearchResponse(
+        results=results,
+        total=len(results),
+        query=request.query
+    )
+
+# ============================================
+# Agent API - Timeline
+# ============================================
+
+@memory_router.get("/timeline/{entity_type}/{entity_id}")
+async def get_timeline(
+    entity_type: str,
+    entity_id: str,
+    since: str = None,
+    until: str = None,
+    channel: str = None,
+    limit: int = 50,
+    offset: int = 0,
+    agent: dict = Depends(verify_agent_key)
+):
+    """Get chronological timeline for an entity"""
+    
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        
+        # Build query - search in entities_json
+        query = """
+            SELECT id, timestamp, channel, summary_text, has_documents, is_shared, 'interaction' as type
+            FROM memories
+            WHERE entities_json LIKE ?
+        """
+        params = [f'%"entity_id": "{entity_id}"%']
+        
+        if since:
+            query += " AND timestamp >= ?"
+            params.append(since)
+        if until:
+            query += " AND timestamp <= ?"
+            params.append(until)
+        if channel:
+            query += " AND channel = ?"
+            params.append(channel)
+        
+        query += " ORDER BY timestamp DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        
+        cursor.execute(query, params)
+        
+        entries = []
+        for row in cursor.fetchall():
+            entries.append(TimelineEntry(
+                id=row["id"],
+                timestamp=row["timestamp"],
+                type=row["type"],
+                channel=row["channel"],
+                summary_text=row["summary_text"] or "",
+                has_documents=bool(row["has_documents"]),
+                is_shared=bool(row["is_shared"])
+            ))
+    
+    # Log audit
+    log_audit(agent["id"], "timeline", entity_type, entity_id)
+    
+    return {"entries": entries, "entity_type": entity_type, "entity_id": entity_id}
+
+# ============================================
+# Agent API - Lessons
+# ============================================
+
+@memory_router.get("/lessons", response_model=List[LessonResponse])
+async def list_lessons(
+    lesson_type: str = None,
+    status: str = None,
+    limit: int = 50,
+    offset: int = 0,
+    agent: dict = Depends(verify_agent_key)
+):
+    """List lessons with optional filters"""
+    
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        
+        query = "SELECT * FROM memory_lessons WHERE 1=1"
+        params = []
+        
+        if lesson_type:
+            query += " AND lesson_type = ?"
+            params.append(lesson_type)
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+        
+        query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        
+        cursor.execute(query, params)
+        
+        lessons = []
+        for row in cursor.fetchall():
+            lesson = dict(row)
+            lesson["related_entities"] = json.loads(lesson.get("related_entities_json", "[]"))
+            lesson["source_memory_ids"] = json.loads(lesson.get("source_memory_ids_json", "[]"))
+            lesson["is_shared"] = bool(lesson["is_shared"])
+            lessons.append(LessonResponse(**lesson))
+    
+    return lessons
+
+@memory_router.post("/lessons", response_model=LessonResponse)
+async def create_lesson(
+    data: LessonCreate,
+    agent: dict = Depends(verify_agent_key)
+):
+    """Create a new lesson"""
+    now = datetime.now(timezone.utc).isoformat()
+    lesson_id = str(uuid.uuid4())
+    
+    settings = get_memory_settings()
+    status = "draft" if settings.get("lesson_approval_required", True) else "approved"
+    
+    # Generate summary
+    summary = await summarize_text(data.body)
+    
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            INSERT INTO memory_lessons (id, lesson_type, name, body, summary, status, is_shared,
+                                        related_entities_json, source_memory_ids_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
+        """, (
+            lesson_id, data.lesson_type, data.name, data.body, summary, status,
+            json.dumps([e.dict() for e in data.related_entities]),
+            json.dumps(data.source_memory_ids),
+            now, now
+        ))
+    
+    # Generate and store embedding
+    embedding = await generate_embedding(f"{data.name}\n\n{data.body}")
+    if embedding:
+        await upsert_vector(
+            "memory_lessons",
+            lesson_id,
+            embedding,
+            {
+                "lesson_id": lesson_id,
+                "lesson_type": data.lesson_type,
+                "name": data.name,
+                "summary": summary,
+                "created_at": now
+            }
+        )
+    
+    # Log audit
+    log_audit(agent["id"], "create_lesson", "lesson", lesson_id)
+    
+    return LessonResponse(
+        id=lesson_id,
+        lesson_type=data.lesson_type,
+        name=data.name,
+        body=data.body,
+        summary=summary,
+        status=status,
+        is_shared=False,
+        related_entities=data.related_entities,
+        source_memory_ids=data.source_memory_ids,
+        created_at=now,
+        updated_at=now
+    )
+
+@memory_router.patch("/lessons/{lesson_id}", response_model=LessonResponse)
+async def update_lesson(
+    lesson_id: str,
+    data: LessonUpdate,
+    agent: dict = Depends(verify_agent_key)
+):
+    """Update a lesson"""
+    now = datetime.now(timezone.utc).isoformat()
+    
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT * FROM memory_lessons WHERE id = ?", (lesson_id,))
+        lesson = cursor.fetchone()
+        if not lesson:
+            raise HTTPException(status_code=404, detail="Lesson not found")
+        
+        updates = ["updated_at = ?"]
+        params = [now]
+        
+        if data.name is not None:
+            updates.append("name = ?")
+            params.append(data.name)
+        if data.body is not None:
+            updates.append("body = ?")
+            params.append(data.body)
+            # Regenerate summary
+            summary = await summarize_text(data.body)
+            updates.append("summary = ?")
+            params.append(summary)
+        if data.status is not None:
+            updates.append("status = ?")
+            params.append(data.status)
+        if data.related_entities is not None:
+            updates.append("related_entities_json = ?")
+            params.append(json.dumps([e.dict() for e in data.related_entities]))
+        
+        params.append(lesson_id)
+        cursor.execute(f"UPDATE memory_lessons SET {', '.join(updates)} WHERE id = ?", params)
+        
+        cursor.execute("SELECT * FROM memory_lessons WHERE id = ?", (lesson_id,))
+        updated = dict(cursor.fetchone())
+    
+    # Log audit
+    log_audit(agent["id"], "update_lesson", "lesson", lesson_id)
+    
+    return LessonResponse(
+        id=updated["id"],
+        lesson_type=updated["lesson_type"],
+        name=updated["name"],
+        body=updated["body"],
+        summary=updated["summary"],
+        status=updated["status"],
+        is_shared=bool(updated["is_shared"]),
+        related_entities=json.loads(updated["related_entities_json"]),
+        source_memory_ids=json.loads(updated["source_memory_ids_json"]),
+        created_at=updated["created_at"],
+        updated_at=updated["updated_at"]
+    )
+
+# ============================================
+# Health & Init
+# ============================================
+
+@memory_router.get("/health")
+async def memory_health():
+    """Memory system health check"""
+    return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+@memory_router.post("/init")
+async def init_memory_system():
+    """Initialize Qdrant collections"""
+    await init_qdrant_collections()
+    return {"message": "Memory system initialized"}
