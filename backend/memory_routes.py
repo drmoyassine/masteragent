@@ -298,7 +298,7 @@ async def delete_channel_type(type_id: str):
 # ============================================
 
 @memory_router.get("/config/agents", response_model=List[AgentResponse])
-async def list_agents():
+async def list_agents(user: dict = Depends(require_admin_auth)):
     """List all registered agents"""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -311,7 +311,7 @@ async def list_agents():
         return agents
 
 @memory_router.post("/config/agents", response_model=AgentCreateResponse)
-async def create_agent(data: AgentCreate):
+async def create_agent(data: AgentCreate, user: dict = Depends(require_admin_auth)):
     """Create a new agent and return API key"""
     now = datetime.now(timezone.utc).isoformat()
     agent_id = str(uuid.uuid4())
@@ -338,7 +338,7 @@ async def create_agent(data: AgentCreate):
         )
 
 @memory_router.patch("/config/agents/{agent_id}")
-async def update_agent(agent_id: str, is_active: bool = None, access_level: str = None):
+async def update_agent(agent_id: str, user: dict = Depends(require_admin_auth), is_active: bool = None, access_level: str = None):
     """Update agent settings"""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -358,7 +358,7 @@ async def update_agent(agent_id: str, is_active: bool = None, access_level: str 
     return {"message": "Updated"}
 
 @memory_router.delete("/config/agents/{agent_id}")
-async def delete_agent(agent_id: str):
+async def delete_agent(agent_id: str, user: dict = Depends(require_admin_auth)):
     """Delete an agent"""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -370,7 +370,7 @@ async def delete_agent(agent_id: str):
 # ============================================
 
 @memory_router.get("/config/system-prompts", response_model=List[SystemPromptResponse])
-async def list_system_prompts():
+async def list_system_prompts(user: dict = Depends(require_admin_auth)):
     """List all system prompts"""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -383,7 +383,7 @@ async def list_system_prompts():
         return prompts
 
 @memory_router.post("/config/system-prompts", response_model=SystemPromptResponse)
-async def create_system_prompt(data: SystemPromptCreate):
+async def create_system_prompt(data: SystemPromptCreate, user: dict = Depends(require_admin_auth)):
     """Create a new system prompt"""
     now = datetime.now(timezone.utc).isoformat()
     prompt_id = str(uuid.uuid4())
