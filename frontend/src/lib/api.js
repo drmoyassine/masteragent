@@ -89,4 +89,55 @@ export const deleteApiKey = (id) => api.delete(`/keys/${id}`);
 // Health
 export const healthCheck = () => api.get('/health');
 
+// ============================================
+// Memory System APIs
+// ============================================
+
+// Memory Health
+export const memoryHealthCheck = () => api.get('/memory/health');
+export const initMemorySystem = () => api.post('/memory/init');
+
+// Entity Types
+export const getEntityTypes = () => api.get('/memory/config/entity-types');
+export const createEntityType = (data) => api.post('/memory/config/entity-types', data);
+export const deleteEntityType = (id) => api.delete(`/memory/config/entity-types/${id}`);
+
+// Entity Subtypes
+export const getEntitySubtypes = (typeId) => api.get(`/memory/config/entity-types/${typeId}/subtypes`);
+export const createEntitySubtype = (data) => api.post('/memory/config/entity-subtypes', data);
+export const deleteEntitySubtype = (id) => api.delete(`/memory/config/entity-subtypes/${id}`);
+
+// Lesson Types
+export const getLessonTypes = () => api.get('/memory/config/lesson-types');
+export const createLessonType = (data) => api.post('/memory/config/lesson-types', data);
+export const deleteLessonType = (id) => api.delete(`/memory/config/lesson-types/${id}`);
+
+// Channel Types
+export const getChannelTypes = () => api.get('/memory/config/channel-types');
+export const createChannelType = (data) => api.post('/memory/config/channel-types', data);
+export const deleteChannelType = (id) => api.delete(`/memory/config/channel-types/${id}`);
+
+// Agents
+export const getAgents = () => api.get('/memory/config/agents');
+export const createAgent = (data) => api.post('/memory/config/agents', data);
+export const updateAgent = (id, data) => api.patch(`/memory/config/agents/${id}`, data);
+export const deleteAgent = (id) => api.delete(`/memory/config/agents/${id}`);
+
+// System Prompts
+export const getSystemPrompts = () => api.get('/memory/config/system-prompts');
+export const createSystemPrompt = (data) => api.post('/memory/config/system-prompts', data);
+export const updateSystemPrompt = (id, data) => api.put(`/memory/config/system-prompts/${id}`, data);
+export const deleteSystemPrompt = (id) => api.delete(`/memory/config/system-prompts/${id}`);
+
+// LLM Configurations
+export const getLLMConfigs = () => api.get('/memory/config/llm-configs');
+export const getLLMConfigByTask = (taskType) => api.get(`/memory/config/llm-configs/${taskType}`);
+export const createLLMConfig = (data) => api.post('/memory/config/llm-configs', data);
+export const updateLLMConfig = (id, data) => api.put(`/memory/config/llm-configs/${id}`, data);
+export const deleteLLMConfig = (id) => api.delete(`/memory/config/llm-configs/${id}`);
+
+// Memory Settings
+export const getMemorySettings = () => api.get('/memory/config/settings');
+export const updateMemorySettings = (data) => api.put('/memory/config/settings', data);
+
 export default api;
