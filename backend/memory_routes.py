@@ -399,6 +399,182 @@ async def delete_system_prompt(prompt_id: str):
     return {"message": "Deleted"}
 
 # ============================================
+# Admin Config Endpoints - LLM Configurations
+# ============================================
+
+@memory_router.get("/config/llm-configs", response_model=List[LLMConfigResponse])
+async def list_llm_configs():
+    """List all LLM configurations"""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM memory_llm_configs ORDER BY task_type, created_at DESC")
+        configs = []
+        for row in cursor.fetchall():
+            config = dict(row)
+            configs.append(LLMConfigResponse(
+                id=config["id"],
+                task_type=config["task_type"],
+                provider=config["provider"],
+                name=config["name"],
+                api_base_url=config.get("api_base_url", ""),
+                api_key_preview=config.get("api_key_preview", ""),
+                model_name=config.get("model_name", ""),
+                is_active=bool(config.get("is_active", 0)),
+                extra_config=json.loads(config.get("extra_config_json", "{}")),
+                created_at=config["created_at"],
+                updated_at=config["updated_at"]
+            ))
+        return configs
+
+@memory_router.get("/config/llm-configs/{task_type}", response_model=LLMConfigResponse)
+async def get_llm_config_by_task(task_type: str):
+    """Get active LLM config for a task type"""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM memory_llm_configs 
+            WHERE task_type = ? AND is_active = 1
+            ORDER BY updated_at DESC LIMIT 1
+        """, (task_type,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"No active LLM config for {task_type}")
+        
+        config = dict(row)
+        return LLMConfigResponse(
+            id=config["id"],
+            task_type=config["task_type"],
+            provider=config["provider"],
+            name=config["name"],
+            api_base_url=config.get("api_base_url", ""),
+            api_key_preview=config.get("api_key_preview", ""),
+            model_name=config.get("model_name", ""),
+            is_active=bool(config.get("is_active", 0)),
+            extra_config=json.loads(config.get("extra_config_json", "{}")),
+            created_at=config["created_at"],
+            updated_at=config["updated_at"]
+        )
+
+@memory_router.post("/config/llm-configs", response_model=LLMConfigResponse)
+async def create_llm_config(data: LLMConfigCreate):
+    """Create a new LLM configuration"""
+    now = datetime.now(timezone.utc).isoformat()
+    config_id = str(uuid.uuid4())
+    
+    # Create preview of API key
+    api_key_preview = ""
+    if data.api_key:
+        api_key_preview = f"{data.api_key[:4]}...{data.api_key[-4:]}" if len(data.api_key) > 8 else "****"
+    
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        
+        # Deactivate other configs for the same task type if this one is active
+        if data.is_active:
+            cursor.execute("""
+                UPDATE memory_llm_configs SET is_active = 0 
+                WHERE task_type = ?
+            """, (data.task_type,))
+        
+        cursor.execute("""
+            INSERT INTO memory_llm_configs (id, task_type, provider, name, api_base_url, api_key_encrypted, api_key_preview, model_name, is_active, extra_config_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            config_id, data.task_type, data.provider, data.name,
+            data.api_base_url or "", data.api_key or "", api_key_preview,
+            data.model_name or "", 1 if data.is_active else 0,
+            json.dumps(data.extra_config or {}), now, now
+        ))
+        
+        return LLMConfigResponse(
+            id=config_id,
+            task_type=data.task_type,
+            provider=data.provider,
+            name=data.name,
+            api_base_url=data.api_base_url or "",
+            api_key_preview=api_key_preview,
+            model_name=data.model_name or "",
+            is_active=data.is_active,
+            extra_config=data.extra_config or {},
+            created_at=now,
+            updated_at=now
+        )
+
+@memory_router.put("/config/llm-configs/{config_id}", response_model=LLMConfigResponse)
+async def update_llm_config(config_id: str, data: LLMConfigUpdate):
+    """Update an LLM configuration"""
+    now = datetime.now(timezone.utc).isoformat()
+    
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT * FROM memory_llm_configs WHERE id = ?", (config_id,))
+        existing = cursor.fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="LLM config not found")
+        
+        existing = dict(existing)
+        
+        updates = ["updated_at = ?"]
+        params = [now]
+        
+        if data.name is not None:
+            updates.append("name = ?")
+            params.append(data.name)
+        if data.api_base_url is not None:
+            updates.append("api_base_url = ?")
+            params.append(data.api_base_url)
+        if data.api_key is not None:
+            updates.append("api_key_encrypted = ?")
+            params.append(data.api_key)
+            api_key_preview = f"{data.api_key[:4]}...{data.api_key[-4:]}" if len(data.api_key) > 8 else "****"
+            updates.append("api_key_preview = ?")
+            params.append(api_key_preview)
+        if data.model_name is not None:
+            updates.append("model_name = ?")
+            params.append(data.model_name)
+        if data.is_active is not None:
+            # Deactivate other configs for the same task type
+            if data.is_active:
+                cursor.execute("""
+                    UPDATE memory_llm_configs SET is_active = 0 
+                    WHERE task_type = ? AND id != ?
+                """, (existing["task_type"], config_id))
+            updates.append("is_active = ?")
+            params.append(1 if data.is_active else 0)
+        if data.extra_config is not None:
+            updates.append("extra_config_json = ?")
+            params.append(json.dumps(data.extra_config))
+        
+        params.append(config_id)
+        cursor.execute(f"UPDATE memory_llm_configs SET {', '.join(updates)} WHERE id = ?", params)
+        
+        cursor.execute("SELECT * FROM memory_llm_configs WHERE id = ?", (config_id,))
+        updated = dict(cursor.fetchone())
+        
+        return LLMConfigResponse(
+            id=updated["id"],
+            task_type=updated["task_type"],
+            provider=updated["provider"],
+            name=updated["name"],
+            api_base_url=updated.get("api_base_url", ""),
+            api_key_preview=updated.get("api_key_preview", ""),
+            model_name=updated.get("model_name", ""),
+            is_active=bool(updated.get("is_active", 0)),
+            extra_config=json.loads(updated.get("extra_config_json", "{}")),
+            created_at=updated["created_at"],
+            updated_at=updated["updated_at"]
+        )
+
+@memory_router.delete("/config/llm-configs/{config_id}")
+async def delete_llm_config(config_id: str):
+    """Delete an LLM configuration"""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM memory_llm_configs WHERE id = ?", (config_id,))
+    return {"message": "Deleted"}
+
+# ============================================
 # Admin Config Endpoints - Settings
 # ============================================
 
