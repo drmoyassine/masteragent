@@ -20,14 +20,15 @@ from memory_models import (
     InteractionCreate, InteractionResponse, MemoryDetailResponse,
     LessonCreate, LessonResponse, LessonUpdate,
     SearchRequest, SearchResponse, SearchResult,
-    TimelineEntry, RelatedEntity
+    TimelineEntry, RelatedEntity,
+    LLMConfigCreate, LLMConfigResponse, LLMConfigUpdate
 )
 from memory_services import (
     generate_embedding, generate_embeddings_batch,
     upsert_vector, search_vectors, delete_vector,
     init_qdrant_collections,
     chunk_text, parse_document, summarize_text, extract_entities,
-    scrub_pii, get_memory_settings
+    scrub_pii, get_memory_settings, get_llm_config
 )
 
 logger = logging.getLogger(__name__)
