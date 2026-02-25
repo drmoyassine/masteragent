@@ -139,7 +139,7 @@ def log_audit(agent_id: str, action: str, resource_type: str = None, resource_id
 # ============================================
 
 @memory_router.get("/config/entity-types", response_model=List[EntityTypeResponse])
-async def list_entity_types():
+async def list_entity_types(user: dict = Depends(require_admin_auth)):
     """List all entity types"""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -147,7 +147,7 @@ async def list_entity_types():
         return [dict(row) for row in cursor.fetchall()]
 
 @memory_router.post("/config/entity-types", response_model=EntityTypeResponse)
-async def create_entity_type(data: EntityTypeCreate):
+async def create_entity_type(data: EntityTypeCreate, user: dict = Depends(require_admin_auth)):
     """Create a new entity type"""
     now = datetime.now(timezone.utc).isoformat()
     type_id = str(uuid.uuid4())
@@ -166,7 +166,7 @@ async def create_entity_type(data: EntityTypeCreate):
         return dict(cursor.fetchone())
 
 @memory_router.delete("/config/entity-types/{type_id}")
-async def delete_entity_type(type_id: str):
+async def delete_entity_type(type_id: str, user: dict = Depends(require_admin_auth)):
     """Delete an entity type"""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
