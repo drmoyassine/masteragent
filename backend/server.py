@@ -203,6 +203,9 @@ def init_db():
 
 init_db()
 
+# Initialize Memory System DB
+init_memory_db()
+
 # Seed admin user for testing
 def seed_admin_user():
     admin_email = "admin@promptsrc.com"
@@ -225,7 +228,7 @@ def seed_admin_user():
 seed_admin_user()
 
 # Create the main app
-app = FastAPI(title="Prompt Manager API")
+app = FastAPI(title="Prompt Manager & Memory System API")
 
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
