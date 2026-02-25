@@ -6,7 +6,8 @@ import {
   Settings,
   Sparkles,
   LogOut,
-  Brain
+  Brain,
+  Search
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -29,7 +30,8 @@ export const MainLayout = ({ children }) => {
     { path: "/app", icon: LayoutDashboard, label: "Prompts" },
     { path: "/app/templates", icon: Sparkles, label: "Templates" },
     { path: "/app/api-keys", icon: Key, label: "API Keys" },
-    { path: "/app/memory", icon: Brain, label: "Memory System" },
+    { path: "/app/memory/explore", icon: Search, label: "Memory Explorer" },
+    { path: "/app/memory", icon: Brain, label: "Memory Settings" },
     { path: "/app/settings", icon: Settings, label: "Settings" },
   ];
 
