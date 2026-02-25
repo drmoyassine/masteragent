@@ -15,6 +15,7 @@ import PromptEditorPage from "@/pages/PromptEditorPage";
 import TemplatesPage from "@/pages/TemplatesPage";
 import ApiKeysPage from "@/pages/ApiKeysPage";
 import SettingsPage from "@/pages/SettingsPage";
+import MemorySettingsPage from "@/pages/MemorySettingsPage";
 
 // Layout
 import MainLayout from "@/components/layout/MainLayout";
