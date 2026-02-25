@@ -16,6 +16,7 @@ import TemplatesPage from "@/pages/TemplatesPage";
 import ApiKeysPage from "@/pages/ApiKeysPage";
 import SettingsPage from "@/pages/SettingsPage";
 import MemorySettingsPage from "@/pages/MemorySettingsPage";
+import MemoryExplorerPage from "@/pages/MemoryExplorerPage";
 
 // Layout
 import MainLayout from "@/components/layout/MainLayout";
