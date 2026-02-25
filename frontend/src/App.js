@@ -17,6 +17,7 @@ import ApiKeysPage from "@/pages/ApiKeysPage";
 import SettingsPage from "@/pages/SettingsPage";
 import MemorySettingsPage from "@/pages/MemorySettingsPage";
 import MemoryExplorerPage from "@/pages/MemoryExplorerPage";
+import MemoryMonitorPage from "@/pages/MemoryMonitorPage";
 
 // Layout
 import MainLayout from "@/components/layout/MainLayout";
