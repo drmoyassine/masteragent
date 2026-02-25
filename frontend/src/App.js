@@ -92,21 +92,26 @@ const AppContent = () => {
         path="/app/*"
         element={
           <ProtectedRoute>
-            {isConfigured === false ? (
-              <SetupPage onConfigured={() => setIsConfigured(true)} />
-            ) : (
-              <MainLayout>
-                <Routes>
-                  <Route index element={<DashboardPage />} />
-                  <Route path="prompts/:promptId" element={<PromptEditorPage />} />
-                  <Route path="templates" element={<TemplatesPage />} />
-                  <Route path="api-keys" element={<ApiKeysPage />} />
-                  <Route path="settings" element={<SettingsPage onDisconnect={() => setIsConfigured(false)} />} />
-                  <Route path="memory" element={<MemorySettingsPage />} />
-                  <Route path="setup" element={<SetupPage onConfigured={() => setIsConfigured(true)} />} />
-                </Routes>
-              </MainLayout>
-            )}
+            <MainLayout>
+              <Routes>
+                {/* Routes that work without GitHub config */}
+                <Route path="memory" element={<MemorySettingsPage />} />
+                <Route path="setup" element={<SetupPage onConfigured={() => setIsConfigured(true)} />} />
+                
+                {/* Routes that require GitHub config */}
+                {isConfigured === false ? (
+                  <Route path="*" element={<SetupPage onConfigured={() => setIsConfigured(true)} />} />
+                ) : (
+                  <>
+                    <Route index element={<DashboardPage />} />
+                    <Route path="prompts/:promptId" element={<PromptEditorPage />} />
+                    <Route path="templates" element={<TemplatesPage />} />
+                    <Route path="api-keys" element={<ApiKeysPage />} />
+                    <Route path="settings" element={<SettingsPage onDisconnect={() => setIsConfigured(false)} />} />
+                  </>
+                )}
+              </Routes>
+            </MainLayout>
           </ProtectedRoute>
         }
       />
