@@ -19,6 +19,10 @@ from contextlib import contextmanager
 from jose import jwt, JWTError
 import bcrypt
 
+# Import Memory System modules
+from memory_routes import memory_router
+from memory_db import init_memory_db
+
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
