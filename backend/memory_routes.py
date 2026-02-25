@@ -1438,6 +1438,45 @@ async def update_lesson_admin(lesson_id: str, data: LessonUpdate, user: dict = D
             updates.append("lesson_type = ?")
             params.append(data.lesson_type)
         if data.status is not None:
+
+
+# ============================================
+# Admin UI - Stats & Background Tasks
+# ============================================
+
+from memory_tasks import (
+    sync_to_openclaw, mine_lessons, 
+    get_agent_stats, get_system_stats,
+    check_rate_limit, get_rate_limit_status
+)
+
+@memory_router.get("/admin/stats")
+async def get_stats(user: dict = Depends(require_admin_auth)):
+    """Get system statistics for admin dashboard"""
+    return get_system_stats()
+
+@memory_router.get("/admin/stats/agents")
+async def get_all_agent_stats(days: int = 7, user: dict = Depends(require_admin_auth)):
+    """Get activity stats for all agents"""
+    return get_agent_stats(days=days)
+
+@memory_router.get("/admin/stats/agents/{agent_id}")
+async def get_single_agent_stats(agent_id: str, days: int = 7, user: dict = Depends(require_admin_auth)):
+    """Get activity stats for a specific agent"""
+    return get_agent_stats(agent_id=agent_id, days=days)
+
+@memory_router.post("/admin/sync/openclaw")
+async def trigger_openclaw_sync(user: dict = Depends(require_admin_auth)):
+    """Manually trigger OpenClaw sync"""
+    result = await sync_to_openclaw()
+    return result
+
+@memory_router.post("/admin/tasks/mine-lessons")
+async def trigger_lesson_mining(user: dict = Depends(require_admin_auth)):
+    """Manually trigger lesson mining"""
+    result = await mine_lessons()
+    return result
+
             updates.append("status = ?")
             params.append(data.status)
         
