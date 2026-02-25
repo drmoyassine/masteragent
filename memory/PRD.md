@@ -5,152 +5,112 @@ Build a **Prompt Manager** (prompt versioning as code using GitHub) extended wit
 
 ---
 
-## Core Product Requirements
-
-### Module 1: Prompt Manager (Complete)
-- Prompts stored as ordered Markdown files in GitHub
-- Versioning via Git branches/folders
-- Variable injection with Mustache-style templates
-- API-based prompt rendering
-- Templates for different agent personas
-
-### Module 2: Agent-Facing Memory System (In Progress)
-**Architecture**: API-first microservice where agents push data, UI for configuration and exploration
-
-**Admin Configuration (✅ Complete)**:
-- Dynamic schema: Entity types/subtypes, lesson types, channel types
-- Agent credentials with API keys
-- LLM API configurations per task (summarization, embedding, vision, NER, PII)
-- System prompts for LLM operations
-- General settings (chunking, lessons, PII, rate limits)
-- **JWT Authentication** on all admin config endpoints
-
-**Ingestion APIs (✅ Complete)**:
-- `POST /api/memory/interactions` - Agent submits interaction with text and documents
-- Document parsing using vision LLM
-- Text chunking (OpenClaw-style)
-- Embedding generation and Qdrant storage
-- Entity extraction using GLiNER2
-- Summarization using configured LLM
-- PII scrubbing for shared data
-- **Agent API Key Authentication** (X-API-Key header)
-
-**Retrieval APIs (Implemented)**:
-- `POST /api/memory/search` - Hybrid semantic search
-- `GET /api/memory/timeline/{entity_type}/{entity_id}` - Entity history
-- `GET/POST /api/memory/lessons` - Curated lessons
-
-**Explorer UI (Pending)**:
-- Search memories and lessons
-- View entity timelines
-- Browse daily logs
-- Edit/approve lessons
-
----
-
-## Technical Stack
-
-### Backend
-- **Framework**: FastAPI
-- **Database**: SQLite (dev) / PostgreSQL (prod)
-- **Vector Store**: Qdrant
-- **NER**: GLiNER2 (docker service)
-- **LLM**: Admin-configurable (OpenAI, Anthropic, Gemini, custom)
-- **PII**: Admin-configurable (Zendata or other)
-- **Auth**: JWT for admin, API keys for agents
-
-### Frontend
-- **Framework**: React
-- **UI**: Tailwind CSS, Shadcn/UI
-- **Router**: react-router-dom
-
-### Infrastructure
-- **Docker Compose** with services:
-  - promptsrc (main app)
-  - qdrant (vector database)
-  - gliner (NER service)
-
----
-
 ## What's Implemented (February 2026)
 
 ### ✅ Complete
-1. **Prompt Manager Application**
-   - Full-stack app with prompts, sections, versions
-   - Templates (Agent Persona, Task Executor, etc.)
-   - API keys for external access
-   - GitHub integration for storage
 
-2. **Authentication**
-   - Email/password signup/login
-   - GitHub OAuth
-   - JWT tokens
-   - User profiles with plans
+#### Prompt Manager
+- Full-stack app with prompts, sections, versions
+- Templates (Agent Persona, Task Executor, etc.)
+- API keys for external access
+- GitHub integration for storage
+- Email/password + GitHub OAuth authentication
 
-3. **Memory System - Backend Infrastructure**
-   - Database schema for all config tables
-   - Memory router integrated into main app
-   - Default data seeding (entity types, lesson types, channels, LLM configs)
-   - All config API endpoints working
-   - **JWT authentication on admin config endpoints**
+#### Memory System - Backend
+1. **Admin Configuration** (JWT Protected)
+   - Entity types/subtypes management
+   - Lesson types with colors
+   - Channel types
+   - Agent credentials with API keys
+   - LLM API configs per task (summarization, embedding, vision, NER, PII)
+   - System prompts for LLM operations
+   - General settings
 
-4. **Memory System - Admin Configuration UI**
-   - LLM APIs tab - Configure API keys for each task
-   - Entities tab - Manage entity types and subtypes
-   - Lessons tab - Manage lesson types with colors
-   - Channels tab - Manage channel types
-   - Agents tab - Create agents with API keys
-   - General tab - Chunking, PII, rate limiting settings
-
-5. **Memory System - Ingestion Pipeline**
-   - `POST /api/memory/interactions` endpoint
-   - Agent authentication via X-API-Key header
+2. **Ingestion Pipeline** (Agent API Key Protected)
+   - `POST /api/memory/interactions`
    - Document parsing (text + file attachments)
-   - Text chunking (configurable size/overlap)
+   - Text chunking (configurable)
    - Entity extraction (GLiNER2 or LLM fallback)
-   - Summary generation (LLM-powered)
-   - Embedding generation and Qdrant storage
-   - PII scrubbing for shared memories (when enabled)
+   - Summary generation
+   - Embedding → Qdrant storage
+   - PII scrubbing for shared memories
+   - Rate limiting
    - Audit logging
 
-6. **Docker Deployment**
-   - Dockerfile and docker-compose.yml
-   - Qdrant service
-   - GLiNER2 service
+3. **Retrieval APIs**
+   - `POST /api/memory/search` - Semantic search
+   - `GET /api/memory/timeline/{type}/{id}` - Entity timeline
+   - `GET /api/memory/daily/{date}` - Daily log
+   - `GET/POST/PUT/DELETE /api/memory/admin/lessons` - Lessons CRUD
 
-### ⏳ Pending
-- Memory Explorer UI
-- OpenClaw Markdown sync
-- Automated lesson mining
-- Agent activity monitoring
-- API rate limiting implementation
+4. **Background Tasks**
+   - OpenClaw Markdown sync (export to filesystem)
+   - Automated lesson mining
+   - Rate limiting per agent
+   - Agent activity monitoring/stats
+
+#### Memory System - Frontend
+1. **Memory Settings** (`/app/memory`)
+   - LLM APIs tab - Configure API keys for each task
+   - Entities tab - Manage entity types and subtypes
+   - Lessons tab - Manage lesson types
+   - Channels tab - Manage channel types
+   - Agents tab - Create agents with API keys
+   - General tab - Chunking, PII, rate limiting
+
+2. **Memory Explorer** (`/app/memory/explore`)
+   - Semantic Search with filters
+   - Entity Timeline view
+   - Daily Log browser
+   - Lessons management (create, edit, approve, delete)
+
+3. **System Monitor** (`/app/memory/monitor`)
+   - Stats overview (memories, documents, lessons, agents)
+   - OpenClaw sync trigger
+   - Lesson mining trigger
+   - Agent activity visualization
 
 ---
 
 ## API Endpoints
 
-### Prompt Manager
-- `/api/auth/*` - Authentication
-- `/api/prompts/*` - Prompt CRUD
-- `/api/templates/*` - Templates
-- `/api/keys/*` - API keys
-- `/api/settings` - GitHub config
+### Authentication
+- All `/api/memory/config/*` endpoints require JWT (admin)
+- All `/api/memory/interactions` requires X-API-Key (agent)
+- All `/api/memory/admin/*` endpoints require JWT (admin)
 
-### Memory System - Config (✅ Complete - JWT Auth Required)
-- `/api/memory/config/entity-types` - Entity type CRUD
-- `/api/memory/config/entity-subtypes` - Subtype CRUD
-- `/api/memory/config/lesson-types` - Lesson type CRUD
-- `/api/memory/config/channel-types` - Channel type CRUD
-- `/api/memory/config/agents` - Agent management
-- `/api/memory/config/llm-configs` - LLM API configs
-- `/api/memory/config/system-prompts` - System prompts
-- `/api/memory/config/settings` - General settings
+### Memory System APIs
+```
+# Health
+GET  /api/memory/health
 
-### Memory System - Agent APIs (✅ Complete - API Key Auth Required)
-- `POST /api/memory/interactions` - Ingest interaction
-- `POST /api/memory/search` - Semantic search
-- `GET /api/memory/timeline/{type}/{id}` - Entity timeline
-- `GET/POST /api/memory/lessons` - Lessons management
+# Config (JWT auth)
+GET/POST/DELETE  /api/memory/config/entity-types
+GET/POST/DELETE  /api/memory/config/entity-subtypes
+GET/POST/DELETE  /api/memory/config/lesson-types
+GET/POST/DELETE  /api/memory/config/channel-types
+GET/POST/PATCH/DELETE  /api/memory/config/agents
+GET/POST/PUT/DELETE  /api/memory/config/llm-configs
+GET/POST/PUT/DELETE  /api/memory/config/system-prompts
+GET/PUT  /api/memory/config/settings
+
+# Agent APIs (API Key auth)
+POST  /api/memory/interactions
+GET   /api/memory/search
+GET   /api/memory/timeline/{entity_type}/{entity_id}
+GET   /api/memory/lessons
+
+# Admin UI APIs (JWT auth)
+GET   /api/memory/daily/{date}
+GET   /api/memory/memories/{id}
+POST  /api/memory/search
+GET   /api/memory/admin/timeline/{entity_type}/{entity_id}
+GET/POST/PUT/DELETE  /api/memory/admin/lessons
+GET   /api/memory/admin/stats
+GET   /api/memory/admin/stats/agents
+POST  /api/memory/admin/sync/openclaw
+POST  /api/memory/admin/tasks/mine-lessons
+```
 
 ---
 
@@ -168,21 +128,34 @@ Build a **Prompt Manager** (prompt versioning as code using GitHub) extended wit
 │   ├── server.py             # Main FastAPI app
 │   ├── memory_db.py          # Memory system DB
 │   ├── memory_models.py      # Pydantic models
-│   ├── memory_routes.py      # Memory API routes (with auth)
+│   ├── memory_routes.py      # Memory API routes
 │   ├── memory_services.py    # LLM/Vector services
-│   └── tests/
-│       ├── test_memory_system.py
-│       └── test_memory_auth.py
+│   └── memory_tasks.py       # Background tasks
 ├── frontend/
 │   ├── src/
 │   │   ├── pages/
 │   │   │   ├── MemorySettingsPage.jsx
-│   │   │   └── ... (other pages)
+│   │   │   ├── MemoryExplorerPage.jsx
+│   │   │   └── MemoryMonitorPage.jsx
 │   │   └── lib/api.js
-│   └── ...
 ├── gliner/
 │   ├── Dockerfile
 │   └── app.py
-├── docker-compose.yml
-└── memory/PRD.md
+└── docker-compose.yml
 ```
+
+---
+
+## Tech Stack
+- **Backend**: FastAPI, SQLite/PostgreSQL, Qdrant
+- **Frontend**: React, Tailwind, Shadcn/UI
+- **NER**: GLiNER2 (Docker service)
+- **Auth**: JWT (admin), API Keys (agents)
+
+---
+
+## Future Enhancements
+- Bulk import/export functionality
+- GLiNER model customization
+- Real-time activity dashboard
+- Webhook notifications for new lessons
