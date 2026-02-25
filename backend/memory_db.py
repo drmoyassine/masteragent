@@ -112,6 +112,25 @@ def init_memory_db():
             )
         """)
         
+        # LLM Integration Configurations (per-task API keys)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS memory_llm_configs (
+                id TEXT PRIMARY KEY,
+                task_type TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                name TEXT NOT NULL,
+                api_base_url TEXT DEFAULT '',
+                api_key_encrypted TEXT DEFAULT '',
+                api_key_preview TEXT DEFAULT '',
+                model_name TEXT DEFAULT '',
+                is_active INTEGER DEFAULT 1,
+                extra_config_json TEXT DEFAULT '{}',
+                created_at TEXT,
+                updated_at TEXT,
+                UNIQUE(task_type, is_active) ON CONFLICT REPLACE
+            )
+        """)
+        
         # Memory System Settings
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS memory_settings (
