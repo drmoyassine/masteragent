@@ -173,23 +173,29 @@ async def call_llm_vision(prompt: str, image_base64: str, mime_type: str = "imag
 # ============================================
 
 async def generate_embedding(text: str) -> List[float]:
-    """Generate embedding using OpenAI-compatible API"""
-    if not OPENAI_API_KEY:
-        logger.warning("OpenAI API key not configured")
+    """Generate embedding using admin-configured API"""
+    config = get_llm_config("embedding")
+    
+    if not config or not config.get("api_key_encrypted"):
+        logger.warning("Embedding config not configured or missing API key")
         return []
     
+    api_key = config.get("api_key_encrypted", "")
+    api_base = config.get("api_base_url", "https://api.openai.com/v1")
+    model = config.get("model_name", "text-embedding-3-small")
+    
     headers = {
-        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
     
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
-                f"{OPENAI_API_BASE}/embeddings",
+                f"{api_base}/embeddings",
                 headers=headers,
                 json={
-                    "model": EMBEDDING_MODEL,
+                    "model": model,
                     "input": text
                 }
             )
@@ -205,21 +211,27 @@ async def generate_embedding(text: str) -> List[float]:
 
 async def generate_embeddings_batch(texts: List[str]) -> List[List[float]]:
     """Generate embeddings for multiple texts"""
-    if not OPENAI_API_KEY or not texts:
+    config = get_llm_config("embedding")
+    
+    if not config or not config.get("api_key_encrypted") or not texts:
         return []
     
+    api_key = config.get("api_key_encrypted", "")
+    api_base = config.get("api_base_url", "https://api.openai.com/v1")
+    model = config.get("model_name", "text-embedding-3-small")
+    
     headers = {
-        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
     
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
-                f"{OPENAI_API_BASE}/embeddings",
+                f"{api_base}/embeddings",
                 headers=headers,
                 json={
-                    "model": EMBEDDING_MODEL,
+                    "model": model,
                     "input": texts
                 }
             )
