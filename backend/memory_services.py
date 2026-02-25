@@ -576,23 +576,71 @@ async def summarize_text(text: str) -> str:
         prompt_template = "Summarize this in 1-2 sentences:\n\n{text}"
     
     prompt = prompt_template.replace("{text}", text[:4000])  # Limit input
-    return await call_llm(prompt, max_tokens=200)
+    return await call_llm(prompt, max_tokens=200, task_type="summarization")
 
 # ============================================
-# Entity Extraction Service
+# Entity Extraction Service (GLiNER or LLM)
 # ============================================
 
-async def extract_entities(text: str) -> List[Dict[str, str]]:
-    """Extract entity mentions from text"""
-    if not text:
+async def extract_entities_gliner(text: str) -> List[Dict[str, str]]:
+    """Extract entities using GLiNER2 NER service"""
+    config = get_llm_config("entity_extraction")
+    
+    if not config:
         return []
     
+    # Check if using GLiNER provider
+    if config.get("provider") != "gliner":
+        return []
+    
+    gliner_url = config.get("api_base_url", GLINER_URL)
+    extra_config = config.get("extra_config", {})
+    threshold = extra_config.get("threshold", 0.5)
+    
+    # Entity labels to extract
+    labels = ["person", "organization", "location", "product", "event", "date"]
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{gliner_url}/extract",
+                json={
+                    "text": text[:4000],
+                    "labels": labels,
+                    "threshold": threshold
+                }
+            )
+            if response.status_code == 200:
+                data = response.json()
+                entities = []
+                for e in data.get("entities", []):
+                    # Map GLiNER entity types to our types
+                    entity_type = "Contact" if e.get("label") == "person" else (
+                        "Organization" if e.get("label") == "organization" else "Program"
+                    )
+                    entities.append({
+                        "type": entity_type,
+                        "name": e.get("text", ""),
+                        "role": "mentioned",
+                        "label": e.get("label", ""),
+                        "score": e.get("score", 0)
+                    })
+                return entities
+            else:
+                logger.error(f"GLiNER extraction failed: {response.status_code}")
+    except Exception as e:
+        logger.error(f"GLiNER extraction error: {e}")
+    
+    return []
+
+async def extract_entities_llm(text: str) -> List[Dict[str, str]]:
+    """Extract entities using LLM"""
     prompt_template = get_system_prompt("entity_extraction")
     if not prompt_template:
         return []
     
     prompt = prompt_template.replace("{text}", text[:4000])
-    response = await call_llm(prompt, max_tokens=500)
+    response = await call_llm(prompt, max_tokens=500, task_type="summarization")  # Use summarization LLM
     
     try:
         # Parse JSON response
@@ -603,3 +651,18 @@ async def extract_entities(text: str) -> List[Dict[str, str]]:
         pass
     
     return []
+
+async def extract_entities(text: str) -> List[Dict[str, str]]:
+    """Extract entity mentions from text using configured extractor"""
+    if not text:
+        return []
+    
+    config = get_llm_config("entity_extraction")
+    
+    if config and config.get("provider") == "gliner":
+        # Use GLiNER2 NER (default)
+        return await extract_entities_gliner(text)
+    else:
+        # Fallback to LLM-based extraction
+        return await extract_entities_llm(text)
+
