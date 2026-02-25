@@ -6,6 +6,56 @@ from pydantic import BaseModel, Field
 from enum import Enum
 
 # ============================================
+# LLM Integration Configuration Models
+# ============================================
+
+class LLMTaskType(str, Enum):
+    SUMMARIZATION = "summarization"
+    EMBEDDING = "embedding"
+    VISION = "vision"
+    ENTITY_EXTRACTION = "entity_extraction"
+    PII_SCRUBBING = "pii_scrubbing"
+
+class LLMProviderType(str, Enum):
+    OPENAI = "openai"
+    ANTHROPIC = "anthropic"
+    GEMINI = "gemini"
+    CUSTOM = "custom"
+    GLINER = "gliner"  # For entity extraction
+    ZENDATA = "zendata"  # For PII scrubbing
+
+class LLMConfigCreate(BaseModel):
+    task_type: str  # summarization, embedding, vision, entity_extraction, pii_scrubbing
+    provider: str  # openai, anthropic, gemini, custom, gliner, zendata
+    name: str
+    api_base_url: Optional[str] = ""
+    api_key: Optional[str] = ""
+    model_name: Optional[str] = ""
+    is_active: bool = True
+    extra_config: Optional[Dict[str, Any]] = {}
+
+class LLMConfigResponse(BaseModel):
+    id: str
+    task_type: str
+    provider: str
+    name: str
+    api_base_url: Optional[str]
+    api_key_preview: Optional[str]  # Only show preview, not full key
+    model_name: Optional[str]
+    is_active: bool
+    extra_config: Dict[str, Any]
+    created_at: str
+    updated_at: str
+
+class LLMConfigUpdate(BaseModel):
+    name: Optional[str] = None
+    api_base_url: Optional[str] = None
+    api_key: Optional[str] = None
+    model_name: Optional[str] = None
+    is_active: Optional[bool] = None
+    extra_config: Optional[Dict[str, Any]] = None
+
+# ============================================
 # Pydantic Models for API
 # ============================================
 
