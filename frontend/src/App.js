@@ -99,6 +99,7 @@ const AppContent = () => {
                 {/* Routes that work without GitHub config */}
                 <Route path="memory" element={<MemorySettingsPage />} />
                 <Route path="memory/explore" element={<MemoryExplorerPage />} />
+                <Route path="memory/monitor" element={<MemoryMonitorPage />} />
                 <Route path="setup" element={<SetupPage onConfigured={() => setIsConfigured(true)} />} />
                 
                 {/* Routes that require GitHub config */}
