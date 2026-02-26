@@ -1022,6 +1022,8 @@ async def delete_prompt(prompt_id: str, user: dict = Depends(require_auth)):
 # Sections Endpoints (folder-based versioning)
 @api_router.get("/prompts/{prompt_id}/sections")
 async def get_prompt_sections(prompt_id: str, version: str = "v1", user: dict = Depends(require_auth)):
+    from storage_service import get_storage_service
+    
     with get_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT folder_path FROM prompts WHERE id = ? AND user_id = ?", (prompt_id, user["id"]))
@@ -1030,35 +1032,32 @@ async def get_prompt_sections(prompt_id: str, version: str = "v1", user: dict = 
             raise HTTPException(status_code=404, detail="Prompt not found")
         folder_path = row["folder_path"]
     
-    # Version is now a folder: prompts/{prompt_name}/{version}/
-    version_path = f"{folder_path}/{version}"
-    
     try:
-        # Get files from GitHub (from version folder)
-        contents = await github_api_request("GET", f"/contents/{version_path}", user_id=user["id"])
-        if not contents:
+        storage_service = get_storage_service(user["id"])
+        content = await storage_service.get_prompt_content(folder_path, version)
+        
+        if not content:
             return []
         
         sections = []
-        for item in contents:
-            if item["name"].endswith(".md"):
-                # Parse order from filename
-                match = re.match(r'^(\d+)_(.+)\.md$', item["name"])
-                if match:
-                    order = int(match.group(1))
-                    name = match.group(2)
-                else:
-                    order = 99
-                    name = item["name"].replace(".md", "")
-                
-                sections.append({
-                    "filename": item["name"],
-                    "name": name,
-                    "order": order,
-                    "path": item["path"],
-                    "sha": item["sha"],
-                    "type": "file"
-                })
+        for section in content.get("sections", []):
+            filename = section.get("filename", "")
+            # Parse order from filename
+            match = re.match(r'^(\d+)_(.+)\.md$', filename)
+            if match:
+                order = int(match.group(1))
+                name = match.group(2)
+            else:
+                order = 99
+                name = filename.replace(".md", "")
+            
+            sections.append({
+                "filename": filename,
+                "name": name,
+                "order": order,
+                "path": f"{folder_path}/{version}/{filename}",
+                "type": "file"
+            })
         
         sections.sort(key=lambda x: x["order"])
         return sections
@@ -1068,6 +1067,8 @@ async def get_prompt_sections(prompt_id: str, version: str = "v1", user: dict = 
 
 @api_router.get("/prompts/{prompt_id}/sections/{filename}")
 async def get_section_content(prompt_id: str, filename: str, version: str = "v1", user: dict = Depends(require_auth)):
+    from storage_service import get_storage_service
+    
     with get_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT folder_path FROM prompts WHERE id = ? AND user_id = ?", (prompt_id, user["id"]))
@@ -1076,20 +1077,24 @@ async def get_section_content(prompt_id: str, filename: str, version: str = "v1"
             raise HTTPException(status_code=404, detail="Prompt not found")
         folder_path = row["folder_path"]
     
-    version_path = f"{folder_path}/{version}"
-    
-    import base64
-    file_data = await github_api_request("GET", f"/contents/{version_path}/{filename}", user_id=user["id"])
-    if not file_data:
-        raise HTTPException(status_code=404, detail="Section not found")
-    
-    content = base64.b64decode(file_data["content"]).decode("utf-8")
-    return {
-        "filename": filename,
-        "content": content,
-        "sha": file_data["sha"],
-        "variables": extract_variables(content)
-    }
+    try:
+        storage_service = get_storage_service(user["id"])
+        section_data = await storage_service.get_section(folder_path, filename, version)
+        
+        if not section_data:
+            raise HTTPException(status_code=404, detail="Section not found")
+        
+        content = section_data.get("content", "")
+        return {
+            "filename": filename,
+            "content": content,
+            "variables": extract_variables(content)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error fetching section: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch section: {str(e)}")
 
 @api_router.post("/prompts/{prompt_id}/sections")
 async def create_section(prompt_id: str, section_data: SectionCreate, version: str = "v1", user: dict = Depends(require_auth)):
