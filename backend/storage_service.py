@@ -20,7 +20,9 @@ from contextlib import contextmanager
 import sqlite3
 
 ROOT_DIR = Path(__file__).parent
-DB_PATH = ROOT_DIR / "prompt_manager.db"
+DB_DIR = ROOT_DIR / "db"
+DB_DIR.mkdir(parents=True, exist_ok=True)
+DB_PATH = DB_DIR / "prompt_manager.db"
 LOCAL_STORAGE_PATH = ROOT_DIR / "local_prompts"
 
 

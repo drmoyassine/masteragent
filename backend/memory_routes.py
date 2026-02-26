@@ -44,9 +44,11 @@ memory_router = APIRouter(prefix="/api/memory", tags=["Memory"])
 # ============================================
 
 ROOT_DIR = Path(__file__).parent
+DB_DIR = ROOT_DIR / "db"
+DB_DIR.mkdir(parents=True, exist_ok=True)
 SECRET_KEY = os.environ.get('JWT_SECRET_KEY', 'promptsrc_secret_key_change_in_production_2024')
 ALGORITHM = "HS256"
-DB_PATH = ROOT_DIR / "prompt_manager.db"
+DB_PATH = DB_DIR / "prompt_manager.db"
 
 def get_user_db():
     conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)

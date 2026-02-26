@@ -44,8 +44,11 @@ def hash_password(password: str) -> str:
 def verify_password(password: str, hashed: str) -> bool:
     return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
 
-# SQLite Database Setup
-DB_PATH = ROOT_DIR / "prompt_manager.db"
+# SQLite Database Setup - use /app/backend/db/ for persistence
+import os
+DB_DIR = ROOT_DIR / "db"
+DB_DIR.mkdir(parents=True, exist_ok=True)
+DB_PATH = DB_DIR / "prompt_manager.db"
 
 def get_db():
     conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)

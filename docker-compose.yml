@@ -27,6 +27,8 @@ services:
       - GLINER_URL=${GLINER_URL:-http://gliner:8002}
     volumes:
       - promptsrc_data:/app/backend/data
+      - promptsrc_prompts:/app/backend/local_prompts
+      - promptsrc_db:/app/backend/db
     depends_on:
       - qdrant
     restart: unless-stopped
@@ -61,5 +63,7 @@ services:
 
 volumes:
   promptsrc_data:
+  promptsrc_prompts:
+  promptsrc_db:
   qdrant_data:
   gliner_cache:
