@@ -1098,6 +1098,8 @@ async def get_section_content(prompt_id: str, filename: str, version: str = "v1"
 
 @api_router.post("/prompts/{prompt_id}/sections")
 async def create_section(prompt_id: str, section_data: SectionCreate, version: str = "v1", user: dict = Depends(require_auth)):
+    from storage_service import get_storage_service
+    
     with get_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT folder_path FROM prompts WHERE id = ? AND user_id = ?", (prompt_id, user["id"]))
@@ -1106,21 +1108,22 @@ async def create_section(prompt_id: str, section_data: SectionCreate, version: s
             raise HTTPException(status_code=404, detail="Prompt not found")
         folder_path = row["folder_path"]
     
-    version_path = f"{folder_path}/{version}"
-    
     # Get existing sections to determine order
     sections = await get_prompt_sections(prompt_id, version, user)
     order = section_data.order if section_data.order else (max([s["order"] for s in sections], default=0) + 1)
     
     filename = f"{str(order).zfill(2)}_{slugify(section_data.name)}.md"
     
-    import base64
-    content = base64.b64encode(section_data.content.encode()).decode()
-    
-    await github_api_request("PUT", f"/contents/{version_path}/{filename}", {
-        "message": f"Add section: {section_data.title}",
-        "content": content
-    }, user["id"])
+    try:
+        storage_service = get_storage_service(user["id"])
+        success = await storage_service.create_section(folder_path, filename, section_data.content, version)
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to create section")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error creating section: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to create section: {str(e)}")
     
     # Update timestamp
     now = datetime.now(timezone.utc).isoformat()
@@ -1132,6 +1135,8 @@ async def create_section(prompt_id: str, section_data: SectionCreate, version: s
 
 @api_router.put("/prompts/{prompt_id}/sections/{filename}")
 async def update_section(prompt_id: str, filename: str, section_data: SectionUpdate, version: str = "v1", user: dict = Depends(require_auth)):
+    from storage_service import get_storage_service
+    
     with get_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT folder_path FROM prompts WHERE id = ? AND user_id = ?", (prompt_id, user["id"]))
@@ -1140,21 +1145,16 @@ async def update_section(prompt_id: str, filename: str, section_data: SectionUpd
             raise HTTPException(status_code=404, detail="Prompt not found")
         folder_path = row["folder_path"]
     
-    version_path = f"{folder_path}/{version}"
-    
-    # Get current file SHA
-    file_data = await github_api_request("GET", f"/contents/{version_path}/{filename}", user_id=user["id"])
-    if not file_data:
-        raise HTTPException(status_code=404, detail="Section not found")
-    
-    import base64
-    content = base64.b64encode(section_data.content.encode()).decode()
-    
-    await github_api_request("PUT", f"/contents/{version_path}/{filename}", {
-        "message": f"Update section: {filename}",
-        "content": content,
-        "sha": file_data["sha"]
-    }, user["id"])
+    try:
+        storage_service = get_storage_service(user["id"])
+        success = await storage_service.update_section(folder_path, filename, section_data.content, version)
+        if not success:
+            raise HTTPException(status_code=404, detail="Section not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error updating section: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update section: {str(e)}")
     
     # Update timestamp
     now = datetime.now(timezone.utc).isoformat()
@@ -1166,6 +1166,8 @@ async def update_section(prompt_id: str, filename: str, section_data: SectionUpd
 
 @api_router.delete("/prompts/{prompt_id}/sections/{filename}")
 async def delete_section(prompt_id: str, filename: str, version: str = "v1", user: dict = Depends(require_auth)):
+    from storage_service import get_storage_service
+    
     with get_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT folder_path FROM prompts WHERE id = ? AND user_id = ?", (prompt_id, user["id"]))
@@ -1174,53 +1176,52 @@ async def delete_section(prompt_id: str, filename: str, version: str = "v1", use
             raise HTTPException(status_code=404, detail="Prompt not found")
         folder_path = row["folder_path"]
     
-    version_path = f"{folder_path}/{version}"
-    
-    # Get current file SHA
-    file_data = await github_api_request("GET", f"/contents/{version_path}/{filename}", user_id=user["id"])
-    if not file_data:
-        raise HTTPException(status_code=404, detail="Section not found")
-    
-    await github_api_request("DELETE", f"/contents/{version_path}/{filename}", {
-        "message": f"Delete section: {filename}",
-        "sha": file_data["sha"]
-    }, user["id"])
+    try:
+        storage_service = get_storage_service(user["id"])
+        success = await storage_service.delete_section(folder_path, filename, version)
+        if not success:
+            raise HTTPException(status_code=404, detail="Section not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error deleting section: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete section: {str(e)}")
     
     return {"message": "Section deleted"}
 
 @api_router.post("/prompts/{prompt_id}/sections/reorder")
-async def reorder_sections(prompt_id: str, reorder_data: SectionReorder, version: str = "main"):
+async def reorder_sections(prompt_id: str, reorder_data: SectionReorder, version: str = "v1", user: dict = Depends(require_auth)):
+    from storage_service import get_storage_service
+    
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT folder_path FROM prompts WHERE id = ?", (prompt_id,))
+        cursor.execute("SELECT folder_path FROM prompts WHERE id = ? AND user_id = ?", (prompt_id, user["id"]))
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Prompt not found")
         folder_path = row["folder_path"]
     
-    import base64
-    
-    for i, section in enumerate(reorder_data.sections):
-        old_filename = section["filename"]
-        name = section.get("name", old_filename.split("_", 1)[1].replace(".md", ""))
-        new_filename = f"{str(i + 1).zfill(2)}_{name}.md"
+    try:
+        storage_service = get_storage_service(user["id"])
         
-        if old_filename != new_filename:
-            # Get current content
-            file_data = await github_api_request("GET", f"/contents/{folder_path}/{old_filename}?ref={version}")
-            if file_data:
-                # Create new file
-                await github_api_request("PUT", f"/contents/{folder_path}/{new_filename}", {
-                    "message": f"Rename section: {old_filename} -> {new_filename}",
-                    "content": file_data["content"],
-                    "branch": version
-                })
-                # Delete old file
-                await github_api_request("DELETE", f"/contents/{folder_path}/{old_filename}", {
-                    "message": f"Remove old file: {old_filename}",
-                    "sha": file_data["sha"],
-                    "branch": version
-                })
+        for i, section in enumerate(reorder_data.sections):
+            old_filename = section["filename"]
+            name = section.get("name", old_filename.split("_", 1)[1].replace(".md", ""))
+            new_filename = f"{str(i + 1).zfill(2)}_{name}.md"
+            
+            if old_filename != new_filename:
+                # Get current content
+                section_data = await storage_service.get_section(folder_path, old_filename, version)
+                if section_data:
+                    # Create new file with new name
+                    await storage_service.create_section(folder_path, new_filename, section_data["content"], version)
+                    # Delete old file
+                    await storage_service.delete_section(folder_path, old_filename, version)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error reordering sections: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to reorder sections: {str(e)}")
     
     return {"message": "Sections reordered"}
 
