@@ -1,6 +1,6 @@
 # Progress Tracker
 
-> **Last Updated**: 2026-02-27T00:24:00Z
+> **Last Updated**: 2026-02-27T02:07:00Z
 > **Purpose**: Tracks current work status, completed features, and pending tasks.
 
 ---
@@ -16,8 +16,10 @@
 | Docker Deployment | ✅ Complete |
 | LLM Integration | ⚠️ Needs Configuration |
 | Background Tasks | ⚠️ Manual Trigger Only |
-| Local Storage Support | ✅ Complete (NEW) |
-| Login Redirect Fix | ✅ Complete (NEW) |
+| Local Storage Support | ✅ Complete |
+| Login Redirect Fix | ✅ Complete |
+| Version Consistency Fix | ✅ Complete (NEW) |
+| Documentation Update | ✅ Complete (NEW) |
 
 ---
 
@@ -78,10 +80,17 @@
 - [x] ConfigContext for configuration state management
 - [x] Warning banners for unconfigured storage
 
-### Bug Fixes (NEW - 2026-02-27)
+### Bug Fixes (2026-02-27)
 - [x] Login redirect race condition fixed (async login flow)
 - [x] Route content issue fixed (removed aggressive redirect to SetupPage)
 - [x] MainLayout warning banners for storage status
+- [x] Frontend-backend version consistency fixed (read `is_default` from API)
+- [x] Section endpoints now use storage service with local fallback
+
+### Documentation (2026-02-27)
+- [x] AGENTS.md updated with PowerShell syntax guidelines
+- [x] AGENTS.md updated with lessons learned section
+- [x] Memory bank files updated with recent changes
 
 ---
 

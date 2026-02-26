@@ -1,6 +1,6 @@
 # Active Context
 
-> **Last Updated**: 2026-02-27T00:26:00Z
+> **Last Updated**: 2026-02-27T02:07:00Z
 > **Purpose**: Tracks current session context, recent changes, and immediate next steps for AI assistants.
 
 ---
@@ -22,6 +22,8 @@
 - Added Docker volume mounts for data persistence
 - Fixed automatic fallback to local storage when GitHub not configured
 - Fixed section endpoints to use storage service (template sections now appear)
+- Fixed frontend-backend version consistency (frontend now reads `is_default` from API)
+- Updated AGENTS.md with PowerShell syntax guidelines and lessons learned
 
 ---
 

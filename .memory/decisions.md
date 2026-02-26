@@ -17,6 +17,7 @@
 | [ADR-006](#adr-006-react--shadcnui-for-frontend) | Frontend | ✅ Adopted |
 | [ADR-007](#adr-007-fastapi-for-backend) | Backend | ✅ Adopted |
 | [ADR-008](#adr-008-pluggable-storage-service) | Storage | ✅ Adopted |
+| [ADR-009](#adr-009-automatic-storage-fallback) | Storage | ✅ Adopted |
 
 ---
 
@@ -260,6 +261,41 @@ Implement a pluggable storage architecture with:
 - ConfigContext manages storage state in frontend
 - Warning banners indicate storage mode status
 - Local storage path: `backend/local_prompts/{user_id}/prompts/{slug}/v1/`
+
+---
+
+## ADR-009: Automatic Storage Fallback
+
+### Context
+Even with pluggable storage (ADR-008), users could encounter errors if:
+1. They select GitHub storage but haven't configured a GitHub token
+2. The GitHub token is revoked or expired
+3. They want to quickly test the system without any configuration
+
+### Decision
+Implement automatic fallback in `get_storage_service()`:
+- Check if `github_token` exists before returning GitHubStorageService
+- If no token, return LocalStorageService regardless of `storage_mode` setting
+- Log a warning when fallback occurs
+
+### Rationale
+- **Graceful Degradation**: System works even with misconfigured settings
+- **Better UX**: No cryptic errors when GitHub isn't configured
+- **Quick Start**: Users can create prompts immediately after signup
+- **Self-Healing**: System recovers automatically from config issues
+
+### Trade-offs
+| Pros | Cons |
+|------|------|
+| No configuration errors | May confuse users expecting GitHub |
+| Works out of the box | Silent fallback could hide issues |
+| Better first impression | Local files not synced to cloud |
+
+### Consequences
+- `get_storage_service()` is the single source of truth for storage
+- All endpoints must use this factory function
+- Warning logs help identify configuration issues
+- Users see warning banners in UI when using fallback
 
 ---
 

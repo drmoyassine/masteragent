@@ -46,3 +46,51 @@ REACT_APP_BACKEND_URL=http://localhost pytest tests/
 - Memory router prefix: `/api/memory`
 - LLM configs keyed by `task_type` (summarization, embedding, vision, entity_extraction, pii_scrubbing)
 - Test credentials: `admin@promptsrc.com` / `admin123`
+
+## Lessons Learned
+
+### PowerShell Syntax (Windows Environment)
+> **CRITICAL**: User runs PowerShell 7. Always use PowerShell syntax for commands.
+
+| Unix/Bash | PowerShell | Notes |
+|-----------|------------|-------|
+| `&&` | `;` | Command chaining |
+| `2>/dev/null` | `2>$null` | Redirect stderr to null |
+| `grep` | `Select-String` | Search text patterns |
+| `cat` | `Get-Content` | Read file contents |
+| `rm` | `Remove-Item` | Delete files/folders |
+| `cp` | `Copy-Item` | Copy files/folders |
+| `mv` | `Move-Item` | Move files/folders |
+
+**Examples:**
+```powershell
+# Chain commands
+cd backend ; python -m pytest tests/ -v
+
+# Redirect stderr
+curl -s http://localhost/api/health 2>$null
+
+# Search for pattern
+Get-Content server.py | Select-String "error"
+```
+
+### Frontend-Backend Version Consistency
+- Backend creates prompts with version **"v1"** (not "main")
+- Frontend must read `is_default` from versions API to set correct version
+- **Never hardcode version defaults** in frontend - always use API response
+- Related: [`PromptEditorPage.jsx`](frontend/src/pages/PromptEditorPage.jsx)
+
+### Storage Service Pattern
+- **GitHub is primary storage** when configured (has token)
+- **Automatic fallback to local** filesystem when GitHub not configured
+- All endpoints should use `get_storage_service()` factory function
+- Factory checks `github_token` existence before returning GitHub service
+- Related: [`storage_service.py`](backend/storage_service.py)
+
+### Docker Volume Mounts for Persistence
+- Database should be in separate `/db/` directory for volume mounting
+- Local prompts need their own volume mount (`promptsrc_prompts`)
+- Named volumes persist across container redeployments
+- Volume paths in `docker-compose.yml`:
+  - `promptsrc_db` → `/app/backend/db/`
+  - `promptsrc_prompts` → `/app/backend/local_prompts/`
