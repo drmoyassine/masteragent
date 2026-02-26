@@ -58,7 +58,7 @@ export default function AuthPage() {
                 response = await login({ email: formData.email, password: formData.password });
             }
             
-            authLogin(response.data.token);
+            await authLogin(response.data.token);
             toast.success(mode === "signup" ? "Account created successfully!" : "Welcome back!");
             navigate("/app");
         } catch (err) {

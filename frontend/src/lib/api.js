@@ -45,6 +45,7 @@ export const logout = () => {
 export const getSettings = () => api.get('/settings');
 export const saveSettings = (data) => api.post('/settings', data);
 export const deleteSettings = () => api.delete('/settings');
+export const setStorageMode = (storageMode) => api.post('/settings/storage-mode', { storage_mode: storageMode });
 
 // Templates
 export const getTemplates = () => api.get('/templates');

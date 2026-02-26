@@ -8,21 +8,25 @@ export default function AuthCallbackPage() {
     const { login } = useAuth();
 
     useEffect(() => {
-        const token = searchParams.get('token');
-        const error = searchParams.get('error');
+        const handleAuth = async () => {
+            const token = searchParams.get('token');
+            const error = searchParams.get('error');
 
-        if (error) {
-            console.error('Auth error:', error);
-            navigate('/?error=' + encodeURIComponent(error));
-            return;
-        }
+            if (error) {
+                console.error('Auth error:', error);
+                navigate('/?error=' + encodeURIComponent(error));
+                return;
+            }
 
-        if (token) {
-            login(token);
-            navigate('/app');
-        } else {
-            navigate('/');
-        }
+            if (token) {
+                await login(token);
+                navigate('/app');
+            } else {
+                navigate('/');
+            }
+        };
+
+        handleAuth();
     }, [searchParams, login, navigate]);
 
     return (

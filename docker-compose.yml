@@ -22,13 +22,13 @@ services:
       # Qdrant
       - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
       - QDRANT_API_KEY=${QDRANT_API_KEY:-}
-      # GLiNER2 NER Service
+      # GLiNER NER Service (optional)
+      - ENABLE_GLINER=${ENABLE_GLINER:-false}
       - GLINER_URL=${GLINER_URL:-http://gliner:8002}
     volumes:
       - promptsrc_data:/app/backend/data
     depends_on:
       - qdrant
-      - gliner
     restart: unless-stopped
 
   qdrant:
@@ -42,7 +42,12 @@ services:
       - QDRANT__SERVICE__GRPC_PORT=6334
     restart: unless-stopped
 
+  # GLiNER NER Service (optional - use profile to enable)
+  # To start with GLiNER: docker-compose --profile gliner up -d
+  # Or set ENABLE_GLINER=true in .env and use: docker-compose up -d
   gliner:
+    profiles:
+      - gliner
     build:
       context: ./gliner
       dockerfile: Dockerfile

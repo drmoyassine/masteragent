@@ -1,16 +1,20 @@
 import { NavLink } from "react-router-dom";
-import { 
-  LayoutDashboard, 
-  FileText, 
-  Key, 
+import {
+  LayoutDashboard,
+  FileText,
+  Key,
   Settings,
   Sparkles,
   LogOut,
   Brain,
   Search,
-  Activity
+  Activity,
+  AlertTriangle,
+  HardDrive,
+  Github
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
+import { useConfig } from "@/context/ConfigContext";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -22,9 +26,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useNavigate } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 
 export const MainLayout = ({ children }) => {
   const { user, logout } = useAuth();
+  const { isConfigured, storageMode, hasStorage } = useConfig();
   const navigate = useNavigate();
 
   const navItems = [
@@ -116,6 +122,42 @@ export const MainLayout = ({ children }) => {
       
       {/* Main Content */}
       <main className="main-content">
+        {/* Configuration Warning Banner */}
+        {!hasStorage && (
+          <Alert className="mx-6 mt-4 border-yellow-500/50 bg-yellow-500/10">
+            <AlertTriangle className="h-4 w-4 text-yellow-500" />
+            <AlertDescription className="text-yellow-200">
+              <span className="font-medium">Storage not configured.</span>
+              {" Connect GitHub or set up local storage to manage prompts. "}
+              <Button
+                variant="link"
+                className="p-0 h-auto text-yellow-300 underline"
+                onClick={() => navigate('/app/setup')}
+              >
+                Configure now
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )}
+        
+        {/* Storage Mode Indicator */}
+        {hasStorage && storageMode === 'local' && (
+          <Alert className="mx-6 mt-4 border-blue-500/50 bg-blue-500/10">
+            <HardDrive className="h-4 w-4 text-blue-500" />
+            <AlertDescription className="text-blue-200">
+              <span className="font-medium">Local Storage Mode.</span>
+              {" Prompts are stored locally. Connect GitHub for cloud sync and collaboration. "}
+              <Button
+                variant="link"
+                className="p-0 h-auto text-blue-300 underline"
+                onClick={() => navigate('/app/settings')}
+              >
+                Settings
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )}
+        
         {children}
       </main>
     </div>

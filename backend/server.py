@@ -90,11 +90,18 @@ def init_db():
                 github_token TEXT,
                 github_repo TEXT,
                 github_owner TEXT,
+                storage_mode TEXT DEFAULT 'github',
                 created_at TEXT,
                 updated_at TEXT,
                 FOREIGN KEY (user_id) REFERENCES users(id)
             )
         """)
+        
+        # Migration: Add storage_mode column if it doesn't exist
+        try:
+            cursor.execute("ALTER TABLE settings ADD COLUMN storage_mode TEXT DEFAULT 'github'")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
         
         # Prompts metadata table
         cursor.execute("""
@@ -334,6 +341,7 @@ class SettingsResponse(BaseModel):
     github_repo: Optional[str] = None
     github_owner: Optional[str] = None
     is_configured: bool = False
+    storage_mode: str = "github"  # 'github' or 'local'
 
 class PromptCreate(BaseModel):
     name: str
@@ -661,13 +669,21 @@ def extract_variables(content: str) -> List[str]:
 async def get_settings(user: dict = Depends(require_auth)):
     settings = get_github_settings(user["id"])
     if settings:
+        storage_mode = settings.get("storage_mode", "github")
+        # For github mode, check if token exists; for local mode, always configured
+        if storage_mode == "local":
+            is_configured = True
+        else:
+            is_configured = bool(settings.get("github_token"))
+        
         return SettingsResponse(
             id=settings["id"],
             github_repo=settings.get("github_repo"),
             github_owner=settings.get("github_owner"),
-            is_configured=bool(settings.get("github_token"))
+            is_configured=is_configured,
+            storage_mode=storage_mode
         )
-    return SettingsResponse(id=0, is_configured=False)
+    return SettingsResponse(id=0, is_configured=False, storage_mode="github")
 
 @api_router.post("/settings", response_model=SettingsResponse)
 async def save_settings(settings_data: SettingsCreate, user: dict = Depends(require_auth)):
@@ -753,6 +769,56 @@ async def delete_settings(user: dict = Depends(require_auth)):
         cursor = conn.cursor()
         cursor.execute("DELETE FROM settings WHERE user_id = ?", (user["id"],))
     return {"message": "Settings deleted"}
+
+class StorageModeUpdate(BaseModel):
+    storage_mode: str  # 'github' or 'local'
+
+@api_router.post("/settings/storage-mode", response_model=SettingsResponse)
+async def set_storage_mode(mode_data: StorageModeUpdate, user: dict = Depends(require_auth)):
+    """Set the storage mode for the user (github or local)."""
+    if mode_data.storage_mode not in ["github", "local"]:
+        raise HTTPException(status_code=400, detail="Invalid storage mode. Must be 'github' or 'local'")
+    
+    now = datetime.now(timezone.utc).isoformat()
+    
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM settings WHERE user_id = ?", (user["id"],))
+        existing = cursor.fetchone()
+        
+        if existing:
+            cursor.execute("""
+                UPDATE settings SET storage_mode = ?, updated_at = ?
+                WHERE user_id = ?
+            """, (mode_data.storage_mode, now, user["id"]))
+            settings_id = existing["id"]
+            storage_mode = mode_data.storage_mode
+            github_repo = existing.get("github_repo")
+            github_owner = existing.get("github_owner")
+            # For github mode, check if token exists; for local mode, always configured
+            if mode_data.storage_mode == "local":
+                is_configured = True
+            else:
+                is_configured = bool(existing.get("github_token"))
+        else:
+            # Create new settings entry with local mode
+            cursor.execute("""
+                INSERT INTO settings (user_id, storage_mode, created_at, updated_at)
+                VALUES (?, ?, ?, ?)
+            """, (user["id"], mode_data.storage_mode, now, now))
+            settings_id = cursor.lastrowid
+            storage_mode = mode_data.storage_mode
+            github_repo = None
+            github_owner = None
+            is_configured = (mode_data.storage_mode == "local")
+    
+    return SettingsResponse(
+        id=settings_id,
+        github_repo=github_repo,
+        github_owner=github_owner,
+        is_configured=is_configured,
+        storage_mode=storage_mode
+    )
 
 # Templates Endpoints
 @api_router.get("/templates")

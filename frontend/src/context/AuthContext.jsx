@@ -41,9 +41,9 @@ export const AuthProvider = ({ children }) => {
         checkAuth();
     }, [checkAuth]);
 
-    const login = (token) => {
+    const login = async (token) => {
         localStorage.setItem('auth_token', token);
-        checkAuth();
+        await checkAuth();
     };
 
     const logout = () => {
