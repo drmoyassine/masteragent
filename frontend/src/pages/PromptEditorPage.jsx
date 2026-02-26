@@ -116,6 +116,12 @@ export default function PromptEditorPage() {
       ]);
       setPrompt(promptRes.data);
       setVersions(versionsRes.data);
+
+      // Set currentVersion to the default version
+      const defaultVersion = versionsRes.data.find(v => v.is_default);
+      if (defaultVersion) {
+        setCurrentVersion(defaultVersion.branch_name);
+      }
     } catch (error) {
       toast.error("Failed to load prompt");
       navigate("/app");

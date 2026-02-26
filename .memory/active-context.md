@@ -19,6 +19,9 @@
 - Updated SetupPage with storage selection UI
 - Added ConfigContext for configuration state
 - Added warning banners in MainLayout
+- Added Docker volume mounts for data persistence
+- Fixed automatic fallback to local storage when GitHub not configured
+- Fixed section endpoints to use storage service (template sections now appear)
 
 ---
 
