@@ -688,10 +688,18 @@ class LocalStorageService(StorageService):
 
 
 def get_storage_service(user_id: str) -> StorageService:
-    """Factory function to get the appropriate storage service based on user settings."""
+    """Factory function to get the appropriate storage service based on user settings.
+    
+    Falls back to local storage if GitHub is not configured.
+    """
     storage_mode = get_storage_mode(user_id)
     
     if storage_mode == "local":
         return LocalStorageService(user_id)
     else:
+        # Check if GitHub is actually configured
+        settings = get_github_settings(user_id)
+        if not settings or not settings.get("github_token"):
+            # Fallback to local storage
+            return LocalStorageService(user_id)
         return GitHubStorageService(user_id)

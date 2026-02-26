@@ -862,6 +862,9 @@ async def get_prompts(user: dict = Depends(require_auth)):
 
 @api_router.post("/prompts", response_model=PromptResponse)
 async def create_prompt(prompt_data: PromptCreate, user: dict = Depends(require_auth)):
+    # Import storage service
+    from storage_service import get_storage_service, get_storage_mode
+    
     # Check plan limits
     with get_db_context() as conn:
         cursor = conn.cursor()
@@ -876,24 +879,13 @@ async def create_prompt(prompt_data: PromptCreate, user: dict = Depends(require_
     # Folder structure: prompts/{prompt_name}/v1/
     folder_path = f"prompts/{prompt_slug}"
     
-    settings = get_github_settings(user["id"])
-    if not settings:
-        raise HTTPException(status_code=400, detail="GitHub not configured")
-    
-    # Create prompt in DB
-    with get_db_context() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO prompts (id, user_id, name, description, folder_path, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (prompt_id, user["id"], prompt_data.name, prompt_data.description or "", folder_path, now, now))
-        
-        # Create default version (v1) - now folder-based
-        version_id = str(uuid.uuid4())
-        cursor.execute("""
-            INSERT INTO prompt_versions (id, prompt_id, version_name, branch_name, is_default, created_at)
-            VALUES (?, ?, ?, ?, 1, ?)
-        """, (version_id, prompt_id, "v1", "v1", now))
+    # Check storage mode - fallback to local if GitHub not configured
+    storage_mode = get_storage_mode(user["id"])
+    if storage_mode == "github":
+        settings = get_github_settings(user["id"])
+        if not settings or not settings.get("github_token"):
+            # Auto-fallback to local storage
+            storage_mode = "local"
     
     # Get template sections if template_id provided
     sections_to_create = []
@@ -905,50 +897,57 @@ async def create_prompt(prompt_data: PromptCreate, user: dict = Depends(require_
             if template_row:
                 sections_to_create = json.loads(template_row["sections"])
     
-    # Create manifest and sections in GitHub (in v1 folder)
-    version_path = f"{folder_path}/v1"
-    manifest = {
-        "prompt_id": prompt_slug,
-        "name": prompt_data.name,
-        "description": prompt_data.description or "",
-        "version": "v1",
-        "sections": [],
-        "variables": {}
-    }
-    
-    # Create manifest file in version folder
-    import base64
-    manifest_content = base64.b64encode(json.dumps(manifest, indent=2).encode()).decode()
-    await github_api_request("PUT", f"/contents/{version_path}/manifest.json", {
-        "message": f"Create prompt: {prompt_data.name} (v1)",
-        "content": manifest_content
-    }, user["id"])
-    
-    # Create sections from template in version folder
+    # Prepare sections for storage service
+    sections = []
     for section in sections_to_create:
         section_filename = f"{str(section['order']).zfill(2)}_{section['name']}.md"
-        section_content = base64.b64encode(section["content"].encode()).decode()
-        await github_api_request("PUT", f"/contents/{version_path}/{section_filename}", {
-            "message": f"Add section: {section['title']}",
-            "content": section_content
-        }, user["id"])
-        manifest["sections"].append(section_filename)
-        
-        # Extract variables from section
-        vars_in_section = extract_variables(section["content"])
-        for var in vars_in_section:
-            if var not in manifest["variables"]:
-                manifest["variables"][var] = {"required": True}
+        sections.append({
+            "filename": section_filename,
+            "content": section.get("content", ""),
+            "order": section.get("order", 1),
+            "name": section.get("name", "section")
+        })
     
-    # Update manifest with sections
-    if sections_to_create:
-        manifest_response = await github_api_request("GET", f"/contents/{version_path}/manifest.json", user_id=user["id"])
-        manifest_content = base64.b64encode(json.dumps(manifest, indent=2).encode()).decode()
-        await github_api_request("PUT", f"/contents/{version_path}/manifest.json", {
-            "message": "Update manifest with sections",
-            "content": manifest_content,
-            "sha": manifest_response["sha"]
-        }, user["id"])
+    # Extract variables from sections
+    variables = {}
+    for section in sections_to_create:
+        vars_in_section = extract_variables(section.get("content", ""))
+        for var in vars_in_section:
+            if var not in variables:
+                variables[var] = {"required": True}
+    
+    # Create prompt in DB first
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO prompts (id, user_id, name, description, folder_path, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (prompt_id, user["id"], prompt_data.name, prompt_data.description or "", folder_path, now, now))
+        
+        # Create default version (v1)
+        version_id = str(uuid.uuid4())
+        cursor.execute("""
+            INSERT INTO prompt_versions (id, prompt_id, version_name, branch_name, is_default, created_at)
+            VALUES (?, ?, ?, ?, 1, ?)
+        """, (version_id, prompt_id, "v1", "v1", now))
+    
+    # Use storage service to create prompt files
+    try:
+        storage_service = get_storage_service(user["id"])
+        await storage_service.create_prompt(
+            folder_path=folder_path,
+            name=prompt_data.name,
+            description=prompt_data.description or "",
+            sections=sections,
+            variables=variables
+        )
+    except Exception as e:
+        # If storage fails, clean up DB entry
+        with get_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM prompt_versions WHERE prompt_id = ?", (prompt_id,))
+            cursor.execute("DELETE FROM prompts WHERE id = ?", (prompt_id,))
+        raise HTTPException(status_code=500, detail=f"Failed to create prompt: {str(e)}")
     
     return PromptResponse(
         id=prompt_id,
