@@ -87,9 +87,14 @@
 /* Editor Layout */
 .editor-layout {
     display: grid;
-    grid-template-columns: 280px 1fr;
+    grid-template-columns: 280px 1fr 280px;
     gap: 0;
     height: calc(100vh - 140px);
+}
+
+/* When variables panel is hidden */
+.editor-layout:not(:has(.variables-sidebar)) {
+    grid-template-columns: 280px 1fr;
 }
 
 .section-sidebar {
@@ -124,6 +129,15 @@
     overflow: hidden;
     display: flex;
     flex-direction: column;
+}
+
+/* Variables Sidebar */
+.variables-sidebar {
+    border-left: 1px solid hsl(240 4% 16%);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background-color: hsl(240 10% 3.9%);
 }
 
 /* Code/Markdown textarea */

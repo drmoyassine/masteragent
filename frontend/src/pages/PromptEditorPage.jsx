@@ -13,6 +13,7 @@ import {
   Check,
   ChevronDown,
   AlertCircle,
+  Braces,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -55,8 +56,11 @@ import {
   getPromptVersions,
   createVersion,
   renderPrompt,
+  getAvailableVariables,
 } from "@/lib/api";
 import { toast } from "sonner";
+import VariablesPanel from "@/components/VariablesPanel";
+import VariableAutocomplete from "@/components/VariableAutocomplete";
 
 export default function PromptEditorPage() {
   const { promptId } = useParams();
@@ -93,6 +97,12 @@ export default function PromptEditorPage() {
 
   // Extracted variables
   const [variables, setVariables] = useState([]);
+  
+  // Available variables for autocomplete
+  const [availableVariables, setAvailableVariables] = useState([]);
+  
+  // Variables panel visibility
+  const [showVariablesPanel, setShowVariablesPanel] = useState(true);
 
   useEffect(() => {
     loadPromptData();
@@ -101,6 +111,7 @@ export default function PromptEditorPage() {
   useEffect(() => {
     if (currentVersion) {
       loadSections();
+      loadAvailableVariables();
     }
   }, [currentVersion]);
 
@@ -156,6 +167,20 @@ export default function PromptEditorPage() {
     } catch (error) {
       toast.error("Failed to load section content");
     }
+  };
+
+  const loadAvailableVariables = async () => {
+    try {
+      const response = await getAvailableVariables(promptId, currentVersion);
+      setAvailableVariables(response.data || []);
+    } catch (error) {
+      console.error("Failed to load available variables:", error);
+      // Don't show toast for this - it's not critical
+    }
+  };
+
+  const handleVariablesChange = () => {
+    loadAvailableVariables();
   };
 
   const handleSaveSection = async () => {
@@ -363,6 +388,17 @@ export default function PromptEditorPage() {
             Render
           </Button>
 
+          {/* Variables Toggle Button */}
+          <Button
+            variant={showVariablesPanel ? "default" : "outline"}
+            onClick={() => setShowVariablesPanel(!showVariablesPanel)}
+            className="font-mono"
+            data-testid="toggle-variables-btn"
+          >
+            <Braces className="w-4 h-4 mr-2" />
+            Variables
+          </Button>
+
           {/* Save Button */}
           <Button
             onClick={handleSaveSection}
@@ -473,14 +509,15 @@ export default function PromptEditorPage() {
               </div>
 
               <div className="editor-content">
-                <textarea
+                <VariableAutocomplete
                   value={sectionContent}
                   onChange={(e) => {
                     setSectionContent(e.target.value);
                     setVariables(extractVariablesFromContent(e.target.value));
                   }}
+                  variables={availableVariables}
                   className="code-editor"
-                  placeholder="Write your prompt section content here..."
+                  placeholder="Write your prompt section content here... Use @ to insert variables"
                   data-testid="section-editor"
                 />
               </div>
@@ -496,6 +533,17 @@ export default function PromptEditorPage() {
             </div>
           )}
         </div>
+
+        {/* Variables Sidebar */}
+        {showVariablesPanel && (
+          <div className="variables-sidebar">
+            <VariablesPanel
+              promptId={promptId}
+              version={currentVersion}
+              onVariablesChange={handleVariablesChange}
+            />
+          </div>
+        )}
       </div>
 
       {/* New Section Dialog */}

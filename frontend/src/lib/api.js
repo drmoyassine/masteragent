@@ -153,4 +153,28 @@ export const createLessonAdmin = (data) => api.post('/memory/admin/lessons', dat
 export const updateLessonAdmin = (id, data) => api.put(`/memory/admin/lessons/${id}`, data);
 export const deleteLessonAdmin = (id) => api.delete(`/memory/admin/lessons/${id}`);
 
+// ============================================
+// Variables System APIs
+// ============================================
+
+// Account Variables
+export const getAccountVariables = () => api.get('/account-variables');
+export const createAccountVariable = (data) => api.post('/account-variables', data);
+export const updateAccountVariable = (name, data) => api.put(`/account-variables/${name}`, data);
+export const deleteAccountVariable = (name) => api.delete(`/account-variables/${name}`);
+
+// Prompt Variables
+export const getPromptVariables = (promptId, version = 'v1') =>
+    api.get(`/prompts/${promptId}/variables`, { params: { version } });
+export const createPromptVariable = (promptId, data, version = 'v1') =>
+    api.post(`/prompts/${promptId}/variables`, { ...data, version });
+export const updatePromptVariable = (promptId, name, data, version = 'v1') =>
+    api.put(`/prompts/${promptId}/variables/${name}`, { ...data, version });
+export const deletePromptVariable = (promptId, name, version = 'v1') =>
+    api.delete(`/prompts/${promptId}/variables/${name}`, { params: { version } });
+
+// Combined (for autocomplete)
+export const getAvailableVariables = (promptId, version = 'v1') =>
+    api.get(`/prompts/${promptId}/available-variables`, { params: { version } });
+
 export default api;

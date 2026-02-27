@@ -156,6 +156,38 @@ def init_db():
             )
         """)
         
+        # Account-level variables (accessible across all prompts)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS account_variables (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                value TEXT,
+                description TEXT,
+                created_at TEXT,
+                updated_at TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                UNIQUE(user_id, name)
+            )
+        """)
+        
+        # Prompt-level variables (specific to a prompt version)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS prompt_variables (
+                id TEXT PRIMARY KEY,
+                prompt_id TEXT NOT NULL,
+                version TEXT NOT NULL DEFAULT 'v1',
+                name TEXT NOT NULL,
+                value TEXT,
+                description TEXT,
+                required INTEGER DEFAULT 0,
+                created_at TEXT,
+                updated_at TEXT,
+                FOREIGN KEY (prompt_id) REFERENCES prompts(id),
+                UNIQUE(prompt_id, version, name)
+            )
+        """)
+        
         # Insert default templates
         cursor.execute("SELECT COUNT(*) FROM templates")
         if cursor.fetchone()[0] == 0:
@@ -402,6 +434,39 @@ class APIKeyResponse(BaseModel):
 
 class APIKeyCreateResponse(APIKeyResponse):
     key: str  # Full key only shown on creation
+
+# Variable Models
+class VariableBase(BaseModel):
+    name: str
+    value: Optional[str] = None
+    description: Optional[str] = None
+
+class VariableCreate(VariableBase):
+    pass
+
+class VariableUpdate(BaseModel):
+    value: Optional[str] = None
+    description: Optional[str] = None
+
+class VariableResponse(VariableBase):
+    id: str
+    created_at: str
+    updated_at: str
+
+class PromptVariableResponse(VariableResponse):
+    prompt_id: str
+    version: str
+    required: bool
+
+class AccountVariableResponse(VariableResponse):
+    user_id: str
+
+class AvailableVariableResponse(BaseModel):
+    name: str
+    value: Optional[str] = None
+    description: Optional[str] = None
+    source: str  # 'account', 'prompt', or 'runtime'
+    required: bool = False
 
 # Helper Functions
 def get_github_settings(user_id: str = None):
@@ -654,12 +719,34 @@ def slugify(text: str) -> str:
     text = re.sub(r'[-\s]+', '_', text)
     return text
 
-def inject_variables(content: str, variables: dict) -> str:
-    """Simple Mustache-style variable injection"""
+def inject_variables(content: str, variables: dict, prompt_id: str = None, user_id: str = None, version: str = "v1") -> str:
+    """Inject variables with resolution order: runtime → prompt → account → default"""
+    resolved = {}
+    
+    # 3. Account-level variables (lowest priority)
+    if user_id:
+        with get_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT name, value FROM account_variables WHERE user_id = ?", (user_id,))
+            for row in cursor.fetchall():
+                resolved[row["name"]] = row["value"]
+    
+    # 2. Prompt-level variables (medium priority)
+    if prompt_id:
+        with get_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT name, value FROM prompt_variables WHERE prompt_id = ? AND version = ?", (prompt_id, version))
+            for row in cursor.fetchall():
+                resolved[row["name"]] = row["value"]
+    
+    # 1. Runtime values (highest priority)
+    resolved.update(variables)
+    
+    # Apply substitution
     result = content
-    for key, value in variables.items():
-        # Simple variable replacement {{variable}}
-        result = re.sub(r'\{\{\s*' + re.escape(key) + r'\s*\}\}', str(value), result)
+    for key, value in resolved.items():
+        if value is not None:
+            result = re.sub(r'\{\{\s*' + re.escape(key) + r'\s*\}\}', str(value), result)
     return result
 
 def extract_variables(content: str) -> List[str]:
@@ -1279,6 +1366,7 @@ async def render_prompt(prompt_id: str, version: str, render_data: RenderRequest
         if not prompt:
             raise HTTPException(status_code=404, detail="Prompt not found")
         folder_path = prompt["folder_path"]
+        user_id = prompt["user_id"]  # Get user_id for variable resolution
     
     # Get sections
     sections = await get_prompt_sections(prompt_id, version)
@@ -1296,9 +1384,14 @@ async def render_prompt(prompt_id: str, version: str, render_data: RenderRequest
             content = base64.b64decode(file_data["content"]).decode("utf-8")
             all_variables.update(extract_variables(content))
             
-            # Inject variables
-            if render_data.variables:
-                content = inject_variables(content, render_data.variables)
+            # Inject variables with full resolution order: runtime → prompt → account
+            content = inject_variables(
+                content,
+                render_data.variables or {},
+                prompt_id=prompt_id,
+                user_id=user_id,
+                version=version
+            )
             
             compiled_parts.append(content)
             sections_used.append(section["filename"])
@@ -1308,7 +1401,7 @@ async def render_prompt(prompt_id: str, version: str, render_data: RenderRequest
     remaining_vars = extract_variables(compiled_prompt)
     if remaining_vars:
         raise HTTPException(
-            status_code=400, 
+            status_code=400,
             detail={
                 "error": "Missing required variables",
                 "missing": remaining_vars
@@ -1358,6 +1451,307 @@ async def delete_api_key(key_id: str):
         cursor = conn.cursor()
         cursor.execute("DELETE FROM api_keys WHERE id = ?", (key_id,))
     return {"message": "API key deleted"}
+
+# =====================
+# Account Variables Endpoints
+# =====================
+
+@api_router.get("/account-variables", response_model=List[AccountVariableResponse])
+async def list_account_variables(user: dict = Depends(require_auth)):
+    """List all account-level variables for the current user"""
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM account_variables WHERE user_id = ? ORDER BY name",
+            (user["id"],)
+        )
+        variables = cursor.fetchall()
+        return [
+            AccountVariableResponse(
+                id=row["id"],
+                user_id=row["user_id"],
+                name=row["name"],
+                value=row["value"],
+                description=row["description"],
+                created_at=row["created_at"],
+                updated_at=row["updated_at"]
+            )
+            for row in variables
+        ]
+
+@api_router.post("/account-variables", response_model=AccountVariableResponse)
+async def create_account_variable(data: VariableCreate, user: dict = Depends(require_auth)):
+    """Create a new account-level variable"""
+    now = datetime.now(timezone.utc).isoformat()
+    var_id = str(uuid.uuid4())
+    
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        # Check if variable with this name already exists
+        cursor.execute(
+            "SELECT id FROM account_variables WHERE user_id = ? AND name = ?",
+            (user["id"], data.name)
+        )
+        if cursor.fetchone():
+            raise HTTPException(status_code=400, detail=f"Variable '{data.name}' already exists")
+        
+        cursor.execute(
+            """INSERT INTO account_variables (id, user_id, name, value, description, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (var_id, user["id"], data.name, data.value, data.description, now, now)
+        )
+    
+    return AccountVariableResponse(
+        id=var_id,
+        user_id=user["id"],
+        name=data.name,
+        value=data.value,
+        description=data.description,
+        created_at=now,
+        updated_at=now
+    )
+
+@api_router.put("/account-variables/{name}", response_model=AccountVariableResponse)
+async def update_account_variable(name: str, data: VariableUpdate, user: dict = Depends(require_auth)):
+    """Update an existing account-level variable"""
+    now = datetime.now(timezone.utc).isoformat()
+    
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM account_variables WHERE user_id = ? AND name = ?",
+            (user["id"], name)
+        )
+        existing = cursor.fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail=f"Variable '{name}' not found")
+        
+        # Update only provided fields
+        new_value = data.value if data.value is not None else existing["value"]
+        new_description = data.description if data.description is not None else existing["description"]
+        
+        cursor.execute(
+            """UPDATE account_variables
+               SET value = ?, description = ?, updated_at = ?
+               WHERE user_id = ? AND name = ?""",
+            (new_value, new_description, now, user["id"], name)
+        )
+    
+    return AccountVariableResponse(
+        id=existing["id"],
+        user_id=user["id"],
+        name=name,
+        value=new_value,
+        description=new_description,
+        created_at=existing["created_at"],
+        updated_at=now
+    )
+
+@api_router.delete("/account-variables/{name}")
+async def delete_account_variable(name: str, user: dict = Depends(require_auth)):
+    """Delete an account-level variable"""
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id FROM account_variables WHERE user_id = ? AND name = ?",
+            (user["id"], name)
+        )
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail=f"Variable '{name}' not found")
+        
+        cursor.execute(
+            "DELETE FROM account_variables WHERE user_id = ? AND name = ?",
+            (user["id"], name)
+        )
+    
+    return {"message": f"Variable '{name}' deleted"}
+
+# =====================
+# Prompt Variables Endpoints
+# =====================
+
+@api_router.get("/prompts/{prompt_id}/variables", response_model=List[PromptVariableResponse])
+async def list_prompt_variables(prompt_id: str, version: str = "v1", user: dict = Depends(require_auth)):
+    """List all variables for a specific prompt version"""
+    # Verify prompt exists and belongs to user
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM prompts WHERE id = ?", (prompt_id,))
+        prompt = cursor.fetchone()
+        if not prompt:
+            raise HTTPException(status_code=404, detail="Prompt not found")
+        
+        cursor.execute(
+            """SELECT * FROM prompt_variables
+               WHERE prompt_id = ? AND version = ?
+               ORDER BY name""",
+            (prompt_id, version)
+        )
+        variables = cursor.fetchall()
+        
+        return [
+            PromptVariableResponse(
+                id=row["id"],
+                prompt_id=row["prompt_id"],
+                version=row["version"],
+                name=row["name"],
+                value=row["value"],
+                description=row["description"],
+                required=bool(row["required"]),
+                created_at=row["created_at"],
+                updated_at=row["updated_at"]
+            )
+            for row in variables
+        ]
+
+@api_router.post("/prompts/{prompt_id}/variables", response_model=PromptVariableResponse)
+async def create_prompt_variable(prompt_id: str, data: VariableCreate, version: str = "v1", user: dict = Depends(require_auth)):
+    """Create a new prompt-level variable"""
+    now = datetime.now(timezone.utc).isoformat()
+    var_id = str(uuid.uuid4())
+    
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        # Verify prompt exists
+        cursor.execute("SELECT * FROM prompts WHERE id = ?", (prompt_id,))
+        prompt = cursor.fetchone()
+        if not prompt:
+            raise HTTPException(status_code=404, detail="Prompt not found")
+        
+        # Check if variable with this name already exists for this version
+        cursor.execute(
+            "SELECT id FROM prompt_variables WHERE prompt_id = ? AND version = ? AND name = ?",
+            (prompt_id, version, data.name)
+        )
+        if cursor.fetchone():
+            raise HTTPException(status_code=400, detail=f"Variable '{data.name}' already exists for this version")
+        
+        cursor.execute(
+            """INSERT INTO prompt_variables (id, prompt_id, version, name, value, description, required, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)""",
+            (var_id, prompt_id, version, data.name, data.value, data.description, now, now)
+        )
+    
+    return PromptVariableResponse(
+        id=var_id,
+        prompt_id=prompt_id,
+        version=version,
+        name=data.name,
+        value=data.value,
+        description=data.description,
+        required=False,
+        created_at=now,
+        updated_at=now
+    )
+
+@api_router.put("/prompts/{prompt_id}/variables/{name}", response_model=PromptVariableResponse)
+async def update_prompt_variable(prompt_id: str, name: str, data: VariableUpdate, version: str = "v1", user: dict = Depends(require_auth)):
+    """Update an existing prompt-level variable"""
+    now = datetime.now(timezone.utc).isoformat()
+    
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM prompt_variables WHERE prompt_id = ? AND version = ? AND name = ?",
+            (prompt_id, version, name)
+        )
+        existing = cursor.fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail=f"Variable '{name}' not found")
+        
+        # Update only provided fields
+        new_value = data.value if data.value is not None else existing["value"]
+        new_description = data.description if data.description is not None else existing["description"]
+        
+        cursor.execute(
+            """UPDATE prompt_variables
+               SET value = ?, description = ?, updated_at = ?
+               WHERE prompt_id = ? AND version = ? AND name = ?""",
+            (new_value, new_description, now, prompt_id, version, name)
+        )
+    
+    return PromptVariableResponse(
+        id=existing["id"],
+        prompt_id=prompt_id,
+        version=version,
+        name=name,
+        value=new_value,
+        description=new_description,
+        required=bool(existing["required"]),
+        created_at=existing["created_at"],
+        updated_at=now
+    )
+
+@api_router.delete("/prompts/{prompt_id}/variables/{name}")
+async def delete_prompt_variable(prompt_id: str, name: str, version: str = "v1", user: dict = Depends(require_auth)):
+    """Delete a prompt-level variable"""
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id FROM prompt_variables WHERE prompt_id = ? AND version = ? AND name = ?",
+            (prompt_id, version, name)
+        )
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail=f"Variable '{name}' not found")
+        
+        cursor.execute(
+            "DELETE FROM prompt_variables WHERE prompt_id = ? AND version = ? AND name = ?",
+            (prompt_id, version, name)
+        )
+    
+    return {"message": f"Variable '{name}' deleted"}
+
+# =====================
+# Available Variables Endpoint (for autocomplete)
+# =====================
+
+@api_router.get("/prompts/{prompt_id}/available-variables", response_model=List[AvailableVariableResponse])
+async def get_available_variables(prompt_id: str, version: str = "v1", user: dict = Depends(require_auth)):
+    """Get all available variables for a prompt (prompt-level + account-level)"""
+    variables = []
+    seen_names = set()
+    
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        
+        # Verify prompt exists
+        cursor.execute("SELECT * FROM prompts WHERE id = ?", (prompt_id,))
+        prompt = cursor.fetchone()
+        if not prompt:
+            raise HTTPException(status_code=404, detail="Prompt not found")
+        
+        # Get prompt-level variables (higher priority)
+        cursor.execute(
+            "SELECT * FROM prompt_variables WHERE prompt_id = ? AND version = ?",
+            (prompt_id, version)
+        )
+        for row in cursor.fetchall():
+            seen_names.add(row["name"])
+            variables.append(AvailableVariableResponse(
+                name=row["name"],
+                value=row["value"],
+                description=row["description"],
+                source="prompt",
+                required=bool(row["required"])
+            ))
+        
+        # Get account-level variables (if not already defined at prompt level)
+        cursor.execute(
+            "SELECT * FROM account_variables WHERE user_id = ?",
+            (user["id"],)
+        )
+        for row in cursor.fetchall():
+            if row["name"] not in seen_names:
+                seen_names.add(row["name"])
+                variables.append(AvailableVariableResponse(
+                    name=row["name"],
+                    value=row["value"],
+                    description=row["description"],
+                    source="account",
+                    required=False
+                ))
+    
+    return variables
 
 # Health check
 @api_router.get("/health")
