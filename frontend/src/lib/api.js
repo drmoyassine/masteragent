@@ -1,6 +1,7 @@
 import axios from 'axios';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+// Use empty string for relative URLs (production) or env variable (development)
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API_BASE = `${BACKEND_URL}/api`;
 
 const api = axios.create({
