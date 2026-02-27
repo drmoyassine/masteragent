@@ -7,7 +7,7 @@ services:
       args:
         REACT_APP_BACKEND_URL: ${REACT_APP_BACKEND_URL:-http://localhost}
     ports:
-      - "80:80"
+      - "${PORT:-8080}:80"
     environment:
       # JWT & Auth
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-change_this_secret_in_production}
