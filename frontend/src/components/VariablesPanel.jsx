@@ -29,12 +29,14 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   getPromptVariables,
   createPromptVariable,
   updatePromptVariable,
   deletePromptVariable,
   getAccountVariables,
+  createAccountVariable,
 } from "@/lib/api";
 import { toast } from "sonner";
 
@@ -61,6 +63,7 @@ export default function VariablesPanel({ promptId, version, onVariablesChange })
     value: "",
     description: "",
     required: false,
+    scope: "prompt", // "prompt" or "account"
   });
 
   useEffect(() => {
@@ -100,8 +103,20 @@ export default function VariablesPanel({ promptId, version, onVariablesChange })
     }
 
     try {
-      await createPromptVariable(promptId, formData, version);
-      toast.success("Variable created");
+      if (formData.scope === "account") {
+        // Create account-level variable
+        await createAccountVariable({
+          name: formData.name,
+          value: formData.value,
+          description: formData.description,
+          required: formData.required,
+        });
+        toast.success("Account variable created");
+      } else {
+        // Create prompt-level variable
+        await createPromptVariable(promptId, formData, version);
+        toast.success("Prompt variable created");
+      }
       setEditDialog(false);
       resetForm();
       loadVariables();
@@ -169,6 +184,7 @@ export default function VariablesPanel({ promptId, version, onVariablesChange })
       value: "",
       description: "",
       required: false,
+      scope: "prompt",
     });
     setSelectedVariable(null);
   };
@@ -338,6 +354,39 @@ export default function VariablesPanel({ promptId, version, onVariablesChange })
           </DialogHeader>
 
           <div className="space-y-4 py-4">
+            {/* Scope Selection - only show when creating new variable */}
+            {!selectedVariable && (
+              <div className="space-y-2">
+                <Label>Variable Scope</Label>
+                <RadioGroup
+                  value={formData.scope}
+                  onValueChange={(value) => setFormData({ ...formData, scope: value })}
+                  className="flex flex-col space-y-1"
+                >
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="prompt" id="scope-prompt" data-testid="scope-prompt" />
+                    <Label htmlFor="scope-prompt" className="font-normal cursor-pointer">
+                      <span className="flex items-center gap-1">
+                        <FileText className="w-3 h-3" />
+                        Prompt Level
+                      </span>
+                      <span className="text-xs text-muted-foreground block">Only available in this prompt</span>
+                    </Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="account" id="scope-account" data-testid="scope-account" />
+                    <Label htmlFor="scope-account" className="font-normal cursor-pointer">
+                      <span className="flex items-center gap-1">
+                        <Building className="w-3 h-3" />
+                        Account Level
+                      </span>
+                      <span className="text-xs text-muted-foreground block">Available in all prompts</span>
+                    </Label>
+                  </div>
+                </RadioGroup>
+              </div>
+            )}
+
             <div className="space-y-2">
               <Label htmlFor="name">Name</Label>
               <Input

@@ -95,9 +95,6 @@ export default function PromptEditorPage() {
   const [renderError, setRenderError] = useState(null);
   const [copied, setCopied] = useState(false);
 
-  // Extracted variables
-  const [variables, setVariables] = useState([]);
-  
   // Available variables for autocomplete
   const [availableVariables, setAvailableVariables] = useState([]);
   
@@ -163,7 +160,6 @@ export default function PromptEditorPage() {
       setSelectedSection(section);
       setSectionContent(response.data.content);
       setOriginalContent(response.data.content);
-      setVariables(response.data.variables || []);
     } catch (error) {
       toast.error("Failed to load section content");
     }
@@ -295,21 +291,10 @@ export default function PromptEditorPage() {
     }
   };
 
-  const extractVariablesFromContent = useCallback((content) => {
-    const pattern = /\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}/g;
-    const matches = [...content.matchAll(pattern)];
-    return [...new Set(matches.map((m) => m[1]))];
-  }, []);
-
-  // Get all variables from all sections for render dialog
+  // Get all variables for render dialog from availableVariables (API)
   const getAllVariables = useCallback(() => {
-    const allVars = new Set();
-    // Add variables from current section
-    variables.forEach((v) => allVars.add(v));
-    // Also check current content
-    extractVariablesFromContent(sectionContent).forEach((v) => allVars.add(v));
-    return [...allVars];
-  }, [variables, sectionContent, extractVariablesFromContent]);
+    return availableVariables.map(v => v.name);
+  }, [availableVariables]);
 
   if (loading) {
     return (
@@ -479,23 +464,6 @@ export default function PromptEditorPage() {
                   )}
                 </div>
                 <div className="flex items-center gap-2">
-                  {variables.length > 0 && (
-                    <div className="flex items-center gap-1 mr-2">
-                      <span className="text-xs text-muted-foreground font-mono">
-                        Variables:
-                      </span>
-                      {variables.slice(0, 3).map((v) => (
-                        <Badge key={v} variant="secondary" className="text-xs font-mono">
-                          {`{{${v}}}`}
-                        </Badge>
-                      ))}
-                      {variables.length > 3 && (
-                        <Badge variant="secondary" className="text-xs font-mono">
-                          +{variables.length - 3}
-                        </Badge>
-                      )}
-                    </div>
-                  )}
                   <Button
                     variant="ghost"
                     size="sm"
@@ -511,10 +479,7 @@ export default function PromptEditorPage() {
               <div className="editor-content">
                 <VariableAutocomplete
                   value={sectionContent}
-                  onChange={(e) => {
-                    setSectionContent(e.target.value);
-                    setVariables(extractVariablesFromContent(e.target.value));
-                  }}
+                  onChange={(e) => setSectionContent(e.target.value)}
                   variables={availableVariables}
                   className="code-editor"
                   placeholder="Write your prompt section content here... Use @ to insert variables"

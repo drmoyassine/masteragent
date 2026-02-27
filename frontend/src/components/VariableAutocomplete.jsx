@@ -44,9 +44,19 @@ export default function VariableAutocomplete({
   const [triggerPosition, setTriggerPosition] = useState({ top: 0, left: 0 });
   const [triggerIndex, setTriggerIndex] = useState(-1);
   
+  // Debug: log variables to diagnose empty array issues
+  useEffect(() => {
+    console.log("[VariableAutocomplete] Variables received:", variables);
+  }, [variables]);
+  
   // Separate variables by source
   const promptVariables = variables.filter(v => v.source === "prompt");
   const accountVariables = variables.filter(v => v.source === "account");
+  
+  // Debug: log filtered variables
+  useEffect(() => {
+    console.log("[VariableAutocomplete] Prompt vars:", promptVariables.length, "Account vars:", accountVariables.length);
+  }, [promptVariables.length, accountVariables.length]);
   
   // Filter variables based on search query
   const filteredPromptVars = promptVariables.filter(v => 
@@ -112,7 +122,9 @@ export default function VariableAutocomplete({
     if (newValue[selectionStart - 1] === "@") {
       // Check if @ is at start or preceded by whitespace or newline
       const prevChar = selectionStart > 1 ? newValue[selectionStart - 2] : "";
+      console.log("[VariableAutocomplete] @ detected, prevChar:", JSON.stringify(prevChar), "selectionStart:", selectionStart);
       if (selectionStart === 1 || /\s|\n/.test(prevChar)) {
+        console.log("[VariableAutocomplete] Showing popover, variables count:", variables.length);
         setTriggerIndex(selectionStart - 1);
         setSearchQuery("");
         const position = calculateCursorPosition();
@@ -240,11 +252,15 @@ export default function VariableAutocomplete({
           />
         </PopoverTrigger>
         <PopoverContent
-          className="w-64 p-0"
+          className="w-64 p-0 z-50"
           align="start"
           side="bottom"
           sideOffset={5}
           onOpenAutoFocus={(e) => e.preventDefault()}
+          onEscapeKeyDown={() => {
+            setShowPopover(false);
+            setTriggerIndex(-1);
+          }}
           data-testid="variable-popover"
         >
           <Command shouldFilter={false}>
