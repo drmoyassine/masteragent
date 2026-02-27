@@ -76,6 +76,7 @@ export default function VariableAutocomplete({
     
     const textarea = textareaRef.current;
     const { selectionStart } = textarea;
+    const textareaRect = textarea.getBoundingClientRect();
     
     // Create a hidden div to measure text position
     const div = document.createElement("div");
@@ -91,6 +92,8 @@ export default function VariableAutocomplete({
     div.style.border = style.border;
     div.style.boxSizing = style.boxSizing;
     div.style.lineHeight = style.lineHeight;
+    div.style.top = "0";
+    div.style.left = "0";
     
     // Get text up to cursor
     const textBeforeCursor = value.substring(0, selectionStart);
@@ -103,14 +106,36 @@ export default function VariableAutocomplete({
     span.textContent = "|";
     div.appendChild(span);
     
-    const textareaRect = textarea.getBoundingClientRect();
-    const spanRect = span.getBoundingClientRect();
+    // Get the span's position within the measurement div
+    const spanOffsetLeft = span.offsetLeft;
+    const spanOffsetTop = span.offsetTop;
+    const spanHeight = span.offsetHeight;
     
     document.body.removeChild(div);
     
-    // Calculate position relative to textarea
-    const top = spanRect.bottom - textareaRect.top;
-    const left = spanRect.left - textareaRect.left;
+    // Calculate position relative to textarea container
+    // Account for textarea's scroll position
+    const lineHeight = parseInt(style.lineHeight) || 20;
+    const paddingTop = parseInt(style.paddingTop) || 0;
+    const paddingLeft = parseInt(style.paddingLeft) || 0;
+    
+    // Top position: textarea top + padding + measured height - scroll
+    let top = textareaRect.top + paddingTop + spanOffsetTop - textarea.scrollTop + spanHeight;
+    
+    // Left position: textarea left + padding + measured width - horizontal scroll
+    let left = textareaRect.left + paddingLeft + spanOffsetLeft - textarea.scrollLeft;
+    
+    // Clamp left to ensure popover stays within textarea bounds (never negative)
+    const minLeft = textareaRect.left + 10; // Small padding from left edge
+    const maxLeft = textareaRect.right - 280; // 280px is popover width + buffer
+    left = Math.max(minLeft, Math.min(left, maxLeft));
+    
+    // Ensure top is within viewport
+    const minTop = textareaRect.top + 10;
+    const maxTop = window.innerHeight - 300; // Leave room for popover height
+    top = Math.max(minTop, Math.min(top, maxTop));
+    
+    console.log("[VariableAutocomplete] Position calc - textareaRect:", textareaRect, "spanOffset:", { left: spanOffsetLeft, top: spanOffsetTop }, "final:", { top, left });
     
     return { top, left };
   }, [value]);
