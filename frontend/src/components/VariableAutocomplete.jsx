@@ -47,6 +47,10 @@ export default function VariableAutocomplete({
   // Debug: log variables to diagnose empty array issues
   useEffect(() => {
     console.log("[VariableAutocomplete] Variables received:", variables);
+    console.log("[VariableAutocomplete] Variables count:", variables?.length || 0);
+    if (variables && variables.length > 0) {
+      console.log("[VariableAutocomplete] First variable:", variables[0]);
+    }
   }, [variables]);
   
   // Separate variables by source
@@ -116,6 +120,8 @@ export default function VariableAutocomplete({
     const newValue = e.target.value;
     const { selectionStart } = e.target;
     
+    console.log("[VariableAutocomplete] Input event, key typed:", newValue[selectionStart - 1], "position:", selectionStart);
+    
     onChange(e);
     
     // Check if we just typed @
@@ -123,13 +129,17 @@ export default function VariableAutocomplete({
       // Check if @ is at start or preceded by whitespace or newline
       const prevChar = selectionStart > 1 ? newValue[selectionStart - 2] : "";
       console.log("[VariableAutocomplete] @ detected, prevChar:", JSON.stringify(prevChar), "selectionStart:", selectionStart);
+      console.log("[VariableAutocomplete] Condition check - selectionStart === 1:", selectionStart === 1, "whitespace test:", /\s|\n/.test(prevChar));
       if (selectionStart === 1 || /\s|\n/.test(prevChar)) {
-        console.log("[VariableAutocomplete] Showing popover, variables count:", variables.length);
+        console.log("[VariableAutocomplete] Showing popover, variables count:", variables?.length || 0);
+        console.log("[VariableAutocomplete] Current variables:", variables);
         setTriggerIndex(selectionStart - 1);
         setSearchQuery("");
         const position = calculateCursorPosition();
+        console.log("[VariableAutocomplete] Cursor position calculated:", position);
         setTriggerPosition(position);
         setShowPopover(true);
+        console.log("[VariableAutocomplete] setShowPopover(true) called");
       }
     } else if (showPopover && triggerIndex !== -1) {
       // Update search query based on text after @
@@ -224,6 +234,11 @@ export default function VariableAutocomplete({
     setShowPopover(false);
     setTriggerIndex(-1);
   };
+
+  // Debug: log render state
+  useEffect(() => {
+    console.log("[VariableAutocomplete] Render state - showPopover:", showPopover, "triggerIndex:", triggerIndex, "searchQuery:", searchQuery);
+  }, [showPopover, triggerIndex, searchQuery]);
 
   return (
     <div className="relative w-full h-full">

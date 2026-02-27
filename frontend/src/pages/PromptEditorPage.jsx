@@ -476,6 +476,20 @@ export default function PromptEditorPage() {
                 </div>
               </div>
 
+              {/* Available Variables Horizontal List */}
+              {availableVariables.length > 0 && (
+                <div className="flex items-center gap-2 px-4 py-2 bg-muted/50 border-b border-border">
+                  <span className="text-sm text-muted-foreground">Variables:</span>
+                  <div className="flex flex-wrap gap-1">
+                    {availableVariables.map((v) => (
+                      <Badge key={v.name} variant="secondary" className="text-xs font-mono">
+                        {`{{${v.name}}}`}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className="editor-content">
                 <VariableAutocomplete
                   value={sectionContent}
