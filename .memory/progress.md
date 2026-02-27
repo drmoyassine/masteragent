@@ -1,204 +1,56 @@
-# Progress Tracker
+# Progress
 
-> **Last Updated**: 2026-02-27T05:30:00Z
-> **Purpose**: Tracks current work status, completed features, and pending tasks.
+> **Last Updated**: 2026-02-27T23:21:00Z
 
 ---
 
-## Status Summary
+## Session Summary (2026-02-27)
 
-| Category | Status |
-|----------|--------|
+### ✅ Completed
+- [x] Memory Bank unification
+- [x] @ Autocomplete position fix (container-relative coordinates)
+- [x] Section Drag-and-Drop with @dnd-kit
+- [x] Variable bar styling (green highlights, right-aligned)
+- [x] VPS deployment fixes (removed localhost defaults)
+- [x] Created .env.example template
+- [x] Docker deployment running locally
+
+### Commits Pushed
+1. `ad5fc50` - docs: Add .env.example and fix .gitignore
+2. `264bc9f` - Fix: Remove localhost defaults for VPS deployment
+3. `21890f2` - Fix: Use configurable port for VPS deployment
+4. `6084bc3` - Fix: Variables system polish
+
+---
+
+## Project Status
+
+### Production Ready ✅
+| Component | Status |
+|-----------|--------|
 | Prompt Manager | ✅ Complete |
 | Memory System Backend | ✅ Complete |
 | Memory System Frontend | ✅ Complete |
-| Authentication | ✅ Complete |
+| Variables System | ✅ Complete |
 | Docker Deployment | ✅ Complete |
-| LLM Integration | ⚠️ Needs Configuration |
-| Background Tasks | ⚠️ Manual Trigger Only |
-| Local Storage Support | ✅ Complete |
-| Variables Management System | 🔄 In Progress (NEW) |
-| Login Redirect Fix | ✅ Complete |
-| Version Consistency Fix | ✅ Complete |
-| Documentation Update | ✅ Complete |
+| VPS Deployment | ✅ Configured |
+
+### Pending Configuration
+- [ ] LLM API keys (via /app/memory → LLM APIs)
+- [ ] GLiNER service (optional)
+- [ ] GitHub OAuth (optional)
+- [ ] GitHub storage (optional)
 
 ---
 
-## ✅ Completed Features
+## Previous Sessions
 
-### Prompt Manager Module
-- [x] Multi-file Markdown prompts with ordered sections
-- [x] GitHub integration for storage and versioning
-- [x] Variable injection (Mustache-style)
-- [x] Render API with API key authentication
-- [x] Starter templates (Agent Persona, Task Executor, Knowledge Expert, etc.)
+### 2026-02-27 (Session 2)
+- Variables Management System implementation
+- Storage service architecture
+- Login redirect fixes
 
-### Memory System - Backend
-- [x] Database schema (`memory_db.py`)
-  - Config tables: entity_types, subtypes, lesson_types, channel_types, agents, llm_configs, system_prompts, settings
-  - Data tables: memories, memory_documents, memory_lessons, memories_shared, lessons_shared, audit_log
-- [x] Ingestion Pipeline (`POST /api/memory/interactions`)
-  - Text + file parsing
-  - Configurable chunking
-  - Entity extraction (GLiNER2 or LLM fallback)
-  - Summarization
-  - Embedding → Qdrant
-  - PII scrubbing for shared memories
-  - Rate limiting per agent
-- [x] Retrieval APIs
-  - Semantic search
-  - Entity timeline
-  - Daily log
-  - Lessons CRUD
-- [x] Background Tasks (`memory_tasks.py`)
-  - OpenClaw Markdown sync
-  - Automated lesson mining
-  - Agent stats/monitoring
-
-### Memory System - Frontend
-- [x] Memory Settings Page (`/app/memory`) - 6 tabs for admin configuration
-- [x] Memory Explorer Page (`/app/memory/explore`) - Search, timeline, daily log, lessons
-- [x] System Monitor Page (`/app/memory/monitor`) - Stats, sync triggers, agent activity
-
-### Authentication & Security
-- [x] JWT auth on all admin config endpoints
-- [x] API key auth on agent endpoints
-- [x] Rate limiting implemented
-
-### Infrastructure
-- [x] Docker multi-stage build
-- [x] Docker Compose orchestration
-- [x] GLiNER2 NER service Dockerfile (CPU-only mode)
-- [x] GLiNER2 optional via Docker Compose profiles
-
-### Local Storage Support (NEW - 2026-02-27)
-- [x] StorageService abstract interface (`backend/storage_service.py`)
-- [x] GitHubStorageService implementation (wraps existing GitHub logic)
-- [x] LocalStorageService implementation (stores in `backend/local_prompts/`)
-- [x] `storage_mode` column in settings table ('github' or 'local')
-- [x] `POST /api/settings/storage-mode` endpoint
-- [x] SetupPage with storage selection UI
-- [x] ConfigContext for configuration state management
-- [x] Warning banners for unconfigured storage
-
-### Bug Fixes (2026-02-27)
-- [x] Login redirect race condition fixed (async login flow)
-- [x] Route content issue fixed (removed aggressive redirect to SetupPage)
-- [x] MainLayout warning banners for storage status
-- [x] Frontend-backend version consistency fixed (read `is_default` from API)
-- [x] Section endpoints now use storage service with local fallback
-- [x] Section write endpoints now use storage service (save button works)
-
-### Variables Management System (2026-02-27) - 🔄 In Progress
-- [x] Backend: account_variables and prompt_variables tables
-- [x] Backend: CRUD endpoints for account and prompt variables
-- [x] Backend: `/prompts/{id}/available-variables` endpoint for autocomplete
-- [x] Backend: Updated `inject_variables()` with resolution order (runtime > prompt > account)
-- [x] Frontend: VariablesPanel component with add/edit/delete UI
-- [x] Frontend: VariableAutocomplete component with @ trigger
-- [x] Frontend: Scope selection (Prompt Level vs Account Level)
-- [x] Frontend: Horizontal variable list display
-- [ ] @ autocomplete position fix (popover appears in middle of page)
-- [ ] Variable bar styling (right-align label, light green highlights)
-- [ ] Drag-and-drop variables from list to editor
-
-### Section DnD (Pending)
-- [ ] Section drag-and-drop reordering not working
-
-### Documentation (2026-02-27)
-- [x] AGENTS.md updated with PowerShell syntax guidelines
-- [x] AGENTS.md updated with lessons learned section
-- [x] Memory bank files updated with recent changes
-
----
-
-## ⚠️ In Progress / Needs Configuration
-
-### LLM Integration
-- **Status**: Tables exist, no API keys configured
-- **Impact**: Summarization, embedding, vision parsing return empty
-- **Action Required**: Admin must add API keys in Memory Settings → LLM APIs tab
-- **Supported Providers**: OpenAI, Anthropic, Gemini
-
-### GLiNER2 Service
-- **Status**: Dockerfile created, not running in preview
-- **Impact**: Falls back to LLM-based extraction (slower, less accurate)
-- **Action Required**: Run via `docker-compose up gliner`
-
-### Qdrant Collections
-- **Status**: Created on first use
-- **Impact**: No pre-existing data migrations
-- **Action Required**: Call `POST /api/memory/init` to initialize
-
-### Background Tasks
-- **Status**: Implemented but manual trigger only
-- **Impact**: Sync and mining don't run automatically
-- **Action Required**: Add scheduler (Celery or asyncio.create_task on startup)
-
----
-
-## 📋 Pending / Blocked
-
-### P0 - Critical for Production
-1. **Real LLM Configuration**
-   - Guide users to add API keys
-   - Test embedding generation and search quality
-
-2. **Startup Initialization**
-   - Auto-call `init_qdrant_collections()` on server start
-   - Run background task scheduler
-
-3. **PostgreSQL Migration**
-   - Test with PostgreSQL instead of SQLite
-   - Add migration scripts
-
-### P1 - Enhancements
-1. **Error Handling Improvements**
-   - More specific error responses for LLM failures
-   - Better logging for debugging
-
-2. **Performance Optimization**
-   - Caching for frequently accessed data
-   - Query optimization for large datasets
-
-### P2 - Future Features
-1. **Multi-tenant Support**
-2. **Advanced Analytics Dashboard**
-3. **Custom Entity Type Creation UI**
-4. **Memory Export/Import Functionality**
-
----
-
-## Known Technical Debt
-
-| Issue | Impact | Priority |
-|-------|--------|----------|
-| LLM calls return empty strings on failure | Graceful degradation but silent failures | Low |
-| No database migrations | Schema changes require manual intervention | Medium |
-| Background tasks manual only | Reduced automation | Medium |
-| No rate limit UI feedback | Users don't know when throttled | Low |
-
----
-
-## Test Coverage
-
-| Area | Status | Location |
-|------|--------|----------|
-| Memory Authentication | ✅ Tested | `backend/tests/test_memory_auth.py` |
-| Memory System | ✅ Tested | `backend/tests/test_memory_system.py` |
-| Integration Tests | ✅ 5 iterations | `test_reports/iteration_*.json` |
-
----
-
-## Recent Milestones
-
-| Date | Milestone |
-|------|-----------|
-| 2026-02-25 | Production-ready MVP completed |
-| 2026-02-25 | Memory System frontend completed |
-| 2026-02-25 | Dual authentication implemented |
-| 2026-02-25 | Docker deployment validated |
-
----
-
-*Update this file as work progresses to maintain accurate project status.*
+### 2026-02-27 (Session 1)
+- Memory system backend/frontend
+- Docker configuration
+- Initial project setup
