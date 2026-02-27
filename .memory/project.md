@@ -1,7 +1,20 @@
 # Project Overview
 
-> **Last Updated**: 2026-02-26
+> **Last Updated**: 2026-02-27
 > **Purpose**: Provides a high-level summary of the MasterAgent (PromptSRC) project for AI assistant context.
+
+---
+
+## Project Origin
+
+The project began as a **Prompt Manager** - a standalone microservice to manage AI prompts as code. Prompts were stored as ordered Markdown files in a GitHub repository, versioned, and rendered via an API with variable injection.
+
+The scope then expanded to include an **Agent-Facing Memory System** as an extension. This new system is **API-first**, designed to be a memory backend for AI agents where:
+- Agents push data programmatically via API
+- UI is used for configuration and read-only exploration only
+- No data entry through the UI
+
+**Key Architecture Principle**: The memory system maintains strict separation between private data and PII-scrubbed shared data across both the relational database and Qdrant collections.
 
 ---
 

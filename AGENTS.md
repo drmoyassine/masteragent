@@ -5,6 +5,33 @@ This file provides guidance to agents when working with code in this repository.
 ## Project Overview
 MasterAgent (PromptSRC) - Full-stack AI agent infrastructure with prompt management and memory system.
 
+## Memory Bank System
+
+The project uses a unified memory bank located in `.memory/` for AI assistant context persistence:
+
+| File | Purpose |
+|------|---------|
+| `.memory/project.md` | Project overview, goals, architecture |
+| `.memory/active-context.md` | Current focus, recent changes, next steps |
+| `.memory/progress.md` | Task tracking, completed/pending features |
+| `.memory/decisions.md` | Architecture Decision Records (ADRs) |
+| `.memory/patterns.md` | Coding patterns, conventions, gotchas |
+
+### Session Start Protocol
+1. Read `.memory/active-context.md` for current state
+2. Review `.memory/progress.md` for task status
+3. Check `.memory/patterns.md` before coding
+
+### Session End Protocol
+1. Update `.memory/active-context.md` with changes made
+2. Update `.memory/progress.md` if milestones reached
+3. Add decisions to `.memory/decisions.md` if architectural
+
+### Related Documentation
+- `docs/` - Technical design documents (e.g., variables-system-design.md)
+- `HANDOFF.md` - Project handoff document
+- `memory/PRD.md` - Memory system product requirements
+
 ## Critical Architecture Notes
 
 ### Dual Database System

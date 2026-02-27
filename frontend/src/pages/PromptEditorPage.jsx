@@ -1,6 +1,22 @@
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import {
   ArrowLeft,
   Save,
   Plus,
@@ -57,10 +73,52 @@ import {
   createVersion,
   renderPrompt,
   getAvailableVariables,
+  reorderSections,
 } from "@/lib/api";
 import { toast } from "sonner";
 import VariablesPanel from "@/components/VariablesPanel";
 import VariableAutocomplete from "@/components/VariableAutocomplete";
+
+// Sortable Section Item Component
+function SortableSectionItem({ section, isSelected, onSelect, sectionIndex }) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: section.filename });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`section-item flex items-center gap-2 p-3 rounded-sm cursor-pointer border-l-2 ${
+        isSelected ? "active border-primary bg-accent/50" : "border-transparent hover:bg-accent/20"
+      } ${isDragging ? "shadow-md ring-2 ring-primary/50" : ""}`}
+      onClick={() => onSelect(section)}
+      data-testid={`section-${section.filename}`}
+    >
+      <div {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing">
+        <GripVertical className="w-4 h-4 text-muted-foreground" />
+      </div>
+      <FileText className="w-4 h-4 text-muted-foreground" />
+      <span className="flex-1 font-mono text-sm truncate">
+        {section.name}
+      </span>
+      <Badge variant="outline" className="text-xs font-mono">
+        {String(sectionIndex + 1).padStart(2, "0")}
+      </Badge>
+    </div>
+  );
+}
 
 export default function PromptEditorPage() {
   const { promptId } = useParams();
@@ -100,6 +158,44 @@ export default function PromptEditorPage() {
   
   // Variables panel visibility
   const [showVariablesPanel, setShowVariablesPanel] = useState(true);
+
+  // DnD sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  // Handle drag end for section reordering
+  const handleDragEnd = async (event) => {
+    const { active, over } = event;
+
+    if (over && active.id !== over.id) {
+      const oldIndex = sections.findIndex((s) => s.filename === active.id);
+      const newIndex = sections.findIndex((s) => s.filename === over.id);
+
+      const newSections = arrayMove(sections, oldIndex, newIndex);
+      setSections(newSections);
+
+      // Persist the new order to the backend
+      try {
+        await reorderSections(promptId, newSections.map((s, i) => ({
+          filename: s.filename,
+          order: i + 1,
+        })), currentVersion);
+        toast.success("Sections reordered");
+      } catch (error) {
+        toast.error("Failed to reorder sections");
+        // Revert on error
+        setSections(sections);
+      }
+    }
+  };
 
   useEffect(() => {
     loadPromptData();
@@ -422,27 +518,26 @@ export default function PromptEditorPage() {
                   No sections yet. Add one to get started.
                 </div>
               ) : (
-                sections.map((section, index) => (
-                  <div
-                    key={section.filename}
-                    className={`section-item flex items-center gap-2 p-3 rounded-sm cursor-pointer border-l-2 border-transparent ${
-                      selectedSection?.filename === section.filename
-                        ? "active"
-                        : ""
-                    }`}
-                    onClick={() => loadSectionContent(section)}
-                    data-testid={`section-${section.filename}`}
+                <DndContext
+                  sensors={sensors}
+                  collisionDetection={closestCenter}
+                  onDragEnd={handleDragEnd}
+                >
+                  <SortableContext
+                    items={sections.map((s) => s.filename)}
+                    strategy={verticalListSortingStrategy}
                   >
-                    <GripVertical className="w-4 h-4 text-muted-foreground cursor-grab" />
-                    <FileText className="w-4 h-4 text-muted-foreground" />
-                    <span className="flex-1 font-mono text-sm truncate">
-                      {section.name}
-                    </span>
-                    <Badge variant="outline" className="text-xs font-mono">
-                      {String(section.order).padStart(2, "0")}
-                    </Badge>
-                  </div>
-                ))
+                    {sections.map((section, index) => (
+                      <SortableSectionItem
+                        key={section.filename}
+                        section={section}
+                        sectionIndex={index}
+                        isSelected={selectedSection?.filename === section.filename}
+                        onSelect={loadSectionContent}
+                      />
+                    ))}
+                  </SortableContext>
+                </DndContext>
               )}
             </div>
           </ScrollArea>
@@ -478,11 +573,20 @@ export default function PromptEditorPage() {
 
               {/* Available Variables Horizontal List */}
               {availableVariables.length > 0 && (
-                <div className="flex items-center gap-2 px-4 py-2 bg-muted/50 border-b border-border">
-                  <span className="text-sm text-muted-foreground">Variables:</span>
-                  <div className="flex flex-wrap gap-1">
+                <div className="flex items-center gap-3 px-4 py-2 bg-muted/50 border-b border-border">
+                  <span className="text-sm text-muted-foreground shrink-0">Variables:</span>
+                  <div className="flex flex-wrap gap-1.5 justify-end flex-1">
                     {availableVariables.map((v) => (
-                      <Badge key={v.name} variant="secondary" className="text-xs font-mono">
+                      <Badge
+                        key={v.name}
+                        variant="secondary"
+                        className="text-xs font-mono bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 hover:bg-green-200 dark:hover:bg-green-900/50 cursor-pointer transition-colors"
+                        onClick={() => {
+                          // Insert variable at cursor position
+                          const variableSyntax = `{{${v.name}}}`;
+                          setSectionContent(prev => prev + variableSyntax);
+                        }}
+                      >
                         {`{{${v.name}}}`}
                       </Badge>
                     ))}

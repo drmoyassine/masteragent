@@ -1,11 +1,38 @@
 # Active Context
 
-> **Last Updated**: 2026-02-27T05:30:00Z
+> **Last Updated**: 2026-02-27T22:30:00Z
 > **Purpose**: Tracks current session context, recent changes, and immediate next steps for AI assistants.
 
 ---
 
 ## Current Focus
+
+**Task**: Variables System Polish
+**Status**: ✅ Complete
+**Started**: 2026-02-27
+
+### What Was Done
+1. **@ Autocomplete Position Fix**
+   - Fixed popover positioning in [`VariableAutocomplete.jsx`](../frontend/src/components/VariableAutocomplete.jsx)
+   - Root Cause: Viewport coordinates used instead of container-relative
+   - Solution: Added `containerRef`, calculate position relative to container
+
+2. **Section Drag-and-Drop**
+   - Implemented full DnD functionality in [`PromptEditorPage.jsx`](../frontend/src/pages/PromptEditorPage.jsx)
+   - Uses @dnd-kit/core and @dnd-kit/sortable
+   - Persists order to backend via `reorderSections` API
+
+3. **Variable Bar Styling**
+   - Right-aligned "Variables:" label with variable list
+   - Variables highlighted in light green (`bg-green-100 dark:bg-green-900/30`)
+   - Click on variable badge to insert at cursor
+
+### Files Modified
+- [`frontend/src/components/VariableAutocomplete.jsx`](../frontend/src/components/VariableAutocomplete.jsx) - Fixed popover positioning
+- [`frontend/src/pages/PromptEditorPage.jsx`](../frontend/src/pages/PromptEditorPage.jsx) - Added DnD, variable bar styling
+- [`HANDOFF.md`](../HANDOFF.md) - Updated status to reflect completed tasks
+
+---
 
 **Task**: Variables Management System Polish
 **Status**: 🔄 In Progress

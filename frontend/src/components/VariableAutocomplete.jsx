@@ -39,6 +39,7 @@ export default function VariableAutocomplete({
   ...props
 }) {
   const textareaRef = useRef(null);
+  const containerRef = useRef(null);
   const [showPopover, setShowPopover] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [triggerPosition, setTriggerPosition] = useState({ top: 0, left: 0 });
@@ -69,76 +70,6 @@ export default function VariableAutocomplete({
   const filteredAccountVars = accountVariables.filter(v =>
     v.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
-
-  // Calculate cursor position for popover placement
-  const calculateCursorPosition = useCallback(() => {
-    if (!textareaRef.current) return { top: 0, left: 0 };
-    
-    const textarea = textareaRef.current;
-    const { selectionStart } = textarea;
-    const textareaRect = textarea.getBoundingClientRect();
-    
-    // Create a hidden div to measure text position
-    const div = document.createElement("div");
-    const style = window.getComputedStyle(textarea);
-    
-    div.style.position = "absolute";
-    div.style.visibility = "hidden";
-    div.style.whiteSpace = "pre-wrap";
-    div.style.wordWrap = "break-word";
-    div.style.width = style.width;
-    div.style.font = style.font;
-    div.style.padding = style.padding;
-    div.style.border = style.border;
-    div.style.boxSizing = style.boxSizing;
-    div.style.lineHeight = style.lineHeight;
-    div.style.top = "0";
-    div.style.left = "0";
-    
-    // Get text up to cursor
-    const textBeforeCursor = value.substring(0, selectionStart);
-    div.textContent = textBeforeCursor;
-    
-    document.body.appendChild(div);
-    
-    // Add a span to measure cursor position
-    const span = document.createElement("span");
-    span.textContent = "|";
-    div.appendChild(span);
-    
-    // Get the span's position within the measurement div
-    const spanOffsetLeft = span.offsetLeft;
-    const spanOffsetTop = span.offsetTop;
-    const spanHeight = span.offsetHeight;
-    
-    document.body.removeChild(div);
-    
-    // Calculate position relative to textarea container
-    // Account for textarea's scroll position
-    const lineHeight = parseInt(style.lineHeight) || 20;
-    const paddingTop = parseInt(style.paddingTop) || 0;
-    const paddingLeft = parseInt(style.paddingLeft) || 0;
-    
-    // Top position: textarea top + padding + measured height - scroll
-    let top = textareaRect.top + paddingTop + spanOffsetTop - textarea.scrollTop + spanHeight;
-    
-    // Left position: textarea left + padding + measured width - horizontal scroll
-    let left = textareaRect.left + paddingLeft + spanOffsetLeft - textarea.scrollLeft;
-    
-    // Clamp left to ensure popover stays within textarea bounds (never negative)
-    const minLeft = textareaRect.left + 10; // Small padding from left edge
-    const maxLeft = textareaRect.right - 280; // 280px is popover width + buffer
-    left = Math.max(minLeft, Math.min(left, maxLeft));
-    
-    // Ensure top is within viewport
-    const minTop = textareaRect.top + 10;
-    const maxTop = window.innerHeight - 300; // Leave room for popover height
-    top = Math.max(minTop, Math.min(top, maxTop));
-    
-    console.log("[VariableAutocomplete] Position calc - textareaRect:", textareaRect, "spanOffset:", { left: spanOffsetLeft, top: spanOffsetTop }, "final:", { top, left });
-    
-    return { top, left };
-  }, [value]);
 
   // Handle input changes and detect @ trigger
   const handleInput = (e) => {
@@ -265,8 +196,80 @@ export default function VariableAutocomplete({
     console.log("[VariableAutocomplete] Render state - showPopover:", showPopover, "triggerIndex:", triggerIndex, "searchQuery:", searchQuery);
   }, [showPopover, triggerIndex, searchQuery]);
 
+  // Calculate cursor position relative to container (not viewport)
+  const calculateCursorPosition = useCallback(() => {
+    if (!textareaRef.current || !containerRef.current) return { top: 0, left: 0 };
+    
+    const textarea = textareaRef.current;
+    const container = containerRef.current;
+    const { selectionStart } = textarea;
+    const textareaRect = textarea.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
+    
+    // Create a hidden div to measure text position
+    const div = document.createElement("div");
+    const style = window.getComputedStyle(textarea);
+    
+    div.style.position = "absolute";
+    div.style.visibility = "hidden";
+    div.style.whiteSpace = "pre-wrap";
+    div.style.wordWrap = "break-word";
+    div.style.width = style.width;
+    div.style.font = style.font;
+    div.style.padding = style.padding;
+    div.style.border = style.border;
+    div.style.boxSizing = style.boxSizing;
+    div.style.lineHeight = style.lineHeight;
+    div.style.top = "0";
+    div.style.left = "0";
+    
+    // Get text up to cursor
+    const textBeforeCursor = value.substring(0, selectionStart);
+    div.textContent = textBeforeCursor;
+    
+    document.body.appendChild(div);
+    
+    // Add a span to measure cursor position
+    const span = document.createElement("span");
+    span.textContent = "|";
+    div.appendChild(span);
+    
+    // Get the span's position within the measurement div
+    const spanOffsetLeft = span.offsetLeft;
+    const spanOffsetTop = span.offsetTop;
+    const spanHeight = span.offsetHeight;
+    
+    document.body.removeChild(div);
+    
+    // Calculate position relative to container
+    // Top: measured position from textarea top + textarea offset from container
+    const lineHeight = parseInt(style.lineHeight) || 20;
+    const paddingTop = parseInt(style.paddingTop) || 0;
+    const paddingLeft = parseInt(style.paddingLeft) || 0;
+    
+    // Position relative to container: textarea position within container + cursor position within textarea
+    const textareaTopInContainer = textareaRect.top - containerRect.top;
+    const textareaLeftInContainer = textareaRect.left - containerRect.left;
+    
+    // Calculate cursor position relative to textarea content
+    let top = textareaTopInContainer + paddingTop + spanOffsetTop - textarea.scrollTop + spanHeight;
+    let left = textareaLeftInContainer + paddingLeft + spanOffsetLeft - textarea.scrollLeft;
+    
+    // Clamp to ensure popover stays within reasonable bounds
+    const minLeft = 10;
+    const maxLeft = containerRect.width - 280; // 280px is popover width + buffer
+    left = Math.max(minLeft, Math.min(left, maxLeft));
+    
+    // Ensure top doesn't go negative
+    top = Math.max(10, top);
+    
+    console.log("[VariableAutocomplete] Position calc - relative to container:", { top, left });
+    
+    return { top, left };
+  }, [value]);
+
   return (
-    <div className="relative w-full h-full">
+    <div ref={containerRef} className="relative w-full h-full">
       <textarea
         ref={textareaRef}
         value={value}

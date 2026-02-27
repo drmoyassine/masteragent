@@ -1,34 +1,52 @@
 # Agent Handoff Document - PromptSRC
 
-> **Last Updated**: February 27, 2026
-> **Status**: Production-Ready MVP + Variables System In Progress
-> **Priority**: Polish Variables System, then continue enhancements
+> **Last Updated**: February 27, 2026 (Session 3)
+> **Status**: Production-Ready MVP + Variables System Complete
+> **Priority**: Configure LLM APIs, test end-to-end flow
+
+---
+
+## ✅ Completed This Session (2026-02-27)
+
+### High Priority - All Done!
+1. **@ Autocomplete Position Fix** ✅
+   - Fixed: Popover now appears inline at cursor position
+   - File: [`VariableAutocomplete.jsx`](frontend/src/components/VariableAutocomplete.jsx)
+   - Solution: Calculate cursor coordinates relative to container, not viewport
+
+2. **Section Drag-and-Drop** ✅
+   - Fixed: Sections can now be reordered via drag and drop
+   - File: [`PromptEditorPage.jsx`](frontend/src/pages/PromptEditorPage.jsx)
+   - Solution: Implemented using @dnd-kit/core and @dnd-kit/sortable
+
+3. **Variable Bar Styling** ✅
+   - Right-aligned "Variables:" label with variable list
+   - Variables highlighted in light green color
+   - Click on variable badge to insert at cursor
+
+### Files Modified This Session
+- `frontend/src/components/VariableAutocomplete.jsx` - Fixed popover positioning
+- `frontend/src/pages/PromptEditorPage.jsx` - Added DnD, improved variable bar styling
 
 ---
 
 ## 🔴 Pending Tasks (Next Session)
 
-### High Priority
-1. **@ Autocomplete Position Fix**
-   - Issue: Popover appears in middle of page, not inline at cursor position
-   - File: [`VariableAutocomplete.jsx`](frontend/src/components/VariableAutocomplete.jsx)
-   - Need: Calculate cursor coordinates relative to viewport
+### Configuration (P0)
+1. **Configure LLM APIs**
+   - Navigate to `/app/memory` → LLM APIs tab
+   - Add API keys for: summarization, embedding, vision, entity_extraction, pii_scrubbing
+   - Test with sample interactions
 
-2. **Section Drag-and-Drop**
-   - Issue: Cannot reorder sections via drag and drop
-   - File: [`PromptEditorPage.jsx`](frontend/src/pages/PromptEditorPage.jsx)
-   - Need: Implement DnD functionality for section list
+2. **Start GLiNER Service**
+   ```bash
+   docker-compose up gliner
+   ```
 
-3. **Variable Bar Styling**
-   - Right-align "Variables:" label with variable list
-   - Highlight variables in light green color (both in list and editor)
-   - Enable drag-and-drop from horizontal list into editor at cursor location
-
-### Files Modified This Session
-- `backend/server.py` - Variables CRUD endpoints, tables, inject_variables()
-- `frontend/src/components/VariablesPanel.jsx` - Variable management UI
-- `frontend/src/components/VariableAutocomplete.jsx` - @ trigger autocomplete
-- `frontend/src/pages/PromptEditorPage.jsx` - Variables integration, scope selection
+3. **Initialize Qdrant**
+   ```bash
+   curl -X POST http://localhost:8001/api/memory/init
+   ```
 
 ---
 
