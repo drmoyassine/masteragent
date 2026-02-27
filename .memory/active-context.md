@@ -1,17 +1,31 @@
 # Active Context
 
-> **Last Updated**: 2026-02-27T02:07:00Z
+> **Last Updated**: 2026-02-27T05:30:00Z
 > **Purpose**: Tracks current session context, recent changes, and immediate next steps for AI assistants.
 
 ---
 
 ## Current Focus
 
-**Task**: Bug Fixes & Local Storage Support
-**Status**: ✅ Completed
-**Started**: 2026-02-26
+**Task**: Variables Management System Polish
+**Status**: 🔄 In Progress
+**Started**: 2026-02-27
+
+### Pending Tasks
+1. **@ Autocomplete Position** - Popover appears in middle of page, not inline at cursor position
+2. **Section DnD Not Working** - Cannot reorder sections via drag and drop
+3. **Variable Bar Styling**:
+   - Right-align "Variables:" label with variable list
+   - Highlight variables in light green color (both in list and editor)
+   - Enable drag-and-drop from horizontal list into editor at cursor location
+4. **Review HANDOFF.md** - Check if there are remaining items
 
 ### What Was Done
+- Fixed save button (section write endpoints now use storage service)
+- Implemented Variables Management System (backend + frontend)
+- Added scope selection (Prompt Level vs Account Level)
+- Restored horizontal variable list
+- @ autocomplete partially working (needs position fix)
 - Fixed login redirect race condition (async login flow)
 - Fixed route content issue (removed aggressive redirect)
 - Implemented pluggable storage service architecture
@@ -29,7 +43,19 @@
 
 ## Recent Changes
 
-### 2026-02-27
+### 2026-02-27 (Session 2 - Variables System)
+| Change | Files | Description |
+|--------|-------|-------------|
+| Variables backend | `backend/server.py` | Added account_variables and prompt_variables tables + CRUD endpoints |
+| Variables API | `backend/server.py` | Added `/prompts/{id}/available-variables` endpoint for autocomplete |
+| Variables injection | `backend/server.py` | Updated `inject_variables()` with resolution order (runtime > prompt > account) |
+| VariablesPanel | `frontend/src/components/VariablesPanel.jsx` | Add/edit/delete UI for variables |
+| VariableAutocomplete | `frontend/src/components/VariableAutocomplete.jsx` | @ trigger autocomplete component |
+| Scope selection | `PromptEditorPage.jsx` | Radio buttons for Prompt Level vs Account Level |
+| Horizontal variable list | `PromptEditorPage.jsx` | Available variables display at top of editor |
+| Section write fix | `backend/server.py` | Section CRUD now uses storage service with local fallback |
+
+### 2026-02-27 (Session 1 - Storage & Auth)
 | Change | Files | Description |
 |--------|-------|-------------|
 | Login redirect fix | `AuthContext.jsx`, `AuthCallbackPage.jsx`, `AuthPage.jsx` | Made login async to fix race condition |
@@ -85,6 +111,7 @@
 
 | Area | Status | Notes |
 |------|--------|-------|
+| Variables System | 🔄 In Progress | @ autocomplete position, DnD, styling needed |
 | Prompt Manager | ✅ Stable | No active work needed |
 | Memory Backend | ✅ Complete | Awaiting LLM configuration |
 | Memory Frontend | ✅ Complete | All pages implemented |
@@ -111,6 +138,9 @@
 
 | Issue | Impact | Workaround |
 |-------|--------|------------|
+| @ autocomplete position | Popover in middle of page | Needs cursor position fix |
+| Section DnD not working | Cannot reorder sections | Needs drag-and-drop implementation |
+| Variable bar styling | Not aligned/highlighted | CSS improvements needed |
 | LLM not configured | Empty summarization/embedding | Add API keys in settings |
 | GLiNER not running | Slower NER, LLM fallback | `docker-compose up gliner` |
 | Manual background tasks | No auto-sync | Trigger via Monitor page |

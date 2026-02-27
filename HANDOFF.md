@@ -1,8 +1,34 @@
 # Agent Handoff Document - PromptSRC
 
-> **Last Updated**: February 25, 2026  
-> **Status**: Production-Ready MVP  
-> **Priority**: Ready for enhancement and scaling
+> **Last Updated**: February 27, 2026
+> **Status**: Production-Ready MVP + Variables System In Progress
+> **Priority**: Polish Variables System, then continue enhancements
+
+---
+
+## 🔴 Pending Tasks (Next Session)
+
+### High Priority
+1. **@ Autocomplete Position Fix**
+   - Issue: Popover appears in middle of page, not inline at cursor position
+   - File: [`VariableAutocomplete.jsx`](frontend/src/components/VariableAutocomplete.jsx)
+   - Need: Calculate cursor coordinates relative to viewport
+
+2. **Section Drag-and-Drop**
+   - Issue: Cannot reorder sections via drag and drop
+   - File: [`PromptEditorPage.jsx`](frontend/src/pages/PromptEditorPage.jsx)
+   - Need: Implement DnD functionality for section list
+
+3. **Variable Bar Styling**
+   - Right-align "Variables:" label with variable list
+   - Highlight variables in light green color (both in list and editor)
+   - Enable drag-and-drop from horizontal list into editor at cursor location
+
+### Files Modified This Session
+- `backend/server.py` - Variables CRUD endpoints, tables, inject_variables()
+- `frontend/src/components/VariablesPanel.jsx` - Variable management UI
+- `frontend/src/components/VariableAutocomplete.jsx` - @ trigger autocomplete
+- `frontend/src/pages/PromptEditorPage.jsx` - Variables integration, scope selection
 
 ---
 
@@ -22,6 +48,27 @@
 ---
 
 ## Current State
+
+### 🔄 In Progress
+
+#### Variables Management System (NEW - 2026-02-27)
+Backend complete, frontend needs polish:
+- **Database Tables**: `account_variables`, `prompt_variables`
+- **API Endpoints**:
+  - `GET/POST /api/variables/account` - Account-level variables
+  - `GET/POST/DELETE /api/variables/prompt/{prompt_id}` - Prompt-level variables
+  - `GET /api/prompts/{id}/available-variables` - Merged list for autocomplete
+- **Variable Injection**: Updated `inject_variables()` with resolution order:
+  1. Runtime variables (passed in request)
+  2. Prompt-level variables
+  3. Account-level variables
+- **Frontend Components**:
+  - [`VariablesPanel.jsx`](frontend/src/components/VariablesPanel.jsx) - Add/edit/delete UI
+  - [`VariableAutocomplete.jsx`](frontend/src/components/VariableAutocomplete.jsx) - @ trigger popover
+- **Known Issues**:
+  - @ autocomplete popover position incorrect (middle of page, not at cursor)
+  - Variable bar needs styling improvements (right-align, green highlights)
+  - Drag-and-drop from variable list to editor not implemented
 
 ### ✅ Fully Implemented
 

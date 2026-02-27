@@ -1,6 +1,6 @@
 # Progress Tracker
 
-> **Last Updated**: 2026-02-27T02:07:00Z
+> **Last Updated**: 2026-02-27T05:30:00Z
 > **Purpose**: Tracks current work status, completed features, and pending tasks.
 
 ---
@@ -17,9 +17,10 @@
 | LLM Integration | ⚠️ Needs Configuration |
 | Background Tasks | ⚠️ Manual Trigger Only |
 | Local Storage Support | ✅ Complete |
+| Variables Management System | 🔄 In Progress (NEW) |
 | Login Redirect Fix | ✅ Complete |
-| Version Consistency Fix | ✅ Complete (NEW) |
-| Documentation Update | ✅ Complete (NEW) |
+| Version Consistency Fix | ✅ Complete |
+| Documentation Update | ✅ Complete |
 
 ---
 
@@ -86,6 +87,23 @@
 - [x] MainLayout warning banners for storage status
 - [x] Frontend-backend version consistency fixed (read `is_default` from API)
 - [x] Section endpoints now use storage service with local fallback
+- [x] Section write endpoints now use storage service (save button works)
+
+### Variables Management System (2026-02-27) - 🔄 In Progress
+- [x] Backend: account_variables and prompt_variables tables
+- [x] Backend: CRUD endpoints for account and prompt variables
+- [x] Backend: `/prompts/{id}/available-variables` endpoint for autocomplete
+- [x] Backend: Updated `inject_variables()` with resolution order (runtime > prompt > account)
+- [x] Frontend: VariablesPanel component with add/edit/delete UI
+- [x] Frontend: VariableAutocomplete component with @ trigger
+- [x] Frontend: Scope selection (Prompt Level vs Account Level)
+- [x] Frontend: Horizontal variable list display
+- [ ] @ autocomplete position fix (popover appears in middle of page)
+- [ ] Variable bar styling (right-align label, light green highlights)
+- [ ] Drag-and-drop variables from list to editor
+
+### Section DnD (Pending)
+- [ ] Section drag-and-drop reordering not working
 
 ### Documentation (2026-02-27)
 - [x] AGENTS.md updated with PowerShell syntax guidelines
