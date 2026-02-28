@@ -1,41 +1,40 @@
 # Active Context
 
-> **Last Updated**: 2026-02-27T23:20:00Z
+> **Last Updated**: 2026-03-01
 > **Purpose**: Tracks current session context, recent changes, and immediate next steps.
 
 ---
 
 ## Current State
 
-**Status**: ✅ Production Ready
+**Status**: ✅ Core Architecture Modularized & Hardened
+**Testing**: 42/42 Tests Passing (`pytest`)
 **Docker**: Running on localhost (port 80), VPS deployment configured
 
 ### Commits This Session
 | Commit | Description |
 |--------|-------------|
+| *pending* | 15-Item Backend Refactor: Componentizing `core/`, `routes/`, `memory/` |
+| *pending* | Centralize `ARCHITECTURE.md` API-First Module Definitions |
 | `ad5fc50` | Add .env.example and fix .gitignore |
 | `264bc9f` | Remove localhost defaults for VPS deployment |
-| `21890f2` | Use configurable port for VPS deployment |
-| `6084bc3` | Variables system polish (autocomplete, DnD, styling) |
 
 ---
 
-## Completed Today (2026-02-27)
+## Completed Today (2026-03-01)
 
-### 1. Variables System Polish ✅
-- **@ Autocomplete**: Fixed popover positioning (container-relative coordinates)
-- **Section DnD**: Implemented with @dnd-kit/core and @dnd-kit/sortable
-- **Variable Bar**: Green highlights, right-aligned, click-to-insert
+### 1. Backend Monolith Decomposition ✅
+- **`server.py` & `memory_routes.py`**: Totally dismantled. Route logic extracted into standalone `routes/*` and `memory/*` files matching their domain entities.
+- **`core/` Framework**: Standalone `db.py` and `auth.py` handlers created to universalize and DRY up validation chains.
+- **Legacy Purge**: Obsoleted and safely deleted duplicate models (`old_memory_routes.py`, duplicate functions).
 
-### 2. VPS Deployment Fixes ✅
-- **Frontend API**: Now uses relative URLs when `REACT_APP_BACKEND_URL` is empty
-- **docker-compose.yml**: Removed localhost defaults, configurable port
-- **.env.example**: Comprehensive environment variable template
-- **.gitignore**: Fixed to allow .env.example
+### 2. Security Hardening ✅
+- **API Key Hashes**: Replaced plaintext conditional API Key verifications with cryptographically sound `hashlib.sha256` hashing routines.
+- **Admin Warning Guard**: Injected explicit terminal boot warnings when `db_init.py` relies on `admin123` defaults without an explicit `.env` toggle.
 
-### 3. Docker Deployment ✅
-- Containers running: `masteragent-promptsrc-1`, `masteragent-qdrant-1`
-- Access: http://localhost (Frontend), http://localhost/api (Backend)
+### 3. Frontend Standardization ✅
+- **Delete Handlers**: Unified `MemorySettingsPage.jsx` logic by ripping out raw `.then()` calls and installing robust `async () => { try/catch }` blocks bound to `toast` UI alerts.
+- **Variable Alignment**: Adjusted API default routing versions from the disjointed `main` syntax back to `v1`.
 
 ---
 
@@ -43,12 +42,12 @@
 
 | File | Changes |
 |------|---------|
-| `frontend/src/lib/api.js` | Relative URL support |
-| `frontend/src/components/VariableAutocomplete.jsx` | Fixed popover position |
-| `frontend/src/pages/PromptEditorPage.jsx` | Added DnD, variable bar styling |
-| `docker-compose.yml` | Configurable port, no localhost defaults |
-| `.env.example` | New comprehensive template |
-| `.gitignore` | Allow .env.example |
+| `backend/core/*` | New shared utility foundation (auth, db hooks) |
+| `backend/routes/*` | New prompt manager controllers |
+| `backend/memory/*` | New memory system controllers |
+| `backend/server.py` | Strip down to barebone mount logic |
+| `frontend/src/pages/MemorySettingsPage.jsx` | Standardized `toast` UX on inline deletes |
+| `frontend/src/context/ConfigContext.jsx` | Clearer variables (removed ambiguous `hasStorage`) |
 
 ---
 

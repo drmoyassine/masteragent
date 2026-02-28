@@ -1,0 +1,264 @@
+# Masteragent Codebase — Refactoring & Optimization Opportunities
+
+## Summary
+
+The project is a **FastAPI + React** app for prompt management with an integrated memory system. The core logic is solid and well-structured, but there are several significant refactoring opportunities concentrated in two areas: **backend code duplication/organisation** and **frontend patterns**.
+
+---
+
+## 🔴 High Priority
+
+### 1. Duplicated Auth & DB Utilities Across Backend Modules
+
+**Files:** [server.py](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/backend/server.py), [memory_routes.py](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/backend/memory_routes.py), [storage_service.py](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/backend/storage_service.py)
+
+All three files independently define nearly identical database connection logic and JWT functions:
+
+```python
+# Defined in server.py AND memory_routes.py AND storage_service.py
+ROOT_DIR = Path(__file__).parent
+DB_DIR = ROOT_DIR / "db"
+DB_PATH = DB_DIR / "prompt_manager.db"
+
+@contextmanager
+def get_db_context(): ...
+def verify_jwt_token(token: str): ...
+SECRET_KEY = os.environ.get('JWT_SECRET_KEY', ...)
+ALGORITHM = "HS256"
+```
+
+**Fix:** Create a [db.py](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/backend/memory_db.py) (or `core/db.py`) shared module:
+- [get_db_context()](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/backend/storage_service.py#29-38) — single source of truth for the main DB
+- [verify_jwt_token()](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/backend/server.py#302-313) / [get_current_user()](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/backend/server.py#314-334) — shared auth utilities
+- All three files import from this module
+
+---
+
+### 2. [server.py](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/backend/server.py) is Monolithic (1825 lines)
+
+[server.py](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/backend/server.py) handles: DB init, schema migrations, seed data, JWT auth, GitHub OAuth, templates, prompts, sections, versions, API keys, account variables, prompt variables, settings, rendering, and CORS. That's at least 10 distinct concerns.
+
+**Suggested split:**
+| New Module | Routes/Concerns |
+|---|---|
+| `routes/auth.py` | `/auth/*` — signup, login, GitHub OAuth |
+| `routes/prompts.py` | `/prompts/*`, sections, versions, render |
+| `routes/settings.py` | `/settings/*`, storage-mode |
+| `routes/variables.py` | `/account-variables/*`, `/prompts/{id}/variables/*` |
+| `routes/templates.py` | `/templates/*` |
+| `routes/api_keys.py` | `/keys/*` |
+| `core/db.py` | DB init, [get_db_context](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/backend/storage_service.py#29-38), migrations |
+| `core/auth.py` | JWT creation, [require_auth](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/backend/server.py#335-340), [get_current_user](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/backend/server.py#314-334) |
+
+[server.py](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/backend/server.py) becomes the thin app entry point that registers routers.
+
+---
+
+### 3. [memory_routes.py](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/backend/memory_routes.py) is Also Monolithic (1543 lines)
+
+Same problem — all memory system admin and agent endpoints live in one file.
+
+**Suggested split:**
+| New Module | Routes |
+|---|---|
+| `memory/routes/config.py` | Entity types, subtypes, lesson/channel types, agents, system prompts, LLM configs, settings |
+| `memory/routes/agent.py` | `/memory/interactions`, `/memory/search`, agent ingest routes |
+| `memory/routes/admin.py` | `/memory/admin/*`, timeline, lessons admin |
+
+---
+
+### 4. Duplicated [render_prompt](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/backend/server.py#1388-1445) Logic
+
+`GitHubStorageService.render_prompt` and `LocalStorageService.render_prompt` are identical:
+
+```python
+# SAME in both classes
+for var_name, var_value in variables.items():
+    section_content = section_content.replace(f"{{{{{var_name}}}}}", str(var_value))
+rendered.append(section_content)
+```
+
+**Fix:** Move [render_prompt](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/backend/server.py#1388-1445) into the base class [StorageService](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/backend/storage_service.py#62-148), calling `await self.get_prompt_content(...)` (already abstract). This eliminates 15+ lines of duplication.
+
+---
+
+## 🟡 Medium Priority
+
+### 5. Bare `except:` Clauses
+
+Several routes use bare `except:` (catches `BaseException`, `KeyboardInterrupt`, etc.):
+
+```python
+# memory_routes.py lines ~247, 286, 710
+except:
+    raise HTTPException(status_code=400, detail="...")
+```
+
+**Fix:** Replace with `except Exception as e:` — consistent with the rest of the codebase, and prevents accidentally swallowing signals.
+
+---
+
+### 6. Missing Error Context in Silenced Exceptions
+
+Many places swallow errors without context:
+
+```python
+try:
+    entities_list = json.loads(entities)
+except:
+    entities_list = []  # silent fallback — no log
+```
+
+**Fix:** Add `logger.warning(f"Failed to parse entities JSON: {e}")` before the fallback so errors are observable in production.
+
+---
+
+### 7. [get_github_settings](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/backend/storage_service.py#40-52) Is Defined Twice
+
+Identical function exists in both [server.py](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/backend/server.py) (line 490) and [storage_service.py](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/backend/storage_service.py) (line 40):
+
+```python
+def get_github_settings(user_id: str = None):
+    with get_db_context() as conn: ...
+```
+
+**Fix:** After extracting `core/db.py`, import this from one canonical location.
+
+---
+
+### 8. API Key Not Truly Hashed
+
+The [api_keys](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/backend/server.py#1447-1453) table stores `key_hash` but [verify_api_key](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/backend/server.py#341-354) compares it directly as plaintext:
+
+```python
+# server.py line 347
+cursor.execute("SELECT * FROM api_keys WHERE key_hash = ?", (api_key,))
+```
+
+There's a comment in the code acknowledging this: _"we store hashed, but for simplicity we'll use preview matching"_. Since this is an actual security control (API access), the key should be properly hashed with `bcrypt` or `hashlib.sha256` and compared by hash.
+
+---
+
+### 9. [inject_variables](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/backend/server.py#744-773) Opens Two DB Connections Unnecessarily
+
+```python
+# server.py lines 750–763
+if user_id:
+    with get_db_context() as conn:  # Connection 1
+        ...
+if prompt_id:
+    with get_db_context() as conn:  # Connection 2
+        ...
+```
+
+**Fix:** Open one connection and run both queries:
+```python
+with get_db_context() as conn:
+    if user_id:
+        cursor.execute(...) 
+    if prompt_id:
+        cursor.execute(...)
+```
+
+---
+
+### 10. Frontend: Inconsistent Delete Handler Patterns
+
+In [MemorySettingsPage.jsx](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/frontend/src/pages/MemorySettingsPage.jsx), lesson types and channel types use different (inconsistent) delete patterns:
+
+```jsx
+// Uses a handler function:
+onClick={() => handleDeleteEntityType(type.id)}
+
+// Inline with API call directly (no error handling):
+onClick={() => deleteLessonType(type.id).then(loadAllData)}
+onClick={() => deleteChannelType(channel.id).then(loadAllData)}
+```
+
+The inline `.then(loadAllData)` calls have no `.catch()`, so failures are silently ignored.
+
+**Fix:** Create handler functions for lesson/channel type deletion matching the entity type pattern with proper `try/catch` and `toast.error(...)`.
+
+---
+
+### 11. Frontend: API Sections Use `'main'` Default, Backend Uses `'v1'`
+
+```js
+// api.js — default is 'main'
+export const getPromptSections = (promptId, version = 'main') => ...
+
+// server.py — default is 'v1'
+async def get_prompt_sections(prompt_id: str, version: str = "v1", ...):
+```
+
+This mismatch means the frontend will often pass `version=main` while the backend expects `v1`. Align both to the same default (`v1`).
+
+---
+
+## 🟢 Low Priority / Quick Wins
+
+### 12. `import os` Appears Twice in [server.py](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/backend/server.py)
+
+```python
+# Line 6
+import os
+# Line 60
+import os  # duplicate
+```
+
+Remove the duplicate.
+
+---
+
+### 13. [seed_admin_user](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/backend/server.py#264-281) Has Hardcoded Credentials
+
+```python
+admin_email = "admin@promptsrc.com"
+admin_password = "admin123"  # ← hardcoded
+```
+
+Move to [.env](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/.env) or at minimum read from environment variables (`ADMIN_EMAIL`, `ADMIN_PASSWORD`), falling back to these only for dev.
+
+---
+
+### 14. [call_llm](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/backend/memory_services.py#73-116) and [call_llm_vision](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/backend/memory_services.py#117-170) Share Copy-Pasted Header Logic
+
+Both functions in [memory_services.py](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/backend/memory_services.py) build the same headers dict:
+```python
+headers = {
+    "Authorization": f"Bearer {api_key}",
+    "Content-Type": "application/json"
+}
+```
+
+**Fix:** Extract `_build_llm_headers(api_key) -> dict` helper.
+
+---
+
+### 15. `ConfigContext` `hasStorage` Computed Property Is Misleading
+
+```js
+// ConfigContext.jsx
+hasStorage: isConfigured || hasGitHub,
+```
+
+`isConfigured=true` when local storage is active (always true after first login). So `hasStorage` is almost always `true` and conveys little real meaning. Consider removing or renaming to be explicit about what's being checked.
+
+---
+
+## Refactoring Priority Matrix
+
+| # | Area | Impact | Effort | Priority |
+|---|---|---|---|---|
+| 1 | Shared DB/Auth module | High | Medium | 🔴 Do first |
+| 2 | Split [server.py](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/backend/server.py) | High | High | 🔴 High |
+| 3 | Split [memory_routes.py](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/backend/memory_routes.py) | Medium | High | 🔴 High |
+| 4 | [render_prompt](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/backend/server.py#1388-1445) dedup | Low | Low | 🟡 Easy win |
+| 5 | Bare `except:` clauses | Medium | Low | 🟡 Easy win |
+| 6 | Missing error logs | Low | Low | 🟢 Quick win |
+| 7 | [get_github_settings](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/backend/storage_service.py#40-52) dedup | Medium | Low | 🟡 Easy win |
+| 8 | API Key hashing | High | Medium | 🔴 Security |
+| 9 | [inject_variables](file:///c:/Users/PC/OneDrive%20-%20studygram.me/VsCode/masteragent/backend/server.py#744-773) DB connections | Low | Low | 🟢 Quick win |
+| 10 | Frontend delete handlers | Medium | Low | 🟡 Easy win |
+| 11 | Version default mismatch | Medium | Low | 🟡 Easy win |
+| 12–14 | Minor code cleanup | Low | Low | 🟢 Quick wins |

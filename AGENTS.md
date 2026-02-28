@@ -28,6 +28,7 @@ The project uses a unified memory bank located in `.memory/` for AI assistant co
 3. Add decisions to `.memory/decisions.md` if architectural
 
 ### Related Documentation
+- `ARCHITECTURE.md` - Master engineering architecture and system boundaries
 - `docs/` - Technical design documents (e.g., variables-system-design.md)
 - `HANDOFF.md` - Project handoff document
 - `memory/PRD.md` - Memory system product requirements
@@ -40,8 +41,8 @@ The project uses a unified memory bank located in `.memory/` for AI assistant co
 - Use `get_db_context()` for main DB, `get_memory_db_context()` for memory DB
 
 ### Dual Authentication
-- **JWT (Bearer token)**: Admin/config endpoints - via `require_admin_auth()`
-- **API Key (X-API-Key header)**: Agent-facing endpoints - via `verify_agent_key()`
+- **JWT (Bearer token)**: Admin/config endpoints - via `core.auth.require_admin_auth()`
+- **API Key (X-API-Key header)**: Agent-facing endpoints - via `core.auth.verify_agent_key()`
 
 ### Service Ports
 - Backend: 8001 (Docker), 8000 (local dev)

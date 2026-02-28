@@ -92,10 +92,12 @@ The scope then expanded to include an **Agent-Facing Memory System** as an exten
 ```
 promptsrc/
 ├── backend/                    # FastAPI backend
-│   ├── server.py              # Main application entry
+│   ├── core/                  # DB connection and Auth singletons
+│   ├── routes/                # Prompt Manager module endpoints
+│   ├── memory/                # Memory System module endpoints
+│   ├── server.py              # Root router mount
 │   ├── memory_db.py           # Memory database schema
 │   ├── memory_models.py       # Pydantic models
-│   ├── memory_routes.py       # Memory API endpoints
 │   ├── memory_services.py     # LLM, embedding, Qdrant services
 │   ├── memory_tasks.py        # Background tasks
 │   ├── prompt_manager.db      # Main SQLite database

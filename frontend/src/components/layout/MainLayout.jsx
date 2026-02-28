@@ -30,7 +30,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 
 export const MainLayout = ({ children }) => {
   const { user, logout } = useAuth();
-  const { isConfigured, storageMode, hasStorage, hasGitHub } = useConfig();
+  const { isConfigured, storageMode, hasGitHub } = useConfig();
   const navigate = useNavigate();
 
   const navItems = [
@@ -122,7 +122,7 @@ export const MainLayout = ({ children }) => {
       {/* Main Content */}
       <main className="main-content">
         {/* Configuration Warning Banner */}
-        {!hasStorage && (
+        {!(isConfigured || hasGitHub) && (
           <Alert className="mx-6 mt-4 border-yellow-500/50 bg-yellow-500/10">
             <AlertTriangle className="h-4 w-4 text-yellow-500" />
             <AlertDescription className="text-yellow-200">
@@ -140,7 +140,7 @@ export const MainLayout = ({ children }) => {
         )}
 
         {/* Storage Mode Indicator */}
-        {hasStorage && storageMode === 'local' && (
+        {(isConfigured || hasGitHub) && storageMode === 'local' && (
           <Alert className="mx-6 mt-4 border-blue-500/50 bg-blue-500/10">
             <HardDrive className="h-4 w-4 text-blue-500" />
             <AlertDescription className="text-blue-200">

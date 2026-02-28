@@ -58,9 +58,9 @@ class TestMemoryHealth:
 class TestLLMConfigs:
     """LLM Configuration API Tests"""
     
-    def test_list_llm_configs(self, api_client):
+    def test_list_llm_configs(self, authenticated_client):
         """Test GET /api/memory/config/llm-configs returns all configs"""
-        response = api_client.get(f"{BASE_URL}/api/memory/config/llm-configs")
+        response = authenticated_client.get(f"{BASE_URL}/api/memory/config/llm-configs")
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)
@@ -74,9 +74,9 @@ class TestLLMConfigs:
         
         print(f"✓ Found {len(data)} LLM configs: {task_types}")
     
-    def test_llm_config_structure(self, api_client):
+    def test_llm_config_structure(self, authenticated_client):
         """Test LLM config response structure"""
-        response = api_client.get(f"{BASE_URL}/api/memory/config/llm-configs")
+        response = authenticated_client.get(f"{BASE_URL}/api/memory/config/llm-configs")
         assert response.status_code == 200
         data = response.json()
         
@@ -88,10 +88,10 @@ class TestLLMConfigs:
         
         print(f"✓ LLM config structure validated: {list(config.keys())}")
     
-    def test_update_llm_config(self, api_client):
+    def test_update_llm_config(self, authenticated_client):
         """Test PUT /api/memory/config/llm-configs/{id} updates config"""
         # First get existing configs
-        response = api_client.get(f"{BASE_URL}/api/memory/config/llm-configs")
+        response = authenticated_client.get(f"{BASE_URL}/api/memory/config/llm-configs")
         assert response.status_code == 200
         configs = response.json()
         
@@ -106,7 +106,7 @@ class TestLLMConfigs:
             "name": "Updated Summarizer Test",
             "model_name": "gpt-4o-mini-test"
         }
-        response = api_client.put(f"{BASE_URL}/api/memory/config/llm-configs/{config_id}", json=update_data)
+        response = authenticated_client.put(f"{BASE_URL}/api/memory/config/llm-configs/{config_id}", json=update_data)
         assert response.status_code == 200
         
         updated = response.json()
@@ -118,7 +118,7 @@ class TestLLMConfigs:
             "name": "OpenAI Summarizer (Configure)",
             "model_name": "gpt-4o-mini"
         }
-        api_client.put(f"{BASE_URL}/api/memory/config/llm-configs/{config_id}", json=restore_data)
+        authenticated_client.put(f"{BASE_URL}/api/memory/config/llm-configs/{config_id}", json=restore_data)
         
         print(f"✓ LLM config update successful for {config_id}")
 
@@ -126,9 +126,9 @@ class TestLLMConfigs:
 class TestEntityTypes:
     """Entity Types API Tests"""
     
-    def test_list_entity_types(self, api_client):
+    def test_list_entity_types(self, authenticated_client):
         """Test GET /api/memory/config/entity-types returns all types"""
-        response = api_client.get(f"{BASE_URL}/api/memory/config/entity-types")
+        response = authenticated_client.get(f"{BASE_URL}/api/memory/config/entity-types")
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)
@@ -141,7 +141,7 @@ class TestEntityTypes:
         
         print(f"✓ Found {len(data)} entity types: {names}")
     
-    def test_create_and_delete_entity_type(self, api_client):
+    def test_create_and_delete_entity_type(self, authenticated_client):
         """Test POST and DELETE /api/memory/config/entity-types"""
         # Create new entity type
         new_type = {
@@ -149,7 +149,7 @@ class TestEntityTypes:
             "description": "Test project entity type",
             "icon": "folder"
         }
-        response = api_client.post(f"{BASE_URL}/api/memory/config/entity-types", json=new_type)
+        response = authenticated_client.post(f"{BASE_URL}/api/memory/config/entity-types", json=new_type)
         assert response.status_code == 200
         
         created = response.json()
@@ -158,16 +158,16 @@ class TestEntityTypes:
         type_id = created["id"]
         
         # Verify it exists
-        response = api_client.get(f"{BASE_URL}/api/memory/config/entity-types")
+        response = authenticated_client.get(f"{BASE_URL}/api/memory/config/entity-types")
         types = response.json()
         assert any(t["id"] == type_id for t in types)
         
         # Delete it
-        response = api_client.delete(f"{BASE_URL}/api/memory/config/entity-types/{type_id}")
+        response = authenticated_client.delete(f"{BASE_URL}/api/memory/config/entity-types/{type_id}")
         assert response.status_code == 200
         
         # Verify deletion
-        response = api_client.get(f"{BASE_URL}/api/memory/config/entity-types")
+        response = authenticated_client.get(f"{BASE_URL}/api/memory/config/entity-types")
         types = response.json()
         assert not any(t["id"] == type_id for t in types)
         
@@ -177,16 +177,16 @@ class TestEntityTypes:
 class TestEntitySubtypes:
     """Entity Subtypes API Tests"""
     
-    def test_list_entity_subtypes(self, api_client):
+    def test_list_entity_subtypes(self, authenticated_client):
         """Test GET /api/memory/config/entity-types/{id}/subtypes"""
         # First get Contact entity type
-        response = api_client.get(f"{BASE_URL}/api/memory/config/entity-types")
+        response = authenticated_client.get(f"{BASE_URL}/api/memory/config/entity-types")
         types = response.json()
         contact_type = next((t for t in types if t["name"] == "Contact"), None)
         assert contact_type is not None, "Contact entity type not found"
         
         # Get subtypes
-        response = api_client.get(f"{BASE_URL}/api/memory/config/entity-types/{contact_type['id']}/subtypes")
+        response = authenticated_client.get(f"{BASE_URL}/api/memory/config/entity-types/{contact_type['id']}/subtypes")
         assert response.status_code == 200
         subtypes = response.json()
         assert isinstance(subtypes, list)
@@ -203,9 +203,9 @@ class TestEntitySubtypes:
 class TestLessonTypes:
     """Lesson Types API Tests"""
     
-    def test_list_lesson_types(self, api_client):
+    def test_list_lesson_types(self, authenticated_client):
         """Test GET /api/memory/config/lesson-types"""
-        response = api_client.get(f"{BASE_URL}/api/memory/config/lesson-types")
+        response = authenticated_client.get(f"{BASE_URL}/api/memory/config/lesson-types")
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)
@@ -218,14 +218,14 @@ class TestLessonTypes:
         
         print(f"✓ Found {len(data)} lesson types: {names}")
     
-    def test_create_and_delete_lesson_type(self, api_client):
+    def test_create_and_delete_lesson_type(self, authenticated_client):
         """Test POST and DELETE /api/memory/config/lesson-types"""
         new_type = {
             "name": "TEST_Compliance",
             "description": "Test compliance lessons",
             "color": "#FF5733"
         }
-        response = api_client.post(f"{BASE_URL}/api/memory/config/lesson-types", json=new_type)
+        response = authenticated_client.post(f"{BASE_URL}/api/memory/config/lesson-types", json=new_type)
         assert response.status_code == 200
         
         created = response.json()
@@ -233,7 +233,7 @@ class TestLessonTypes:
         type_id = created["id"]
         
         # Delete it
-        response = api_client.delete(f"{BASE_URL}/api/memory/config/lesson-types/{type_id}")
+        response = authenticated_client.delete(f"{BASE_URL}/api/memory/config/lesson-types/{type_id}")
         assert response.status_code == 200
         
         print(f"✓ Lesson type CRUD operations successful")
@@ -242,9 +242,9 @@ class TestLessonTypes:
 class TestChannelTypes:
     """Channel Types API Tests"""
     
-    def test_list_channel_types(self, api_client):
+    def test_list_channel_types(self, authenticated_client):
         """Test GET /api/memory/config/channel-types"""
-        response = api_client.get(f"{BASE_URL}/api/memory/config/channel-types")
+        response = authenticated_client.get(f"{BASE_URL}/api/memory/config/channel-types")
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)
@@ -257,14 +257,14 @@ class TestChannelTypes:
         
         print(f"✓ Found {len(data)} channel types: {names}")
     
-    def test_create_and_delete_channel_type(self, api_client):
+    def test_create_and_delete_channel_type(self, authenticated_client):
         """Test POST and DELETE /api/memory/config/channel-types"""
         new_channel = {
             "name": "TEST_slack",
             "description": "Test Slack channel",
             "icon": "slack"
         }
-        response = api_client.post(f"{BASE_URL}/api/memory/config/channel-types", json=new_channel)
+        response = authenticated_client.post(f"{BASE_URL}/api/memory/config/channel-types", json=new_channel)
         assert response.status_code == 200
         
         created = response.json()
@@ -272,7 +272,7 @@ class TestChannelTypes:
         channel_id = created["id"]
         
         # Delete it
-        response = api_client.delete(f"{BASE_URL}/api/memory/config/channel-types/{channel_id}")
+        response = authenticated_client.delete(f"{BASE_URL}/api/memory/config/channel-types/{channel_id}")
         assert response.status_code == 200
         
         print(f"✓ Channel type CRUD operations successful")
@@ -281,22 +281,22 @@ class TestChannelTypes:
 class TestAgents:
     """Agents API Tests"""
     
-    def test_list_agents(self, api_client):
+    def test_list_agents(self, authenticated_client):
         """Test GET /api/memory/config/agents"""
-        response = api_client.get(f"{BASE_URL}/api/memory/config/agents")
+        response = authenticated_client.get(f"{BASE_URL}/api/memory/config/agents")
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)
         print(f"✓ Found {len(data)} agents")
     
-    def test_create_agent_returns_api_key(self, api_client):
+    def test_create_agent_returns_api_key(self, authenticated_client):
         """Test POST /api/memory/config/agents returns API key"""
         new_agent = {
             "name": "TEST_Email_Sync_Agent",
             "description": "Test agent for email sync",
             "access_level": "private"
         }
-        response = api_client.post(f"{BASE_URL}/api/memory/config/agents", json=new_agent)
+        response = authenticated_client.post(f"{BASE_URL}/api/memory/config/agents", json=new_agent)
         assert response.status_code == 200
         
         created = response.json()
@@ -312,12 +312,12 @@ class TestAgents:
         print(f"✓ Agent created with API key: {created['api_key_preview']}")
         
         # Clean up - delete the test agent
-        response = api_client.delete(f"{BASE_URL}/api/memory/config/agents/{agent_id}")
+        response = authenticated_client.delete(f"{BASE_URL}/api/memory/config/agents/{agent_id}")
         assert response.status_code == 200
         
         print(f"✓ Agent CRUD operations successful")
     
-    def test_update_agent_status(self, api_client):
+    def test_update_agent_status(self, authenticated_client):
         """Test PATCH /api/memory/config/agents/{id} to toggle active status"""
         # Create agent
         new_agent = {
@@ -325,23 +325,23 @@ class TestAgents:
             "description": "Test agent for toggle",
             "access_level": "private"
         }
-        response = api_client.post(f"{BASE_URL}/api/memory/config/agents", json=new_agent)
+        response = authenticated_client.post(f"{BASE_URL}/api/memory/config/agents", json=new_agent)
         assert response.status_code == 200
         agent_id = response.json()["id"]
         
         # Toggle to inactive
-        response = api_client.patch(f"{BASE_URL}/api/memory/config/agents/{agent_id}?is_active=false")
+        response = authenticated_client.patch(f"{BASE_URL}/api/memory/config/agents/{agent_id}?is_active=false")
         assert response.status_code == 200
         
         # Verify status changed
-        response = api_client.get(f"{BASE_URL}/api/memory/config/agents")
+        response = authenticated_client.get(f"{BASE_URL}/api/memory/config/agents")
         agents = response.json()
         agent = next((a for a in agents if a["id"] == agent_id), None)
         assert agent is not None
         assert agent["is_active"] == False
         
         # Clean up
-        api_client.delete(f"{BASE_URL}/api/memory/config/agents/{agent_id}")
+        authenticated_client.delete(f"{BASE_URL}/api/memory/config/agents/{agent_id}")
         
         print(f"✓ Agent status toggle successful")
 
@@ -349,9 +349,9 @@ class TestAgents:
 class TestMemorySettings:
     """Memory Settings API Tests"""
     
-    def test_get_settings(self, api_client):
+    def test_get_settings(self, authenticated_client):
         """Test GET /api/memory/config/settings"""
-        response = api_client.get(f"{BASE_URL}/api/memory/config/settings")
+        response = authenticated_client.get(f"{BASE_URL}/api/memory/config/settings")
         assert response.status_code == 200
         data = response.json()
         
@@ -368,15 +368,15 @@ class TestMemorySettings:
         
         print(f"✓ Memory settings retrieved: chunk_size={data['chunk_size']}, pii_enabled={data['pii_scrubbing_enabled']}")
     
-    def test_update_settings(self, api_client):
+    def test_update_settings(self, authenticated_client):
         """Test PUT /api/memory/config/settings"""
         # Get current settings
-        response = api_client.get(f"{BASE_URL}/api/memory/config/settings")
+        response = authenticated_client.get(f"{BASE_URL}/api/memory/config/settings")
         original = response.json()
         
         # Update chunk size
         update_data = {"chunk_size": 500}
-        response = api_client.put(f"{BASE_URL}/api/memory/config/settings", json=update_data)
+        response = authenticated_client.put(f"{BASE_URL}/api/memory/config/settings", json=update_data)
         assert response.status_code == 200
         
         updated = response.json()
@@ -384,7 +384,7 @@ class TestMemorySettings:
         
         # Restore original
         restore_data = {"chunk_size": original["chunk_size"]}
-        api_client.put(f"{BASE_URL}/api/memory/config/settings", json=restore_data)
+        authenticated_client.put(f"{BASE_URL}/api/memory/config/settings", json=restore_data)
         
         print(f"✓ Memory settings update successful")
 
@@ -392,9 +392,9 @@ class TestMemorySettings:
 class TestSystemPrompts:
     """System Prompts API Tests"""
     
-    def test_list_system_prompts(self, api_client):
+    def test_list_system_prompts(self, authenticated_client):
         """Test GET /api/memory/config/system-prompts"""
-        response = api_client.get(f"{BASE_URL}/api/memory/config/system-prompts")
+        response = authenticated_client.get(f"{BASE_URL}/api/memory/config/system-prompts")
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)
@@ -412,7 +412,8 @@ class TestAuthenticationRequired:
     """Test endpoints that should work without auth (config endpoints)"""
     
     def test_config_endpoints_accessible(self, api_client):
-        """Config endpoints should be accessible without auth for admin UI"""
+        """Config endpoints should require auth for admin UI"""
+        api_client.headers.pop("Authorization", None)
         endpoints = [
             "/api/memory/config/llm-configs",
             "/api/memory/config/entity-types",
@@ -425,9 +426,9 @@ class TestAuthenticationRequired:
         
         for endpoint in endpoints:
             response = api_client.get(f"{BASE_URL}{endpoint}")
-            assert response.status_code == 200, f"Endpoint {endpoint} failed with {response.status_code}"
+            assert response.status_code == 401, f"Endpoint {endpoint} failed to reject unauthenticated user with {response.status_code}"
         
-        print(f"✓ All {len(endpoints)} config endpoints accessible")
+        print(f"✓ All {len(endpoints)} config endpoints successfully block unauthenticated access")
 
 
 if __name__ == "__main__":

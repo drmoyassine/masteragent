@@ -60,17 +60,17 @@ export const updatePrompt = (id, data) => api.put(`/prompts/${id}`, data);
 export const deletePrompt = (id) => api.delete(`/prompts/${id}`);
 
 // Sections
-export const getPromptSections = (promptId, version = 'main') => 
+export const getPromptSections = (promptId, version = 'v1') =>
     api.get(`/prompts/${promptId}/sections`, { params: { version } });
-export const getSectionContent = (promptId, filename, version = 'main') => 
+export const getSectionContent = (promptId, filename, version = 'v1') =>
     api.get(`/prompts/${promptId}/sections/${filename}`, { params: { version } });
-export const createSection = (promptId, data, version = 'main') => 
+export const createSection = (promptId, data, version = 'v1') =>
     api.post(`/prompts/${promptId}/sections`, data, { params: { version } });
-export const updateSection = (promptId, filename, data, version = 'main') => 
+export const updateSection = (promptId, filename, data, version = 'v1') =>
     api.put(`/prompts/${promptId}/sections/${filename}`, data, { params: { version } });
-export const deleteSection = (promptId, filename, version = 'main') => 
+export const deleteSection = (promptId, filename, version = 'v1') =>
     api.delete(`/prompts/${promptId}/sections/${filename}`, { params: { version } });
-export const reorderSections = (promptId, sections, version = 'main') => 
+export const reorderSections = (promptId, sections, version = 'main') =>
     api.post(`/prompts/${promptId}/sections/reorder`, { sections }, { params: { version } });
 
 // Versions

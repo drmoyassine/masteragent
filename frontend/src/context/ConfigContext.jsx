@@ -55,8 +55,6 @@ export const ConfigProvider = ({ children }) => {
         markDisconnected,
         // Helper to check if GitHub features are fully configured
         hasGitHubAccess: isConfigured && storageMode === 'github' && hasGitHub,
-        // Helper to check if any storage is configured
-        hasStorage: isConfigured || hasGitHub,
     };
 
     return (

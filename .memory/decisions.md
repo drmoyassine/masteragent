@@ -18,6 +18,8 @@
 | [ADR-007](#adr-007-fastapi-for-backend) | Backend | ✅ Adopted |
 | [ADR-008](#adr-008-pluggable-storage-service) | Storage | ✅ Adopted |
 | [ADR-009](#adr-009-automatic-storage-fallback) | Storage | ✅ Adopted |
+| [ADR-010](#adr-010-modular-backend-architecture) | Backend | ✅ Adopted |
+| [ADR-011](#adr-011-hashed-api-keys) | Security | ✅ Adopted |
 
 ---
 
@@ -321,6 +323,55 @@ Implement automatic fallback in `get_storage_service()`:
 ### Consequences
 [What becomes easier or more difficult because of this change?]
 ```
+
+---
+
+## ADR-010: Modular Backend Architecture
+
+### Context
+`server.py` and `memory_routes.py` grew into massive, tangled monoliths (over 1,500 lines each). Finding code was confusing, database and auth logics were repetitively copy-pasted, and the files were becoming a massive technical debt liability threatening the project's scalability.
+
+### Decision
+Break the monolithic scripts into a strictly patterned Domain-Driven folder architecture mapped onto APIRouters:
+- `core/` for shared authentication verification and database transaction scopes.
+- `routes/` for base Prompt Manager functionality (`auth.py`, `templates.py`, `api_keys.py`, etc.).
+- `memory/` for all Agent Memory functionality (`admin.py`, `agent.py`, `config.py`).
+
+### Rationale
+Isolates namespaces completely. Reduces `server.py` down to a 75-line minimalist boot loader strictly responsible for registering routers, allowing each domain branch to evolve and be tested concurrently without risking adjacent regression.
+
+### Trade-offs
+| Pros | Cons |
+|------|------|
+| Rapidly accelerates parallel development | More explicit imports needed per-file |
+| Code discovery is intuitive and domain-mapped | Higher baseline file overhead |
+| Eliminates shared-state god objects | Slower initial navigation for new devs |
+
+### Consequences
+- Import models exclusively using relative paths bounded within the domain scope.
+- `server.py` may only be modified to mount system middleware or new outer-edge APIRouters.
+
+---
+
+## ADR-011: Hashed API Keys
+
+### Context
+Agent API keys were stored directly as plain text within the SQLite `api_keys` relation. While convenient for rapid preview development, this presented a critical, unacceptable security vulnerability. If the simple SQLite DB was captured or leaked, all authenticated agent keys would immediately be fully compromised in production.
+
+### Decision
+Migrate Agent Key schema interactions exclusively to one-way `hashlib.sha256` digest comparisons. The original plaintext API Key (`mem_xxxxxx...`) is *only* shown immediately post-creation once and never cached.
+
+### Rationale
+Absolute standard cryptographic security practice. If the vector database or SQLite file gets intercepted, zero credentials can be reversed back into workable agent payloads. 
+
+### Trade-offs
+| Pros | Cons |
+|------|------|
+| High security integrity against data exfiltration | Admins cannot recover a lost API key |
+| Standardizes cryptographic boundaries | Debugging key mapping is harder without the raw strings |
+
+### Consequences
+- If an agent loses their key, an admin must delete the old mapping and generate an entirely new valid API key inside the UI; recovery is permanently impossible.
 
 ---
 

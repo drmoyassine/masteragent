@@ -26,7 +26,7 @@ Always use context managers for database connections:
 
 ```python
 # Main database (users, prompts, settings)
-from server import get_db_context
+from core.db import get_db_context
 
 with get_db_context() as db:
     # db operations here
@@ -44,7 +44,7 @@ with get_memory_db_context() as db:
 
 ```python
 # JWT authentication for admin endpoints
-from server import require_admin_auth
+from core.auth import require_admin_auth
 
 @router.get("/api/memory/config/entity-types")
 async def get_entity_types(current_user: dict = Depends(require_admin_auth)):
@@ -52,7 +52,7 @@ async def get_entity_types(current_user: dict = Depends(require_admin_auth)):
     pass
 
 # API Key authentication for agent endpoints
-from memory_routes import verify_agent_key
+from memory.auth import verify_agent_key
 
 @router.post("/api/memory/interactions")
 async def create_interaction(

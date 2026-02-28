@@ -89,23 +89,23 @@ const PROVIDER_OPTIONS = [
 export default function MemorySettingsPage() {
   const [activeTab, setActiveTab] = useState("llm");
   const [loading, setLoading] = useState(true);
-  
+
   // LLM Configs
   const [llmConfigs, setLLMConfigs] = useState([]);
   const [editingConfig, setEditingConfig] = useState(null);
   const [showApiKey, setShowApiKey] = useState({});
-  
+
   // Entity Types
   const [entityTypes, setEntityTypes] = useState([]);
   const [selectedEntityType, setSelectedEntityType] = useState(null);
   const [entitySubtypes, setEntitySubtypes] = useState([]);
-  
+
   // Other configs
   const [lessonTypes, setLessonTypes] = useState([]);
   const [channelTypes, setChannelTypes] = useState([]);
   const [agents, setAgents] = useState([]);
   const [settings, setSettings] = useState({});
-  
+
   // Dialog states
   const [newEntityType, setNewEntityType] = useState({ name: "", description: "", icon: "folder" });
   const [newSubtype, setNewSubtype] = useState({ name: "", description: "" });
@@ -221,6 +221,17 @@ export default function MemorySettingsPage() {
     }
   };
 
+  const handleDeleteLessonType = async (id) => {
+    if (!window.confirm("Delete this lesson type?")) return;
+    try {
+      await deleteLessonType(id);
+      toast.success("Lesson type deleted");
+      loadAllData();
+    } catch (error) {
+      toast.error("Failed to delete lesson type");
+    }
+  };
+
   // Channel Type handlers
   const handleCreateChannel = async () => {
     try {
@@ -230,6 +241,17 @@ export default function MemorySettingsPage() {
       loadAllData();
     } catch (error) {
       toast.error("Failed to create channel type");
+    }
+  };
+
+  const handleDeleteChannelType = async (id) => {
+    if (!window.confirm("Delete this channel type?")) return;
+    try {
+      await deleteChannelType(id);
+      toast.success("Channel type deleted");
+      loadAllData();
+    } catch (error) {
+      toast.error("Failed to delete channel type");
     }
   };
 
@@ -323,7 +345,7 @@ export default function MemorySettingsPage() {
                 const taskInfo = TASK_TYPE_LABELS[config.task_type] || { label: config.task_type, icon: Brain, color: "bg-gray-500" };
                 const TaskIcon = taskInfo.icon;
                 const isEditing = editingConfig?.id === config.id;
-                
+
                 return (
                   <Card key={config.id} className={`border-l-4 ${taskInfo.color}`}>
                     <CardContent className="pt-4">
@@ -357,7 +379,7 @@ export default function MemorySettingsPage() {
                           </Button>
                         </div>
                       </div>
-                      
+
                       {isEditing && (
                         <div className="mt-4 pt-4 border-t space-y-4">
                           <div className="grid grid-cols-2 gap-4">
@@ -485,9 +507,8 @@ export default function MemorySettingsPage() {
                   {entityTypes.map((type) => (
                     <div
                       key={type.id}
-                      className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-colors ${
-                        selectedEntityType?.id === type.id ? "bg-accent border-primary" : "hover:bg-accent/50"
-                      }`}
+                      className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-colors ${selectedEntityType?.id === type.id ? "bg-accent border-primary" : "hover:bg-accent/50"
+                        }`}
                       onClick={() => {
                         setSelectedEntityType(type);
                         loadEntitySubtypes(type.id);
@@ -644,7 +665,7 @@ export default function MemorySettingsPage() {
                         <p className="text-xs text-muted-foreground">{type.description}</p>
                       </div>
                     </div>
-                    <Button variant="ghost" size="icon" onClick={() => deleteLessonType(type.id).then(loadAllData)}>
+                    <Button variant="ghost" size="icon" onClick={() => handleDeleteLessonType(type.id)}>
                       <Trash2 className="w-4 h-4 text-destructive" />
                     </Button>
                   </div>
@@ -711,7 +732,7 @@ export default function MemorySettingsPage() {
                       <p className="font-medium">{channel.name}</p>
                       <p className="text-xs text-muted-foreground">{channel.description}</p>
                     </div>
-                    <Button variant="ghost" size="icon" onClick={() => deleteChannelType(channel.id).then(loadAllData)}>
+                    <Button variant="ghost" size="icon" onClick={() => handleDeleteChannelType(channel.id)}>
                       <Trash2 className="w-4 h-4 text-destructive" />
                     </Button>
                   </div>

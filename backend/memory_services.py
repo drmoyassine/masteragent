@@ -70,6 +70,12 @@ def get_system_prompt(prompt_type: str) -> Optional[str]:
 # OpenAI-Compatible LLM Service
 # ============================================
 
+def _build_llm_headers(api_key: str) -> dict:
+    return {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+
 async def call_llm(prompt: str, system_prompt: str = None, max_tokens: int = 1000, task_type: str = "summarization") -> str:
     """Call OpenAI-compatible LLM using admin-configured settings"""
     config = get_llm_config(task_type)
@@ -87,10 +93,7 @@ async def call_llm(prompt: str, system_prompt: str = None, max_tokens: int = 100
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
     
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
+    headers = _build_llm_headers(api_key)
     
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -141,10 +144,7 @@ async def call_llm_vision(prompt: str, image_base64: str, mime_type: str = "imag
         }
     ]
     
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
+    headers = _build_llm_headers(api_key)
     
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
@@ -514,7 +514,8 @@ async def parse_document(
         try:
             result["text"] = file_content.decode('utf-8')
             return result
-        except:
+        except Exception as e:
+            logger.error(f"Failed to decode text file: {e}")
             pass
     
     # For PDFs and images, use vision LLM
@@ -647,7 +648,8 @@ async def extract_entities_llm(text: str) -> List[Dict[str, str]]:
         entities = json.loads(response)
         if isinstance(entities, list):
             return entities
-    except:
+    except Exception as e:
+        logger.error(f"Failed to extract entities with LLM: {e}")
         pass
     
     return []

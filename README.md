@@ -128,10 +128,12 @@ REACT_APP_BACKEND_URL=http://localhost
 ```
 promptsrc/
 ├── backend/
+│   ├── core/                  # Shared DB and Auth logic
+│   ├── routes/                # Prompt Manager endpoints
+│   ├── memory/                # Memory System endpoints
 │   ├── server.py              # Main FastAPI application
 │   ├── memory_db.py           # Memory system database schema
 │   ├── memory_models.py       # Pydantic models
-│   ├── memory_routes.py       # Memory API endpoints
 │   ├── memory_services.py     # LLM and vector services
 │   ├── memory_tasks.py        # Background tasks
 │   └── requirements.txt
@@ -335,6 +337,7 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Support
 
+- **Architecture Details**: Review [ARCHITECTURE.md](ARCHITECTURE.md)
 - **Documentation**: [docs.promptsrc.com](https://docs.promptsrc.com)
 - **Issues**: [GitHub Issues](https://github.com/your-org/promptsrc/issues)
 - **Email**: support@promptsrc.com

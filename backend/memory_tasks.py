@@ -241,7 +241,8 @@ async def mine_lessons():
                 
                 try:
                     lesson_data = json.loads(response)
-                except:
+                except Exception as e:
+                    logger.error(f"Failed to parse auto-mined lesson JSON: {e}")
                     continue
                 
                 # Create lesson

@@ -14,41 +14,16 @@ import os
 import base64
 import httpx
 from datetime import datetime, timezone
+import logging
 
-# SQLite context manager
-from contextlib import contextmanager
-import sqlite3
+logger = logging.getLogger(__name__)
+
+# Import shared DB utilities from core package (single source of truth)
+from core.db import get_db_context, get_github_settings
 
 ROOT_DIR = Path(__file__).parent
-DB_DIR = ROOT_DIR / "db"
-DB_DIR.mkdir(parents=True, exist_ok=True)
-DB_PATH = DB_DIR / "prompt_manager.db"
 LOCAL_STORAGE_PATH = ROOT_DIR / "local_prompts"
 
-
-@contextmanager
-def get_db_context():
-    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    try:
-        yield conn
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def get_github_settings(user_id: str = None) -> Optional[Dict]:
-    """Get GitHub settings from database."""
-    with get_db_context() as conn:
-        cursor = conn.cursor()
-        if user_id:
-            cursor.execute("SELECT * FROM settings WHERE user_id = ?", (user_id,))
-        else:
-            cursor.execute("SELECT * FROM settings WHERE id = 1")
-        row = cursor.fetchone()
-        if row:
-            return dict(row)
-    return None
 
 
 def get_storage_mode(user_id: str) -> str:
@@ -136,7 +111,6 @@ class StorageService(ABC):
         """List all prompts in storage."""
         pass
     
-    @abstractmethod
     async def render_prompt(
         self, 
         folder_path: str, 
@@ -144,7 +118,20 @@ class StorageService(ABC):
         variables: Dict
     ) -> str:
         """Render a prompt with variables substituted."""
-        pass
+        content = await self.get_prompt_content(folder_path, version)
+        if not content:
+            return ""
+        
+        # Combine all sections
+        rendered = []
+        for section in content.get("sections", []):
+            section_content = section.get("content", "")
+            # Substitute variables
+            for var_name, var_value in variables.items():
+                section_content = section_content.replace(f"{{{{{var_name}}}}}", str(var_value))
+            rendered.append(section_content)
+        
+        return "\n\n".join(rendered)
 
 
 class GitHubStorageService(StorageService):
@@ -440,30 +427,9 @@ class GitHubStorageService(StorageService):
                         "path": item["path"]
                     })
             return prompts
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to list GitHub prompts: {e}")
             return []
-    
-    async def render_prompt(
-        self, 
-        folder_path: str, 
-        version: str,
-        variables: Dict
-    ) -> str:
-        """Render a prompt with variables."""
-        content = await self.get_prompt_content(folder_path, version)
-        if not content:
-            return ""
-        
-        # Combine all sections
-        rendered = []
-        for section in content.get("sections", []):
-            section_content = section.get("content", "")
-            # Substitute variables
-            for var_name, var_value in variables.items():
-                section_content = section_content.replace(f"{{{{{var_name}}}}}", str(var_value))
-            rendered.append(section_content)
-        
-        return "\n\n".join(rendered)
 
 
 class LocalStorageService(StorageService):
@@ -665,28 +631,6 @@ class LocalStorageService(StorageService):
                 })
         
         return prompts
-    
-    async def render_prompt(
-        self, 
-        folder_path: str, 
-        version: str,
-        variables: Dict
-    ) -> str:
-        """Render a prompt with variables."""
-        content = await self.get_prompt_content(folder_path, version)
-        if not content:
-            return ""
-        
-        # Combine all sections
-        rendered = []
-        for section in content.get("sections", []):
-            section_content = section.get("content", "")
-            # Substitute variables
-            for var_name, var_value in variables.items():
-                section_content = section_content.replace(f"{{{{{var_name}}}}}", str(var_value))
-            rendered.append(section_content)
-        
-        return "\n\n".join(rendered)
 
 
 def get_storage_service(user_id: str) -> StorageService:
