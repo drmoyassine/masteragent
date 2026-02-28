@@ -393,6 +393,7 @@ class SettingsResponse(BaseModel):
     github_repo: Optional[str] = None
     github_owner: Optional[str] = None
     is_configured: bool = False
+    has_github: bool = False
     storage_mode: str = "github"  # 'github' or 'local'
 
 class PromptCreate(BaseModel):
@@ -780,21 +781,24 @@ def extract_variables(content: str) -> List[str]:
 async def get_settings(user: dict = Depends(require_auth)):
     settings = get_github_settings(user["id"])
     if settings:
-        storage_mode = settings.get("storage_mode", "github")
-        # For github mode, check if token exists; for local mode, always configured
+        storage_mode = settings.get("storage_mode", "local")
+        has_github = bool(settings.get("github_token")) and bool(settings.get("github_repo"))
+        
+        # System is configured if has local mode or github is fully setup
         if storage_mode == "local":
             is_configured = True
         else:
-            is_configured = bool(settings.get("github_token"))
+            is_configured = has_github
         
         return SettingsResponse(
             id=settings["id"],
             github_repo=settings.get("github_repo"),
             github_owner=settings.get("github_owner"),
             is_configured=is_configured,
+            has_github=has_github,
             storage_mode=storage_mode
         )
-    return SettingsResponse(id=0, is_configured=True, storage_mode="local")
+    return SettingsResponse(id=0, is_configured=True, has_github=False, storage_mode="local")
 
 @api_router.post("/settings", response_model=SettingsResponse)
 async def save_settings(settings_data: SettingsCreate, user: dict = Depends(require_auth)):
@@ -858,7 +862,9 @@ async def save_settings(settings_data: SettingsCreate, user: dict = Depends(requ
         id=settings_id,
         github_repo=settings_data.github_repo,
         github_owner=settings_data.github_owner,
-        is_configured=True
+        is_configured=True,
+        has_github=True,
+        storage_mode=settings_data.storage_mode if hasattr(settings_data, 'storage_mode') else "github"
     )
 
 @api_router.get("/github/user")
@@ -928,6 +934,7 @@ async def set_storage_mode(mode_data: StorageModeUpdate, user: dict = Depends(re
         github_repo=github_repo,
         github_owner=github_owner,
         is_configured=is_configured,
+        has_github=bool(existing.get("github_token")) if existing else False,
         storage_mode=storage_mode
     )
 

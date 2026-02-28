@@ -145,51 +145,86 @@ export default function SettingsPage({ onDisconnect }) {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-primary animate-pulse-slow" />
-                    <span className="text-sm text-primary font-mono">Connected</span>
+                    <div className={`w-2 h-2 rounded-full ${settings?.has_github ? 'bg-primary animate-pulse-slow' : 'bg-muted'}`} />
+                    <span className={`text-sm font-mono ${settings?.has_github ? 'text-primary' : 'text-muted-foreground'}`}>
+                      {settings?.has_github ? 'Connected' : 'Not Connected'}
+                    </span>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4 mb-6">
-                  <div className="space-y-1">
-                    <span className="text-xs text-muted-foreground font-mono uppercase tracking-wider">
-                      Owner
-                    </span>
-                    <div className="font-mono">{settings?.github_owner}</div>
+                {!settings?.has_github && (
+                  <div className="bg-primary/5 rounded-sm p-4 mb-6 border border-primary/10">
+                    <p className="text-sm text-primary/80 mb-2">
+                      Connect your GitHub account to enable cloud sync and version history for your prompts.
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      You'll need a GitHub Personal Access Token with <code className="bg-muted px-1 rounded text-foreground">repo</code> scope.
+                      <a
+                        href="https://github.com/settings/tokens/new?scopes=repo&description=PromptSRC"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary underline inline-flex items-center ml-1"
+                      >
+                        Create token on GitHub <ExternalLink className="w-3 h-3 ml-1" />
+                      </a>
+                    </p>
                   </div>
-                  <div className="space-y-1">
-                    <span className="text-xs text-muted-foreground font-mono uppercase tracking-wider">
-                      Repository
-                    </span>
-                    <div className="font-mono">{settings?.github_repo}</div>
-                  </div>
-                </div>
+                )}
 
-                <div className="flex gap-3">
+                {settings?.has_github && (
+                  <>
+                    <div className="grid grid-cols-2 gap-4 mb-6">
+                      <div className="space-y-1">
+                        <span className="text-xs text-muted-foreground font-mono uppercase tracking-wider">
+                          Owner
+                        </span>
+                        <div className="font-mono">{settings?.github_owner}</div>
+                      </div>
+                      <div className="space-y-1">
+                        <span className="text-xs text-muted-foreground font-mono uppercase tracking-wider">
+                          Repository
+                        </span>
+                        <div className="font-mono">{settings?.github_repo}</div>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-3">
+                      <Button
+                        variant="outline"
+                        onClick={() => setUpdateDialog(true)}
+                        className="font-mono"
+                        data-testid="update-settings-btn"
+                      >
+                        Update Connection
+                      </Button>
+                      <Button
+                        variant="outline"
+                        asChild
+                        className="font-mono"
+                      >
+                        <a
+                          href={`https://github.com/${settings?.github_owner}/${settings?.github_repo}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          data-testid="view-repo-link"
+                        >
+                          <ExternalLink className="w-4 h-4 mr-2" />
+                          View Repository
+                        </a>
+                      </Button>
+                    </div>
+                  </>
+                )}
+
+                {!settings?.has_github && (
                   <Button
-                    variant="outline"
                     onClick={() => setUpdateDialog(true)}
-                    className="font-mono"
-                    data-testid="update-settings-btn"
+                    className="font-mono uppercase tracking-wider"
+                    data-testid="connect-github-btn"
                   >
-                    Update Connection
+                    Connect GitHub
                   </Button>
-                  <Button
-                    variant="outline"
-                    asChild
-                    className="font-mono"
-                  >
-                    <a
-                      href={`https://github.com/${settings?.github_owner}/${settings?.github_repo}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      data-testid="view-repo-link"
-                    >
-                      <ExternalLink className="w-4 h-4 mr-2" />
-                      View Repository
-                    </a>
-                  </Button>
-                </div>
+                )}
               </div>
 
               {/* Danger Zone */}

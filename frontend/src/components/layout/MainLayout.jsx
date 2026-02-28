@@ -30,7 +30,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 
 export const MainLayout = ({ children }) => {
   const { user, logout } = useAuth();
-  const { isConfigured, storageMode, hasStorage } = useConfig();
+  const { isConfigured, storageMode, hasStorage, hasGitHub } = useConfig();
   const navigate = useNavigate();
 
   const navItems = [
@@ -145,14 +145,31 @@ export const MainLayout = ({ children }) => {
             <HardDrive className="h-4 w-4 text-blue-500" />
             <AlertDescription className="text-blue-200">
               <span className="font-medium">Local Storage Mode.</span>
-              {" Prompts are stored locally. Connect GitHub for cloud sync and collaboration. "}
-              <Button
-                variant="link"
-                className="p-0 h-auto text-blue-300 underline"
-                onClick={() => navigate('/app/settings')}
-              >
-                Settings
-              </Button>
+              {" Prompts are stored locally. "}
+              {!hasGitHub && (
+                <>
+                  Connect GitHub for cloud sync and collaboration.{" "}
+                  <Button
+                    variant="link"
+                    className="p-0 h-auto text-blue-300 underline"
+                    onClick={() => navigate('/app/setup')}
+                  >
+                    Connect now
+                  </Button>
+                </>
+              )}
+              {hasGitHub && (
+                <>
+                  Your prompts are backed up to GitHub.{" "}
+                  <Button
+                    variant="link"
+                    className="p-0 h-auto text-blue-300 underline"
+                    onClick={() => navigate('/app/settings')}
+                  >
+                    Settings
+                  </Button>
+                </>
+              )}
             </AlertDescription>
           </Alert>
         )}
