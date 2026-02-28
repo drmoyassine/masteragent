@@ -81,7 +81,13 @@ export default function SettingsPage({ onDisconnect }) {
     }
   };
 
-  const handleDisconnect = async () => {
+  try {
+    await deleteSettings();
+    toast.success("GitHub disconnected");
+    onDisconnect();
+    navigate("/setup");
+  } catch (error) {
+    toast.error("Failed to disconnect");
   }
 };
 
