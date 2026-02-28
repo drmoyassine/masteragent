@@ -105,7 +105,7 @@ def init_db():
                 github_token TEXT,
                 github_repo TEXT,
                 github_owner TEXT,
-                storage_mode TEXT DEFAULT 'github',
+                storage_mode TEXT DEFAULT 'local',
                 created_at TEXT,
                 updated_at TEXT,
                 FOREIGN KEY (user_id) REFERENCES users(id)
@@ -114,7 +114,7 @@ def init_db():
         
         # Migration: Add storage_mode column if it doesn't exist
         try:
-            cursor.execute("ALTER TABLE settings ADD COLUMN storage_mode TEXT DEFAULT 'github'")
+            cursor.execute("ALTER TABLE settings ADD COLUMN storage_mode TEXT DEFAULT 'local'")
         except sqlite3.OperationalError:
             pass  # Column already exists
         
@@ -794,7 +794,7 @@ async def get_settings(user: dict = Depends(require_auth)):
             is_configured=is_configured,
             storage_mode=storage_mode
         )
-    return SettingsResponse(id=0, is_configured=False, storage_mode="github")
+    return SettingsResponse(id=0, is_configured=True, storage_mode="local")
 
 @api_router.post("/settings", response_model=SettingsResponse)
 async def save_settings(settings_data: SettingsCreate, user: dict = Depends(require_auth)):

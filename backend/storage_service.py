@@ -52,11 +52,11 @@ def get_github_settings(user_id: str = None) -> Optional[Dict]:
 
 
 def get_storage_mode(user_id: str) -> str:
-    """Get the storage mode for a user. Defaults to 'github' for backward compatibility."""
+    """Get the storage mode for a user. Defaults to 'local' for new users."""
     settings = get_github_settings(user_id)
     if settings:
-        return settings.get("storage_mode", "github")
-    return "github"
+        return settings.get("storage_mode", "local")
+    return "local"
 
 
 class StorageService(ABC):
