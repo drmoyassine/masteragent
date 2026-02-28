@@ -212,17 +212,23 @@ export default function SettingsPage({ onDisconnect }) {
                     <p className="text-sm text-primary/80 mb-2">
                       Connect your GitHub account to enable cloud sync and version history for your prompts.
                     </p>
-                    <p className="text-xs text-muted-foreground">
-                      You'll need a GitHub Personal Access Token with <code className="bg-muted px-1 rounded text-foreground">repo</code> scope.
+                    <div className="text-xs text-muted-foreground space-y-2">
+                      <p>
+                        Generate a <strong>Fine-grained Token</strong> (recommended) or <strong>Classic PAT</strong>:
+                      </p>
+                      <ul className="list-disc list-inside space-y-1 ml-1">
+                        <li><strong>Fine-grained:</strong> Repository access -> Select Repository; Permissions -> <strong>Contents: Read and write</strong></li>
+                        <li><strong>Classic:</strong> Enable the <code className="bg-muted px-1 rounded text-foreground">repo</code> scope</li>
+                      </ul>
                       <a
-                        href="https://github.com/settings/tokens/new?scopes=repo&description=PromptSRC"
+                        href="https://github.com/settings/tokens?type=beta"
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-primary underline inline-flex items-center ml-1"
+                        className="text-primary underline inline-flex items-center"
                       >
-                        Create token on GitHub <ExternalLink className="w-3 h-3 ml-1" />
+                        Create Fine-grained Token <ExternalLink className="w-3 h-3 ml-1" />
                       </a>
-                    </p>
+                    </div>
                   </div>
                 )}
 
@@ -317,9 +323,13 @@ export default function SettingsPage({ onDisconnect }) {
       <Dialog open={updateDialog} onOpenChange={setUpdateDialog}>
         <DialogContent data-testid="update-settings-dialog">
           <DialogHeader>
-            <DialogTitle className="font-mono">Update Connection</DialogTitle>
-            <DialogDescription>
-              Update your GitHub connection settings.
+            <DialogTitle className="font-mono text-xl">Update GitHub Connection</DialogTitle>
+            <DialogDescription className="space-y-2 pt-2">
+              <p>For cloud sync to work, your token must have:</p>
+              <ul className="text-xs list-disc list-inside opacity-80">
+                <li><strong>Fine-grained:</strong> Repository Content (Read & Write)</li>
+                <li><strong>Classic PAT:</strong> full 'repo' scope</li>
+              </ul>
             </DialogDescription>
           </DialogHeader>
 
