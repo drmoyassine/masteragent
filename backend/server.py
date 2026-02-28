@@ -19,15 +19,19 @@ from contextlib import contextmanager
 from jose import jwt, JWTError
 import bcrypt
 
-# Import Memory System modules
+# Load environment variables early
+ROOT_DIR = Path(__file__).parent
+env_path = ROOT_DIR / '.env'
+if not env_path.exists():
+    env_path = ROOT_DIR.parent / '.env'
+load_dotenv(env_path)
+
+# Import Memory System modules AFTER loading env vars
 from memory_routes import memory_router
 from memory_db import init_memory_db
 
-ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
-
 # JWT Configuration
-SECRET_KEY = os.environ.get('JWT_SECRET_KEY', secrets.token_urlsafe(32))
+SECRET_KEY = os.environ.get('JWT_SECRET_KEY', 'promptsrc_secret_key_change_in_production_2024')
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_DAYS = 30
 

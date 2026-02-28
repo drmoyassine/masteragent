@@ -128,9 +128,9 @@ export default function ApiKeysPage() {
       {/* Header */}
       <div className="content-header">
         <div>
-          <h1 className="text-2xl font-mono font-bold tracking-tight">API Keys</h1>
+          <h1 className="text-2xl font-mono font-bold tracking-tight">Developer API Keys</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Manage API keys for accessing the render endpoint
+            Manage API keys to let external applications fetch and render your prompts dynamically
           </p>
         </div>
         <Button
@@ -152,11 +152,12 @@ export default function ApiKeysPage() {
             <div className="text-sm text-muted-foreground">
               <p className="font-medium text-foreground mb-1">Using API Keys</p>
               <p>
-                Include your API key in the <code className="font-mono text-primary">X-API-Key</code> header 
+                API Keys allow your external services or applications to authenticate with PromptSRC and execute prompts programmatically.
+                Include your API key in the <code className="font-mono text-primary">X-API-Key</code> header
                 when calling the render endpoint:
               </p>
               <pre className="mt-2 p-3 bg-secondary/50 rounded-sm font-mono text-xs overflow-x-auto">
-{`curl -X POST "/api/prompts/{prompt_id}/{version}/render" \\
+                {`curl -X POST "/api/prompts/{prompt_id}/{version}/render" \\
   -H "X-API-Key: your_api_key" \\
   -H "Content-Type: application/json" \\
   -d '{"variables": {"company_name": "Acme"}}'`}

@@ -36,11 +36,11 @@ export const MainLayout = ({ children }) => {
   const navItems = [
     { path: "/app", icon: LayoutDashboard, label: "Prompts" },
     { path: "/app/templates", icon: Sparkles, label: "Templates" },
-    { path: "/app/api-keys", icon: Key, label: "API Keys" },
     { path: "/app/memory/explore", icon: Search, label: "Memory Explorer" },
     { path: "/app/memory/monitor", icon: Activity, label: "System Monitor" },
     { path: "/app/memory", icon: Brain, label: "Memory Settings" },
     { path: "/app/settings", icon: Settings, label: "Settings" },
+    { path: "/app/api-keys", icon: Key, label: "Developer API Keys" },
   ];
 
   const handleLogout = () => {
