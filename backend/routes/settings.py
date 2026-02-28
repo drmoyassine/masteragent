@@ -68,7 +68,7 @@ async def get_settings(user: dict = Depends(require_auth)):
 async def save_settings(settings_data: SettingsCreate, user: dict = Depends(require_auth)):
     now = datetime.now(timezone.utc).isoformat()
     headers = {
-        "Authorization": f"token {settings_data.github_token}",
+        "Authorization": f"Bearer {settings_data.github_token}", # Switched to Bearer
         "Accept": "application/vnd.github.v3+json",
     }
     async with httpx.AsyncClient() as client:
@@ -93,7 +93,8 @@ async def save_settings(settings_data: SettingsCreate, user: dict = Depends(requ
             headers=headers,
         )
         if resp.status_code != 200:
-            raise HTTPException(status_code=400, detail="Invalid GitHub credentials or repository not found")
+            logger.error(f"GitHub repository check failed for {settings_data.github_owner}/{settings_data.github_repo}. Status: {resp.status_code}, Body: {resp.text}")
+            raise HTTPException(status_code=400, detail=f"Invalid GitHub credentials or repository not found: {resp.text}")
 
     with get_db_context() as conn:
         cursor = conn.cursor()
@@ -174,7 +175,7 @@ async def set_storage_mode(mode_data: StorageModeUpdate, user: dict = Depends(re
 @router.get("/github/user")
 async def get_github_user(token: str):
     """Get GitHub user info from token."""
-    headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github.v3+json"}
     async with httpx.AsyncClient() as client:
         resp = await client.get("https://api.github.com/user", headers=headers)
         if resp.status_code != 200:

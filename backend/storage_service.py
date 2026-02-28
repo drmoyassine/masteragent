@@ -164,7 +164,7 @@ class GitHubStorageService(StorageService):
         url = f"https://api.github.com/repos/{owner}/{repo}{endpoint}"
         
         headers = {
-            "Authorization": f"token {self.settings['github_token']}",
+            "Authorization": f"Bearer {self.settings['github_token']}", # Switched to Bearer
             "Accept": "application/vnd.github.v3+json"
         }
         

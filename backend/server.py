@@ -73,7 +73,7 @@ from memory import memory_router
 from fastapi import APIRouter
 from datetime import datetime, timezone
 
-_meta_router = APIRouter(prefix="/api")
+_meta_router = APIRouter() # Removed prefix="/api" to avoid double prefixing
 
 @_meta_router.get("/health")
 async def health_check():
