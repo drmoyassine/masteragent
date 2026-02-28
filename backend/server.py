@@ -14,6 +14,14 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 import uuid
+
+# Configure logging early
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
 from datetime import datetime, timezone, timedelta
 from contextlib import contextmanager
 from jose import jwt, JWTError
@@ -287,16 +295,20 @@ def create_access_token(data: dict, expires_delta: timedelta = None):
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + (expires_delta or timedelta(days=ACCESS_TOKEN_EXPIRE_DAYS))
     to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    logger.debug(f"Created access token for sub: {data.get('sub')}")
+    return token
 
 def verify_jwt_token(token: str):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id = payload.get("sub")
         if user_id is None:
+            logger.warning("JWT payload missing 'sub' claim")
             return None
         return user_id
-    except JWTError:
+    except JWTError as e:
+        logger.warning(f"JWT verification failed: {str(e)}")
         return None
 
 def get_current_user(authorization: str = Header(None)):
@@ -315,7 +327,8 @@ def get_current_user(authorization: str = Header(None)):
             user = cursor.fetchone()
             if user:
                 return dict(user)
-    except Exception:
+    except Exception as e:
+        logger.error(f"Error in get_current_user: {str(e)}")
         pass
     return None
 
@@ -540,17 +553,21 @@ async def login(credentials: UserLogin):
         user = cursor.fetchone()
         
         if not user:
+            logger.warning(f"Login failed: user not found for email {credentials.email}")
             raise HTTPException(status_code=401, detail="Invalid email or password")
         
         user = dict(user)
         
         if not user.get("password_hash"):
+            logger.warning(f"Login failed: user {credentials.email} uses GitHub login")
             raise HTTPException(status_code=401, detail="This account uses GitHub login. Please sign in with GitHub.")
         
         if not verify_password(credentials.password, user["password_hash"]):
+            logger.warning(f"Login failed: password mismatch for email {credentials.email}")
             raise HTTPException(status_code=401, detail="Invalid email or password")
         
         # Update last login
+        logger.info(f"Successful login for user: {credentials.email}")
         now = datetime.now(timezone.utc).isoformat()
         cursor.execute("UPDATE users SET updated_at = ? WHERE id = ?", (now, user["id"]))
     
@@ -1781,9 +1798,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+# Add Proxy Headers Middleware for VPS/Nginx support
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+# We can also add a custom middleware to log headers for debugging
+@app.middleware("http")
+async def log_requests(request, call_next):
+    logger.debug(f"Request: {request.method} {request.url}")
+    # Only log headers in DEBUG mode to avoid leaking sensitive info
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(f"Headers: {dict(request.headers)}")
+    response = await call_next(request)
+    return response
+
+# Log configuration on startup
+logger.info(f"Starting Prompt Manager API")
+logger.info(f"CORS Origins: {os.environ.get('CORS_ORIGINS', '*')}")
+logger.info(f"Frontend URL: {FRONTEND_URL}")
+logger.info(f"Database Path: {DB_PATH}")

@@ -60,7 +60,8 @@ def verify_jwt_token(token: str):
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id = payload.get("sub")
         return user_id
-    except JWTError:
+    except JWTError as e:
+        logger.warning(f"Memory system JWT verification failed: {str(e)}")
         return None
 
 async def require_admin_auth(authorization: str = Header(None)):
@@ -75,6 +76,7 @@ async def require_admin_auth(authorization: str = Header(None)):
         
         user_id = verify_jwt_token(token)
         if not user_id:
+            logger.warning("Memory system auth failed: Invalid or expired token")
             raise HTTPException(status_code=401, detail="Invalid or expired token")
         
         conn = get_user_db()
