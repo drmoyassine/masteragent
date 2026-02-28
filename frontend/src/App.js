@@ -64,7 +64,6 @@ const AppContent = () => {
                 <Route index element={<DashboardPage />} />
                 <Route path="prompts/:promptId" element={<PromptEditorPage />} />
                 <Route path="templates" element={<TemplatesPage />} />
-                <Route path="api-keys" element={<ApiKeysPage />} />
                 <Route path="settings" element={<SettingsPage />} />
                 <Route path="memory" element={<MemorySettingsPage />} />
                 <Route path="memory/explore" element={<MemoryExplorerPage />} />
@@ -92,7 +91,7 @@ function App() {
           </ConfigProvider>
         </AuthProvider>
       </BrowserRouter>
-      <Toaster 
+      <Toaster
         position="bottom-right"
         toastOptions={{
           style: {

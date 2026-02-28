@@ -40,7 +40,6 @@ export const MainLayout = ({ children }) => {
     { path: "/app/memory/monitor", icon: Activity, label: "System Monitor" },
     { path: "/app/memory", icon: Brain, label: "Memory Settings" },
     { path: "/app/settings", icon: Settings, label: "Settings" },
-    { path: "/app/api-keys", icon: Key, label: "Developer API Keys" },
   ];
 
   const handleLogout = () => {
@@ -62,7 +61,7 @@ export const MainLayout = ({ children }) => {
             </span>
           </div>
         </div>
-        
+
         <nav className="sidebar-nav">
           <div className="space-y-1">
             {navItems.map((item) => (
@@ -70,7 +69,7 @@ export const MainLayout = ({ children }) => {
                 key={item.path}
                 to={item.path}
                 end={item.path === "/app"}
-                className={({ isActive }) => 
+                className={({ isActive }) =>
                   `nav-item ${isActive ? 'active' : ''}`
                 }
                 data-testid={`nav-${item.label.toLowerCase().replace(' ', '-')}`}
@@ -81,7 +80,7 @@ export const MainLayout = ({ children }) => {
             ))}
           </div>
         </nav>
-        
+
         {/* User Section */}
         <div className="p-4 border-t border-border">
           {user && (
@@ -119,7 +118,7 @@ export const MainLayout = ({ children }) => {
           </div>
         </div>
       </aside>
-      
+
       {/* Main Content */}
       <main className="main-content">
         {/* Configuration Warning Banner */}
@@ -139,7 +138,7 @@ export const MainLayout = ({ children }) => {
             </AlertDescription>
           </Alert>
         )}
-        
+
         {/* Storage Mode Indicator */}
         {hasStorage && storageMode === 'local' && (
           <Alert className="mx-6 mt-4 border-blue-500/50 bg-blue-500/10">
@@ -157,7 +156,7 @@ export const MainLayout = ({ children }) => {
             </AlertDescription>
           </Alert>
         )}
-        
+
         {children}
       </main>
     </div>

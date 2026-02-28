@@ -1,9 +1,11 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Github, Trash2, ExternalLink, AlertTriangle } from "lucide-react";
+import { Github, Trash2, ExternalLink, AlertTriangle, Key } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import ApiKeysPage from "./ApiKeysPage";
 import {
   Dialog,
   DialogContent,
@@ -114,90 +116,111 @@ export default function SettingsPage({ onDisconnect }) {
 
       {/* Content */}
       <div className="content-body">
-        <div className="max-w-2xl space-y-6">
-          {/* GitHub Connection */}
-          <div className="border border-border rounded-sm p-6">
-            <div className="flex items-start justify-between mb-6">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-sm bg-primary/10 flex items-center justify-center">
-                  <Github className="w-5 h-5 text-primary" />
-                </div>
-                <div>
-                  <h2 className="font-mono font-semibold">GitHub Connection</h2>
-                  <p className="text-sm text-muted-foreground">
-                    Your prompts are stored in this repository
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-primary animate-pulse-slow" />
-                <span className="text-sm text-primary font-mono">Connected</span>
-              </div>
-            </div>
+        <Tabs defaultValue="general" className="space-y-6">
+          <TabsList className="mb-4">
+            <TabsTrigger value="general" className="gap-2">
+              <Github className="w-4 h-4" />
+              GitHub Connection
+            </TabsTrigger>
+            <TabsTrigger value="api-keys" className="gap-2">
+              <Key className="w-4 h-4" />
+              Developer API Keys
+            </TabsTrigger>
+          </TabsList>
 
-            <div className="grid grid-cols-2 gap-4 mb-6">
-              <div className="space-y-1">
-                <span className="text-xs text-muted-foreground font-mono uppercase tracking-wider">
-                  Owner
-                </span>
-                <div className="font-mono">{settings?.github_owner}</div>
-              </div>
-              <div className="space-y-1">
-                <span className="text-xs text-muted-foreground font-mono uppercase tracking-wider">
-                  Repository
-                </span>
-                <div className="font-mono">{settings?.github_repo}</div>
-              </div>
-            </div>
+          <TabsContent value="general">
+            <div className="max-w-2xl space-y-6">
+              {/* GitHub Connection */}
+              <div className="border border-border rounded-sm p-6">
+                <div className="flex items-start justify-between mb-6">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-sm bg-primary/10 flex items-center justify-center">
+                      <Github className="w-5 h-5 text-primary" />
+                    </div>
+                    <div>
+                      <h2 className="font-mono font-semibold">GitHub Connection</h2>
+                      <p className="text-sm text-muted-foreground">
+                        Your prompts are stored in this repository
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-primary animate-pulse-slow" />
+                    <span className="text-sm text-primary font-mono">Connected</span>
+                  </div>
+                </div>
 
-            <div className="flex gap-3">
-              <Button
-                variant="outline"
-                onClick={() => setUpdateDialog(true)}
-                className="font-mono"
-                data-testid="update-settings-btn"
-              >
-                Update Connection
-              </Button>
-              <Button
-                variant="outline"
-                asChild
-                className="font-mono"
-              >
-                <a
-                  href={`https://github.com/${settings?.github_owner}/${settings?.github_repo}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  data-testid="view-repo-link"
+                <div className="grid grid-cols-2 gap-4 mb-6">
+                  <div className="space-y-1">
+                    <span className="text-xs text-muted-foreground font-mono uppercase tracking-wider">
+                      Owner
+                    </span>
+                    <div className="font-mono">{settings?.github_owner}</div>
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-xs text-muted-foreground font-mono uppercase tracking-wider">
+                      Repository
+                    </span>
+                    <div className="font-mono">{settings?.github_repo}</div>
+                  </div>
+                </div>
+
+                <div className="flex gap-3">
+                  <Button
+                    variant="outline"
+                    onClick={() => setUpdateDialog(true)}
+                    className="font-mono"
+                    data-testid="update-settings-btn"
+                  >
+                    Update Connection
+                  </Button>
+                  <Button
+                    variant="outline"
+                    asChild
+                    className="font-mono"
+                  >
+                    <a
+                      href={`https://github.com/${settings?.github_owner}/${settings?.github_repo}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      data-testid="view-repo-link"
+                    >
+                      <ExternalLink className="w-4 h-4 mr-2" />
+                      View Repository
+                    </a>
+                  </Button>
+                </div>
+              </div>
+
+              {/* Danger Zone */}
+              <div className="border border-destructive/30 rounded-sm p-6">
+                <div className="flex items-center gap-3 mb-4">
+                  <AlertTriangle className="w-5 h-5 text-destructive" />
+                  <h2 className="font-mono font-semibold text-destructive">Danger Zone</h2>
+                </div>
+                <p className="text-sm text-muted-foreground mb-4">
+                  Disconnecting will remove your GitHub configuration. Your prompts will
+                  remain in the repository but won't be accessible from this instance.
+                </p>
+                <Button
+                  variant="outline"
+                  onClick={() => setDisconnectDialog(true)}
+                  className="font-mono text-destructive border-destructive/30 hover:bg-destructive/10"
+                  data-testid="disconnect-github-btn"
                 >
-                  <ExternalLink className="w-4 h-4 mr-2" />
-                  View Repository
-                </a>
-              </Button>
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Disconnect GitHub
+                </Button>
+              </div>
             </div>
-          </div>
+          </TabsContent>
 
-          {/* Danger Zone */}
-          <div className="border border-destructive/30 rounded-sm p-6">
-            <div className="flex items-center gap-3 mb-4">
-              <AlertTriangle className="w-5 h-5 text-destructive" />
-              <h2 className="font-mono font-semibold text-destructive">Danger Zone</h2>
+          <TabsContent value="api-keys" className="m-0">
+            <div className="border border-border rounded-sm shadow-sm bg-background">
+              <ApiKeysPage />
             </div>
-            <p className="text-sm text-muted-foreground mb-4">
-              Disconnecting will remove your GitHub configuration. Your prompts will
-              remain in the repository but won't be accessible from this instance.
-            </p>
-            <Button
-              variant="outline"
-              onClick={() => setDisconnectDialog(true)}
-              className="font-mono text-destructive border-destructive/30 hover:bg-destructive/10"
-              data-testid="disconnect-github-btn"
-            >
-              <Trash2 className="w-4 h-4 mr-2" />
-              Disconnect GitHub
-            </Button>
-          </div>
-        </div>
+          </TabsContent>
+        </Tabs>
       </div>
 
       {/* Update Dialog */}
