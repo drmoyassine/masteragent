@@ -102,14 +102,14 @@ async def save_settings(settings_data: SettingsCreate, user: dict = Depends(requ
         existing = cursor.fetchone()
         if existing:
             cursor.execute(
-                "UPDATE settings SET github_token=?, github_repo=?, github_owner=?, updated_at=? WHERE user_id=?",
+                "UPDATE settings SET github_token=?, github_repo=?, github_owner=?, storage_mode='github', updated_at=? WHERE user_id=?",
                 (settings_data.github_token, settings_data.github_repo, settings_data.github_owner, now, user["id"]),
             )
             settings_id = existing["id"]
         else:
             cursor.execute(
-                "INSERT INTO settings (user_id, github_token, github_repo, github_owner, created_at, updated_at) VALUES (?,?,?,?,?,?)",
-                (user["id"], settings_data.github_token, settings_data.github_repo, settings_data.github_owner, now, now),
+                "INSERT INTO settings (user_id, github_token, github_repo, github_owner, storage_mode, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+                (user["id"], settings_data.github_token, settings_data.github_repo, settings_data.github_owner, 'github', now, now),
             )
             settings_id = cursor.lastrowid
 
