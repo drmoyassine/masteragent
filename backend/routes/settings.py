@@ -147,10 +147,10 @@ async def set_storage_mode(mode_data: StorageModeUpdate, user: dict = Depends(re
                 (mode_data.storage_mode, now, user["id"]),
             )
             settings_id = existing["id"]
-            is_configured = True if mode_data.storage_mode == "local" else bool(existing.get("github_token"))
-            has_github = bool(existing.get("github_token"))
-            github_repo = existing.get("github_repo")
-            github_owner = existing.get("github_owner")
+            is_configured = True if mode_data.storage_mode == "local" else bool(existing["github_token"])
+            has_github = bool(existing["github_token"])
+            github_repo = existing["github_repo"]
+            github_owner = existing["github_owner"]
         else:
             cursor.execute(
                 "INSERT INTO settings (user_id, storage_mode, created_at, updated_at) VALUES (?,?,?,?)",
