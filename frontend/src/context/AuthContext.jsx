@@ -23,15 +23,19 @@ export const AuthProvider = ({ children }) => {
                 setUser(response.data.user);
                 setIsAuthenticated(true);
             } else {
+                console.warn('Authentication token invalid, clearing session');
                 localStorage.removeItem('auth_token');
                 setUser(null);
                 setIsAuthenticated(false);
             }
         } catch (error) {
-            console.error('Auth check failed:', error);
-            localStorage.removeItem('auth_token');
-            setUser(null);
-            setIsAuthenticated(false);
+            console.error('Auth verification failed:', error);
+            // Only clear on definitive 401/403 (handled by interceptor but good to be explicit)
+            if (error.response?.status === 401 || error.response?.status === 403) {
+                localStorage.removeItem('auth_token');
+                setUser(null);
+                setIsAuthenticated(false);
+            }
         } finally {
             setLoading(false);
         }

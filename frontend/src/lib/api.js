@@ -25,8 +25,10 @@ api.interceptors.response.use(
     (response) => response,
     (error) => {
         if (error.response?.status === 401) {
+            console.warn('Unauthorized request (401), redirecting to login...', error.config.url);
             localStorage.removeItem('auth_token');
-            window.location.href = '/';
+            // Use window.location.replace to prevent back-button loops
+            window.location.replace('/');
         }
         return Promise.reject(error);
     }
