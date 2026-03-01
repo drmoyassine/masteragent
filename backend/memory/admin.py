@@ -26,7 +26,7 @@ router = APIRouter()
 # Admin UI - Memory Explorer Endpoints
 # ============================================
 
-@router.get("/daily/{date}")
+@router.get("/admin/daily/{date}")
 async def get_daily_memories(date: str, user: dict = Depends(require_admin_auth)):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -50,7 +50,7 @@ async def get_daily_memories(date: str, user: dict = Depends(require_admin_auth)
         return memories
 
 
-@router.get("/memories/{memory_id}")
+@router.get("/admin/memories/{memory_id}")
 async def get_memory_detail(memory_id: str, user: dict = Depends(require_admin_auth)):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -69,7 +69,7 @@ async def get_memory_detail(memory_id: str, user: dict = Depends(require_admin_a
         return memory
 
 
-@router.post("/search")
+@router.post("/admin/search")
 async def search_memories_admin(request: SearchRequest, user: dict = Depends(require_admin_auth)):
     query_embedding = await generate_embedding(request.query)
     results = []

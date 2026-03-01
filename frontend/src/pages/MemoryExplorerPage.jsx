@@ -1,7 +1,19 @@
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import { format } from "date-fns";
-import api from "@/lib/api";
+import api, {
+  searchMemories,
+  getDailyMemories,
+  getMemoryDetail,
+  getLessonsAdmin,
+  createLessonAdmin,
+  updateLessonAdmin,
+  deleteLessonAdmin,
+  getEntityTypes,
+  getLessonTypes,
+  getChannelTypes,
+  getTimeline
+} from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -73,7 +85,7 @@ const ENTITY_ICONS = {
 export default function MemoryExplorerPage() {
   const [activeTab, setActiveTab] = useState("search");
   const [loading, setLoading] = useState(false);
-  
+
   // Search state
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
@@ -83,17 +95,17 @@ export default function MemoryExplorerPage() {
     date_from: "",
     date_to: "",
   });
-  
+
   // Timeline state
   const [entityTypes, setEntityTypes] = useState([]);
   const [selectedEntityType, setSelectedEntityType] = useState("");
   const [entityId, setEntityId] = useState("");
   const [timeline, setTimeline] = useState([]);
-  
+
   // Daily log state
   const [selectedDate, setSelectedDate] = useState(format(new Date(), "yyyy-MM-dd"));
   const [dailyMemories, setDailyMemories] = useState([]);
-  
+
   // Lessons state
   const [lessons, setLessons] = useState([]);
   const [lessonTypes, setLessonTypes] = useState([]);
@@ -101,10 +113,10 @@ export default function MemoryExplorerPage() {
   const [editingLesson, setEditingLesson] = useState(null);
   const [newLesson, setNewLesson] = useState({ name: "", type: "", body: "", status: "draft" });
   const [showNewLessonDialog, setShowNewLessonDialog] = useState(false);
-  
+
   // Memory detail state
   const [selectedMemory, setSelectedMemory] = useState(null);
-  
+
   // Channel types
   const [channelTypes, setChannelTypes] = useState([]);
 
@@ -115,9 +127,9 @@ export default function MemoryExplorerPage() {
   const loadInitialData = async () => {
     try {
       const [entityRes, lessonTypeRes, channelRes] = await Promise.all([
-        api.get("/memory/config/entity-types"),
-        api.get("/memory/config/lesson-types"),
-        api.get("/memory/config/channel-types"),
+        getEntityTypes(),
+        getLessonTypes(),
+        getChannelTypes(),
       ]);
       setEntityTypes(entityRes.data);
       setLessonTypes(lessonTypeRes.data);
@@ -130,7 +142,7 @@ export default function MemoryExplorerPage() {
   // Search memories
   const handleSearch = async () => {
     if (!searchQuery.trim()) return;
-    
+
     setLoading(true);
     try {
       const filters = {};
@@ -138,8 +150,8 @@ export default function MemoryExplorerPage() {
       if (searchFilters.entity_type) filters.entity_type = searchFilters.entity_type;
       if (searchFilters.date_from) filters.date_from = searchFilters.date_from;
       if (searchFilters.date_to) filters.date_to = searchFilters.date_to;
-      
-      const res = await api.post("/memory/search", {
+
+      const res = await searchMemories({
         query: searchQuery,
         filters: Object.keys(filters).length > 0 ? filters : undefined,
         limit: 50,
@@ -155,10 +167,10 @@ export default function MemoryExplorerPage() {
   // Load timeline for entity
   const loadTimeline = async () => {
     if (!selectedEntityType || !entityId) return;
-    
+
     setLoading(true);
     try {
-      const res = await api.get(`/memory/timeline/${selectedEntityType}/${entityId}`);
+      const res = await getTimeline(selectedEntityType, entityId);
       setTimeline(res.data || []);
     } catch (error) {
       toast.error("Failed to load timeline");
@@ -172,7 +184,7 @@ export default function MemoryExplorerPage() {
   const loadDailyMemories = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await api.get(`/memory/daily/${selectedDate}`);
+      const res = await getDailyMemories(selectedDate);
       setDailyMemories(res.data || []);
     } catch (error) {
       console.error("Failed to load daily memories:", error);
@@ -194,7 +206,7 @@ export default function MemoryExplorerPage() {
     try {
       const params = {};
       if (lessonFilter !== "all") params.status = lessonFilter;
-      const res = await api.get("/memory/lessons", { params });
+      const res = await getLessonsAdmin(params);
       setLessons(res.data || []);
     } catch (error) {
       console.error("Failed to load lessons:", error);
@@ -216,9 +228,9 @@ export default function MemoryExplorerPage() {
       toast.error("Please fill all fields");
       return;
     }
-    
+
     try {
-      await api.post("/memory/lessons", newLesson);
+      await createLessonAdmin(newLesson);
       toast.success("Lesson created");
       setShowNewLessonDialog(false);
       setNewLesson({ name: "", type: "", body: "", status: "draft" });
@@ -231,9 +243,9 @@ export default function MemoryExplorerPage() {
   // Update lesson
   const handleUpdateLesson = async () => {
     if (!editingLesson) return;
-    
+
     try {
-      await api.put(`/memory/lessons/${editingLesson.id}`, {
+      await updateLessonAdmin(editingLesson.id, {
         name: editingLesson.name,
         type: editingLesson.type,
         body: editingLesson.body,
@@ -250,7 +262,7 @@ export default function MemoryExplorerPage() {
   // Approve lesson
   const handleApproveLesson = async (lessonId) => {
     try {
-      await api.put(`/memory/lessons/${lessonId}`, { status: "approved" });
+      await updateLessonAdmin(lessonId, { status: "approved" });
       toast.success("Lesson approved");
       loadLessons();
     } catch (error) {
@@ -261,9 +273,9 @@ export default function MemoryExplorerPage() {
   // Delete lesson
   const handleDeleteLesson = async (lessonId) => {
     if (!window.confirm("Delete this lesson?")) return;
-    
+
     try {
-      await api.delete(`/memory/lessons/${lessonId}`);
+      await deleteLessonAdmin(lessonId);
       toast.success("Lesson deleted");
       loadLessons();
     } catch (error) {
@@ -274,7 +286,7 @@ export default function MemoryExplorerPage() {
   // Load memory detail
   const loadMemoryDetail = async (memoryId) => {
     try {
-      const res = await api.get(`/memory/memories/${memoryId}`);
+      const res = await getMemoryDetail(memoryId);
       setSelectedMemory(res.data);
     } catch (error) {
       toast.error("Failed to load memory details");
@@ -337,12 +349,12 @@ export default function MemoryExplorerPage() {
                   Search
                 </Button>
               </div>
-              
+
               {/* Filters */}
               <div className="flex flex-wrap gap-3 items-end">
                 <div className="space-y-1">
                   <Label className="text-xs">Channel</Label>
-                  <Select value={searchFilters.channel || "all"} onValueChange={(v) => setSearchFilters({...searchFilters, channel: v === "all" ? "" : v})}>
+                  <Select value={searchFilters.channel || "all"} onValueChange={(v) => setSearchFilters({ ...searchFilters, channel: v === "all" ? "" : v })}>
                     <SelectTrigger className="w-32">
                       <SelectValue placeholder="Any" />
                     </SelectTrigger>
@@ -356,7 +368,7 @@ export default function MemoryExplorerPage() {
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Entity Type</Label>
-                  <Select value={searchFilters.entity_type || "all"} onValueChange={(v) => setSearchFilters({...searchFilters, entity_type: v === "all" ? "" : v})}>
+                  <Select value={searchFilters.entity_type || "all"} onValueChange={(v) => setSearchFilters({ ...searchFilters, entity_type: v === "all" ? "" : v })}>
                     <SelectTrigger className="w-32">
                       <SelectValue placeholder="Any" />
                     </SelectTrigger>
@@ -370,11 +382,11 @@ export default function MemoryExplorerPage() {
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">From</Label>
-                  <Input type="date" value={searchFilters.date_from} onChange={(e) => setSearchFilters({...searchFilters, date_from: e.target.value})} className="w-36" />
+                  <Input type="date" value={searchFilters.date_from} onChange={(e) => setSearchFilters({ ...searchFilters, date_from: e.target.value })} className="w-36" />
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">To</Label>
-                  <Input type="date" value={searchFilters.date_to} onChange={(e) => setSearchFilters({...searchFilters, date_to: e.target.value})} className="w-36" />
+                  <Input type="date" value={searchFilters.date_to} onChange={(e) => setSearchFilters({ ...searchFilters, date_to: e.target.value })} className="w-36" />
                 </div>
                 {(searchFilters.channel || searchFilters.entity_type || searchFilters.date_from || searchFilters.date_to) && (
                   <Button variant="ghost" size="sm" onClick={clearFilters}>
@@ -660,21 +672,21 @@ export default function MemoryExplorerPage() {
                   {format(new Date(selectedMemory.timestamp), "MMMM d, yyyy h:mm a")}
                 </span>
               </div>
-              
+
               {selectedMemory.summary_text && (
                 <div>
                   <Label className="text-xs text-muted-foreground">Summary</Label>
                   <p className="mt-1 p-3 bg-muted rounded-lg text-sm">{selectedMemory.summary_text}</p>
                 </div>
               )}
-              
+
               <div>
                 <Label className="text-xs text-muted-foreground">Full Text</Label>
                 <ScrollArea className="h-48 mt-1 p-3 bg-muted rounded-lg">
                   <p className="text-sm whitespace-pre-wrap">{selectedMemory.raw_text}</p>
                 </ScrollArea>
               </div>
-              
+
               {selectedMemory.entities?.length > 0 && (
                 <div>
                   <Label className="text-xs text-muted-foreground">Related Entities</Label>
@@ -692,7 +704,7 @@ export default function MemoryExplorerPage() {
                   </div>
                 </div>
               )}
-              
+
               {selectedMemory.documents?.length > 0 && (
                 <div>
                   <Label className="text-xs text-muted-foreground">Attachments</Label>
@@ -724,13 +736,13 @@ export default function MemoryExplorerPage() {
               <Label>Name</Label>
               <Input
                 value={newLesson.name}
-                onChange={(e) => setNewLesson({...newLesson, name: e.target.value})}
+                onChange={(e) => setNewLesson({ ...newLesson, name: e.target.value })}
                 placeholder="Lesson title"
               />
             </div>
             <div>
               <Label>Type</Label>
-              <Select value={newLesson.type} onValueChange={(v) => setNewLesson({...newLesson, type: v})}>
+              <Select value={newLesson.type} onValueChange={(v) => setNewLesson({ ...newLesson, type: v })}>
                 <SelectTrigger>
                   <SelectValue placeholder="Select type" />
                 </SelectTrigger>
@@ -745,14 +757,14 @@ export default function MemoryExplorerPage() {
               <Label>Body</Label>
               <Textarea
                 value={newLesson.body}
-                onChange={(e) => setNewLesson({...newLesson, body: e.target.value})}
+                onChange={(e) => setNewLesson({ ...newLesson, body: e.target.value })}
                 placeholder="Lesson content (Markdown supported)"
                 rows={6}
               />
             </div>
             <div>
               <Label>Status</Label>
-              <Select value={newLesson.status} onValueChange={(v) => setNewLesson({...newLesson, status: v})}>
+              <Select value={newLesson.status} onValueChange={(v) => setNewLesson({ ...newLesson, status: v })}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -782,12 +794,12 @@ export default function MemoryExplorerPage() {
                 <Label>Name</Label>
                 <Input
                   value={editingLesson.name}
-                  onChange={(e) => setEditingLesson({...editingLesson, name: e.target.value})}
+                  onChange={(e) => setEditingLesson({ ...editingLesson, name: e.target.value })}
                 />
               </div>
               <div>
                 <Label>Type</Label>
-                <Select value={editingLesson.type} onValueChange={(v) => setEditingLesson({...editingLesson, type: v})}>
+                <Select value={editingLesson.type} onValueChange={(v) => setEditingLesson({ ...editingLesson, type: v })}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
@@ -802,13 +814,13 @@ export default function MemoryExplorerPage() {
                 <Label>Body</Label>
                 <Textarea
                   value={editingLesson.body}
-                  onChange={(e) => setEditingLesson({...editingLesson, body: e.target.value})}
+                  onChange={(e) => setEditingLesson({ ...editingLesson, body: e.target.value })}
                   rows={6}
                 />
               </div>
               <div>
                 <Label>Status</Label>
-                <Select value={editingLesson.status} onValueChange={(v) => setEditingLesson({...editingLesson, status: v})}>
+                <Select value={editingLesson.status} onValueChange={(v) => setEditingLesson({ ...editingLesson, status: v })}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>

@@ -145,9 +145,9 @@ export const getMemorySettings = () => api.get('/memory/config/settings');
 export const updateMemorySettings = (data) => api.put('/memory/config/settings', data);
 
 // Memory Explorer - Admin UI
-export const searchMemories = (data) => api.post('/memory/search', data);
-export const getDailyMemories = (date) => api.get(`/memory/daily/${date}`);
-export const getMemoryDetail = (id) => api.get(`/memory/memories/${id}`);
+export const searchMemories = (data) => api.post('/memory/admin/search', data);
+export const getDailyMemories = (date) => api.get(`/memory/admin/daily/${date}`);
+export const getMemoryDetail = (id) => api.get(`/memory/admin/memories/${id}`);
 export const getTimeline = (entityType, entityId) => api.get(`/memory/admin/timeline/${entityType}/${entityId}`);
 
 // Lessons - Admin UI
