@@ -217,7 +217,7 @@ export default function SettingsPage({ onDisconnect }) {
                         Generate a <strong>Fine-grained Token</strong> (recommended) or <strong>Classic PAT</strong>:
                       </p>
                       <ul className="list-disc list-inside space-y-1 ml-1">
-                        <li><strong>Fine-grained:</strong> Repository access -> Select Repository; Permissions -> <strong>Contents: Read and write</strong></li>
+                        <li><strong>Fine-grained:</strong> Repository access &rarr; Select Repository; Permissions &rarr; <strong>Contents: Read and write</strong></li>
                         <li><strong>Classic:</strong> Enable the <code className="bg-muted px-1 rounded text-foreground">repo</code> scope</li>
                       </ul>
                       <a
@@ -327,7 +327,7 @@ export default function SettingsPage({ onDisconnect }) {
             <DialogDescription className="space-y-2 pt-2">
               <p>For cloud sync to work, your token must have:</p>
               <ul className="text-xs list-disc list-inside opacity-80">
-                <li><strong>Fine-grained:</strong> Repository Content (Read & Write)</li>
+                <li><strong>Fine-grained:</strong> Repository Content (Read &amp; Write)</li>
                 <li><strong>Classic PAT:</strong> full 'repo' scope</li>
               </ul>
             </DialogDescription>
