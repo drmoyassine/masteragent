@@ -1,79 +1,174 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Github, Trash2, ExternalLink, AlertTriangle, Key, HardDrive } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import ApiKeysPage from "./ApiKeysPage";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { getSettings, saveSettings, deleteSettings, setStorageMode as setStorageModeApi } from "@/lib/api";
-import { useConfig } from "@/context/ConfigContext";
+  Github,
+  Key,
+  HardDrive,
+  Cpu,
+  ShieldCheck,
+  Database,
+  Settings2,
+  ChevronRight
+} from "lucide-react";
 import { toast } from "sonner";
+
+// API Helpers
+import {
+  getSettings,
+  saveSettings,
+  deleteSettings,
+  setStorageMode as setStorageModeApi,
+  getLLMConfigs,
+  updateLLMConfig,
+  getApiKeys,
+  createApiKey,
+  deleteApiKey,
+  getAgents,
+  createAgent,
+  updateAgent,
+  deleteAgent,
+  getEntityTypes,
+  createEntityType,
+  deleteEntityType,
+  getLessonTypes,
+  createLessonType,
+  deleteLessonType,
+  getChannelTypes,
+  createChannelType,
+  deleteChannelType,
+  getMemorySettings,
+  updateMemorySettings
+} from "@/lib/api";
+
+// Sub-components
+import { StorageSettings } from "@/components/settings/StorageSettings";
+import { LLMProviderSettings } from "@/components/settings/LLMProviderSettings";
+import { AccessSettings } from "@/components/settings/AccessSettings";
+import { KnowledgeModelSettings } from "@/components/settings/KnowledgeModelSettings";
+import { GeneralMemorySettings } from "@/components/settings/GeneralMemorySettings";
+
+import { useConfig } from "@/context/ConfigContext";
+
+const TABS = [
+  { id: "storage", label: "Storage", icon: HardDrive, description: "GitHub & Local persistence" },
+  { id: "llm", label: "LLM Providers", icon: Cpu, description: "API keys for AI tasks" },
+  { id: "access", label: "API Access", icon: ShieldCheck, description: "Keys & Documentation" },
+  { id: "model", label: "Knowledge Model", icon: Database, description: "Entity & Lesson definitions" },
+  { id: "general", label: "Advanced", icon: Settings2, description: "System & Privacy rules" },
+];
 
 export default function SettingsPage({ onDisconnect }) {
   const navigate = useNavigate();
-  const [settings, setSettings] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [updateDialog, setUpdateDialog] = useState(false);
-  const [disconnectDialog, setDisconnectDialog] = useState(false);
-  const [updating, setUpdating] = useState(false);
   const { storageMode, checkConfiguration } = useConfig();
-  const [formData, setFormData] = useState({
+  const [activeTab, setActiveTab] = useState("storage");
+  const [loading, setLoading] = useState(true);
+
+  // --- Shared State ---
+  const [settings, setSettings] = useState(null);
+  const [memorySettings, setMemorySettings] = useState({});
+  const [llmConfigs, setLLMConfigs] = useState([]);
+  const [promptsKeys, setPromptsKeys] = useState([]);
+  const [memoryKeys, setMemoryKeys] = useState([]);
+  const [entityTypes, setEntityTypes] = useState([]);
+  const [lessonTypes, setLessonTypes] = useState([]);
+  const [channelTypes, setChannelTypes] = useState([]);
+
+  // --- UI State ---
+  const [updating, setUpdating] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [showApiKey, setShowApiKey] = useState({});
+  const [editingConfig, setEditingConfig] = useState(null);
+  const [selectedKey, setSelectedKey] = useState(null);
+  const [newKeyName, setNewKeyName] = useState("");
+  const [createdKey, setCreatedKey] = useState(null);
+
+  // Dialogs
+  const [updateStorageDialog, setUpdateStorageDialog] = useState(false);
+  const [disconnectGithubDialog, setDisconnectGithubDialog] = useState(false);
+  const [createPromptKeyDialog, setCreatePromptKeyDialog] = useState(false);
+  const [createMemoryKeyDialog, setCreateMemoryKeyDialog] = useState(false);
+  const [deletePromptKeyDialog, setDeletePromptKeyDialog] = useState(false);
+  const [deleteMemoryKeyDialog, setDeleteMemoryKeyDialog] = useState(false);
+  const [addTypeDialogOpen, setAddTypeDialogOpen] = useState(false);
+
+  // Forms
+  const [githubFormData, setGithubFormData] = useState({
     github_token: "",
     github_owner: "",
     github_repo: "",
   });
+  const [newMemoryKey, setNewMemoryKey] = useState({ name: "", description: "", access_level: "private" });
+  const [newType, setNewType] = useState({ name: "", description: "", type: "entity" });
 
-  useEffect(() => {
-    loadSettings();
-  }, []);
-
-  const loadSettings = async () => {
+  const loadAllData = useCallback(async () => {
+    setLoading(true);
     try {
-      const response = await getSettings();
-      setSettings(response.data);
-      setFormData({
+      const [
+        promptSettingsRes,
+        memorySettingsRes,
+        llmRes,
+        pKeysRes,
+        mKeysRes,
+        entityRes,
+        lessonRes,
+        channelRes
+      ] = await Promise.all([
+        getSettings(),
+        getMemorySettings(),
+        getLLMConfigs(),
+        getApiKeys(),
+        getAgents(),
+        getEntityTypes(),
+        getLessonTypes(),
+        getChannelTypes()
+      ]);
+
+      setSettings(promptSettingsRes.data);
+      setGithubFormData({
         github_token: "",
-        github_owner: response.data.github_owner || "",
-        github_repo: response.data.github_repo || "",
+        github_owner: promptSettingsRes.data.github_owner || "",
+        github_repo: promptSettingsRes.data.github_repo || "",
       });
+      setMemorySettings(memorySettingsRes.data);
+      setLLMConfigs(llmRes.data);
+      setPromptsKeys(pKeysRes.data);
+      setMemoryKeys(mKeysRes.data);
+      setEntityTypes(entityRes.data);
+      setLessonTypes(lessonRes.data);
+      setChannelTypes(channelRes.data);
     } catch (error) {
-      toast.error("Failed to load settings");
+      toast.error("Failed to load settings data");
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
+    loadAllData();
+  }, [loadAllData]);
+
+  // --- Handlers ---
+
+  // Storage
+  const handleModeChange = async (newMode) => {
+    try {
+      await setStorageModeApi(newMode);
+      toast.success(`Storage mode switched to ${newMode}`);
+      await checkConfiguration();
+      loadAllData();
+    } catch (error) {
+      toast.error("Failed to switch storage mode");
+    }
   };
 
-  const handleUpdateSettings = async () => {
-    if (!formData.github_token || !formData.github_owner || !formData.github_repo) {
-      toast.error("Please fill in all fields");
-      return;
-    }
-
+  const handleUpdateGithub = async () => {
     setUpdating(true);
     try {
-      await saveSettings(formData);
-      toast.success("Settings updated");
-      setUpdateDialog(false);
-      loadSettings();
+      await saveSettings(githubFormData);
+      toast.success("GitHub settings updated");
+      setUpdateStorageDialog(false);
+      loadAllData();
     } catch (error) {
       toast.error(error.response?.data?.detail || "Failed to update settings");
     } finally {
@@ -81,347 +176,285 @@ export default function SettingsPage({ onDisconnect }) {
     }
   };
 
-  const handleDisconnect = async () => {
+  const handleDisconnectGithub = async () => {
     try {
       await deleteSettings();
       toast.success("GitHub disconnected");
-      onDisconnect();
+      if (onDisconnect) onDisconnect();
       navigate("/setup");
     } catch (error) {
       toast.error("Failed to disconnect");
     }
   };
 
-  const handleModeChange = async (newMode) => {
+  // LLM Configs
+  const handleSaveLLMConfig = async (configId, data) => {
     try {
-      await setStorageModeApi(newMode);
-      toast.success(`Storage mode switched to ${newMode}`);
-      await checkConfiguration();
-      loadSettings();
+      await updateLLMConfig(configId, data);
+      toast.success("LLM configuration saved");
+      setEditingConfig(null);
+      loadAllData();
     } catch (error) {
-      toast.error("Failed to switch storage mode");
+      toast.error("Failed to save configuration");
     }
   };
 
-  const handleChange = (field) => (e) => {
-    setFormData((prev) => ({ ...prev, [field]: e.target.value }));
+  // Access (Prompts Keys)
+  const handleCreatePromptKey = async () => {
+    setCreating(true);
+    try {
+      const res = await createApiKey(newKeyName);
+      setCreatedKey(res.data);
+      setNewKeyName("");
+      loadAllData();
+    } catch (error) {
+      toast.error("Failed to create key");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleDeletePromptKey = async () => {
+    try {
+      await deleteApiKey(selectedKey.id);
+      toast.success("Prompt key deleted");
+      setDeletePromptKeyDialog(false);
+      loadAllData();
+    } catch (error) {
+      toast.error("Failed to delete key");
+    }
+  };
+
+  // Access (Memory Keys)
+  const handleCreateMemoryKey = async () => {
+    setCreating(true);
+    try {
+      const res = await createAgent(newMemoryKey);
+      setCreatedKey(res.data);
+      setNewMemoryKey({ name: "", description: "", access_level: "private" });
+      loadAllData();
+    } catch (error) {
+      toast.error("Failed to create memory key");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleToggleMemoryKey = async (agent) => {
+    try {
+      await updateAgent(agent.id, { is_active: !agent.is_active });
+      toast.success(agent.is_active ? "Key deactivated" : "Key activated");
+      loadAllData();
+    } catch (error) {
+      toast.error("Failed to update status");
+    }
+  };
+
+  const handleDeleteMemoryKey = async () => {
+    try {
+      await deleteAgent(selectedKey.id);
+      toast.success("Memory key deleted");
+      setDeleteMemoryKeyDialog(false);
+      loadAllData();
+    } catch (error) {
+      toast.error("Failed to delete key");
+    }
+  };
+
+  const handleCopy = (text) => {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+    toast.success("Copied to clipboard");
+  };
+
+  // Knowledge Model
+  const handleAddType = async () => {
+    try {
+      if (newType.type === "entity") await createEntityType(newType);
+      else if (newType.type === "lesson") await createLessonType(newType);
+      else if (newType.type === "channel") await createChannelType(newType);
+
+      toast.success(`${newType.type} type added`);
+      setAddTypeDialogOpen(false);
+      loadAllData();
+    } catch (error) {
+      toast.error("Failed to add type");
+    }
+  };
+
+  const handleDeleteType = async (type, id) => {
+    if (!window.confirm(`Are you sure you want to delete this ${type} type?`)) return;
+    try {
+      if (type === "entity") await deleteEntityType(id);
+      else if (type === "lesson") await deleteLessonType(id);
+      else if (type === "channel") await deleteChannelType(id);
+
+      toast.success(`${type} type deleted`);
+      loadAllData();
+    } catch (error) {
+      toast.error("Failed to delete type");
+    }
+  };
+
+  // General Memory Settings
+  const handleUpdateGeneralSettings = async (key, value) => {
+    try {
+      await updateMemorySettings({ [key]: value });
+      setMemorySettings(prev => ({ ...prev, [key]: value }));
+      toast.success("Setting updated");
+    } catch (error) {
+      toast.error("Failed to update setting");
+    }
+  };
+
+  const formatDate = (dateStr) => {
+    if (!dateStr) return "Never";
+    const date = new Date(dateStr);
+    return date.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric"
+    });
   };
 
   if (loading) {
     return (
-      <div className="p-8" data-testid="settings-loading">
-        <div className="skeleton h-48 w-full max-w-2xl" />
+      <div className="p-8 flex items-center justify-center min-h-[400px]">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+          <span className="text-muted-foreground font-mono text-sm tracking-widest">LOADING SETTINGS...</span>
+        </div>
       </div>
     );
   }
 
   return (
-    <div data-testid="settings-page">
-      {/* Header */}
-      <div className="content-header">
+    <div className="flex flex-col h-full" data-testid="settings-page">
+      <div className="content-header border-b pb-6 mb-6">
         <div>
-          <h1 className="text-2xl font-mono font-bold tracking-tight">Settings</h1>
+          <h1 className="text-2xl font-mono font-bold tracking-tight">System Settings</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Manage your Prompt Manager configuration
+            Configure storage, AI providers, and system behavior
           </p>
         </div>
       </div>
 
-      {/* Content */}
-      <div className="content-body">
-        <Tabs defaultValue="general" className="space-y-6">
-          <TabsList className="mb-4">
-            <TabsTrigger value="general" className="gap-2">
-              <Github className="w-4 h-4" />
-              GitHub Connection
-            </TabsTrigger>
-            <TabsTrigger value="api-keys" className="gap-2">
-              <Key className="w-4 h-4" />
-              Developer API Keys
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="general">
-            <div className="max-w-2xl space-y-6">
-              {/* Storage Mode Toggle */}
-              <div className="border border-border rounded-sm p-6 bg-secondary/20">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-sm bg-blue-500/10 flex items-center justify-center">
-                      <HardDrive className="w-5 h-5 text-blue-500" />
-                    </div>
-                    <div>
-                      <h2 className="font-mono font-semibold">Active Storage Mode</h2>
-                      <p className="text-sm text-muted-foreground">
-                        Choose where your prompts are stored
-                      </p>
-                    </div>
+      <div className="flex flex-1 gap-12">
+        {/* Sidebar Navigation */}
+        <aside className="w-64 space-y-1">
+          {TABS.map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`w-full flex items-start gap-3 p-3 rounded-lg transition-all text-left group ${isActive
+                    ? "bg-primary/10 border-l-2 border-primary"
+                    : "hover:bg-secondary/50 border-l-2 border-transparent"
+                  }`}
+              >
+                <Icon className={`w-5 h-5 mt-0.5 ${isActive ? "text-primary" : "text-muted-foreground group-hover:text-foreground"}`} />
+                <div className="min-w-0">
+                  <div className={`text-sm font-semibold truncate ${isActive ? "text-primary font-bold" : "text-foreground"}`}>
+                    {tab.label}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground truncate font-mono">
+                    {tab.description}
                   </div>
                 </div>
+                {isActive && <ChevronRight className="w-4 h-4 ml-auto text-primary self-center" />}
+              </button>
+            );
+          })}
+        </aside>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <Button
-                    variant={storageMode === 'local' ? 'default' : 'outline'}
-                    className="h-auto py-4 flex-col gap-1 font-mono"
-                    onClick={() => handleModeChange('local')}
-                  >
-                    <HardDrive className="w-5 h-5" />
-                    <span className="text-xs">Local Filesystem</span>
-                  </Button>
-                  <Button
-                    variant={storageMode === 'github' ? 'default' : 'outline'}
-                    disabled={!settings?.has_github}
-                    className="h-auto py-4 flex-col gap-1 font-mono"
-                    onClick={() => handleModeChange('github')}
-                  >
-                    <Github className="w-5 h-5" />
-                    <span className="text-xs">GitHub Cloud</span>
-                  </Button>
-                </div>
-                {!settings?.has_github && (
-                  <p className="text-[10px] text-muted-foreground mt-2 text-center">
-                    Connect GitHub below to enable cloud storage
-                  </p>
-                )}
-              </div>
+        {/* Content Area */}
+        <main className="flex-1 pb-20">
+          {activeTab === "storage" && (
+            <StorageSettings
+              settings={settings}
+              storageMode={storageMode}
+              formData={githubFormData}
+              updating={updating}
+              updateDialog={updateStorageDialog}
+              setUpdateDialog={setUpdateStorageDialog}
+              disconnectDialog={disconnectGithubDialog}
+              setDisconnectDialog={setDisconnectGithubDialog}
+              onModeChange={handleModeChange}
+              onUpdateSettings={handleUpdateGithub}
+              onDisconnect={handleDisconnectGithub}
+              onFormDataChange={(field, value) => setGithubFormData(prev => ({ ...prev, [field]: value }))}
+            />
+          )}
 
-              {/* GitHub Connection */}
-              <div className="border border-border rounded-sm p-6">
-                <div className="flex items-start justify-between mb-6">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-sm bg-primary/10 flex items-center justify-center">
-                      <Github className="w-5 h-5 text-primary" />
-                    </div>
-                    <div>
-                      <h2 className="font-mono font-semibold">GitHub Connection</h2>
-                      <p className="text-sm text-muted-foreground">
-                        Your prompts are stored in this repository
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className={`w-2 h-2 rounded-full ${settings?.has_github ? 'bg-primary animate-pulse-slow' : 'bg-muted'}`} />
-                    <span className={`text-sm font-mono ${settings?.has_github ? 'text-primary' : 'text-muted-foreground'}`}>
-                      {settings?.has_github ? 'Connected' : 'Not Connected'}
-                    </span>
-                  </div>
-                </div>
+          {activeTab === "llm" && (
+            <LLMProviderSettings
+              llmConfigs={llmConfigs}
+              editingConfig={editingConfig}
+              setEditingConfig={setEditingConfig}
+              showApiKey={showApiKey}
+              setShowApiKey={setShowApiKey}
+              onSaveConfig={handleSaveLLMConfig}
+            />
+          )}
 
-                {!settings?.has_github && (
-                  <div className="bg-primary/5 rounded-sm p-4 mb-6 border border-primary/10">
-                    <p className="text-sm text-primary/80 mb-2">
-                      Connect your GitHub account to enable cloud sync and version history for your prompts.
-                    </p>
-                    <div className="text-xs text-muted-foreground space-y-2">
-                      <p>
-                        Generate a <strong>Fine-grained Token</strong> (recommended) or <strong>Classic PAT</strong>:
-                      </p>
-                      <ul className="list-disc list-inside space-y-1 ml-1">
-                        <li><strong>Fine-grained:</strong> Repository access &rarr; Select Repository; Permissions &rarr; <strong>Contents: Read and write</strong></li>
-                        <li><strong>Classic:</strong> Enable the <code className="bg-muted px-1 rounded text-foreground">repo</code> scope</li>
-                      </ul>
-                      <a
-                        href="https://github.com/settings/tokens?type=beta"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-primary underline inline-flex items-center"
-                      >
-                        Create Fine-grained Token <ExternalLink className="w-3 h-3 ml-1" />
-                      </a>
-                    </div>
-                  </div>
-                )}
+          {activeTab === "access" && (
+            <AccessSettings
+              promptsKeys={promptsKeys}
+              memoryKeys={memoryKeys}
+              createPromptKeyDialog={createPromptKeyDialog}
+              setCreatePromptKeyDialog={setCreatePromptKeyDialog}
+              createMemoryKeyDialog={createMemoryKeyDialog}
+              setCreateMemoryKeyDialog={setCreateMemoryKeyDialog}
+              deletePromptKeyDialog={deletePromptKeyDialog}
+              setDeletePromptKeyDialog={setDeletePromptKeyDialog}
+              deleteMemoryKeyDialog={deleteMemoryKeyDialog}
+              setDeleteMemoryKeyDialog={setDeleteMemoryKeyDialog}
+              selectedKey={selectedKey}
+              setSelectedKey={setSelectedKey}
+              newKeyName={newKeyName}
+              setNewKeyName={setNewKeyName}
+              newMemoryKey={newMemoryKey}
+              setNewMemoryKey={setNewMemoryKey}
+              createdKey={createdKey}
+              setCreatedKey={setCreatedKey}
+              copied={copied}
+              onCopyKey={handleCopy}
+              onCreatePromptKey={handleCreatePromptKey}
+              onDeletePromptKey={handleDeletePromptKey}
+              onCreateMemoryKey={handleCreateMemoryKey}
+              onDeleteMemoryKey={handleDeleteMemoryKey}
+              onToggleMemoryKey={handleToggleMemoryKey}
+              creating={creating}
+              formatDate={formatDate}
+            />
+          )}
 
-                {settings?.has_github && (
-                  <>
-                    <div className="grid grid-cols-2 gap-4 mb-6">
-                      <div className="space-y-1">
-                        <span className="text-xs text-muted-foreground font-mono uppercase tracking-wider">
-                          Owner
-                        </span>
-                        <div className="font-mono">{settings?.github_owner}</div>
-                      </div>
-                      <div className="space-y-1">
-                        <span className="text-xs text-muted-foreground font-mono uppercase tracking-wider">
-                          Repository
-                        </span>
-                        <div className="font-mono">{settings?.github_repo}</div>
-                      </div>
-                    </div>
+          {activeTab === "model" && (
+            <KnowledgeModelSettings
+              entityTypes={entityTypes}
+              lessonTypes={lessonTypes}
+              channelTypes={channelTypes}
+              newType={newType}
+              setNewType={setNewType}
+              addTypeDialogOpen={addTypeDialogOpen}
+              setAddTypeDialogOpen={setAddTypeDialogOpen}
+              onAddType={handleAddType}
+              onDeleteType={handleDeleteType}
+              loading={loading}
+            />
+          )}
 
-                    <div className="flex gap-3">
-                      <Button
-                        variant="outline"
-                        onClick={() => setUpdateDialog(true)}
-                        className="font-mono"
-                        data-testid="update-settings-btn"
-                      >
-                        Update Connection
-                      </Button>
-                      <Button
-                        variant="outline"
-                        asChild
-                        className="font-mono"
-                      >
-                        <a
-                          href={`https://github.com/${settings?.github_owner}/${settings?.github_repo}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          data-testid="view-repo-link"
-                        >
-                          <ExternalLink className="w-4 h-4 mr-2" />
-                          View Repository
-                        </a>
-                      </Button>
-                    </div>
-                  </>
-                )}
-
-                {!settings?.has_github && (
-                  <Button
-                    onClick={() => setUpdateDialog(true)}
-                    className="font-mono uppercase tracking-wider"
-                    data-testid="connect-github-btn"
-                  >
-                    Connect GitHub
-                  </Button>
-                )}
-              </div>
-
-              {/* Danger Zone */}
-              <div className="border border-destructive/30 rounded-sm p-6">
-                <div className="flex items-center gap-3 mb-4">
-                  <AlertTriangle className="w-5 h-5 text-destructive" />
-                  <h2 className="font-mono font-semibold text-destructive">Danger Zone</h2>
-                </div>
-                <p className="text-sm text-muted-foreground mb-4">
-                  Disconnecting will remove your GitHub configuration. Your prompts will
-                  remain in the repository but won't be accessible from this instance.
-                </p>
-                <Button
-                  variant="outline"
-                  onClick={() => setDisconnectDialog(true)}
-                  className="font-mono text-destructive border-destructive/30 hover:bg-destructive/10"
-                  data-testid="disconnect-github-btn"
-                >
-                  <Trash2 className="w-4 h-4 mr-2" />
-                  Disconnect GitHub
-                </Button>
-              </div>
-            </div>
-          </TabsContent>
-
-          <TabsContent value="api-keys" className="m-0">
-            <div className="border border-border rounded-sm shadow-sm bg-background">
-              <ApiKeysPage />
-            </div>
-          </TabsContent>
-        </Tabs>
+          {activeTab === "general" && (
+            <GeneralMemorySettings
+              settings={memorySettings}
+              onUpdateSettings={handleUpdateGeneralSettings}
+            />
+          )}
+        </main>
       </div>
-
-      {/* Update Dialog */}
-      <Dialog open={updateDialog} onOpenChange={setUpdateDialog}>
-        <DialogContent data-testid="update-settings-dialog">
-          <DialogHeader>
-            <DialogTitle className="font-mono text-xl">Update GitHub Connection</DialogTitle>
-            <DialogDescription className="space-y-2 pt-2">
-              <p>For cloud sync to work, your token must have:</p>
-              <ul className="text-xs list-disc list-inside opacity-80">
-                <li><strong>Fine-grained:</strong> Repository Content (Read &amp; Write)</li>
-                <li><strong>Classic PAT:</strong> full 'repo' scope</li>
-              </ul>
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="token" className="font-mono text-sm">
-                NEW TOKEN (Required)
-              </Label>
-              <Input
-                id="token"
-                type="password"
-                placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
-                value={formData.github_token}
-                onChange={handleChange("github_token")}
-                className="font-mono"
-                data-testid="update-github-token-input"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="owner" className="font-mono text-sm">
-                  OWNER / ORG
-                </Label>
-                <Input
-                  id="owner"
-                  placeholder="username or org"
-                  value={formData.github_owner}
-                  onChange={handleChange("github_owner")}
-                  className="font-mono"
-                  data-testid="update-github-owner-input"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="repo" className="font-mono text-sm">
-                  REPOSITORY
-                </Label>
-                <Input
-                  id="repo"
-                  placeholder="my-prompts"
-                  value={formData.github_repo}
-                  onChange={handleChange("github_repo")}
-                  className="font-mono"
-                  data-testid="update-github-repo-input"
-                />
-              </div>
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setUpdateDialog(false)}
-              className="font-mono"
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={handleUpdateSettings}
-              disabled={updating}
-              className="font-mono uppercase tracking-wider"
-              data-testid="confirm-update-settings-btn"
-            >
-              {updating ? "Updating..." : "Update"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Disconnect Dialog */}
-      <AlertDialog open={disconnectDialog} onOpenChange={setDisconnectDialog}>
-        <AlertDialogContent data-testid="disconnect-github-dialog">
-          <AlertDialogHeader>
-            <AlertDialogTitle className="font-mono">Disconnect GitHub</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to disconnect from GitHub? You'll need to
-              reconfigure your connection to continue using Prompt Manager.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel className="font-mono">Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDisconnect}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 font-mono uppercase tracking-wider"
-              data-testid="confirm-disconnect-btn"
-            >
-              Disconnect
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }

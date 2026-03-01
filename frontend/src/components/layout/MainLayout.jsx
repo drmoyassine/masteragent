@@ -38,7 +38,6 @@ export const MainLayout = ({ children }) => {
     { path: "/app/templates", icon: Sparkles, label: "Templates" },
     { path: "/app/memory/explore", icon: Search, label: "Memory Explorer" },
     { path: "/app/memory/monitor", icon: Activity, label: "System Monitor" },
-    { path: "/app/memory", icon: Brain, label: "Memory Settings", end: true },
     { path: "/app/settings", icon: Settings, label: "Settings" },
   ];
 

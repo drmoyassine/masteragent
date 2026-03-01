@@ -12,9 +12,7 @@ import SetupPage from "@/pages/SetupPage";
 import DashboardPage from "@/pages/DashboardPage";
 import PromptEditorPage from "@/pages/PromptEditorPage";
 import TemplatesPage from "@/pages/TemplatesPage";
-import ApiKeysPage from "@/pages/ApiKeysPage";
 import SettingsPage from "@/pages/SettingsPage";
-import MemorySettingsPage from "@/pages/MemorySettingsPage";
 import MemoryExplorerPage from "@/pages/MemoryExplorerPage";
 import MemoryMonitorPage from "@/pages/MemoryMonitorPage";
 
@@ -65,7 +63,6 @@ const AppContent = () => {
                 <Route path="prompts/:promptId" element={<PromptEditorPage />} />
                 <Route path="templates" element={<TemplatesPage />} />
                 <Route path="settings" element={<SettingsPage />} />
-                <Route path="memory" element={<MemorySettingsPage />} />
                 <Route path="memory/explore" element={<MemoryExplorerPage />} />
                 <Route path="memory/monitor" element={<MemoryMonitorPage />} />
                 <Route path="setup" element={<SetupPage />} />
