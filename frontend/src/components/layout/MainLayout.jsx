@@ -34,11 +34,11 @@ export const MainLayout = ({ children }) => {
   const navigate = useNavigate();
 
   const navItems = [
-    { path: "/app", icon: LayoutDashboard, label: "Prompts" },
+    { path: "/app", icon: LayoutDashboard, label: "Prompts", end: true },
     { path: "/app/templates", icon: Sparkles, label: "Templates" },
     { path: "/app/memory/explore", icon: Search, label: "Memory Explorer" },
     { path: "/app/memory/monitor", icon: Activity, label: "System Monitor" },
-    { path: "/app/memory", icon: Brain, label: "Memory Settings" },
+    { path: "/app/memory", icon: Brain, label: "Memory Settings", end: true },
     { path: "/app/settings", icon: Settings, label: "Settings" },
   ];
 
@@ -68,7 +68,7 @@ export const MainLayout = ({ children }) => {
               <NavLink
                 key={item.path}
                 to={item.path}
-                end={item.path === "/app"}
+                end={item.end}
                 className={({ isActive }) =>
                   `nav-item ${isActive ? 'active' : ''}`
                 }
