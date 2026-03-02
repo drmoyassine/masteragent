@@ -61,6 +61,7 @@ const PROVIDERS_BY_TASK = {
     entity_extraction: [
         { value: "gliner", label: "GLiNER (Local)", hasModelFetch: false },
         { value: "openai", label: "OpenAI", hasModelFetch: true },
+        { value: "openrouter", label: "OpenRouter", hasModelFetch: true },
         { value: "anthropic", label: "Anthropic", hasModelFetch: true },
         { value: "gemini", label: "Google Gemini", hasModelFetch: true },
         { value: "ollama", label: "Ollama", hasModelFetch: true, needsBaseUrl: true },
@@ -69,6 +70,7 @@ const PROVIDERS_BY_TASK = {
     pii_scrubbing: [
         { value: "zendata", label: "Zendata (PII)", hasModelFetch: false },
         { value: "openai", label: "OpenAI", hasModelFetch: true },
+        { value: "openrouter", label: "OpenRouter", hasModelFetch: true },
         { value: "anthropic", label: "Anthropic", hasModelFetch: true },
         { value: "gemini", label: "Google Gemini", hasModelFetch: true },
         { value: "custom", label: "Custom API", hasModelFetch: false },
