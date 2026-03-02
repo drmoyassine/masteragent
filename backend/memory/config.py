@@ -406,6 +406,9 @@ async def fetch_provider_models(data: FetchModelsRequest, user: dict = Depends(r
     If api_key is not provided but config_id is, falls back to the stored key.
     """
     provider = data.provider.lower()
+    api_key = data.api_key or ""
+    api_base_url = (data.api_base_url or "").rstrip("/")
+
     # If no key was supplied, fall back to:
     # 1. The stored key for this specific config_id
     # 2. ANY stored key for this provider (global sharing)
