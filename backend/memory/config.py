@@ -437,6 +437,13 @@ async def fetch_provider_models(data: FetchModelsRequest, user: dict = Depends(r
                         api_base_url = row["api_base_url"].rstrip("/")
                     logger.info(f"Using globally shared API key for model fetching from provider {provider}")
 
+    # Final check: do we have a key? (except for Ollama which might be local)
+    if not api_key and provider != "ollama":
+        raise HTTPException(
+            status_code=401, 
+            detail=f"No API key found for {provider}. Please enter a key or ensure it is configured in another task category."
+        )
+
     models: List[str] = []
 
     try:

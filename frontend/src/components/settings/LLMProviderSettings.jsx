@@ -201,12 +201,18 @@ export function LLMProviderSettings({
         setFetchErrors((prev) => ({ ...prev, [configId]: null }));
 
         try {
-            const response = await fetchProviderModels({
+            const payload = {
                 provider,
-                api_key: apiKey,
                 api_base_url: apiBaseUrl,
                 config_id: configId, // allows backend to use stored key as fallback
-            });
+            };
+
+            // Only include api_key in the payload if it's not empty
+            if (apiKey && apiKey.trim() !== "") {
+                payload.api_key = apiKey.trim();
+            }
+
+            const response = await fetchProviderModels(payload);
             setModelLists((prev) => ({ ...prev, [configId]: response.data.models }));
         } catch (err) {
             const detail = err.response?.data?.detail || "Failed to fetch models. Check API key.";
@@ -249,17 +255,18 @@ export function LLMProviderSettings({
                         const canFetchModels = isEditing && (currentProviderMeta?.hasModelFetch ?? false);
                         const needsBaseUrl = currentProviderMeta?.needsBaseUrl ?? false;
 
-                        // Key inheritance check: Does ANY configuration (including the current one) have a key for this ACTIVE provider?
-                        const configWithKeyForActiveProvider = llmConfigs.find(c =>
-                            c.provider === activeProviderValue && c.api_key_preview
+                        // Key inheritance check: Does ANY other configuration have a key for this ACTIVE provider?
+                        const otherConfigWithKey = llmConfigs.find(c =>
+                            c.id !== config.id &&
+                            c.provider === activeProviderValue &&
+                            c.api_key_preview
                         );
 
                         // It's considered 'configured' if the specific config for this task has a key for the ACTIVE provider
-                        const isSpecificallyConfigured = config.provider === activeProviderValue && config.api_key_preview;
+                        const isSpecificallyConfigured = config.provider === activeProviderValue && !!config.api_key_preview;
 
-                        // It's considered 'inherited' if the active provider is different from the stored one OR the stored one has no key,
-                        // but some other config DOES have a key for this provider.
-                        const hasInheritedKey = !isSpecificallyConfigured && !!configWithKeyForActiveProvider;
+                        // It's considered 'inherited' if NOT specifically configured, but some OTHER config has a key.
+                        const hasInheritedKey = !isSpecificallyConfigured && !!otherConfigWithKey;
 
                         const isGloballyConfigured = isSpecificallyConfigured || hasInheritedKey;
 
@@ -295,7 +302,7 @@ export function LLMProviderSettings({
                                             <Button
                                                 variant="outline"
                                                 size="sm"
-                                                onClick={() => setEditingConfig(isEditing ? null : { ...config, api_key: "" })}
+                                                onClick={() => setEditingConfig(isEditing ? null : { ...config, api_key: null })}
                                             >
                                                 {isEditing ? "Cancel" : "Edit"}
                                             </Button>
@@ -413,7 +420,13 @@ export function LLMProviderSettings({
                                                 )}
                                             </div>
 
-                                            <Button onClick={() => onSaveConfig(config.id, editingConfig)}>
+                                            <Button onClick={() => {
+                                                const payload = { ...editingConfig };
+                                                if (!payload.api_key || payload.api_key.trim() === "") {
+                                                    delete payload.api_key;
+                                                }
+                                                onSaveConfig(config.id, payload);
+                                            }}>
                                                 Save Configuration
                                             </Button>
                                         </div>
