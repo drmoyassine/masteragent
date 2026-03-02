@@ -9,8 +9,9 @@ import secrets
 import uuid
 import hashlib
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Optional
 import logging
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,7 @@ from memory_models import (
     EntityTypeCreate, EntityTypeResponse,
     LessonTypeCreate, LessonTypeResponse,
     LLMConfigCreate, LLMConfigResponse, LLMConfigUpdate,
+    FetchModelsRequest, FetchModelsResponse,
     MemorySettingsResponse, MemorySettingsUpdate,
     SystemPromptCreate, SystemPromptResponse
 )
@@ -393,6 +395,107 @@ async def update_llm_config(config_id: str, data: LLMConfigUpdate, user: dict = 
             extra_config=json.loads(updated.get("extra_config_json", "{}")),
             created_at=updated["created_at"], updated_at=updated["updated_at"]
         )
+
+@router.post("/config/llm-configs/fetch-models", response_model=FetchModelsResponse)
+async def fetch_provider_models(data: FetchModelsRequest, user: dict = Depends(require_admin_auth)):
+    """
+    Proxy endpoint that fetches available models from a provider's API.
+    Keeps API keys server-side and avoids browser CORS issues.
+    If api_key is not provided but config_id is, falls back to the stored key.
+    """
+    provider = data.provider.lower()
+    api_key = data.api_key or ""
+    api_base_url = (data.api_base_url or "").rstrip("/")
+
+    # If no key was supplied (e.g. user re-opened edit panel without re-entering key),
+    # fall back to the stored encrypted key from the database.
+    if not api_key and data.config_id:
+        with get_memory_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT api_key_encrypted, api_base_url FROM memory_llm_configs WHERE id = ?", (data.config_id,))
+            row = cursor.fetchone()
+            if row:
+                api_key = row["api_key_encrypted"] or ""
+                if not api_base_url and row["api_base_url"]:
+                    api_base_url = row["api_base_url"].rstrip("/")
+
+    models: List[str] = []
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            if provider == "openai":
+                base = api_base_url or "https://api.openai.com/v1"
+                resp = await client.get(
+                    f"{base}/models",
+                    headers={"Authorization": f"Bearer {api_key}"}
+                )
+                resp.raise_for_status()
+                data_json = resp.json()
+                all_ids = [m["id"] for m in data_json.get("data", [])]
+                # Sort: show GPT / embedding / etc models first
+                models = sorted(all_ids)
+
+            elif provider == "gemini":
+                base = api_base_url or "https://generativelanguage.googleapis.com/v1beta"
+                resp = await client.get(
+                    f"{base}/models",
+                    params={"key": api_key}
+                )
+                resp.raise_for_status()
+                data_json = resp.json()
+                models = sorted([
+                    m["name"].replace("models/", "")
+                    for m in data_json.get("models", [])
+                ])
+
+            elif provider == "openrouter":
+                base = api_base_url or "https://openrouter.ai/api/v1"
+                resp = await client.get(
+                    f"{base}/models",
+                    headers={"Authorization": f"Bearer {api_key}"}
+                )
+                resp.raise_for_status()
+                data_json = resp.json()
+                models = sorted([m["id"] for m in data_json.get("data", [])])
+
+            elif provider == "ollama":
+                base = api_base_url or "http://localhost:11434"
+                resp = await client.get(f"{base}/api/tags")
+                resp.raise_for_status()
+                data_json = resp.json()
+                models = sorted([m["name"] for m in data_json.get("models", [])])
+
+            elif provider == "anthropic":
+                # Anthropic does not expose a public model list API — return curated static list
+                models = [
+                    "claude-opus-4-5",
+                    "claude-sonnet-4-5",
+                    "claude-haiku-4-5",
+                    "claude-3-7-sonnet-20250219",
+                    "claude-3-5-haiku-20241022",
+                    "claude-3-opus-20240229",
+                    "claude-3-sonnet-20240229",
+                    "claude-3-haiku-20240307",
+                ]
+
+            else:
+                raise HTTPException(status_code=400, detail=f"Provider '{provider}' does not support model fetching")
+
+    except httpx.HTTPStatusError as e:
+        logger.error(f"HTTP error fetching models for {provider}: {e.response.status_code} - {e.response.text}")
+        raise HTTPException(status_code=e.response.status_code, detail=f"Provider API error: {e.response.text[:200]}")
+    except httpx.ConnectError:
+        raise HTTPException(status_code=503, detail=f"Cannot connect to {provider} endpoint. Check the base URL and ensure the service is running.")
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail=f"Timeout connecting to {provider} endpoint.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error fetching models for {provider}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch models: {str(e)}")
+
+    return FetchModelsResponse(models=models, provider=provider)
+
 
 @router.delete("/config/llm-configs/{config_id}")
 async def delete_llm_config(config_id: str, user: dict = Depends(require_admin_auth)):

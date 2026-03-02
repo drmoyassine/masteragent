@@ -20,8 +20,10 @@ class LLMProviderType(str, Enum):
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
     GEMINI = "gemini"
+    OPENROUTER = "openrouter"
+    OLLAMA = "ollama"
     CUSTOM = "custom"
-    GLINER = "gliner"  # For entity extraction
+    GLINER = "gliner"   # For entity extraction
     ZENDATA = "zendata"  # For PII scrubbing
 
 class LLMConfigCreate(BaseModel):
@@ -54,6 +56,16 @@ class LLMConfigUpdate(BaseModel):
     model_name: Optional[str] = None
     is_active: Optional[bool] = None
     extra_config: Optional[Dict[str, Any]] = None
+
+class FetchModelsRequest(BaseModel):
+    provider: str
+    api_key: Optional[str] = ""
+    api_base_url: Optional[str] = ""
+    config_id: Optional[str] = None  # If set, backend looks up stored key as fallback
+
+class FetchModelsResponse(BaseModel):
+    models: List[str]
+    provider: str
 
 # ============================================
 # Pydantic Models for API

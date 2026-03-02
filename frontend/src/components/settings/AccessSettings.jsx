@@ -72,38 +72,6 @@ export function AccessSettings({
 }) {
     return (
         <div className="space-y-8 max-w-5xl">
-            {/* API Documentation Section */}
-            <Card className="border-primary/20 bg-primary/5">
-                <CardHeader className="pb-3">
-                    <div className="flex items-center gap-3">
-                        <div className="p-2 rounded-lg bg-primary/10">
-                            <FileText className="w-5 h-5 text-primary" />
-                        </div>
-                        <div>
-                            <CardTitle>API Documentation</CardTitle>
-                            <CardDescription>
-                                View the interactive OpenAPI (Swagger) documentation to explore and test the available endpoints.
-                            </CardDescription>
-                        </div>
-                    </div>
-                </CardHeader>
-                <CardContent>
-                    <div className="flex gap-4">
-                        <Button asChild variant="default" className="font-mono">
-                            <a href="/api/docs" target="_blank" rel="noopener noreferrer">
-                                <ExternalLink className="w-4 h-4 mr-2" />
-                                Swagger UI
-                            </a>
-                        </Button>
-                        <Button asChild variant="outline" className="font-mono">
-                            <a href="/api/redoc" target="_blank" rel="noopener noreferrer">
-                                <FileText className="w-4 h-4 mr-2" />
-                                ReDoc
-                            </a>
-                        </Button>
-                    </div>
-                </CardContent>
-            </Card>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 {/* Prompts Keys Section */}
@@ -218,6 +186,33 @@ export function AccessSettings({
                     </div>
                 </section>
             </div>
+
+            {/* API Documentation Section */}
+            <Card className="border-primary/20 bg-primary/5">
+                <CardHeader className="pb-3">
+                    <div className="flex items-center gap-3">
+                        <div className="p-2 rounded-lg bg-primary/10">
+                            <FileText className="w-5 h-5 text-primary" />
+                        </div>
+                        <div>
+                            <CardTitle>API Documentation</CardTitle>
+                            <CardDescription>
+                                View the interactive OpenAPI (Swagger) documentation to explore and test the available endpoints.
+                            </CardDescription>
+                        </div>
+                    </div>
+                </CardHeader>
+                <CardContent>
+                    <div className="flex gap-4">
+                        <Button asChild variant="default" className="font-mono">
+                            <a href="/api/docs" target="_blank" rel="noopener noreferrer">
+                                <ExternalLink className="w-4 h-4 mr-2" />
+                                Swagger UI
+                            </a>
+                        </Button>
+                    </div>
+                </CardContent>
+            </Card>
 
             {/* Create Prompt Key Dialog */}
             <Dialog open={createPromptKeyDialog} onOpenChange={(v) => { if (!v) { setCreatedKey(null); setNewKeyName(""); } setCreatePromptKeyDialog(v); }}>

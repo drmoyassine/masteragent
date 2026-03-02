@@ -55,7 +55,12 @@ seed_admin_user()
 # ─────────────────────────────────────────────
 # FastAPI app
 # ─────────────────────────────────────────────
-app = FastAPI(title="Prompt Manager & Memory System API")
+app = FastAPI(
+    title="Prompt Manager & Memory System API",
+    docs_url="/api/docs",
+    redoc_url=None,
+    openapi_url="/api/openapi.json"
+)
 
 # ─────────────────────────────────────────────
 # Route modules
