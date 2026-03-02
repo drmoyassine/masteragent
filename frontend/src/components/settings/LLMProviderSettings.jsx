@@ -286,13 +286,9 @@ export function LLMProviderSettings({
                                             </div>
                                         </div>
                                         <div className="flex items-center gap-2">
-                                            {isSpecificallyConfigured ? (
+                                            {isGloballyConfigured ? (
                                                 <Badge variant="default" className="bg-green-500">
                                                     <CheckCircle2 className="w-3 h-3 mr-1" /> Configured
-                                                </Badge>
-                                            ) : hasInheritedKey ? (
-                                                <Badge variant="secondary" className="bg-blue-500 text-white border-none">
-                                                    <CheckCircle2 className="w-3 h-3 mr-1" /> Key Inherited
                                                 </Badge>
                                             ) : (
                                                 <Badge variant="outline" className="border-amber-500 text-amber-500">
@@ -382,7 +378,7 @@ export function LLMProviderSettings({
                                                 )}
                                                 {canFetchModels && hasInheritedKey && !editingConfig.api_key && (
                                                     <p className="text-xs text-blue-400 flex items-center gap-1">
-                                                        <CheckCircle2 className="w-3 h-3" /> Using inherited key from other task.
+                                                        <CheckCircle2 className="w-3 h-3" /> Using shared provider API key.
                                                     </p>
                                                 )}
                                                 {fetchErrors[config.id] && (
@@ -400,7 +396,7 @@ export function LLMProviderSettings({
                                                         onChange={(e) => setEditingConfig({ ...editingConfig, api_key: e.target.value })}
                                                         placeholder={
                                                             hasInheritedKey
-                                                                ? "Already inherited (enter to override)"
+                                                                ? "Already configured (enter to override)"
                                                                 : editingConfig.provider === "ollama"
                                                                     ? "No key required for local"
                                                                     : "Enter API key"
