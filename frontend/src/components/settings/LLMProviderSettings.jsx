@@ -241,19 +241,27 @@ export function LLMProviderSettings({
                         const TaskIcon = taskInfo.icon;
                         const isEditing = editingConfig?.id === config.id;
                         const taskProviders = PROVIDERS_BY_TASK[config.task_type] || [];
-                        const currentProviderValue = isEditing ? editingConfig.provider : config.provider;
-                        const currentProviderMeta = taskProviders.find((p) => p.value === currentProviderValue);
+
+                        // Use the currently selected provider in the editor, or the stored one if not editing
+                        const activeProviderValue = isEditing ? editingConfig.provider : config.provider;
+                        const currentProviderMeta = taskProviders.find((p) => p.value === activeProviderValue);
+
                         const canFetchModels = isEditing && (currentProviderMeta?.hasModelFetch ?? false);
                         const needsBaseUrl = currentProviderMeta?.needsBaseUrl ?? false;
 
-                        // Check if this provider has an API key in ANY other task config
-                        const otherConfigsWithKey = llmConfigs.filter(c =>
-                            c.id !== config.id &&
-                            c.provider === currentProviderValue &&
-                            c.api_key_preview
+                        // Key inheritance check: Does ANY configuration (including the current one) have a key for this ACTIVE provider?
+                        const configWithKeyForActiveProvider = llmConfigs.find(c =>
+                            c.provider === activeProviderValue && c.api_key_preview
                         );
-                        const hasInheritedKey = otherConfigsWithKey.length > 0;
-                        const isConfigured = config.api_key_preview || hasInheritedKey;
+
+                        // It's considered 'configured' if the specific config for this task has a key for the ACTIVE provider
+                        const isSpecificallyConfigured = config.provider === activeProviderValue && config.api_key_preview;
+
+                        // It's considered 'inherited' if the active provider is different from the stored one OR the stored one has no key,
+                        // but some other config DOES have a key for this provider.
+                        const hasInheritedKey = !isSpecificallyConfigured && !!configWithKeyForActiveProvider;
+
+                        const isGloballyConfigured = isSpecificallyConfigured || hasInheritedKey;
 
                         return (
                             <Card key={config.id} className={`border-l-4 ${taskInfo.color} bg-card/50`}>
@@ -265,11 +273,13 @@ export function LLMProviderSettings({
                                             </div>
                                             <div>
                                                 <h3 className="font-semibold text-foreground">{taskInfo.label}</h3>
-                                                <p className="text-sm text-muted-foreground">{config.name} ({config.provider})</p>
+                                                <p className="text-sm text-muted-foreground">
+                                                    {isEditing ? `Editing: ${activeProviderValue}` : `${config.name} (${config.provider})`}
+                                                </p>
                                             </div>
                                         </div>
                                         <div className="flex items-center gap-2">
-                                            {config.api_key_preview ? (
+                                            {isSpecificallyConfigured ? (
                                                 <Badge variant="default" className="bg-green-500">
                                                     <CheckCircle2 className="w-3 h-3 mr-1" /> Configured
                                                 </Badge>
@@ -285,7 +295,7 @@ export function LLMProviderSettings({
                                             <Button
                                                 variant="outline"
                                                 size="sm"
-                                                onClick={() => setEditingConfig(isEditing ? null : config)}
+                                                onClick={() => setEditingConfig(isEditing ? null : { ...config, api_key: "" })}
                                             >
                                                 {isEditing ? "Cancel" : "Edit"}
                                             </Button>
@@ -360,7 +370,7 @@ export function LLMProviderSettings({
                                                     canFetch={canFetchModels}
                                                     provider={editingConfig.provider}
                                                 />
-                                                {canFetchModels && !isConfigured && !editingConfig.api_key && (
+                                                {canFetchModels && !isGloballyConfigured && !editingConfig.api_key && (
                                                     <p className="text-xs text-amber-400">Save an API key first to enable model fetching.</p>
                                                 )}
                                                 {canFetchModels && hasInheritedKey && !editingConfig.api_key && (

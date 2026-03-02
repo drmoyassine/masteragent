@@ -51,6 +51,7 @@ class LLMConfigResponse(BaseModel):
 
 class LLMConfigUpdate(BaseModel):
     name: Optional[str] = None
+    provider: Optional[str] = None
     api_base_url: Optional[str] = None
     api_key: Optional[str] = None
     model_name: Optional[str] = None

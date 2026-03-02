@@ -370,6 +370,8 @@ async def update_llm_config(config_id: str, data: LLMConfigUpdate, user: dict = 
         updates, params = ["updated_at = ?"], [now]
         if data.name is not None:
             updates.append("name = ?"); params.append(data.name)
+        if data.provider is not None:
+            updates.append("provider = ?"); params.append(data.provider)
         if data.api_base_url is not None:
             updates.append("api_base_url = ?"); params.append(data.api_base_url)
         if data.api_key is not None:
