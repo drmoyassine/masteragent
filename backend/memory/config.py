@@ -404,20 +404,33 @@ async def fetch_provider_models(data: FetchModelsRequest, user: dict = Depends(r
     If api_key is not provided but config_id is, falls back to the stored key.
     """
     provider = data.provider.lower()
-    api_key = data.api_key or ""
-    api_base_url = (data.api_base_url or "").rstrip("/")
-
-    # If no key was supplied (e.g. user re-opened edit panel without re-entering key),
-    # fall back to the stored encrypted key from the database.
-    if not api_key and data.config_id:
+    # If no key was supplied, fall back to:
+    # 1. The stored key for this specific config_id
+    # 2. ANY stored key for this provider (global sharing)
+    if not api_key:
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT api_key_encrypted, api_base_url FROM memory_llm_configs WHERE id = ?", (data.config_id,))
-            row = cursor.fetchone()
-            if row:
-                api_key = row["api_key_encrypted"] or ""
-                if not api_base_url and row["api_base_url"]:
-                    api_base_url = row["api_base_url"].rstrip("/")
+            if data.config_id:
+                cursor.execute("SELECT api_key_encrypted, api_base_url FROM memory_llm_configs WHERE id = ?", (data.config_id,))
+                row = cursor.fetchone()
+                if row and row["api_key_encrypted"]:
+                    api_key = row["api_key_encrypted"]
+                    if not api_base_url and row["api_base_url"]:
+                        api_base_url = row["api_base_url"].rstrip("/")
+
+            # If still no key, search globally for this provider
+            if not api_key:
+                cursor.execute("""
+                    SELECT api_key_encrypted, api_base_url FROM memory_llm_configs 
+                    WHERE provider = ? AND api_key_encrypted IS NOT NULL AND api_key_encrypted != ''
+                    ORDER BY updated_at DESC LIMIT 1
+                """, (provider,))
+                row = cursor.fetchone()
+                if row:
+                    api_key = row["api_key_encrypted"]
+                    if not api_base_url and row["api_base_url"]:
+                        api_base_url = row["api_base_url"].rstrip("/")
+                    logger.info(f"Using globally shared API key for model fetching from provider {provider}")
 
     models: List[str] = []
 

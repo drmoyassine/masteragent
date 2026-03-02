@@ -241,9 +241,19 @@ export function LLMProviderSettings({
                         const TaskIcon = taskInfo.icon;
                         const isEditing = editingConfig?.id === config.id;
                         const taskProviders = PROVIDERS_BY_TASK[config.task_type] || [];
-                        const currentProviderMeta = taskProviders.find((p) => p.value === (editingConfig?.provider || config.provider));
+                        const currentProviderValue = isEditing ? editingConfig.provider : config.provider;
+                        const currentProviderMeta = taskProviders.find((p) => p.value === currentProviderValue);
                         const canFetchModels = isEditing && (currentProviderMeta?.hasModelFetch ?? false);
                         const needsBaseUrl = currentProviderMeta?.needsBaseUrl ?? false;
+
+                        // Check if this provider has an API key in ANY other task config
+                        const otherConfigsWithKey = llmConfigs.filter(c =>
+                            c.id !== config.id &&
+                            c.provider === currentProviderValue &&
+                            c.api_key_preview
+                        );
+                        const hasInheritedKey = otherConfigsWithKey.length > 0;
+                        const isConfigured = config.api_key_preview || hasInheritedKey;
 
                         return (
                             <Card key={config.id} className={`border-l-4 ${taskInfo.color} bg-card/50`}>
@@ -262,6 +272,10 @@ export function LLMProviderSettings({
                                             {config.api_key_preview ? (
                                                 <Badge variant="default" className="bg-green-500">
                                                     <CheckCircle2 className="w-3 h-3 mr-1" /> Configured
+                                                </Badge>
+                                            ) : hasInheritedKey ? (
+                                                <Badge variant="secondary" className="bg-blue-500 text-white border-none">
+                                                    <CheckCircle2 className="w-3 h-3 mr-1" /> Key Inherited
                                                 </Badge>
                                             ) : (
                                                 <Badge variant="outline" className="border-amber-500 text-amber-500">
@@ -346,8 +360,13 @@ export function LLMProviderSettings({
                                                     canFetch={canFetchModels}
                                                     provider={editingConfig.provider}
                                                 />
-                                                {canFetchModels && !config.api_key_preview && !editingConfig.api_key && (
+                                                {canFetchModels && !isConfigured && !editingConfig.api_key && (
                                                     <p className="text-xs text-amber-400">Save an API key first to enable model fetching.</p>
+                                                )}
+                                                {canFetchModels && hasInheritedKey && !editingConfig.api_key && (
+                                                    <p className="text-xs text-blue-400 flex items-center gap-1">
+                                                        <CheckCircle2 className="w-3 h-3" /> Using inherited key from other task.
+                                                    </p>
                                                 )}
                                                 {fetchErrors[config.id] && (
                                                     <p className="text-xs text-red-400">{fetchErrors[config.id]}</p>
@@ -363,9 +382,11 @@ export function LLMProviderSettings({
                                                         value={editingConfig.api_key || ""}
                                                         onChange={(e) => setEditingConfig({ ...editingConfig, api_key: e.target.value })}
                                                         placeholder={
-                                                            editingConfig.provider === "ollama"
-                                                                ? "No key required for local"
-                                                                : "Enter API key"
+                                                            hasInheritedKey
+                                                                ? "Already inherited (enter to override)"
+                                                                : editingConfig.provider === "ollama"
+                                                                    ? "No key required for local"
+                                                                    : "Enter API key"
                                                         }
                                                     />
                                                     <Button

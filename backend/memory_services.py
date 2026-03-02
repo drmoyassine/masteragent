@@ -37,20 +37,48 @@ def get_memory_settings() -> Dict[str, Any]:
     return {}
 
 def get_llm_config(task_type: str) -> Optional[Dict[str, Any]]:
-    """Get active LLM configuration for a task type"""
+    """
+    Get active LLM configuration for a task type.
+    Includes fallback logic to share API keys across task types for the same provider.
+    """
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
+        
+        # 1. Get the primary active config for this task
         cursor.execute("""
             SELECT * FROM memory_llm_configs 
             WHERE task_type = ? AND is_active = 1
             ORDER BY updated_at DESC LIMIT 1
         """, (task_type,))
         row = cursor.fetchone()
-        if row:
-            config = dict(row)
-            config["extra_config"] = json.loads(config.get("extra_config_json", "{}"))
-            return config
-    return None
+        
+        if not row:
+            return None
+            
+        config = dict(row)
+        config["extra_config"] = json.loads(config.get("extra_config_json", "{}"))
+        
+        # 2. Key Fallback: If this config is missing a key, look for one from the same provider in other tasks
+        if not config.get("api_key_encrypted"):
+            provider = config.get("provider")
+            # Skip fallback for local/no-key providers
+            if provider not in ["gliner", "zendata", "custom"]:
+                cursor.execute("""
+                    SELECT api_key_encrypted, api_key_preview, api_base_url 
+                    FROM memory_llm_configs 
+                    WHERE provider = ? AND api_key_encrypted IS NOT NULL AND api_key_encrypted != ''
+                    ORDER BY updated_at DESC LIMIT 1
+                """, (provider,))
+                fallback_row = cursor.fetchone()
+                if fallback_row:
+                    config["api_key_encrypted"] = fallback_row["api_key_encrypted"]
+                    config["api_key_preview"] = fallback_row["api_key_preview"]
+                    # Also fallback base URL if current is empty and fallback is not
+                    if not config.get("api_base_url") and fallback_row["api_base_url"]:
+                        config["api_base_url"] = fallback_row["api_base_url"]
+                    logger.info(f"Using inherited API key for {task_type} from matching provider {provider}")
+        
+        return config
 
 def get_system_prompt(prompt_type: str) -> Optional[str]:
     """Get active system prompt by type"""
