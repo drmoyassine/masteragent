@@ -154,8 +154,24 @@ POST  /api/memory/admin/tasks/mine-lessons
 
 ---
 
-## Future Enhancements
+## Recent Updates (March 2026)
+
+### ✅ UI Cleanup - "Made with Emergent" Badge Removed
+- Removed the "Made with Emergent" badge from `/app/frontend/public/index.html`
+- Updated page title to "PromptSRC | Prompt Manager & Memory System"
+- Updated meta description to reflect the project's purpose
+
+---
+
+## Future Enhancements (P1/P2)
+
+### P1 - Background Jobs Implementation
+- **OpenClaw Sync**: Logic in `/app/backend/memory_tasks.py` is a placeholder and needs full implementation
+- **Lesson Mining**: Automated lesson extraction logic is a stub
+
+### P2 - Feature Enhancements  
 - Bulk import/export functionality
 - GLiNER model customization
-- Real-time activity dashboard
+- Real-time activity dashboard with WebSockets
 - Webhook notifications for new lessons
+- Deeper LLM customization (model parameters tuning)
