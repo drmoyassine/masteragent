@@ -1,38 +1,46 @@
 """
-memory/config.py — Memory system admin configurations
+memory/config.py — Memory system admin configuration endpoints
 
-Handles creating and managing entity types, subtypes, lesson types, 
-channel types, agents, system prompts, LLM configs, and system settings.
+Manages entity types, subtypes, lesson types, channel types, agents,
+system prompts, LLM configs, and system settings.
 """
+import hashlib
 import json
+import logging
 import secrets
 import uuid
-import hashlib
-from datetime import datetime, timezone
 from typing import List, Optional
-import logging
+
 import httpx
-
-logger = logging.getLogger(__name__)
-
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel as _BaseModel
 
 from core.storage import get_memory_db_context
+from core.utils import utcnow
+from memory.auth import require_admin_auth
+from memory.services.config_helpers import get_memory_settings
 from memory_models import (
     AgentCreate, AgentCreateResponse, AgentResponse,
     ChannelTypeCreate, ChannelTypeResponse,
     EntitySubtypeCreate, EntitySubtypeResponse,
     EntityTypeCreate, EntityTypeResponse,
+    FetchModelsRequest, FetchModelsResponse,
     LessonTypeCreate, LessonTypeResponse,
     LLMConfigCreate, LLMConfigResponse, LLMConfigUpdate,
-    FetchModelsRequest, FetchModelsResponse,
     MemorySettingsResponse, MemorySettingsUpdate,
-    SystemPromptCreate, SystemPromptResponse
+    SystemPromptCreate, SystemPromptResponse,
 )
-from memory_services import get_memory_settings
-from memory.auth import require_admin_auth
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _list_config_table(table: str) -> list:
+    """Generic helper: select all rows from a config table ordered by name."""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT * FROM {table} ORDER BY name")
+        return [dict(row) for row in cursor.fetchall()]
 
 
 # ============================================
@@ -41,14 +49,11 @@ router = APIRouter()
 
 @router.get("/config/entity-types", response_model=List[EntityTypeResponse])
 async def list_entity_types(user: dict = Depends(require_admin_auth)):
-    with get_memory_db_context() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM memory_entity_types ORDER BY name")
-        return [dict(row) for row in cursor.fetchall()]
+    return _list_config_table("memory_entity_types")
 
 @router.post("/config/entity-types", response_model=EntityTypeResponse)
 async def create_entity_type(data: EntityTypeCreate, user: dict = Depends(require_admin_auth)):
-    now = datetime.now(timezone.utc).isoformat()
+    now = utcnow()
     type_id = str(uuid.uuid4())
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -84,7 +89,7 @@ async def list_entity_subtypes(type_id: str, user: dict = Depends(require_admin_
 
 @router.post("/config/entity-subtypes", response_model=EntitySubtypeResponse)
 async def create_entity_subtype(data: EntitySubtypeCreate, user: dict = Depends(require_admin_auth)):
-    now = datetime.now(timezone.utc).isoformat()
+    now = utcnow()
     subtype_id = str(uuid.uuid4())
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -113,14 +118,11 @@ async def delete_entity_subtype(subtype_id: str, user: dict = Depends(require_ad
 
 @router.get("/config/lesson-types", response_model=List[LessonTypeResponse])
 async def list_lesson_types(user: dict = Depends(require_admin_auth)):
-    with get_memory_db_context() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM memory_lesson_types ORDER BY name")
-        return [dict(row) for row in cursor.fetchall()]
+    return _list_config_table("memory_lesson_types")
 
 @router.post("/config/lesson-types", response_model=LessonTypeResponse)
 async def create_lesson_type(data: LessonTypeCreate, user: dict = Depends(require_admin_auth)):
-    now = datetime.now(timezone.utc).isoformat()
+    now = utcnow()
     type_id = str(uuid.uuid4())
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -149,14 +151,11 @@ async def delete_lesson_type(type_id: str, user: dict = Depends(require_admin_au
 
 @router.get("/config/channel-types", response_model=List[ChannelTypeResponse])
 async def list_channel_types(user: dict = Depends(require_admin_auth)):
-    with get_memory_db_context() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM memory_channel_types ORDER BY name")
-        return [dict(row) for row in cursor.fetchall()]
+    return _list_config_table("memory_channel_types")
 
 @router.post("/config/channel-types", response_model=ChannelTypeResponse)
 async def create_channel_type(data: ChannelTypeCreate, user: dict = Depends(require_admin_auth)):
-    now = datetime.now(timezone.utc).isoformat()
+    now = utcnow()
     type_id = str(uuid.uuid4())
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -198,7 +197,7 @@ async def list_agents(user: dict = Depends(require_admin_auth)):
 @router.post("/config/agents")
 async def create_agent(data: AgentCreate, user: dict = Depends(require_admin_auth)):
     import traceback
-    now = datetime.now(timezone.utc).isoformat()
+    now = utcnow()
     agent_id = str(uuid.uuid4())
     api_key = f"mem_{secrets.token_urlsafe(32)}"
     api_key_preview = f"{api_key[:7]}...{api_key[-4:]}"
@@ -263,7 +262,7 @@ async def list_system_prompts(user: dict = Depends(require_admin_auth)):
 
 @router.post("/config/system-prompts", response_model=SystemPromptResponse)
 async def create_system_prompt(data: SystemPromptCreate, user: dict = Depends(require_admin_auth)):
-    now = datetime.now(timezone.utc).isoformat()
+    now = utcnow()
     prompt_id = str(uuid.uuid4())
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -280,7 +279,7 @@ async def create_system_prompt(data: SystemPromptCreate, user: dict = Depends(re
 
 @router.put("/config/system-prompts/{prompt_id}", response_model=SystemPromptResponse)
 async def update_system_prompt(prompt_id: str, data: SystemPromptCreate, user: dict = Depends(require_admin_auth)):
-    now = datetime.now(timezone.utc).isoformat()
+    now = utcnow()
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT prompt_type FROM memory_system_prompts WHERE id = %s", (prompt_id,))
@@ -346,7 +345,7 @@ async def get_llm_config_by_task(task_type: str, user: dict = Depends(require_ad
 
 @router.post("/config/llm-configs", response_model=LLMConfigResponse)
 async def create_llm_config(data: LLMConfigCreate, user: dict = Depends(require_admin_auth)):
-    now = datetime.now(timezone.utc).isoformat()
+    now = utcnow()
     config_id = str(uuid.uuid4())
     api_key_preview = f"{data.api_key[:4]}...{data.api_key[-4:]}" if data.api_key and len(data.api_key) > 8 else ("****" if data.api_key else "")
     with get_memory_db_context() as conn:
@@ -366,7 +365,7 @@ async def create_llm_config(data: LLMConfigCreate, user: dict = Depends(require_
 
 @router.put("/config/llm-configs/{config_id}", response_model=LLMConfigResponse)
 async def update_llm_config(config_id: str, data: LLMConfigUpdate, user: dict = Depends(require_admin_auth)):
-    now = datetime.now(timezone.utc).isoformat()
+    now = utcnow()
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM memory_llm_configs WHERE id = %s", (config_id,))
@@ -556,7 +555,7 @@ async def get_settings_endpoint(user: dict = Depends(require_admin_auth)):
 
 @router.put("/config/settings", response_model=MemorySettingsResponse)
 async def update_settings_endpoint(data: MemorySettingsUpdate, user: dict = Depends(require_admin_auth)):
-    now = datetime.now(timezone.utc).isoformat()
+    now = utcnow()
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         updates, params = [], []
@@ -573,8 +572,6 @@ async def update_settings_endpoint(data: MemorySettingsUpdate, user: dict = Depe
 # ============================================
 # Supabase Connection Endpoints
 # ============================================
-
-from pydantic import BaseModel as _BaseModel
 
 class SupabaseConnectRequest(_BaseModel):
     supabase_url: str           # https://xyz.supabase.co

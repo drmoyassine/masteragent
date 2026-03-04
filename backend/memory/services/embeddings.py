@@ -1,0 +1,61 @@
+"""memory/services/embeddings.py — Embedding generation via admin-configured API"""
+import logging
+from typing import List
+
+import httpx
+
+from memory.services.config_helpers import get_llm_config
+
+logger = logging.getLogger(__name__)
+
+
+async def generate_embedding(text: str) -> List[float]:
+    """Generate embedding using admin-configured API."""
+    config = get_llm_config("embedding")
+    if not config or not config.get("api_key_encrypted"):
+        logger.warning("Embedding config not configured or missing API key")
+        return []
+
+    api_key = config["api_key_encrypted"]
+    api_base = config.get("api_base_url", "https://api.openai.com/v1")
+    model = config.get("model_name", "text-embedding-3-small")
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{api_base}/embeddings",
+                headers=headers,
+                json={"model": model, "input": text},
+            )
+            if response.status_code == 200:
+                return response.json()["data"][0]["embedding"]
+            logger.error(f"Embedding call failed: {response.status_code}")
+    except Exception as e:
+        logger.error(f"Embedding call error: {e}")
+    return []
+
+
+async def generate_embeddings_batch(texts: List[str]) -> List[List[float]]:
+    """Generate embeddings for multiple texts in a single API call."""
+    config = get_llm_config("embedding")
+    if not config or not config.get("api_key_encrypted") or not texts:
+        return []
+
+    api_key = config["api_key_encrypted"]
+    api_base = config.get("api_base_url", "https://api.openai.com/v1")
+    model = config.get("model_name", "text-embedding-3-small")
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                f"{api_base}/embeddings",
+                headers=headers,
+                json={"model": model, "input": texts},
+            )
+            if response.status_code == 200:
+                return [item["embedding"] for item in response.json()["data"]]
+    except Exception as e:
+        logger.error(f"Batch embedding error: {e}")
+    return []
