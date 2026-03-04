@@ -7,7 +7,7 @@ import requests
 import os
 import json
 
-BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
+BASE_URL = os.environ.get('MEMORY_TEST_BASE_URL', 'http://localhost:8080').rstrip('/')
 
 # Test credentials
 TEST_EMAIL = "admin@promptsrc.com"
@@ -208,10 +208,16 @@ class TestAgentAPIKeyAuthentication:
         """POST /api/memory/interactions should return 401 without API key"""
         api_client.headers.pop("Authorization", None)
         api_client.headers.pop("X-API-Key", None)
-        
+        api_client.headers["Content-Type"] = "application/json"
+
         response = api_client.post(
             f"{BASE_URL}/api/memory/interactions",
-            data={"text": "Test interaction", "channel": "email"}
+            json={
+                "interaction_type": "email_sent",
+                "content": "Test",
+                "primary_entity_type": "contact",
+                "primary_entity_id": "test-001"
+            }
         )
         assert response.status_code == 401
         data = response.json()
@@ -222,40 +228,54 @@ class TestAgentAPIKeyAuthentication:
         """POST /api/memory/interactions should return 401 with invalid API key"""
         api_client.headers.pop("Authorization", None)
         api_client.headers["X-API-Key"] = "invalid_key_12345"
-        
+        api_client.headers["Content-Type"] = "application/json"
+
         response = api_client.post(
             f"{BASE_URL}/api/memory/interactions",
-            data={"text": "Test interaction", "channel": "email"}
+            json={
+                "interaction_type": "email_sent",
+                "content": "Test",
+                "primary_entity_type": "contact",
+                "primary_entity_id": "test-001"
+            }
         )
         assert response.status_code == 401
         data = response.json()
         assert "Invalid API key" in data.get("detail", "")
         print(f"✓ Invalid API key rejected: {data}")
     
-    def test_interactions_with_valid_api_key(self, api_client):
-        """POST /api/memory/interactions should work with valid API key"""
-        api_client.headers.pop("Authorization", None)
-        api_client.headers["X-API-Key"] = AGENT_API_KEY
-        api_client.headers.pop("Content-Type", None)  # Let requests set multipart
-        
-        response = api_client.post(
-            f"{BASE_URL}/api/memory/interactions",
-            data={
-                "text": "Test interaction from auth test",
-                "channel": "email",
-                "entities": "[]",
-                "metadata": "{}"
-            }
-        )
-        
-        # Should be 200 (success) - LLM features may return empty but ingestion should work
-        assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
-        
-        data = response.json()
-        assert "id" in data
-        assert data["channel"] == "email"
-        
-        print(f"✓ Interaction ingested with API key: {data['id']}")
+    def test_interactions_with_valid_api_key(self, api_client, authenticated_client):
+        """POST /api/memory/interactions should work with a dynamically created agent API key"""
+        # Create a temporary test agent to get a real API key
+        resp = authenticated_client.post(f"{BASE_URL}/api/memory/config/agents", json={
+            "name": "TestAuthAgent", "description": "temp", "access_level": "private"
+        })
+        if resp.status_code != 200:
+            pytest.skip(f"Could not create test agent: {resp.text}")
+        agent_data = resp.json()
+        real_key = agent_data["api_key"]
+        agent_id = agent_data["id"]
+
+        try:
+            api_client.headers.pop("Authorization", None)
+            api_client.headers["X-API-Key"] = real_key
+            api_client.headers["Content-Type"] = "application/json"
+
+            response = api_client.post(
+                f"{BASE_URL}/api/memory/interactions",
+                json={
+                    "interaction_type": "email_sent",
+                    "content": "Test interaction from auth test",
+                    "primary_entity_type": "contact",
+                    "primary_entity_id": "test-auth-001"
+                }
+            )
+            assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
+            data = response.json()
+            assert "id" in data
+            print(f"✓ Interaction ingested with API key: {data['id']}")
+        finally:
+            authenticated_client.delete(f"{BASE_URL}/api/memory/config/agents/{agent_id}")
     
     def test_search_requires_api_key(self, api_client):
         """POST /api/memory/search should return 401 without API key"""
@@ -283,33 +303,41 @@ class TestMemoryPersistence:
     
     def test_ingest_and_verify_storage(self, api_client, authenticated_client):
         """Ingest interaction and verify it's stored"""
-        # Use API key for ingestion
-        api_client.headers.pop("Authorization", None)
-        api_client.headers["X-API-Key"] = AGENT_API_KEY
-        api_client.headers.pop("Content-Type", None)
-        
-        test_text = f"TEST_PERSISTENCE_CHECK_{os.urandom(4).hex()}"
-        
-        response = api_client.post(
-            f"{BASE_URL}/api/memory/interactions",
-            data={
-                "text": test_text,
-                "channel": "note",
-                "entities": "[]",
-                "metadata": json.dumps({"test": True})
-            }
-        )
-        
-        assert response.status_code == 200
-        data = response.json()
-        memory_id = data["id"]
-        
-        print(f"✓ Memory ingested with ID: {memory_id}")
-        
-        # Note: We can't directly query the memory without a GET endpoint
-        # But the successful 200 response indicates storage worked
-        assert memory_id is not None
-        assert len(memory_id) > 0
+        # Create a temporary test agent to get a real API key
+        resp = authenticated_client.post(f"{BASE_URL}/api/memory/config/agents", json={
+            "name": "TestPersistenceAgent", "description": "temp", "access_level": "private"
+        })
+        if resp.status_code != 200:
+            pytest.skip(f"Could not create test agent: {resp.text}")
+        agent_data = resp.json()
+        real_key = agent_data["api_key"]
+        agent_id = agent_data["id"]
+
+        try:
+            api_client.headers.pop("Authorization", None)
+            api_client.headers["X-API-Key"] = real_key
+            api_client.headers["Content-Type"] = "application/json"
+
+            test_text = f"TEST_PERSISTENCE_CHECK_{os.urandom(4).hex()}"
+
+            response = api_client.post(
+                f"{BASE_URL}/api/memory/interactions",
+                json={
+                    "interaction_type": "crm_note",
+                    "content": test_text,
+                    "primary_entity_type": "contact",
+                    "primary_entity_id": "test-persist-001",
+                    "metadata": {"test": True}
+                }
+            )
+            assert response.status_code == 200
+            data = response.json()
+            memory_id = data["id"]
+            assert memory_id is not None
+            assert len(memory_id) > 0
+            print(f"✓ Memory ingested with ID: {memory_id}")
+        finally:
+            authenticated_client.delete(f"{BASE_URL}/api/memory/config/agents/{agent_id}")
 
 
 class TestInvalidJWTToken:

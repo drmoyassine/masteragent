@@ -96,20 +96,20 @@ async def signup(user_data: UserCreate):
     now = datetime.now(timezone.utc).isoformat()
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT id FROM users WHERE email = ?", (user_data.email,))
+        cursor.execute("SELECT id FROM users WHERE email = %s", (user_data.email,))
         if cursor.fetchone():
             raise HTTPException(status_code=400, detail="Email already registered")
-        cursor.execute("SELECT id FROM users WHERE username = ?", (user_data.username,))
+        cursor.execute("SELECT id FROM users WHERE username = %s", (user_data.username,))
         if cursor.fetchone():
             raise HTTPException(status_code=400, detail="Username already taken")
         user_id = str(uuid.uuid4())
         password_hash = hash_password(user_data.password)
         cursor.execute(
             """INSERT INTO users (id, username, email, password_hash, plan, created_at, updated_at)
-               VALUES (?, ?, ?, ?, 'free', ?, ?)""",
+               VALUES (%s, %s, %s, %s, 'free', %s, %s)""",
             (user_id, user_data.username, user_data.email, password_hash, now, now),
         )
-        cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+        cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
         user = dict(cursor.fetchone())
     token = create_access_token(data={"sub": user_id})
     return AuthResponse(token=token, user=user_to_response(user))
@@ -120,7 +120,7 @@ async def login(credentials: UserLogin):
     """Login with email/password."""
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM users WHERE email = ?", (credentials.email,))
+        cursor.execute("SELECT * FROM users WHERE email = %s", (credentials.email,))
         user = cursor.fetchone()
         if not user:
             logger.warning(f"Login failed: user not found for email {credentials.email}")
@@ -132,7 +132,7 @@ async def login(credentials: UserLogin):
             logger.warning(f"Login failed: password mismatch for email {credentials.email}")
             raise HTTPException(status_code=401, detail="Invalid email or password")
         now = datetime.now(timezone.utc).isoformat()
-        cursor.execute("UPDATE users SET updated_at = ? WHERE id = ?", (now, user["id"]))
+        cursor.execute("UPDATE users SET updated_at = %s WHERE id = %s", (now, user["id"]))
     logger.info(f"Successful login for user: {credentials.email}")
     token = create_access_token(data={"sub": user["id"]})
     return AuthResponse(token=token, user=user_to_response(user))
@@ -189,19 +189,19 @@ async def github_callback(code: str, state: str = None):
         now = datetime.now(timezone.utc).isoformat()
         with get_db_context() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM users WHERE github_id = ?", (github_user["id"],))
+            cursor.execute("SELECT * FROM users WHERE github_id = %s", (github_user["id"],))
             existing = cursor.fetchone()
             if existing:
                 user_id = existing["id"]
                 cursor.execute(
-                    "UPDATE users SET username=?, email=?, avatar_url=?, github_token=?, updated_at=? WHERE id=?",
+                    "UPDATE users SET username=%s, email=%s, avatar_url=%s, github_token=%s, updated_at=%s WHERE id=%s",
                     (github_user["login"], primary_email, github_user.get("avatar_url"), github_token, now, user_id),
                 )
             else:
                 user_id = str(uuid.uuid4())
                 cursor.execute(
                     """INSERT INTO users (id, github_id, username, email, avatar_url, github_url, github_token, plan, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, 'free', ?, ?)""",
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, 'free', %s, %s)""",
                     (user_id, github_user["id"], github_user["login"], primary_email,
                      github_user.get("avatar_url"), github_user.get("html_url"), github_token, now, now),
                 )

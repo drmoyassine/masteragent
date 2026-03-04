@@ -57,7 +57,7 @@ async def create_api_key(key_data: APIKeyCreate):
     with get_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO api_keys (id, name, key_hash, key_preview, created_at) VALUES (?,?,?,?,?)",
+            "INSERT INTO api_keys (id, name, key_hash, key_preview, created_at) VALUES (%s,%s,%s,%s,%s)",
             (key_id, key_data.name, full_key, key_preview, now),
         )
     return APIKeyCreateResponse(
@@ -69,5 +69,5 @@ async def create_api_key(key_data: APIKeyCreate):
 async def delete_api_key(key_id: str):
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM api_keys WHERE id = ?", (key_id,))
+        cursor.execute("DELETE FROM api_keys WHERE id = %s", (key_id,))
     return {"message": "API key deleted"}

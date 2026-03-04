@@ -1,8 +1,8 @@
 """
-db_init.py — Database initialization and seeding
+db_init.py — Database initialization and seeding (PostgreSQL)
 
-Extracted from server.py to keep the entry point clean.
 Contains: init_db(), seed_admin_user(), and the default template seed data.
+All tables now live in the PostgreSQL 'memory' database alongside the memory system.
 """
 import json
 import uuid
@@ -16,9 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 def init_db():
-    """Create all main database tables and run any pending migrations."""
-    import sqlite3
-
+    """Create all main app tables if they don't exist, run idempotent migrations."""
     with get_db_context() as conn:
         cursor = conn.cursor()
 
@@ -26,7 +24,7 @@ def init_db():
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
-                github_id INTEGER UNIQUE,
+                github_id BIGINT UNIQUE,
                 username TEXT NOT NULL,
                 email TEXT UNIQUE,
                 password_hash TEXT,
@@ -42,7 +40,7 @@ def init_db():
         # Settings table (GitHub config per user)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS settings (
-                id INTEGER PRIMARY KEY,
+                id SERIAL PRIMARY KEY,
                 user_id TEXT,
                 github_token TEXT,
                 github_repo TEXT,
@@ -54,11 +52,10 @@ def init_db():
             )
         """)
 
-        # Migration: Add storage_mode column if it doesn't exist
-        try:
-            cursor.execute("ALTER TABLE settings ADD COLUMN storage_mode TEXT DEFAULT 'local'")
-        except sqlite3.OperationalError:
-            pass  # Column already exists
+        # Idempotent migration: add storage_mode if missing
+        cursor.execute("""
+            ALTER TABLE settings ADD COLUMN IF NOT EXISTS storage_mode TEXT DEFAULT 'local'
+        """)
 
         # Prompts metadata table
         cursor.execute("""
@@ -81,7 +78,7 @@ def init_db():
                 prompt_id TEXT NOT NULL,
                 version_name TEXT NOT NULL,
                 branch_name TEXT NOT NULL,
-                is_default INTEGER DEFAULT 0,
+                is_default BOOLEAN DEFAULT FALSE,
                 created_at TEXT,
                 FOREIGN KEY (prompt_id) REFERENCES prompts(id)
             )
@@ -98,7 +95,7 @@ def init_db():
             )
         """)
 
-        # API Keys table
+        # API Keys table (for prompt manager external access)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS api_keys (
                 id TEXT PRIMARY KEY,
@@ -134,7 +131,7 @@ def init_db():
                 name TEXT NOT NULL,
                 value TEXT,
                 description TEXT,
-                required INTEGER DEFAULT 0,
+                required BOOLEAN DEFAULT FALSE,
                 created_at TEXT,
                 updated_at TEXT,
                 FOREIGN KEY (prompt_id) REFERENCES prompts(id),
@@ -142,9 +139,9 @@ def init_db():
             )
         """)
 
-        # Insert default templates only if table is empty
+        # Seed default templates only if empty
         cursor.execute("SELECT COUNT(*) FROM templates")
-        if cursor.fetchone()[0] == 0:
+        if cursor.fetchone()["count"] == 0:
             _seed_templates(cursor)
 
 
@@ -199,7 +196,7 @@ def _seed_templates(cursor):
     ]
     for t in default_templates:
         cursor.execute(
-            "INSERT INTO templates (id, name, description, sections, created_at) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO templates (id, name, description, sections, created_at) VALUES (%s, %s, %s, %s, %s)",
             (t["id"], t["name"], t["description"], t["sections"], t["created_at"]),
         )
 
@@ -220,14 +217,14 @@ def seed_admin_user():
 
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT id FROM users WHERE email = ?", (admin_email,))
+        cursor.execute("SELECT id FROM users WHERE email = %s", (admin_email,))
         if not cursor.fetchone():
             now = datetime.now(timezone.utc).isoformat()
             admin_id = str(uuid.uuid4())
             password_hash = hash_password(admin_password)
             cursor.execute(
                 """INSERT INTO users (id, username, email, password_hash, plan, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, 'pro', ?, ?)""",
+                   VALUES (%s, %s, %s, %s, 'pro', %s, %s)""",
                 (admin_id, admin_username, admin_email, password_hash, now, now),
             )
             logger.info(f"Admin user created: {admin_email}")

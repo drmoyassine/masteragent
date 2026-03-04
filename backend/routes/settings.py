@@ -68,7 +68,7 @@ async def get_settings(user: dict = Depends(require_auth)):
 async def save_settings(settings_data: SettingsCreate, user: dict = Depends(require_auth)):
     now = datetime.now(timezone.utc).isoformat()
     headers = {
-        "Authorization": f"Bearer {settings_data.github_token}", # Switched to Bearer
+        "Authorization": f"Bearer {settings_data.github_token}",
         "Accept": "application/vnd.github.v3+json",
     }
     async with httpx.AsyncClient() as client:
@@ -98,20 +98,20 @@ async def save_settings(settings_data: SettingsCreate, user: dict = Depends(requ
 
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT id FROM settings WHERE user_id = ?", (user["id"],))
+        cursor.execute("SELECT id FROM settings WHERE user_id = %s", (user["id"],))
         existing = cursor.fetchone()
         if existing:
             cursor.execute(
-                "UPDATE settings SET github_token=?, github_repo=?, github_owner=?, storage_mode='github', updated_at=? WHERE user_id=?",
+                "UPDATE settings SET github_token=%s, github_repo=%s, github_owner=%s, storage_mode='github', updated_at=%s WHERE user_id=%s",
                 (settings_data.github_token, settings_data.github_repo, settings_data.github_owner, now, user["id"]),
             )
             settings_id = existing["id"]
         else:
             cursor.execute(
-                "INSERT INTO settings (user_id, github_token, github_repo, github_owner, storage_mode, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+                "INSERT INTO settings (user_id, github_token, github_repo, github_owner, storage_mode, created_at, updated_at) VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id",
                 (user["id"], settings_data.github_token, settings_data.github_repo, settings_data.github_owner, 'github', now, now),
             )
-            settings_id = cursor.lastrowid
+            settings_id = cursor.fetchone()["id"]
 
     return SettingsResponse(
         id=settings_id,
@@ -127,7 +127,7 @@ async def save_settings(settings_data: SettingsCreate, user: dict = Depends(requ
 async def delete_settings(user: dict = Depends(require_auth)):
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM settings WHERE user_id = ?", (user["id"],))
+        cursor.execute("DELETE FROM settings WHERE user_id = %s", (user["id"],))
     return {"message": "Settings deleted"}
 
 
@@ -139,11 +139,11 @@ async def set_storage_mode(mode_data: StorageModeUpdate, user: dict = Depends(re
     now = datetime.now(timezone.utc).isoformat()
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM settings WHERE user_id = ?", (user["id"],))
+        cursor.execute("SELECT * FROM settings WHERE user_id = %s", (user["id"],))
         existing = cursor.fetchone()
         if existing:
             cursor.execute(
-                "UPDATE settings SET storage_mode=?, updated_at=? WHERE user_id=?",
+                "UPDATE settings SET storage_mode=%s, updated_at=%s WHERE user_id=%s",
                 (mode_data.storage_mode, now, user["id"]),
             )
             settings_id = existing["id"]
@@ -153,10 +153,10 @@ async def set_storage_mode(mode_data: StorageModeUpdate, user: dict = Depends(re
             github_owner = existing["github_owner"]
         else:
             cursor.execute(
-                "INSERT INTO settings (user_id, storage_mode, created_at, updated_at) VALUES (?,?,?,?)",
+                "INSERT INTO settings (user_id, storage_mode, created_at, updated_at) VALUES (%s,%s,%s,%s) RETURNING id",
                 (user["id"], mode_data.storage_mode, now, now),
             )
-            settings_id = cursor.lastrowid
+            settings_id = cursor.fetchone()["id"]
             is_configured = mode_data.storage_mode == "local"
             has_github = False
             github_repo = None

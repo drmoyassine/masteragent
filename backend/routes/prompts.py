@@ -97,22 +97,22 @@ def inject_variables(
 ) -> str:
     """Inject variables with resolution order: account → prompt → runtime."""
     resolved = {}
-    
+
     # Bundle DB operations within a single connection
     if user_id or prompt_id:
         with get_db_context() as conn:
             cursor = conn.cursor()
-            
+
             # 3. Account-level variables (lowest priority)
             if user_id:
-                cursor.execute("SELECT name, value FROM account_variables WHERE user_id = ?", (user_id,))
+                cursor.execute("SELECT name, value FROM account_variables WHERE user_id = %s", (user_id,))
                 for row in cursor.fetchall():
                     resolved[row["name"]] = row["value"]
-                    
+
             # 2. Prompt-level variables (medium priority)
             if prompt_id:
                 cursor.execute(
-                    "SELECT name, value FROM prompt_variables WHERE prompt_id = ? AND version = ?",
+                    "SELECT name, value FROM prompt_variables WHERE prompt_id = %s AND version = %s",
                     (prompt_id, version),
                 )
                 for row in cursor.fetchall():
@@ -135,10 +135,10 @@ def inject_variables(
 async def get_prompts(user: dict = Depends(require_auth)):
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM prompts WHERE user_id = ? ORDER BY updated_at DESC", (user["id"],))
+        cursor.execute("SELECT * FROM prompts WHERE user_id = %s ORDER BY updated_at DESC", (user["id"],))
         prompts = [dict(row) for row in cursor.fetchall()]
         for prompt in prompts:
-            cursor.execute("SELECT * FROM prompt_versions WHERE prompt_id = ? ORDER BY created_at", (prompt["id"],))
+            cursor.execute("SELECT * FROM prompt_versions WHERE prompt_id = %s ORDER BY created_at", (prompt["id"],))
             prompt["versions"] = [dict(v) for v in cursor.fetchall()]
     return prompts
 
@@ -149,7 +149,7 @@ async def create_prompt(prompt_data: PromptCreate, user: dict = Depends(require_
 
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) as count FROM prompts WHERE user_id = ?", (user["id"],))
+        cursor.execute("SELECT COUNT(*) as count FROM prompts WHERE user_id = %s", (user["id"],))
         count = cursor.fetchone()["count"]
         if user.get("plan") == "free" and count >= 1:
             raise HTTPException(
@@ -172,7 +172,7 @@ async def create_prompt(prompt_data: PromptCreate, user: dict = Depends(require_
     if prompt_data.template_id:
         with get_db_context() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT sections FROM templates WHERE id = ?", (prompt_data.template_id,))
+            cursor.execute("SELECT sections FROM templates WHERE id = %s", (prompt_data.template_id,))
             t = cursor.fetchone()
             if t:
                 sections_to_create = json.loads(t["sections"])
@@ -195,12 +195,12 @@ async def create_prompt(prompt_data: PromptCreate, user: dict = Depends(require_
     with get_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO prompts (id, user_id, name, description, folder_path, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO prompts (id, user_id, name, description, folder_path, created_at, updated_at) VALUES (%s,%s,%s,%s,%s,%s,%s)",
             (prompt_id, user["id"], prompt_data.name, prompt_data.description or "", folder_path, now, now),
         )
         version_id = str(uuid.uuid4())
         cursor.execute(
-            "INSERT INTO prompt_versions (id, prompt_id, version_name, branch_name, is_default, created_at) VALUES (?,?,?,?,1,?)",
+            "INSERT INTO prompt_versions (id, prompt_id, version_name, branch_name, is_default, created_at) VALUES (%s,%s,%s,%s,TRUE,%s)",
             (version_id, prompt_id, "v1", "v1", now),
         )
 
@@ -216,8 +216,8 @@ async def create_prompt(prompt_data: PromptCreate, user: dict = Depends(require_
     except Exception as e:
         with get_db_context() as conn:
             cursor = conn.cursor()
-            cursor.execute("DELETE FROM prompt_versions WHERE prompt_id = ?", (prompt_id,))
-            cursor.execute("DELETE FROM prompts WHERE id = ?", (prompt_id,))
+            cursor.execute("DELETE FROM prompt_versions WHERE prompt_id = %s", (prompt_id,))
+            cursor.execute("DELETE FROM prompts WHERE id = %s", (prompt_id,))
         raise HTTPException(status_code=500, detail=f"Failed to create prompt: {e}")
 
     return PromptResponse(
@@ -235,12 +235,12 @@ async def create_prompt(prompt_data: PromptCreate, user: dict = Depends(require_
 async def get_prompt(prompt_id: str, user: dict = Depends(require_auth)):
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM prompts WHERE id = ? AND user_id = ?", (prompt_id, user["id"]))
+        cursor.execute("SELECT * FROM prompts WHERE id = %s AND user_id = %s", (prompt_id, user["id"]))
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Prompt not found")
         prompt = dict(row)
-        cursor.execute("SELECT * FROM prompt_versions WHERE prompt_id = ?", (prompt_id,))
+        cursor.execute("SELECT * FROM prompt_versions WHERE prompt_id = %s", (prompt_id,))
         prompt["versions"] = [dict(v) for v in cursor.fetchall()]
     return prompt
 
@@ -250,19 +250,19 @@ async def update_prompt(prompt_id: str, prompt_data: PromptUpdate, user: dict = 
     now = datetime.now(timezone.utc).isoformat()
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM prompts WHERE id = ? AND user_id = ?", (prompt_id, user["id"]))
+        cursor.execute("SELECT * FROM prompts WHERE id = %s AND user_id = %s", (prompt_id, user["id"]))
         if not cursor.fetchone():
             raise HTTPException(status_code=404, detail="Prompt not found")
         updates, params = [], []
         if prompt_data.name:
-            updates.append("name = ?")
+            updates.append("name = %s")
             params.append(prompt_data.name)
         if prompt_data.description is not None:
-            updates.append("description = ?")
+            updates.append("description = %s")
             params.append(prompt_data.description)
-        updates.append("updated_at = ?")
+        updates.append("updated_at = %s")
         params.extend([now, prompt_id])
-        cursor.execute(f"UPDATE prompts SET {', '.join(updates)} WHERE id = ?", params)
+        cursor.execute(f"UPDATE prompts SET {', '.join(updates)} WHERE id = %s", params)
     return await get_prompt(prompt_id, user)
 
 
@@ -270,11 +270,11 @@ async def update_prompt(prompt_id: str, prompt_data: PromptUpdate, user: dict = 
 async def delete_prompt(prompt_id: str, user: dict = Depends(require_auth)):
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT folder_path FROM prompts WHERE id = ? AND user_id = ?", (prompt_id, user["id"]))
+        cursor.execute("SELECT folder_path FROM prompts WHERE id = %s AND user_id = %s", (prompt_id, user["id"]))
         if not cursor.fetchone():
             raise HTTPException(status_code=404, detail="Prompt not found")
-        cursor.execute("DELETE FROM prompt_versions WHERE prompt_id = ?", (prompt_id,))
-        cursor.execute("DELETE FROM prompts WHERE id = ?", (prompt_id,))
+        cursor.execute("DELETE FROM prompt_versions WHERE prompt_id = %s", (prompt_id,))
+        cursor.execute("DELETE FROM prompts WHERE id = %s", (prompt_id,))
     return {"message": "Prompt deleted"}
 
 
@@ -288,7 +288,7 @@ async def get_prompt_sections(prompt_id: str, version: str = "v1", user: dict = 
 
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT folder_path FROM prompts WHERE id = ? AND user_id = ?", (prompt_id, user["id"]))
+        cursor.execute("SELECT folder_path FROM prompts WHERE id = %s AND user_id = %s", (prompt_id, user["id"]))
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Prompt not found")
@@ -325,7 +325,7 @@ async def get_section_content(prompt_id: str, filename: str, version: str = "v1"
 
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT folder_path FROM prompts WHERE id = ? AND user_id = ?", (prompt_id, user["id"]))
+        cursor.execute("SELECT folder_path FROM prompts WHERE id = %s AND user_id = %s", (prompt_id, user["id"]))
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Prompt not found")
@@ -356,7 +356,7 @@ async def create_section(
 
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT folder_path FROM prompts WHERE id = ? AND user_id = ?", (prompt_id, user["id"]))
+        cursor.execute("SELECT folder_path FROM prompts WHERE id = %s AND user_id = %s", (prompt_id, user["id"]))
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Prompt not found")
@@ -380,7 +380,7 @@ async def create_section(
     now = datetime.now(timezone.utc).isoformat()
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("UPDATE prompts SET updated_at = ? WHERE id = ?", (now, prompt_id))
+        cursor.execute("UPDATE prompts SET updated_at = %s WHERE id = %s", (now, prompt_id))
 
     return {"filename": filename, "message": "Section created"}
 
@@ -397,7 +397,7 @@ async def update_section(
 
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT folder_path FROM prompts WHERE id = ? AND user_id = ?", (prompt_id, user["id"]))
+        cursor.execute("SELECT folder_path FROM prompts WHERE id = %s AND user_id = %s", (prompt_id, user["id"]))
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Prompt not found")
@@ -417,7 +417,7 @@ async def update_section(
     now = datetime.now(timezone.utc).isoformat()
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("UPDATE prompts SET updated_at = ? WHERE id = ?", (now, prompt_id))
+        cursor.execute("UPDATE prompts SET updated_at = %s WHERE id = %s", (now, prompt_id))
     return {"filename": filename, "message": "Section updated"}
 
 
@@ -429,7 +429,7 @@ async def delete_section(
 
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT folder_path FROM prompts WHERE id = ? AND user_id = ?", (prompt_id, user["id"]))
+        cursor.execute("SELECT folder_path FROM prompts WHERE id = %s AND user_id = %s", (prompt_id, user["id"]))
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Prompt not found")
@@ -459,7 +459,7 @@ async def reorder_sections(
 
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT folder_path FROM prompts WHERE id = ? AND user_id = ?", (prompt_id, user["id"]))
+        cursor.execute("SELECT folder_path FROM prompts WHERE id = %s AND user_id = %s", (prompt_id, user["id"]))
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Prompt not found")
@@ -492,7 +492,7 @@ async def reorder_sections(
 async def get_prompt_versions(prompt_id: str):
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM prompt_versions WHERE prompt_id = ? ORDER BY created_at DESC", (prompt_id,))
+        cursor.execute("SELECT * FROM prompt_versions WHERE prompt_id = %s ORDER BY created_at DESC", (prompt_id,))
         return [dict(row) for row in cursor.fetchall()]
 
 
@@ -503,7 +503,7 @@ async def create_version(prompt_id: str, version_data: VersionCreate):
 
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM prompts WHERE id = ?", (prompt_id,))
+        cursor.execute("SELECT * FROM prompts WHERE id = %s", (prompt_id,))
         if not cursor.fetchone():
             raise HTTPException(status_code=404, detail="Prompt not found")
 
@@ -524,7 +524,7 @@ async def create_version(prompt_id: str, version_data: VersionCreate):
     with get_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO prompt_versions (id, prompt_id, version_name, branch_name, is_default, created_at) VALUES (?,?,?,?,0,?)",
+            "INSERT INTO prompt_versions (id, prompt_id, version_name, branch_name, is_default, created_at) VALUES (%s,%s,%s,%s,FALSE,%s)",
             (version_id, prompt_id, version_data.version_name, branch_name, now),
         )
     return {"id": version_id, "version_name": version_data.version_name, "branch_name": branch_name}

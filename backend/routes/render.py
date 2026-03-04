@@ -84,7 +84,7 @@ async def render_prompt(
 ):
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM prompts WHERE id = ?", (prompt_id,))
+        cursor.execute("SELECT * FROM prompts WHERE id = %s", (prompt_id,))
         prompt = cursor.fetchone()
         if not prompt:
             raise HTTPException(status_code=404, detail="Prompt not found")

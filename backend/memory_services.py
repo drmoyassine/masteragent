@@ -9,17 +9,15 @@ from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 
-from memory_db import get_memory_db_context
+from core.storage import get_memory_db_context
 from memory_models import RelatedEntity
 
 logger = logging.getLogger(__name__)
 
 # ============================================
-# Configuration (Defaults - can be overridden by DB config)
+# Configuration
 # ============================================
 
-QDRANT_URL = os.environ.get('QDRANT_URL', 'http://localhost:6333')
-QDRANT_API_KEY = os.environ.get('QDRANT_API_KEY', '')
 GLINER_URL = os.environ.get('GLINER_URL', 'http://localhost:8002')
 
 # ============================================
@@ -43,41 +41,39 @@ def get_llm_config(task_type: str) -> Optional[Dict[str, Any]]:
     """
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        
+
         # 1. Get the primary active config for this task
         cursor.execute("""
-            SELECT * FROM memory_llm_configs 
-            WHERE task_type = ? AND is_active = 1
+            SELECT * FROM memory_llm_configs
+            WHERE task_type = %s AND is_active = TRUE
             ORDER BY updated_at DESC LIMIT 1
         """, (task_type,))
         row = cursor.fetchone()
-        
+
         if not row:
             return None
-            
+
         config = dict(row)
-        config["extra_config"] = json.loads(config.get("extra_config_json", "{}"))
-        
-        # 2. Key Fallback: If this config is missing a key, look for one from the same provider in other tasks
+        extra = config.get("extra_settings") or {}
+        config["extra_config"] = extra if isinstance(extra, dict) else json.loads(extra)
+
+        # 2. Key Fallback: If this config is missing a key, look for one from the same provider
         if not config.get("api_key_encrypted"):
             provider = config.get("provider")
-            # Skip fallback for local/no-key providers
             if provider not in ["gliner", "zendata", "custom"]:
                 cursor.execute("""
-                    SELECT api_key_encrypted, api_key_preview, api_base_url 
-                    FROM memory_llm_configs 
-                    WHERE provider = ? AND api_key_encrypted IS NOT NULL AND api_key_encrypted != ''
+                    SELECT api_key_encrypted, api_base_url
+                    FROM memory_llm_configs
+                    WHERE provider = %s AND api_key_encrypted IS NOT NULL AND api_key_encrypted != ''
                     ORDER BY updated_at DESC LIMIT 1
                 """, (provider,))
                 fallback_row = cursor.fetchone()
                 if fallback_row:
                     config["api_key_encrypted"] = fallback_row["api_key_encrypted"]
-                    config["api_key_preview"] = fallback_row["api_key_preview"]
-                    # Also fallback base URL if current is empty and fallback is not
                     if not config.get("api_base_url") and fallback_row["api_base_url"]:
                         config["api_base_url"] = fallback_row["api_base_url"]
-                    logger.info(f"Using inherited API key for {task_type} from matching provider {provider}")
-        
+                    logger.info(f"Using inherited API key for {task_type} from provider {provider}")
+
         return config
 
 def get_system_prompt(prompt_type: str) -> Optional[str]:
@@ -85,8 +81,8 @@ def get_system_prompt(prompt_type: str) -> Optional[str]:
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT prompt_text FROM memory_system_prompts 
-            WHERE prompt_type = ? AND is_active = 1
+            SELECT prompt_text FROM memory_system_prompts
+            WHERE prompt_type = %s AND is_active = TRUE
             ORDER BY updated_at DESC LIMIT 1
         """, (prompt_type,))
         row = cursor.fetchone()
@@ -272,138 +268,139 @@ async def generate_embeddings_batch(texts: List[str]) -> List[List[float]]:
     return []
 
 # ============================================
-# Qdrant Vector Store Service
+# pgvector Search Service (replaces Qdrant)
 # ============================================
 
-async def init_qdrant_collections():
-    """Initialize Qdrant collections if they don't exist"""
-    collections = [
-        "memory_interactions",
-        "memory_interactions_shared", 
-        "memory_lessons",
-        "memory_lessons_shared"
-    ]
-    
-    headers = {"Content-Type": "application/json"}
-    if QDRANT_API_KEY:
-        headers["api-key"] = QDRANT_API_KEY
-    
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            for collection in collections:
-                # Check if collection exists
-                response = await client.get(
-                    f"{QDRANT_URL}/collections/{collection}",
-                    headers=headers
-                )
-                
-                if response.status_code == 404:
-                    # Create collection
-                    await client.put(
-                        f"{QDRANT_URL}/collections/{collection}",
-                        headers=headers,
-                        json={
-                            "vectors": {
-                                "size": 1536,  # OpenAI embedding size
-                                "distance": "Cosine"
-                            }
-                        }
-                    )
-                    logger.info(f"Created Qdrant collection: {collection}")
-    except Exception as e:
-        logger.error(f"Qdrant init error: {e}")
-
-async def upsert_vector(
-    collection: str,
-    vector_id: str,
-    vector: List[float],
-    payload: Dict[str, Any]
-) -> bool:
-    """Upsert a vector into Qdrant"""
-    if not vector:
-        return False
-    
-    headers = {"Content-Type": "application/json"}
-    if QDRANT_API_KEY:
-        headers["api-key"] = QDRANT_API_KEY
-    
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.put(
-                f"{QDRANT_URL}/collections/{collection}/points",
-                headers=headers,
-                json={
-                    "points": [
-                        {
-                            "id": vector_id,
-                            "vector": vector,
-                            "payload": payload
-                        }
-                    ]
-                }
-            )
-            return response.status_code == 200
-    except Exception as e:
-        logger.error(f"Qdrant upsert error: {e}")
-    
-    return False
-
-async def search_vectors(
-    collection: str,
+async def search_memories_by_vector(
     query_vector: List[float],
-    filters: Dict[str, Any] = None,
+    entity_id: str = None,
+    entity_type: str = None,
+    since: str = None,
+    until: str = None,
     limit: int = 20
 ) -> List[Dict[str, Any]]:
-    """Search vectors in Qdrant with optional filters"""
+    """Semantic search over the memories table using pgvector cosine distance."""
     if not query_vector:
         return []
-    
-    headers = {"Content-Type": "application/json"}
-    if QDRANT_API_KEY:
-        headers["api-key"] = QDRANT_API_KEY
-    
-    search_body = {
-        "vector": query_vector,
-        "limit": limit,
-        "with_payload": True
-    }
-    
-    if filters:
-        search_body["filter"] = filters
-    
+    from core.storage import get_memory_db_context as _get_db
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                f"{QDRANT_URL}/collections/{collection}/points/search",
-                headers=headers,
-                json=search_body
-            )
-            if response.status_code == 200:
-                data = response.json()
-                return data.get("result", [])
+        with _get_db() as conn:
+            cursor = conn.cursor()
+            conditions = ["embedding IS NOT NULL"]
+            params: list = []
+            if entity_id:
+                conditions.append("primary_entity_id = %s")
+                params.append(entity_id)
+            if entity_type:
+                conditions.append("primary_entity_type = %s")
+                params.append(entity_type)
+            if since:
+                conditions.append("date >= %s")
+                params.append(since)
+            if until:
+                conditions.append("date <= %s")
+                params.append(until)
+            where = " AND ".join(conditions)
+            cursor.execute(f"""
+                SELECT id, date, primary_entity_type, primary_entity_id,
+                       content_summary, related_entities, intents, created_at,
+                       1 - (embedding <=> %s::vector) AS score
+                FROM memories WHERE {where}
+                ORDER BY embedding <=> %s::vector LIMIT %s
+            """, params + [query_vector, query_vector, limit])
+            return [dict(row) for row in cursor.fetchall()]
     except Exception as e:
-        logger.error(f"Qdrant search error: {e}")
-    
+        logger.error(f"pgvector memory search error: {e}")
+        return []
+
+
+async def search_insights_by_vector(
+    query_vector: List[float],
+    entity_id: str = None,
+    entity_type: str = None,
+    status: str = "confirmed",
+    limit: int = 10
+) -> List[Dict[str, Any]]:
+    """Semantic search over the insights table."""
+    if not query_vector:
+        return []
+    from core.storage import get_memory_db_context as _get_db
+    try:
+        with _get_db() as conn:
+            cursor = conn.cursor()
+            conditions = ["embedding IS NOT NULL"]
+            params: list = []
+            if entity_id:
+                conditions.append("primary_entity_id = %s")
+                params.append(entity_id)
+            if entity_type:
+                conditions.append("primary_entity_type = %s")
+                params.append(entity_type)
+            if status:
+                conditions.append("status = %s")
+                params.append(status)
+            where = " AND ".join(conditions)
+            cursor.execute(f"""
+                SELECT id, primary_entity_type, primary_entity_id,
+                       insight_type, name, summary, status, created_at,
+                       1 - (embedding <=> %s::vector) AS score
+                FROM insights WHERE {where}
+                ORDER BY embedding <=> %s::vector LIMIT %s
+            """, params + [query_vector, query_vector, limit])
+            return [dict(row) for row in cursor.fetchall()]
+    except Exception as e:
+        logger.error(f"pgvector insight search error: {e}")
+        return []
+
+
+async def search_lessons_by_vector(
+    query_vector: List[float],
+    lesson_type: str = None,
+    limit: int = 10
+) -> List[Dict[str, Any]]:
+    """Semantic search over the lessons table."""
+    if not query_vector:
+        return []
+    from core.storage import get_memory_db_context as _get_db
+    try:
+        with _get_db() as conn:
+            cursor = conn.cursor()
+            conditions = ["embedding IS NOT NULL", "visibility = 'shared'"]
+            params: list = []
+            if lesson_type:
+                conditions.append("lesson_type = %s")
+                params.append(lesson_type)
+            where = " AND ".join(conditions)
+            cursor.execute(f"""
+                SELECT id, lesson_type, name, summary, visibility, tags, created_at,
+                       1 - (embedding <=> %s::vector) AS score
+                FROM lessons WHERE {where}
+                ORDER BY embedding <=> %s::vector LIMIT %s
+            """, params + [query_vector, query_vector, limit])
+            return [dict(row) for row in cursor.fetchall()]
+    except Exception as e:
+        logger.error(f"pgvector lesson search error: {e}")
+        return []
+
+
+# Backwards-compatible stubs (no-ops — Qdrant removed)
+async def init_qdrant_collections():
+    """No-op: vector storage is now pgvector in PostgreSQL."""
+    logger.info("pgvector active — Qdrant not used")
+
+async def upsert_vector(collection: str, vector_id: str, vector: List[float], payload: Dict[str, Any]) -> bool:
+    """No-op: embeddings stored directly in PostgreSQL VECTOR columns."""
+    return True
+
+async def search_vectors(collection: str, query_vector: List[float], filters=None, limit: int = 20) -> List[Dict[str, Any]]:
+    """Deprecated stub — use search_*_by_vector() directly."""
+    logger.warning("search_vectors() deprecated — use search_memories/insights/lessons_by_vector()")
     return []
 
 async def delete_vector(collection: str, vector_id: str) -> bool:
-    """Delete a vector from Qdrant"""
-    headers = {"Content-Type": "application/json"}
-    if QDRANT_API_KEY:
-        headers["api-key"] = QDRANT_API_KEY
-    
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                f"{QDRANT_URL}/collections/{collection}/points/delete",
-                headers=headers,
-                json={"points": [vector_id]}
-            )
-            return response.status_code == 200
-    except Exception as e:
-        logger.error(f"Qdrant delete error: {e}")
-    
-    return False
+    """No-op: deletion handled by SQL DELETE on parent table."""
+    return True
+
 
 # ============================================
 # PII Scrubbing Service (Admin Configurable)
@@ -611,24 +608,20 @@ async def summarize_text(text: str) -> str:
 # Entity Extraction Service (GLiNER or LLM)
 # ============================================
 
-async def extract_entities_gliner(text: str) -> List[Dict[str, str]]:
+async def extract_entities_gliner(text: str, confidence_threshold: float = 0.5) -> dict:
     """Extract entities using GLiNER2 NER service"""
     config = get_llm_config("entity_extraction")
-    
-    if not config:
-        return []
-    
-    # Check if using GLiNER provider
-    if config.get("provider") != "gliner":
-        return []
-    
+
+    if not config or config.get("provider") != "gliner":
+        return {"entities": [], "intents": [], "relationships": []}
+
     gliner_url = config.get("api_base_url", GLINER_URL)
+    # Use passed threshold, but allow DB config to override it
     extra_config = config.get("extra_config", {})
-    threshold = extra_config.get("threshold", 0.5)
-    
-    # Entity labels to extract
+    threshold = extra_config.get("threshold", confidence_threshold)
+
     labels = ["person", "organization", "location", "product", "event", "date"]
-    
+
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
@@ -643,56 +636,55 @@ async def extract_entities_gliner(text: str) -> List[Dict[str, str]]:
                 data = response.json()
                 entities = []
                 for e in data.get("entities", []):
-                    # Map GLiNER entity types to our types
-                    entity_type = "Contact" if e.get("label") == "person" else (
-                        "Organization" if e.get("label") == "organization" else "Program"
+                    entity_type = "contact" if e.get("label") == "person" else (
+                        "institution" if e.get("label") == "organization" else "program"
                     )
                     entities.append({
-                        "type": entity_type,
+                        "entity_id": str(uuid.uuid4()),
+                        "entity_type": entity_type,
                         "name": e.get("text", ""),
                         "role": "mentioned",
-                        "label": e.get("label", ""),
-                        "score": e.get("score", 0)
+                        "score": e.get("score", 0),
                     })
-                return entities
+                return {"entities": entities, "intents": [], "relationships": []}
             else:
                 logger.error(f"GLiNER extraction failed: {response.status_code}")
     except Exception as e:
         logger.error(f"GLiNER extraction error: {e}")
-    
-    return []
 
-async def extract_entities_llm(text: str) -> List[Dict[str, str]]:
+    return {"entities": [], "intents": [], "relationships": []}
+
+
+async def extract_entities_llm(text: str, confidence_threshold: float = 0.5) -> dict:
     """Extract entities using LLM"""
     prompt_template = get_system_prompt("entity_extraction")
     if not prompt_template:
-        return []
-    
-    prompt = prompt_template.replace("{text}", text[:4000])
-    response = await call_llm(prompt, max_tokens=500, task_type="summarization")  # Use summarization LLM
-    
-    try:
-        # Parse JSON response
-        entities = json.loads(response)
-        if isinstance(entities, list):
-            return entities
-    except Exception as e:
-        logger.error(f"Failed to extract entities with LLM: {e}")
-        pass
-    
-    return []
+        return {"entities": [], "intents": [], "relationships": []}
 
-async def extract_entities(text: str) -> List[Dict[str, str]]:
-    """Extract entity mentions from text using configured extractor"""
+    response = await call_llm(text[:4000], system_prompt=prompt_template, max_tokens=500, task_type="summarization")
+
+    try:
+        parsed = json.loads(response)
+        if isinstance(parsed, list):
+            return {"entities": parsed, "intents": [], "relationships": []}
+    except Exception as e:
+        logger.error(f"Failed to parse entity extraction LLM response: {e}")
+
+    return {"entities": [], "intents": [], "relationships": []}
+
+
+async def extract_entities(text: str, confidence_threshold: float = 0.5) -> dict:
+    """
+    Extract entity mentions from text using configured extractor.
+    Returns dict: {entities: [...], intents: [...], relationships: [...]}
+    """
     if not text:
-        return []
-    
+        return {"entities": [], "intents": [], "relationships": []}
+
     config = get_llm_config("entity_extraction")
-    
+
     if config and config.get("provider") == "gliner":
-        # Use GLiNER2 NER (default)
-        return await extract_entities_gliner(text)
+        return await extract_entities_gliner(text, confidence_threshold=confidence_threshold)
     else:
-        # Fallback to LLM-based extraction
-        return await extract_entities_llm(text)
+        return await extract_entities_llm(text, confidence_threshold=confidence_threshold)
 

@@ -29,7 +29,7 @@ async def get_templates():
 async def get_template(template_id: str):
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM templates WHERE id = ?", (template_id,))
+        cursor.execute("SELECT * FROM templates WHERE id = %s", (template_id,))
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Template not found")

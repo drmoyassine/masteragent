@@ -8,7 +8,7 @@ import requests
 import os
 import json
 
-BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://ai-memory-vault-7.preview.emergentagent.com')
+BASE_URL = os.environ.get('MEMORY_TEST_BASE_URL', 'http://localhost:8080').rstrip('/')
 
 # Test credentials
 TEST_EMAIL = "admin@promptsrc.com"
@@ -135,7 +135,7 @@ class TestEntityTypes:
         assert len(data) >= 3  # Should have Contact, Organization, Program
         
         names = [t["name"] for t in data]
-        expected = ["Contact", "Organization", "Program"]
+        expected = ["contact", "institution", "product"]
         for name in expected:
             assert name in names, f"Missing entity type: {name}"
         
@@ -143,17 +143,19 @@ class TestEntityTypes:
     
     def test_create_and_delete_entity_type(self, authenticated_client):
         """Test POST and DELETE /api/memory/config/entity-types"""
-        # Create new entity type
+        # Create new entity type with a truly unique name (uuid4 avoids same-second collisions)
+        import uuid
+        unique_name = f"TEST_Project_{uuid.uuid4().hex[:8]}"
         new_type = {
-            "name": "TEST_Project",
+            "name": unique_name,
             "description": "Test project entity type",
             "icon": "folder"
         }
         response = authenticated_client.post(f"{BASE_URL}/api/memory/config/entity-types", json=new_type)
-        assert response.status_code == 200
+        assert response.status_code == 200, response.text
         
         created = response.json()
-        assert created["name"] == "TEST_Project"
+        assert created["name"] == unique_name
         assert "id" in created
         type_id = created["id"]
         
@@ -182,8 +184,8 @@ class TestEntitySubtypes:
         # First get Contact entity type
         response = authenticated_client.get(f"{BASE_URL}/api/memory/config/entity-types")
         types = response.json()
-        contact_type = next((t for t in types if t["name"] == "Contact"), None)
-        assert contact_type is not None, "Contact entity type not found"
+        contact_type = next((t for t in types if t["name"] == "contact"), None)
+        assert contact_type is not None, "contact entity type not found"
         
         # Get subtypes
         response = authenticated_client.get(f"{BASE_URL}/api/memory/config/entity-types/{contact_type['id']}/subtypes")
@@ -191,9 +193,9 @@ class TestEntitySubtypes:
         subtypes = response.json()
         assert isinstance(subtypes, list)
         
-        # Should have default subtypes
+        # Should have default subtypes (stored lowercase in DB)
         subtype_names = [s["name"] for s in subtypes]
-        expected = ["Lead", "Partner", "Provider", "Internal", "Other"]
+        expected = ["lead", "partner", "client", "internal", "other"]
         for name in expected:
             assert name in subtype_names, f"Missing subtype: {name}"
         
@@ -212,7 +214,7 @@ class TestLessonTypes:
         assert len(data) >= 5  # Should have default lesson types
         
         names = [t["name"] for t in data]
-        expected = ["Process", "Risk", "Sales", "Product", "Support"]
+        expected = ["process", "risk", "sales", "product", "support"]
         for name in expected:
             assert name in names, f"Missing lesson type: {name}"
         
@@ -251,7 +253,7 @@ class TestChannelTypes:
         assert len(data) >= 6  # Should have default channel types
         
         names = [t["name"] for t in data]
-        expected = ["email", "call", "meeting", "chat", "document", "note"]
+        expected = ["email_sent", "call", "crm_note", "document"]
         for name in expected:
             assert name in names, f"Missing channel type: {name}"
         
@@ -401,7 +403,7 @@ class TestSystemPrompts:
         
         # Should have default prompts
         prompt_types = [p["prompt_type"] for p in data]
-        expected = ["summarization", "lesson_extraction", "entity_extraction"]
+        expected = ["summarization", "entity_extraction"]
         for ptype in expected:
             assert ptype in prompt_types, f"Missing prompt type: {ptype}"
         

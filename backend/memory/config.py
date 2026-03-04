@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from memory_db import get_memory_db_context
+from core.storage import get_memory_db_context
 from memory_models import (
     AgentCreate, AgentCreateResponse, AgentResponse,
     ChannelTypeCreate, ChannelTypeResponse,
@@ -54,20 +54,20 @@ async def create_entity_type(data: EntityTypeCreate, user: dict = Depends(requir
         cursor = conn.cursor()
         try:
             cursor.execute(
-                "INSERT INTO memory_entity_types (id, name, description, icon, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (type_id, data.name, data.description, data.icon, now, now)
+                "INSERT INTO memory_entity_types (id, name, description, icon, created_at) VALUES (%s, %s, %s, %s, %s)",
+                (type_id, data.name, data.description, data.icon, now)
             )
         except Exception as e:
             logger.error(f"Failed to create entity type (likely duplicate): {e}")
             raise HTTPException(status_code=400, detail="Entity type already exists")
-        cursor.execute("SELECT * FROM memory_entity_types WHERE id = ?", (type_id,))
+        cursor.execute("SELECT * FROM memory_entity_types WHERE id = %s", (type_id,))
         return dict(cursor.fetchone())
 
 @router.delete("/config/entity-types/{type_id}")
 async def delete_entity_type(type_id: str, user: dict = Depends(require_admin_auth)):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM memory_entity_types WHERE id = ?", (type_id,))
+        cursor.execute("DELETE FROM memory_entity_types WHERE id = %s", (type_id,))
     return {"message": "Deleted"}
 
 
@@ -79,7 +79,7 @@ async def delete_entity_type(type_id: str, user: dict = Depends(require_admin_au
 async def list_entity_subtypes(type_id: str, user: dict = Depends(require_admin_auth)):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM memory_entity_subtypes WHERE entity_type_id = ? ORDER BY name", (type_id,))
+        cursor.execute("SELECT * FROM memory_entity_subtypes WHERE entity_type_id = %s ORDER BY name", (type_id,))
         return [dict(row) for row in cursor.fetchall()]
 
 @router.post("/config/entity-subtypes", response_model=EntitySubtypeResponse)
@@ -90,20 +90,20 @@ async def create_entity_subtype(data: EntitySubtypeCreate, user: dict = Depends(
         cursor = conn.cursor()
         try:
             cursor.execute(
-                "INSERT INTO memory_entity_subtypes (id, entity_type_id, name, description, created_at) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO memory_entity_subtypes (id, entity_type_id, name, description, created_at) VALUES (%s, %s, %s, %s, %s)",
                 (subtype_id, data.entity_type_id, data.name, data.description, now)
             )
         except Exception as e:
             logger.error(f"Failed to create entity subtype: {e}")
             raise HTTPException(status_code=400, detail="Subtype already exists for this entity type")
-        cursor.execute("SELECT * FROM memory_entity_subtypes WHERE id = ?", (subtype_id,))
+        cursor.execute("SELECT * FROM memory_entity_subtypes WHERE id = %s", (subtype_id,))
         return dict(cursor.fetchone())
 
 @router.delete("/config/entity-subtypes/{subtype_id}")
 async def delete_entity_subtype(subtype_id: str, user: dict = Depends(require_admin_auth)):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM memory_entity_subtypes WHERE id = ?", (subtype_id,))
+        cursor.execute("DELETE FROM memory_entity_subtypes WHERE id = %s", (subtype_id,))
     return {"message": "Deleted"}
 
 
@@ -126,20 +126,20 @@ async def create_lesson_type(data: LessonTypeCreate, user: dict = Depends(requir
         cursor = conn.cursor()
         try:
             cursor.execute(
-                "INSERT INTO memory_lesson_types (id, name, description, color, created_at) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO memory_lesson_types (id, name, description, color, created_at) VALUES (%s, %s, %s, %s, %s)",
                 (type_id, data.name, data.description, data.color, now)
             )
         except Exception as e:
             logger.error(f"Failed to create lesson type: {e}")
             raise HTTPException(status_code=400, detail="Lesson type already exists")
-        cursor.execute("SELECT * FROM memory_lesson_types WHERE id = ?", (type_id,))
+        cursor.execute("SELECT * FROM memory_lesson_types WHERE id = %s", (type_id,))
         return dict(cursor.fetchone())
 
 @router.delete("/config/lesson-types/{type_id}")
 async def delete_lesson_type(type_id: str, user: dict = Depends(require_admin_auth)):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM memory_lesson_types WHERE id = ?", (type_id,))
+        cursor.execute("DELETE FROM memory_lesson_types WHERE id = %s", (type_id,))
     return {"message": "Deleted"}
 
 
@@ -162,20 +162,20 @@ async def create_channel_type(data: ChannelTypeCreate, user: dict = Depends(requ
         cursor = conn.cursor()
         try:
             cursor.execute(
-                "INSERT INTO memory_channel_types (id, name, description, icon, created_at) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO memory_channel_types (id, name, description, icon, created_at) VALUES (%s, %s, %s, %s, %s)",
                 (type_id, data.name, data.description, data.icon, now)
             )
         except Exception as e:
             logger.error(f"Failed to create channel type: {e}")
             raise HTTPException(status_code=400, detail="Channel type already exists")
-        cursor.execute("SELECT * FROM memory_channel_types WHERE id = ?", (type_id,))
+        cursor.execute("SELECT * FROM memory_channel_types WHERE id = %s", (type_id,))
         return dict(cursor.fetchone())
 
 @router.delete("/config/channel-types/{type_id}")
 async def delete_channel_type(type_id: str, user: dict = Depends(require_admin_auth)):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM memory_channel_types WHERE id = ?", (type_id,))
+        cursor.execute("DELETE FROM memory_channel_types WHERE id = %s", (type_id,))
     return {"message": "Deleted"}
 
 
@@ -195,24 +195,31 @@ async def list_agents(user: dict = Depends(require_admin_auth)):
             agents.append(agent)
         return agents
 
-@router.post("/config/agents", response_model=AgentCreateResponse)
+@router.post("/config/agents")
 async def create_agent(data: AgentCreate, user: dict = Depends(require_admin_auth)):
+    import traceback
     now = datetime.now(timezone.utc).isoformat()
     agent_id = str(uuid.uuid4())
     api_key = f"mem_{secrets.token_urlsafe(32)}"
     api_key_preview = f"{api_key[:7]}...{api_key[-4:]}"
     hashed_key = hashlib.sha256(api_key.encode("utf-8")).hexdigest()
-    with get_memory_db_context() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO memory_agents (id, name, description, api_key_hash, api_key_preview, access_level, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?)",
-            (agent_id, data.name, data.description, hashed_key, api_key_preview, data.access_level, now)
-        )
-        return AgentCreateResponse(
-            id=agent_id, name=data.name, description=data.description,
-            api_key=api_key, api_key_preview=api_key_preview,
-            access_level=data.access_level, is_active=True, created_at=now, last_used=None
-        )
+    try:
+        with get_memory_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO memory_agents (id, name, description, api_key_hash, api_key_preview, access_level, is_active, created_at) VALUES (%s, %s, %s, %s, %s, %s, TRUE, %s)",
+                (agent_id, data.name, data.description, hashed_key, api_key_preview, data.access_level, now)
+            )
+        return {
+            "id": agent_id, "name": data.name, "description": data.description,
+            "api_key": api_key, "api_key_preview": api_key_preview,
+            "access_level": data.access_level, "is_active": True,
+            "created_at": now, "last_used": None
+        }
+    except Exception as e:
+        tb = traceback.format_exc()
+        logger.error(f"create_agent FAILED: {type(e).__name__}: {e}\n{tb}")
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {str(e)}")
 
 @router.patch("/config/agents/{agent_id}")
 async def update_agent(agent_id: str, user: dict = Depends(require_admin_auth), is_active: bool = None, access_level: str = None):
@@ -220,21 +227,21 @@ async def update_agent(agent_id: str, user: dict = Depends(require_admin_auth), 
         cursor = conn.cursor()
         updates, params = [], []
         if is_active is not None:
-            updates.append("is_active = ?")
-            params.append(1 if is_active else 0)
+            updates.append("is_active = %s")
+            params.append(bool(is_active))
         if access_level is not None:
-            updates.append("access_level = ?")
+            updates.append("access_level = %s")
             params.append(access_level)
         if updates:
             params.append(agent_id)
-            cursor.execute(f"UPDATE memory_agents SET {', '.join(updates)} WHERE id = ?", params)
+            cursor.execute(f"UPDATE memory_agents SET {', '.join(updates)} WHERE id = %s", params)
     return {"message": "Updated"}
 
 @router.delete("/config/agents/{agent_id}")
 async def delete_agent(agent_id: str, user: dict = Depends(require_admin_auth)):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM memory_agents WHERE id = ?", (agent_id,))
+        cursor.execute("DELETE FROM memory_agents WHERE id = %s", (agent_id,))
     return {"message": "Deleted"}
 
 
@@ -261,12 +268,12 @@ async def create_system_prompt(data: SystemPromptCreate, user: dict = Depends(re
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         if data.is_active:
-            cursor.execute("UPDATE memory_system_prompts SET is_active = 0 WHERE prompt_type = ?", (data.prompt_type,))
+            cursor.execute("UPDATE memory_system_prompts SET is_active = 0 WHERE prompt_type = %s", (data.prompt_type,))
         cursor.execute(
-            "INSERT INTO memory_system_prompts (id, prompt_type, name, prompt_text, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO memory_system_prompts (id, prompt_type, name, prompt_text, is_active, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s, %s)",
             (prompt_id, data.prompt_type, data.name, data.prompt_text, 1 if data.is_active else 0, now, now)
         )
-        cursor.execute("SELECT * FROM memory_system_prompts WHERE id = ?", (prompt_id,))
+        cursor.execute("SELECT * FROM memory_system_prompts WHERE id = %s", (prompt_id,))
         result = dict(cursor.fetchone())
         result["is_active"] = bool(result["is_active"])
         return result
@@ -276,17 +283,17 @@ async def update_system_prompt(prompt_id: str, data: SystemPromptCreate, user: d
     now = datetime.now(timezone.utc).isoformat()
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT prompt_type FROM memory_system_prompts WHERE id = ?", (prompt_id,))
+        cursor.execute("SELECT prompt_type FROM memory_system_prompts WHERE id = %s", (prompt_id,))
         current = cursor.fetchone()
         if not current:
             raise HTTPException(status_code=404, detail="Prompt not found")
         if data.is_active:
-            cursor.execute("UPDATE memory_system_prompts SET is_active = 0 WHERE prompt_type = ? AND id != ?", (data.prompt_type, prompt_id))
+            cursor.execute("UPDATE memory_system_prompts SET is_active = 0 WHERE prompt_type = %s AND id != %s", (data.prompt_type, prompt_id))
         cursor.execute(
-            "UPDATE memory_system_prompts SET prompt_type = ?, name = ?, prompt_text = ?, is_active = ?, updated_at = ? WHERE id = ?",
+            "UPDATE memory_system_prompts SET prompt_type = %s, name = %s, prompt_text = %s, is_active = %s, updated_at = %s WHERE id = %s",
             (data.prompt_type, data.name, data.prompt_text, 1 if data.is_active else 0, now, prompt_id)
         )
-        cursor.execute("SELECT * FROM memory_system_prompts WHERE id = ?", (prompt_id,))
+        cursor.execute("SELECT * FROM memory_system_prompts WHERE id = %s", (prompt_id,))
         result = dict(cursor.fetchone())
         result["is_active"] = bool(result["is_active"])
         return result
@@ -295,7 +302,7 @@ async def update_system_prompt(prompt_id: str, data: SystemPromptCreate, user: d
 async def delete_system_prompt(prompt_id: str, user: dict = Depends(require_admin_auth)):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM memory_system_prompts WHERE id = ?", (prompt_id,))
+        cursor.execute("DELETE FROM memory_system_prompts WHERE id = %s", (prompt_id,))
     return {"message": "Deleted"}
 
 
@@ -324,7 +331,7 @@ async def list_llm_configs(user: dict = Depends(require_admin_auth)):
 async def get_llm_config_by_task(task_type: str, user: dict = Depends(require_admin_auth)):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM memory_llm_configs WHERE task_type = ? AND is_active = 1 ORDER BY updated_at DESC LIMIT 1", (task_type,))
+        cursor.execute("SELECT * FROM memory_llm_configs WHERE task_type = %s AND is_active = TRUE ORDER BY updated_at DESC LIMIT 1", (task_type,))
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail=f"No active LLM config for {task_type}")
@@ -345,9 +352,9 @@ async def create_llm_config(data: LLMConfigCreate, user: dict = Depends(require_
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         if data.is_active:
-            cursor.execute("UPDATE memory_llm_configs SET is_active = 0 WHERE task_type = ?", (data.task_type,))
+            cursor.execute("UPDATE memory_llm_configs SET is_active = 0 WHERE task_type = %s", (data.task_type,))
         cursor.execute(
-            "INSERT INTO memory_llm_configs (id, task_type, provider, name, api_base_url, api_key_encrypted, api_key_preview, model_name, is_active, extra_config_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO memory_llm_configs (id, task_type, provider, name, api_base_url, api_key_encrypted, api_key_preview, model_name, is_active, extra_config_json, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (config_id, data.task_type, data.provider, data.name, data.api_base_url or "", data.api_key or "", api_key_preview, data.model_name or "", 1 if data.is_active else 0, json.dumps(data.extra_config or {}), now, now)
         )
         return LLMConfigResponse(
@@ -362,33 +369,33 @@ async def update_llm_config(config_id: str, data: LLMConfigUpdate, user: dict = 
     now = datetime.now(timezone.utc).isoformat()
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM memory_llm_configs WHERE id = ?", (config_id,))
+        cursor.execute("SELECT * FROM memory_llm_configs WHERE id = %s", (config_id,))
         existing = cursor.fetchone()
         if not existing:
             raise HTTPException(status_code=404, detail="LLM config not found")
         existing = dict(existing)
-        updates, params = ["updated_at = ?"], [now]
+        updates, params = ["updated_at = %s"], [now]
         if data.name is not None:
-            updates.append("name = ?"); params.append(data.name)
+            updates.append("name = %s"); params.append(data.name)
         if data.provider is not None:
-            updates.append("provider = ?"); params.append(data.provider)
+            updates.append("provider = %s"); params.append(data.provider)
         if data.api_base_url is not None:
-            updates.append("api_base_url = ?"); params.append(data.api_base_url)
+            updates.append("api_base_url = %s"); params.append(data.api_base_url)
         if data.api_key is not None:
-            updates.append("api_key_encrypted = ?"); params.append(data.api_key)
+            updates.append("api_key_encrypted = %s"); params.append(data.api_key)
             api_key_preview = f"{data.api_key[:4]}...{data.api_key[-4:]}" if len(data.api_key) > 8 else "****"
-            updates.append("api_key_preview = ?"); params.append(api_key_preview)
+            updates.append("api_key_preview = %s"); params.append(api_key_preview)
         if data.model_name is not None:
-            updates.append("model_name = ?"); params.append(data.model_name)
+            updates.append("model_name = %s"); params.append(data.model_name)
         if data.is_active is not None:
             if data.is_active:
-                cursor.execute("UPDATE memory_llm_configs SET is_active = 0 WHERE task_type = ? AND id != ?", (existing["task_type"], config_id))
-            updates.append("is_active = ?"); params.append(1 if data.is_active else 0)
+                cursor.execute("UPDATE memory_llm_configs SET is_active = 0 WHERE task_type = %s AND id != %s", (existing["task_type"], config_id))
+            updates.append("is_active = %s"); params.append(1 if data.is_active else 0)
         if data.extra_config is not None:
-            updates.append("extra_config_json = ?"); params.append(json.dumps(data.extra_config))
+            updates.append("extra_config_json = %s"); params.append(json.dumps(data.extra_config))
         params.append(config_id)
-        cursor.execute(f"UPDATE memory_llm_configs SET {', '.join(updates)} WHERE id = ?", params)
-        cursor.execute("SELECT * FROM memory_llm_configs WHERE id = ?", (config_id,))
+        cursor.execute(f"UPDATE memory_llm_configs SET {', '.join(updates)} WHERE id = %s", params)
+        cursor.execute("SELECT * FROM memory_llm_configs WHERE id = %s", (config_id,))
         updated = dict(cursor.fetchone())
         return LLMConfigResponse(
             id=updated["id"], task_type=updated["task_type"], provider=updated["provider"], name=updated["name"],
@@ -416,7 +423,7 @@ async def fetch_provider_models(data: FetchModelsRequest, user: dict = Depends(r
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
             if data.config_id:
-                cursor.execute("SELECT api_key_encrypted, api_base_url FROM memory_llm_configs WHERE id = ?", (data.config_id,))
+                cursor.execute("SELECT api_key_encrypted, api_base_url FROM memory_llm_configs WHERE id = %s", (data.config_id,))
                 row = cursor.fetchone()
                 if row and row["api_key_encrypted"]:
                     api_key = row["api_key_encrypted"]
@@ -427,7 +434,7 @@ async def fetch_provider_models(data: FetchModelsRequest, user: dict = Depends(r
             if not api_key:
                 cursor.execute("""
                     SELECT api_key_encrypted, api_base_url FROM memory_llm_configs 
-                    WHERE provider = ? AND api_key_encrypted IS NOT NULL AND api_key_encrypted != ''
+                    WHERE provider = %s AND api_key_encrypted IS NOT NULL AND api_key_encrypted != ''
                     ORDER BY updated_at DESC LIMIT 1
                 """, (provider,))
                 row = cursor.fetchone()
@@ -526,7 +533,7 @@ async def fetch_provider_models(data: FetchModelsRequest, user: dict = Depends(r
 async def delete_llm_config(config_id: str, user: dict = Depends(require_admin_auth)):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM memory_llm_configs WHERE id = ?", (config_id,))
+        cursor.execute("DELETE FROM memory_llm_configs WHERE id = %s", (config_id,))
     return {"message": "Deleted"}
 
 
@@ -556,8 +563,56 @@ async def update_settings_endpoint(data: MemorySettingsUpdate, user: dict = Depe
         for field, value in data.dict(exclude_unset=True).items():
             if value is not None:
                 if isinstance(value, bool): value = 1 if value else 0
-                updates.append(f"{field} = ?"); params.append(value)
+                updates.append(f"{field} = %s"); params.append(value)
         if updates:
-            updates.append("updated_at = ?"); params.append(now)
+            updates.append("updated_at = %s"); params.append(now)
             cursor.execute(f"UPDATE memory_settings SET {', '.join(updates)} WHERE id = 1", params)
     return await get_settings_endpoint(user)
+
+
+# ============================================
+# Supabase Connection Endpoints
+# ============================================
+
+from pydantic import BaseModel as _BaseModel
+
+class SupabaseConnectRequest(_BaseModel):
+    supabase_url: str           # https://xyz.supabase.co
+    supabase_db_url: str        # postgresql://postgres:<pw>@db.xyz.supabase.co:5432/postgres
+
+
+@router.post("/config/supabase/connect")
+async def connect_supabase_endpoint(
+    body: SupabaseConnectRequest,
+    user: dict = Depends(require_admin_auth)
+):
+    """
+    Connect a Supabase project as the memory storage backend.
+    Validates the connection, writes credentials to memory_settings,
+    and switches the storage layer to use Supabase PostgreSQL.
+    """
+    from core.storage import connect_supabase
+    result = connect_supabase(body.supabase_url, body.supabase_db_url)
+    if not result.get("connected"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Connection failed"))
+    return result
+
+
+@router.get("/config/supabase/status")
+async def get_supabase_status_endpoint(user: dict = Depends(require_admin_auth)):
+    """Return the current storage backend status (local or Supabase)."""
+    from core.storage import get_supabase_status
+    return get_supabase_status()
+
+
+@router.delete("/config/supabase/connect")
+async def disconnect_supabase_endpoint(user: dict = Depends(require_admin_auth)):
+    """
+    Disconnect from Supabase — revert to local PostgreSQL.
+    Clears supabase_url and supabase_db_url from memory_settings.
+    """
+    from core.storage import disconnect_supabase
+    result = disconnect_supabase()
+    if not result.get("disconnected"):
+        raise HTTPException(status_code=500, detail=result.get("error", "Disconnect failed"))
+    return result

@@ -7,6 +7,7 @@ Responsibilities:
   3. Create the FastAPI app
   4. Register all route modules
   5. Configure CORS and middleware
+  6. Start background tasks on startup
 
 All business logic has been extracted to:
   core/      — shared DB and auth utilities
@@ -16,6 +17,7 @@ All business logic has been extracted to:
 """
 import os
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -49,8 +51,22 @@ from db_init import init_db, seed_admin_user
 from memory_db import init_memory_db
 
 init_db()
-init_memory_db()
+init_memory_db()  # Set up PostgreSQL schema + seed defaults
 seed_admin_user()
+
+# ─────────────────────────────────────────────
+# Background tasks (lifespan)
+# ─────────────────────────────────────────────
+from memory_tasks import start_background_tasks, stop_background_tasks
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Start background tasks on boot, stop cleanly on shutdown."""
+    logger.info("Starting memory system background tasks")
+    await start_background_tasks()
+    yield
+    logger.info("Stopping memory system background tasks")
+    await stop_background_tasks()
 
 # ─────────────────────────────────────────────
 # FastAPI app
@@ -59,7 +75,8 @@ app = FastAPI(
     title="Prompt Manager & Memory System API",
     docs_url="/api/docs",
     redoc_url=None,
-    openapi_url="/api/openapi.json"
+    openapi_url="/api/openapi.json",
+    lifespan=lifespan
 )
 
 # ─────────────────────────────────────────────
@@ -123,7 +140,8 @@ async def log_requests(request: Request, call_next):
 # ─────────────────────────────────────────────
 from core.db import DB_PATH
 
-logger.info("Starting Prompt Manager API")
+logger.info("Starting Prompt Manager & Memory System API")
 logger.info(f"CORS Origins: {os.environ.get('CORS_ORIGINS', '*')}")
 logger.info(f"Frontend URL: {FRONTEND_URL}")
-logger.info(f"Database Path: {DB_PATH}")
+logger.info(f"Main DB: {DB_PATH}")
+logger.info(f"Memory DB: {os.environ.get('MEMORY_POSTGRES_URL', 'postgresql://postgres:postgres@localhost:5432/memory')}")

@@ -9,8 +9,6 @@ Single source of truth for:
   - get_current_user  (optional user, returns None if not authenticated)
   - require_auth      (strict user, raises 401 if not authenticated)
   - verify_api_key    (X-API-Key header check against api_keys table)
-
-Previously duplicated across server.py and memory_routes.py.
 """
 import os
 import logging
@@ -107,7 +105,7 @@ def get_current_user(authorization: str = Header(None)) -> Optional[dict]:
             return None
         with get_db_context() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+            cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
             user = cursor.fetchone()
             if user:
                 return dict(user)
@@ -131,22 +129,20 @@ async def verify_api_key(api_key: str = Security(_api_key_header)) -> Optional[d
     """
     Optional API key authentication dependency (checks api_keys table).
     Returns the key row dict if valid, None otherwise.
-    Note: Currently stores the raw key in key_hash (plaintext comparison).
-    Use as: api_key: dict = Depends(verify_api_key)
     """
     if not api_key:
         return None
-    
+
     # Hash incoming key for comparison
     hashed_key = hashlib.sha256(api_key.encode("utf-8")).hexdigest()
-    
+
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM api_keys WHERE key_hash = ?", (hashed_key,))
+        cursor.execute("SELECT * FROM api_keys WHERE key_hash = %s", (hashed_key,))
         key_row = cursor.fetchone()
         if key_row:
             cursor.execute(
-                "UPDATE api_keys SET last_used = ? WHERE id = ?",
+                "UPDATE api_keys SET last_used = %s WHERE id = %s",
                 (datetime.now(timezone.utc).isoformat(), key_row["id"]),
             )
             return dict(key_row)

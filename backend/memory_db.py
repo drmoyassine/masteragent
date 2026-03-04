@@ -1,496 +1,453 @@
-# Memory System Database Schema and Initialization
-import sqlite3
-import os
+"""
+memory_db.py — PostgreSQL schema + initialization for the Memory System
+
+Uses:
+  - psycopg2 for PostgreSQL connections (via core/storage.py)
+  - pgvector extension for VECTOR columns
+  - gen_random_uuid() for UUIDs (requires pgcrypto)
+
+Tables:
+  Config:     memory_entity_types, memory_entity_subtypes, memory_lesson_types,
+              memory_channel_types, memory_agents, memory_system_prompts,
+              memory_llm_configs, memory_settings, memory_entity_type_config
+  Tier 0:     interactions
+  Tier 1:     memories
+  Tier 2:     insights
+  Tier 3:     lessons
+  Audit:      memory_audit_log
+"""
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
-from contextlib import contextmanager
-from pathlib import Path
 
-# Database configuration
-DATABASE_TYPE = os.environ.get('DATABASE_TYPE', 'sqlite')
-DATABASE_PATH = Path(__file__).parent / "data" / "memory.db"
+from core.storage import get_memory_db_context
 
-def get_memory_db():
-    """Get database connection"""
-    DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(DATABASE_PATH), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+logger = logging.getLogger(__name__)
 
-@contextmanager
-def get_memory_db_context():
-    conn = get_memory_db()
-    try:
-        yield conn
-        conn.commit()
-    finally:
-        conn.close()
 
 def init_memory_db():
-    """Initialize memory system database tables"""
+    """Initialize all memory system tables in PostgreSQL. Idempotent."""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        
-        # ============================================
-        # Configuration Tables
-        # ============================================
-        
-        # Entity Types (Contact, Organization, Project, etc.)
+
+        # Enable required extensions
+        cursor.execute("CREATE EXTENSION IF NOT EXISTS vector")
+        cursor.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
+
+        # ── Configuration Tables ─────────────────────────────────────────────
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS memory_entity_types (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL UNIQUE,
-                description TEXT,
-                icon TEXT DEFAULT 'folder',
-                created_at TEXT,
-                updated_at TEXT
+                id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                name        TEXT NOT NULL UNIQUE,
+                icon        TEXT,
+                created_at  TIMESTAMPTZ DEFAULT NOW()
             )
         """)
-        
-        # Entity Subtypes (Lead, Partner, Internal, etc.)
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS memory_entity_subtypes (
-                id TEXT PRIMARY KEY,
-                entity_type_id TEXT NOT NULL,
-                name TEXT NOT NULL,
-                description TEXT,
-                created_at TEXT,
-                FOREIGN KEY (entity_type_id) REFERENCES memory_entity_types(id) ON DELETE CASCADE,
-                UNIQUE(entity_type_id, name)
+                id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                entity_type_id  TEXT NOT NULL REFERENCES memory_entity_types(id) ON DELETE CASCADE,
+                name            TEXT NOT NULL,
+                created_at      TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE (entity_type_id, name)
             )
         """)
-        
-        # Lesson Types (Process, Risk, Sales, etc.)
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS memory_lesson_types (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL UNIQUE,
-                description TEXT,
-                color TEXT DEFAULT '#22C55E',
-                created_at TEXT
+                id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                name        TEXT NOT NULL UNIQUE,
+                color       TEXT DEFAULT '#6B7280',
+                created_at  TIMESTAMPTZ DEFAULT NOW()
             )
         """)
-        
-        # Channel Types (email, call, meeting, etc.)
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS memory_channel_types (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL UNIQUE,
+                id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                name        TEXT NOT NULL UNIQUE,
                 description TEXT,
-                icon TEXT DEFAULT 'message-circle',
-                created_at TEXT
+                icon        TEXT,
+                created_at  TIMESTAMPTZ DEFAULT NOW()
             )
         """)
-        
-        # Registered Agents
+
+        # Idempotent migrations: add description to all config types tables
+        for tbl in ["memory_entity_types", "memory_entity_subtypes",
+                    "memory_lesson_types", "memory_channel_types"]:
+            cursor.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS description TEXT")
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS memory_agents (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                description TEXT,
-                api_key_hash TEXT NOT NULL,
-                api_key_preview TEXT NOT NULL,
-                access_level TEXT DEFAULT 'private',
-                is_active INTEGER DEFAULT 1,
-                created_at TEXT,
-                last_used TEXT
+                id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                name            TEXT NOT NULL,
+                description     TEXT,
+                api_key_hash    TEXT NOT NULL UNIQUE,
+                api_key_preview TEXT,
+                access_level    TEXT DEFAULT 'standard',
+                is_active       BOOLEAN DEFAULT TRUE,
+                last_used       TIMESTAMPTZ,
+                created_at      TIMESTAMPTZ DEFAULT NOW()
             )
         """)
-        
-        # System Prompts for LLM operations
+        # Idempotent migration: add all potentially missing columns to memory_agents
+        for col, col_def in [
+            ("name", "TEXT NOT NULL DEFAULT ''"),
+            ("description", "TEXT"),
+            ("api_key_hash", "TEXT UNIQUE"),
+            ("api_key_preview", "TEXT DEFAULT ''"),
+            ("access_level", "TEXT DEFAULT 'private'"),
+            ("last_used", "TIMESTAMPTZ"),
+        ]:
+            try:
+                cursor.execute(f"ALTER TABLE memory_agents ADD COLUMN IF NOT EXISTS {col} {col_def}")
+            except Exception:
+                pass
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS memory_system_prompts (
-                id TEXT PRIMARY KEY,
+                id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
                 prompt_type TEXT NOT NULL,
-                name TEXT NOT NULL,
+                name        TEXT NOT NULL,
                 prompt_text TEXT NOT NULL,
-                is_active INTEGER DEFAULT 1,
-                created_at TEXT,
-                updated_at TEXT
+                is_active   BOOLEAN DEFAULT TRUE,
+                created_at  TIMESTAMPTZ DEFAULT NOW(),
+                updated_at  TIMESTAMPTZ DEFAULT NOW()
             )
         """)
-        
-        # LLM Integration Configurations (per-task API keys)
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS memory_llm_configs (
-                id TEXT PRIMARY KEY,
-                task_type TEXT NOT NULL,
-                provider TEXT NOT NULL,
-                name TEXT NOT NULL,
-                api_base_url TEXT DEFAULT '',
-                api_key_encrypted TEXT DEFAULT '',
-                api_key_preview TEXT DEFAULT '',
-                model_name TEXT DEFAULT '',
-                is_active INTEGER DEFAULT 1,
-                extra_config_json TEXT DEFAULT '{}',
-                created_at TEXT,
-                updated_at TEXT,
-                UNIQUE(task_type, is_active) ON CONFLICT REPLACE
+                id                  TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                task_type           TEXT NOT NULL,
+                provider            TEXT NOT NULL,
+                name                TEXT NOT NULL DEFAULT '',
+                api_base_url        TEXT,
+                api_key_encrypted   TEXT,
+                api_key_preview     TEXT DEFAULT '',
+                model_name          TEXT,
+                extra_config_json   TEXT DEFAULT '{}',
+                is_active           BOOLEAN DEFAULT TRUE,
+                created_at          TIMESTAMPTZ DEFAULT NOW(),
+                updated_at          TIMESTAMPTZ DEFAULT NOW()
             )
         """)
-        
-        # Memory System Settings
+        # Partial unique index: only one active config per task_type
+        cursor.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_llm_configs_active_task
+            ON memory_llm_configs (task_type) WHERE is_active = TRUE
+        """)
+        # Idempotent migrations: add columns if missing from older schema
+        for col, col_def in [
+            ("name", "TEXT NOT NULL DEFAULT ''"),
+            ("api_key_preview", "TEXT DEFAULT ''"),
+            ("extra_config_json", "TEXT DEFAULT '{}'"),
+        ]:
+            cursor.execute(f"ALTER TABLE memory_llm_configs ADD COLUMN IF NOT EXISTS {col} {col_def}")
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS memory_settings (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                chunk_size INTEGER DEFAULT 400,
-                chunk_overlap INTEGER DEFAULT 80,
-                auto_lesson_enabled INTEGER DEFAULT 1,
-                auto_lesson_threshold INTEGER DEFAULT 5,
-                lesson_approval_required INTEGER DEFAULT 1,
-                pii_scrubbing_enabled INTEGER DEFAULT 1,
-                auto_share_scrubbed INTEGER DEFAULT 0,
-                openclaw_sync_enabled INTEGER DEFAULT 0,
-                openclaw_sync_path TEXT DEFAULT '',
-                openclaw_sync_type TEXT DEFAULT 'filesystem',
-                openclaw_sync_frequency INTEGER DEFAULT 5,
-                rate_limit_enabled INTEGER DEFAULT 0,
-                rate_limit_per_minute INTEGER DEFAULT 60,
-                default_agent_access TEXT DEFAULT 'private',
-                updated_at TEXT
+                id                      INT PRIMARY KEY CHECK (id = 1),
+                chunk_size              INT DEFAULT 400,
+                chunk_overlap           INT DEFAULT 80,
+                pii_scrubbing_enabled   BOOLEAN DEFAULT FALSE,
+                auto_lesson_enabled     BOOLEAN DEFAULT TRUE,
+                auto_lesson_threshold   INT DEFAULT 5,
+                rate_limit_enabled      BOOLEAN DEFAULT TRUE,
+                rate_limit_per_minute   INT DEFAULT 60,
+                supabase_url            TEXT,
+                supabase_db_url         TEXT,
+                supabase_connected      BOOLEAN DEFAULT FALSE,
+                updated_at              TIMESTAMPTZ DEFAULT NOW()
             )
         """)
-        
-        # ============================================
-        # Memory Tables (Private)
-        # ============================================
-        
-        # Main Memories Table
+        # Idempotent migrations for existing installations
+        for col, col_def in [
+            ("supabase_db_url", "TEXT"),
+        ]:
+            try:
+                cursor.execute(f"ALTER TABLE memory_settings ADD COLUMN IF NOT EXISTS {col} {col_def}")
+            except Exception:
+                pass
+
+
+
+        # Per-entity-type configuration (compaction thresholds, NER, embedding)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS memory_entity_type_config (
+                entity_type                 TEXT PRIMARY KEY,
+                compaction_threshold        INT DEFAULT 10,
+                insight_auto_approve        BOOLEAN DEFAULT FALSE,
+                lesson_auto_promote         BOOLEAN DEFAULT FALSE,
+                ner_enabled                 BOOLEAN DEFAULT TRUE,
+                ner_confidence_threshold    FLOAT DEFAULT 0.5,
+                embedding_enabled           BOOLEAN DEFAULT TRUE,
+                pii_scrub_lessons           BOOLEAN DEFAULT TRUE,
+                metadata_field_map          JSONB DEFAULT '{}',
+                updated_at                  TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+
+        # ── Tier 0: Interactions (raw events, immutable log) ─────────────────
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS interactions (
+                id                      TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                timestamp               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                interaction_type        TEXT NOT NULL,
+                agent_id                TEXT,
+                agent_name              TEXT,
+                content                 TEXT NOT NULL,
+                primary_entity_type     TEXT NOT NULL,
+                primary_entity_subtype  TEXT,
+                primary_entity_id       TEXT NOT NULL,
+                metadata                JSONB DEFAULT '{}',
+                metadata_field_map      JSONB DEFAULT '{}',
+                has_attachments         BOOLEAN DEFAULT FALSE,
+                attachment_refs         JSONB DEFAULT '[]',
+                source                  TEXT DEFAULT 'api',
+                status                  TEXT DEFAULT 'pending',
+                created_at              TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_interactions_entity ON interactions (primary_entity_type, primary_entity_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_interactions_timestamp ON interactions (timestamp)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_interactions_status ON interactions (status)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_interactions_agent ON interactions (agent_id)")
+
+        # ── Tier 1: Memories (daily logs, NER-enriched, embedded) ────────────
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS memories (
-                id TEXT PRIMARY KEY,
-                user_id TEXT,
-                timestamp TEXT NOT NULL,
-                channel TEXT NOT NULL,
-                raw_text TEXT NOT NULL,
-                summary_text TEXT,
-                has_documents INTEGER DEFAULT 0,
-                is_shared INTEGER DEFAULT 0,
-                entities_json TEXT DEFAULT '[]',
-                metadata_json TEXT DEFAULT '{}',
-                vector_id TEXT,
-                created_at TEXT,
-                updated_at TEXT
+                id                  TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                date                DATE NOT NULL,
+                primary_entity_type TEXT NOT NULL,
+                primary_entity_id   TEXT NOT NULL,
+                interaction_ids     TEXT[] NOT NULL DEFAULT '{}',
+                interaction_count   INT NOT NULL DEFAULT 0,
+                content_summary     TEXT,
+                related_entities    JSONB DEFAULT '[]',
+                intents             TEXT[] DEFAULT '{}',
+                relationships       JSONB DEFAULT '[]',
+                embedding           vector(1536),
+                compaction_count    INT DEFAULT 0,
+                compacted           BOOLEAN DEFAULT FALSE,
+                created_at          TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE (date, primary_entity_type, primary_entity_id)
             )
         """)
-        
-        # Memory Documents (parsed attachments)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_memories_entity ON memories (primary_entity_type, primary_entity_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_memories_date ON memories (date)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_memories_uncompacted ON memories (primary_entity_id) WHERE compacted = FALSE")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_memories_embedding ON memories USING hnsw (embedding vector_cosine_ops)")
+
+        # Idempotent migrations: add columns missing from older memories schema
+        for col, col_def in [
+            ("updated_at", "TIMESTAMPTZ DEFAULT NOW()"),
+            ("compacted_at", "TIMESTAMPTZ"),
+        ]:
+            cursor.execute(f"ALTER TABLE memories ADD COLUMN IF NOT EXISTS {col} {col_def}")
+
+        # ── Tier 2: Insights (private, LLM-compacted patterns) ───────────────
+
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS memory_documents (
-                id TEXT PRIMARY KEY,
-                memory_id TEXT NOT NULL,
-                filename TEXT NOT NULL,
-                file_type TEXT,
-                file_size INTEGER,
-                parsed_text TEXT,
-                chunk_count INTEGER DEFAULT 0,
-                created_at TEXT,
-                FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE
+            CREATE TABLE IF NOT EXISTS insights (
+                id                  TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                primary_entity_type TEXT NOT NULL,
+                primary_entity_id   TEXT NOT NULL,
+                source_memory_ids   TEXT[] NOT NULL DEFAULT '{}',
+                insight_type        TEXT,
+                name                TEXT NOT NULL,
+                content             TEXT NOT NULL,
+                summary             TEXT,
+                embedding           vector(1536),
+                status              TEXT DEFAULT 'draft',
+                created_by          TEXT DEFAULT 'auto',
+                confirmed_by        TEXT,
+                confirmed_at        TIMESTAMPTZ,
+                created_at          TIMESTAMPTZ DEFAULT NOW(),
+                updated_at          TIMESTAMPTZ DEFAULT NOW()
             )
         """)
-        
-        # Document Chunks (for vector storage reference)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_insights_entity ON insights (primary_entity_type, primary_entity_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_insights_status ON insights (status)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_insights_embedding ON insights USING hnsw (embedding vector_cosine_ops)")
+
+        # ── Tier 3: Lessons (PII-scrubbed, shareable) ────────────────────────
+
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS memory_document_chunks (
-                id TEXT PRIMARY KEY,
-                document_id TEXT NOT NULL,
-                chunk_index INTEGER NOT NULL,
-                chunk_text TEXT NOT NULL,
-                vector_id TEXT,
-                created_at TEXT,
-                FOREIGN KEY (document_id) REFERENCES memory_documents(id) ON DELETE CASCADE
+            CREATE TABLE IF NOT EXISTS lessons (
+                id                  TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                source_insight_ids  TEXT[] NOT NULL DEFAULT '{}',
+                lesson_type         TEXT,
+                name                TEXT NOT NULL,
+                content             TEXT NOT NULL,
+                summary             TEXT,
+                embedding           vector(1536),
+                visibility          TEXT DEFAULT 'shared',
+                tags                TEXT[] DEFAULT '{}',
+                created_at          TIMESTAMPTZ DEFAULT NOW(),
+                updated_at          TIMESTAMPTZ DEFAULT NOW()
             )
         """)
-        
-        # Lessons Table (Private)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS memory_lessons (
-                id TEXT PRIMARY KEY,
-                user_id TEXT,
-                lesson_type TEXT NOT NULL,
-                name TEXT NOT NULL,
-                body TEXT NOT NULL,
-                summary TEXT,
-                status TEXT DEFAULT 'draft',
-                is_shared INTEGER DEFAULT 0,
-                related_entities_json TEXT DEFAULT '[]',
-                source_memory_ids_json TEXT DEFAULT '[]',
-                vector_id TEXT,
-                created_at TEXT,
-                updated_at TEXT
-            )
-        """)
-        
-        # ============================================
-        # Shared Memory Tables (PII-Stripped)
-        # ============================================
-        
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS memories_shared (
-                id TEXT PRIMARY KEY,
-                original_memory_id TEXT NOT NULL,
-                pii_stripped_text TEXT NOT NULL,
-                summary_text TEXT,
-                channel TEXT NOT NULL,
-                entities_json TEXT DEFAULT '[]',
-                metadata_json TEXT DEFAULT '{}',
-                vector_id TEXT,
-                created_at TEXT,
-                FOREIGN KEY (original_memory_id) REFERENCES memories(id) ON DELETE CASCADE
-            )
-        """)
-        
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS memory_lessons_shared (
-                id TEXT PRIMARY KEY,
-                original_lesson_id TEXT NOT NULL,
-                lesson_type TEXT NOT NULL,
-                name TEXT NOT NULL,
-                pii_stripped_body TEXT NOT NULL,
-                summary TEXT,
-                related_entities_json TEXT DEFAULT '[]',
-                vector_id TEXT,
-                created_at TEXT,
-                FOREIGN KEY (original_lesson_id) REFERENCES memory_lessons(id) ON DELETE CASCADE
-            )
-        """)
-        
-        # ============================================
-        # Audit Log
-        # ============================================
-        
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_lessons_type ON lessons (lesson_type)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_lessons_embedding ON lessons USING hnsw (embedding vector_cosine_ops)")
+
+        # ── Audit Log ─────────────────────────────────────────────────────────
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS memory_audit_log (
-                id TEXT PRIMARY KEY,
-                agent_id TEXT,
-                action TEXT NOT NULL,
-                resource_type TEXT,
-                resource_id TEXT,
-                details_json TEXT DEFAULT '{}',
-                timestamp TEXT NOT NULL
+                id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                agent_id        TEXT,
+                action          TEXT NOT NULL,
+                resource_type   TEXT,
+                resource_id     TEXT,
+                details         JSONB DEFAULT '{}',
+                timestamp       TIMESTAMPTZ DEFAULT NOW()
             )
         """)
-        
-        # ============================================
-        # Indexes for performance
-        # ============================================
-        
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_memories_timestamp ON memories(timestamp)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_memories_channel ON memories(channel)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_memories_user ON memories(user_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_lessons_type ON memory_lessons(lesson_type)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_lessons_status ON memory_lessons(status)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON memory_audit_log(timestamp)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_agent ON memory_audit_log(agent_id)")
-        
-        # ============================================
-        # Seed Default Data
-        # ============================================
-        
-        # Default settings
-        cursor.execute("SELECT id FROM memory_settings WHERE id = 1")
-        if not cursor.fetchone():
-            now = datetime.now(timezone.utc).isoformat()
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_agent ON memory_audit_log (agent_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON memory_audit_log (timestamp)")
+
+        # ── Webhook Sources ────────────────────────────────────────────────────
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS memory_webhook_sources (
+                id                          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                name                        TEXT NOT NULL,
+                source_system               TEXT NOT NULL,
+                secret_hash                 TEXT NOT NULL,
+                event_types                 TEXT[] DEFAULT '{}',
+                metadata_field_map          JSONB DEFAULT '{}',
+                default_interaction_type    TEXT DEFAULT 'webhook_event',
+                default_entity_type         TEXT DEFAULT 'contact',
+                is_active                   BOOLEAN DEFAULT TRUE,
+                created_at                  TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_webhook_sources_active ON memory_webhook_sources (is_active)")
+
+        logger.info("Memory system database schema initialized")
+
+
+    _seed_defaults()
+
+
+def _seed_defaults():
+    """Seed default configuration data. Idempotent."""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+
+        # Settings singleton
+        cursor.execute("""
+            INSERT INTO memory_settings (id) VALUES (1)
+            ON CONFLICT (id) DO NOTHING
+        """)
+
+        # Entity types
+        for name, icon in [("contact", "👤"), ("institution", "🏢"), ("program", "📋"), ("supplier", "🏭"), ("product", "📦")]:
+            cursor.execute(
+                "INSERT INTO memory_entity_types (name, icon) VALUES (%s, %s) ON CONFLICT (name) DO NOTHING",
+                (name, icon)
+            )
+
+        # Entity subtypes
+        cursor.execute("SELECT id, name FROM memory_entity_types")
+        entity_type_map = {row["name"]: row["id"] for row in cursor.fetchall()}
+
+        contact_subtypes = ["lead", "client", "partner", "supplier", "internal", "other"]
+        for subtype in contact_subtypes:
+            if "contact" in entity_type_map:
+                cursor.execute(
+                    "INSERT INTO memory_entity_subtypes (entity_type_id, name) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                    (entity_type_map["contact"], subtype)
+                )
+
+        institution_subtypes = ["client", "partner", "supplier", "school", "internal", "other"]
+        for subtype in institution_subtypes:
+            if "institution" in entity_type_map:
+                cursor.execute(
+                    "INSERT INTO memory_entity_subtypes (entity_type_id, name) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                    (entity_type_map["institution"], subtype)
+                )
+
+        # Lesson types
+        for name, color in [
+            ("process", "#22C55E"), ("risk", "#EF4444"), ("sales", "#3B82F6"),
+            ("product", "#8B5CF6"), ("support", "#F59E0B"), ("other", "#6B7280")
+        ]:
+            cursor.execute(
+                "INSERT INTO memory_lesson_types (name, color) VALUES (%s, %s) ON CONFLICT (name) DO NOTHING",
+                (name, color)
+            )
+
+        # Channel types (kept for backwards compat with interaction_type display)
+        for name, icon in [
+            ("email_sent", "📧"), ("email_received", "📨"), ("call", "📞"),
+            ("meeting", "🤝"), ("whatsapp", "💬"), ("crm_note", "📝"),
+            ("document", "📄"), ("ai_conversation", "🤖"), ("webhook_event", "🔗")
+        ]:
+            cursor.execute(
+                "INSERT INTO memory_channel_types (name, icon) VALUES (%s, %s) ON CONFLICT (name) DO NOTHING",
+                (name, icon)
+            )
+
+        # Default LLM configs (placeholders — user must add API keys)
+        for task_type, provider, model in [
+            ("summarization", "openai", "gpt-4o-mini"),
+            ("embedding", "openai", "text-embedding-3-small"),
+            ("vision", "openai", "gpt-4o"),
+            ("entity_extraction", "gliner", "urchade/gliner_multi"),
+            ("pii_scrubbing", "zendata", ""),
+            ("insight_generation", "openai", "gpt-4o-mini"),
+        ]:
             cursor.execute("""
-                INSERT INTO memory_settings (id, updated_at) VALUES (1, ?)
-            """, (now,))
-        
-        # Default entity types
-        default_entity_types = [
-            ("Contact", "People you interact with", "user"),
-            ("Organization", "Companies and institutions", "building"),
-            ("Program", "Projects and initiatives", "folder-kanban"),
-        ]
-        for name, desc, icon in default_entity_types:
-            cursor.execute("SELECT id FROM memory_entity_types WHERE name = ?", (name,))
-            if not cursor.fetchone():
-                now = datetime.now(timezone.utc).isoformat()
-                cursor.execute("""
-                    INSERT INTO memory_entity_types (id, name, description, icon, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (str(uuid.uuid4()), name, desc, icon, now, now))
-        
-        # Default subtypes for Contact
-        cursor.execute("SELECT id FROM memory_entity_types WHERE name = 'Contact'")
-        contact_type = cursor.fetchone()
-        if contact_type:
-            default_subtypes = ["Lead", "Partner", "Provider", "Internal", "Other"]
-            for subtype in default_subtypes:
-                cursor.execute("""
-                    SELECT id FROM memory_entity_subtypes 
-                    WHERE entity_type_id = ? AND name = ?
-                """, (contact_type["id"], subtype))
-                if not cursor.fetchone():
-                    now = datetime.now(timezone.utc).isoformat()
-                    cursor.execute("""
-                        INSERT INTO memory_entity_subtypes (id, entity_type_id, name, created_at)
-                        VALUES (?, ?, ?, ?)
-                    """, (str(uuid.uuid4()), contact_type["id"], subtype, now))
-        
-        # Default subtypes for Organization
-        cursor.execute("SELECT id FROM memory_entity_types WHERE name = 'Organization'")
-        org_type = cursor.fetchone()
-        if org_type:
-            default_subtypes = ["Institution", "Partner", "Provider", "School", "Internal", "Other"]
-            for subtype in default_subtypes:
-                cursor.execute("""
-                    SELECT id FROM memory_entity_subtypes 
-                    WHERE entity_type_id = ? AND name = ?
-                """, (org_type["id"], subtype))
-                if not cursor.fetchone():
-                    now = datetime.now(timezone.utc).isoformat()
-                    cursor.execute("""
-                        INSERT INTO memory_entity_subtypes (id, entity_type_id, name, created_at)
-                        VALUES (?, ?, ?, ?)
-                    """, (str(uuid.uuid4()), org_type["id"], subtype, now))
-        
-        # Default lesson types
-        default_lesson_types = [
-            ("Process", "Workflow and process improvements", "#22C55E"),
-            ("Risk", "Risk identification and mitigation", "#EF4444"),
-            ("Sales", "Sales insights and strategies", "#3B82F6"),
-            ("Product", "Product feedback and ideas", "#8B5CF6"),
-            ("Support", "Customer support learnings", "#F59E0B"),
-            ("Other", "Miscellaneous learnings", "#6B7280"),
-        ]
-        for name, desc, color in default_lesson_types:
-            cursor.execute("SELECT id FROM memory_lesson_types WHERE name = ?", (name,))
-            if not cursor.fetchone():
-                now = datetime.now(timezone.utc).isoformat()
-                cursor.execute("""
-                    INSERT INTO memory_lesson_types (id, name, description, color, created_at)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (str(uuid.uuid4()), name, desc, color, now))
-        
-        # Default channel types
-        default_channels = [
-            ("email", "Email correspondence", "mail"),
-            ("call", "Phone or video calls", "phone"),
-            ("meeting", "In-person or virtual meetings", "users"),
-            ("chat", "Chat or messaging", "message-circle"),
-            ("document", "Document upload or review", "file-text"),
-            ("note", "Manual notes", "sticky-note"),
-        ]
-        for name, desc, icon in default_channels:
-            cursor.execute("SELECT id FROM memory_channel_types WHERE name = ?", (name,))
-            if not cursor.fetchone():
-                now = datetime.now(timezone.utc).isoformat()
-                cursor.execute("""
-                    INSERT INTO memory_channel_types (id, name, description, icon, created_at)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (str(uuid.uuid4()), name, desc, icon, now))
-        
+                INSERT INTO memory_llm_configs (task_type, provider, model_name, is_active)
+                SELECT %s, %s, %s, TRUE
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM memory_llm_configs WHERE task_type = %s AND is_active = TRUE
+                )
+            """, (task_type, provider, model, task_type))
+
         # Default system prompts
-        default_prompts = [
-            ("summarization", "Default Summarizer", """Summarize the following interaction in 1-2 concise sentences. Focus on the key points, decisions, and action items.
-
-Interaction:
-{text}
-
-Summary:"""),
-            ("lesson_extraction", "Default Lesson Extractor", """Analyze the following interactions and extract a lesson learned. The lesson should be actionable and generalizable.
-
-Interactions:
-{interactions}
-
-Provide:
-1. A short lesson name (5-10 words)
-2. The lesson type (Process, Risk, Sales, Product, Support, or Other)
-3. A detailed lesson body in Markdown format (2-3 paragraphs)
-
-Format your response as JSON:
-{{"name": "...", "type": "...", "body": "..."}}"""),
-            ("entity_extraction", "Default Entity Extractor", """Extract any mentioned entities from the following text. Look for people, organizations, and projects/programs.
-
-Text:
-{text}
-
-Return a JSON array of entities:
-[{{"type": "Contact|Organization|Program", "name": "...", "role": "primary|mentioned|cc"}}]"""),
+        prompts = [
+            ("summarization", "Default Summarizer",
+             "You are a concise summarizer. Summarize the following interaction in 2-3 sentences, "
+             "focusing on key facts, decisions, and action items. Be factual and brief."),
+            ("insight_generation", "Default Insight Generator",
+             "You are an AI analyst reviewing interaction history for a specific entity. "
+             "Based on the provided memory summaries, identify a meaningful pattern, risk, opportunity, "
+             "or behavioral insight. Return JSON: {\"name\": \"...\", \"insight_type\": \"...\", "
+             "\"content\": \"...\", \"summary\": \"...\"}. "
+             "insight_type must be one of: behavior_pattern, risk_signal, opportunity, relationship_shift, preference, milestone."),
+            ("entity_extraction", "Default Entity Extractor",
+             "Extract named entities from the following text. Return a JSON array of objects: "
+             "[{\"entity_id\": \"unique-id\", \"entity_type\": \"contact|institution|program|supplier|product\", "
+             "\"name\": \"...\", \"role\": \"...\"}]. Only include clearly identifiable entities."),
+            ("entity_workspace", "Default Entity Workspace Assistant",
+             "You are an intelligent assistant helping manage a relationship with a specific entity. "
+             "You have access to the entity's interaction history as memory summaries, extracted insights, "
+             "and general lessons. Use this context to give personalized, factual answers. "
+             "If you identify a new pattern or important observation, you may create an insight using the action syntax."),
         ]
-        for prompt_type, name, prompt_text in default_prompts:
+        for prompt_type, name, text in prompts:
             cursor.execute("""
-                SELECT id FROM memory_system_prompts 
-                WHERE prompt_type = ? AND is_active = 1
-            """, (prompt_type,))
-            if not cursor.fetchone():
-                now = datetime.now(timezone.utc).isoformat()
-                cursor.execute("""
-                    INSERT INTO memory_system_prompts (id, prompt_type, name, prompt_text, is_active, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, 1, ?, ?)
-                """, (str(uuid.uuid4()), prompt_type, name, prompt_text, now, now))
-        
-        # Default LLM Configurations
-        default_llm_configs = [
-            # Entity Extraction using GLiNER (default NER)
-            {
-                "task_type": "entity_extraction",
-                "provider": "gliner",
-                "name": "GLiNER2 NER (Default)",
-                "api_base_url": "http://gliner:8002",
-                "model_name": "urchade/gliner_multi",
-                "extra_config": {"threshold": 0.5}
-            },
-            # Summarization placeholder (admin configures)
-            {
-                "task_type": "summarization",
-                "provider": "openai",
-                "name": "OpenAI Summarizer (Configure)",
-                "api_base_url": "https://api.openai.com/v1",
-                "model_name": "gpt-4o-mini",
-                "extra_config": {}
-            },
-            # Embedding placeholder (admin configures)
-            {
-                "task_type": "embedding",
-                "provider": "openai",
-                "name": "OpenAI Embeddings (Configure)",
-                "api_base_url": "https://api.openai.com/v1",
-                "model_name": "text-embedding-3-small",
-                "extra_config": {}
-            },
-            # Vision/Document parsing placeholder
-            {
-                "task_type": "vision",
-                "provider": "openai",
-                "name": "OpenAI Vision (Configure)",
-                "api_base_url": "https://api.openai.com/v1",
-                "model_name": "gpt-4o",
-                "extra_config": {}
-            },
-            # PII Scrubbing placeholder
-            {
-                "task_type": "pii_scrubbing",
-                "provider": "zendata",
-                "name": "Zendata PII Scrubber (Configure)",
-                "api_base_url": "",
-                "model_name": "",
-                "extra_config": {}
-            },
-        ]
-        
-        for config in default_llm_configs:
-            cursor.execute("""
-                SELECT id FROM memory_llm_configs 
-                WHERE task_type = ?
-            """, (config["task_type"],))
-            if not cursor.fetchone():
-                now = datetime.now(timezone.utc).isoformat()
-                cursor.execute("""
-                    INSERT INTO memory_llm_configs (id, task_type, provider, name, api_base_url, model_name, is_active, extra_config_json, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
-                """, (
-                    str(uuid.uuid4()),
-                    config["task_type"],
-                    config["provider"],
-                    config["name"],
-                    config["api_base_url"],
-                    config["model_name"],
-                    json.dumps(config["extra_config"]),
-                    now, now
-                ))
+                INSERT INTO memory_system_prompts (prompt_type, name, prompt_text, is_active)
+                SELECT %s, %s, %s, TRUE
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM memory_system_prompts WHERE prompt_type = %s
+                )
+            """, (prompt_type, name, text, prompt_type))
 
-# Initialize on import
-init_memory_db()
+        # Default entity type configs
+        for entity_type in ["contact", "institution", "program", "supplier", "product"]:
+            cursor.execute("""
+                INSERT INTO memory_entity_type_config (entity_type)
+                VALUES (%s)
+                ON CONFLICT (entity_type) DO NOTHING
+            """, (entity_type,))
+
+        logger.info("Memory system defaults seeded")

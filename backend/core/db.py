@@ -1,40 +1,54 @@
 """
-core/db.py — Shared database utilities for prompt_manager.db
+core/db.py — Shared database utilities (PostgreSQL)
 
 Single source of truth for:
-  - DB path resolution
+  - DB connection via DATABASE_URL env var (postgresql://)
   - get_db_context() context manager
   - get_github_settings() helper
 
-Previously duplicated across server.py, storage_service.py, and memory_routes.py.
+Both the prompt manager and memory system use the same PostgreSQL instance.
 """
 import os
-import sqlite3
 import logging
 from contextlib import contextmanager
-from pathlib import Path
 from typing import Optional, Dict, Any
+
+import psycopg2
+import psycopg2.extras
 
 logger = logging.getLogger(__name__)
 
-# Resolve paths relative to the backend/ directory (parent of this core/ package)
-BACKEND_DIR = Path(__file__).parent.parent
-DB_DIR = BACKEND_DIR / "db"
-DB_DIR.mkdir(parents=True, exist_ok=True)
-DB_PATH = DB_DIR / "prompt_manager.db"
+# Connection URL from DATABASE_URL env var.
+# Default: same postgres instance as the memory system.
+DATABASE_URL: str = os.environ.get(
+    "DATABASE_URL",
+    "postgresql://postgres:postgres@localhost:5432/memory"
+)
+
+# Strip sqlite:// prefix if someone still passes a sqlite URL (safety net)
+if DATABASE_URL.startswith("sqlite:"):
+    logger.warning(
+        "DATABASE_URL is a SQLite URI — falling back to default PostgreSQL. "
+        "Set DATABASE_URL=postgresql://... to silence this warning."
+    )
+    DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/memory"
+
+# Expose DB_PATH as a string alias for startup logging compatibility
+DB_PATH = DATABASE_URL
 
 
-def get_db() -> sqlite3.Connection:
-    """Open and return a raw SQLite connection to prompt_manager.db."""
-    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    return conn
+def get_db() -> psycopg2.extensions.connection:
+    """Open and return a raw psycopg2 connection."""
+    return psycopg2.connect(
+        DATABASE_URL,
+        cursor_factory=psycopg2.extras.RealDictCursor
+    )
 
 
 @contextmanager
 def get_db_context():
     """
-    Context manager that opens a DB connection, commits on success,
+    Context manager that opens a PostgreSQL connection, commits on success,
     and closes on exit (even on error).
 
     Usage:
@@ -61,18 +75,17 @@ def get_github_settings(user_id: str = None) -> Optional[Dict[str, Any]]:
     Otherwise fetches the first/default row (id=1).
 
     Returns a dict of the row or None if no row exists.
-    Previously defined independently in server.py AND storage_service.py.
     """
     try:
         with get_db_context() as conn:
             cursor = conn.cursor()
             if user_id:
-                cursor.execute("SELECT * FROM settings WHERE user_id = ?", (user_id,))
+                cursor.execute("SELECT * FROM settings WHERE user_id = %s", (user_id,))
             else:
                 cursor.execute("SELECT * FROM settings WHERE id = 1")
             row = cursor.fetchone()
             if row:
                 return dict(row)
     except Exception as e:
-        logger.error(f"Failed to fetch settings from DB (possible auth race condition): {e}")
+        logger.error(f"Failed to fetch settings from DB: {e}")
     return None

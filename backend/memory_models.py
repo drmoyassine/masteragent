@@ -1,9 +1,13 @@
 # Memory System Models and Database Schema
 import uuid
 from datetime import datetime, timezone
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 from pydantic import BaseModel, Field
+from pydantic import model_validator
 from enum import Enum
+
+# Timestamp type: accepts both str and datetime from psycopg2 TIMESTAMPTZ columns.
+Timestamp = Optional[Any]
 
 # ============================================
 # LLM Integration Configuration Models
@@ -15,6 +19,7 @@ class LLMTaskType(str, Enum):
     VISION = "vision"
     ENTITY_EXTRACTION = "entity_extraction"
     PII_SCRUBBING = "pii_scrubbing"
+    INSIGHT_GENERATION = "insight_generation"
 
 class LLMProviderType(str, Enum):
     OPENAI = "openai"
@@ -40,14 +45,14 @@ class LLMConfigResponse(BaseModel):
     id: str
     task_type: str
     provider: str
-    name: str
-    api_base_url: Optional[str]
-    api_key_preview: Optional[str]  # Only show preview, not full key
-    model_name: Optional[str]
-    is_active: bool
-    extra_config: Dict[str, Any]
-    created_at: str
-    updated_at: str
+    name: str = ""
+    api_base_url: Optional[str] = None
+    api_key_preview: Optional[str] = None  # Only show preview, not full key
+    model_name: Optional[str] = None
+    is_active: bool = True
+    extra_config: Dict[str, Any] = {}
+    created_at: Timestamp
+    updated_at: Timestamp
 
 class LLMConfigUpdate(BaseModel):
     name: Optional[str] = None
@@ -81,9 +86,9 @@ class EntityTypeCreate(BaseModel):
 class EntityTypeResponse(BaseModel):
     id: str
     name: str
-    description: Optional[str]
-    icon: Optional[str]
-    created_at: str
+    description: Optional[str] = None
+    icon: Optional[str] = None
+    created_at: Timestamp
 
 class EntitySubtypeCreate(BaseModel):
     entity_type_id: str
@@ -94,8 +99,8 @@ class EntitySubtypeResponse(BaseModel):
     id: str
     entity_type_id: str
     name: str
-    description: Optional[str]
-    created_at: str
+    description: Optional[str] = None
+    created_at: Timestamp
 
 class LessonTypeCreate(BaseModel):
     name: str
@@ -105,9 +110,9 @@ class LessonTypeCreate(BaseModel):
 class LessonTypeResponse(BaseModel):
     id: str
     name: str
-    description: Optional[str]
-    color: Optional[str]
-    created_at: str
+    description: Optional[str] = None
+    color: Optional[str] = None
+    created_at: Timestamp
 
 class ChannelTypeCreate(BaseModel):
     name: str
@@ -117,9 +122,9 @@ class ChannelTypeCreate(BaseModel):
 class ChannelTypeResponse(BaseModel):
     id: str
     name: str
-    description: Optional[str]
-    icon: Optional[str]
-    created_at: str
+    description: Optional[str] = None
+    icon: Optional[str] = None
+    created_at: Timestamp
 
 class AgentCreate(BaseModel):
     name: str
@@ -129,12 +134,12 @@ class AgentCreate(BaseModel):
 class AgentResponse(BaseModel):
     id: str
     name: str
-    description: Optional[str]
+    description: Optional[str] = None
     api_key_preview: str
     access_level: str
     is_active: bool
-    created_at: str
-    last_used: Optional[str]
+    created_at: Timestamp
+    last_used: Timestamp
 
 class AgentCreateResponse(AgentResponse):
     api_key: str  # Full key only on creation
@@ -151,8 +156,8 @@ class SystemPromptResponse(BaseModel):
     name: str
     prompt_text: str
     is_active: bool
-    created_at: str
-    updated_at: str
+    created_at: Timestamp
+    updated_at: Timestamp
 
 class MemorySettingsUpdate(BaseModel):
     # Chunking settings
@@ -192,105 +197,201 @@ class MemorySettingsResponse(BaseModel):
     rate_limit_per_minute: int
     default_agent_access: str
 
-# Interaction/Memory Models
+# ============================================
+# Tier 0: Interaction Models
+# ============================================
+
 class RelatedEntity(BaseModel):
     entity_type: str
     entity_id: str
-    role: Optional[str] = ""  # e.g., "primary", "mentioned", "cc"
+    name: Optional[str] = ""
+    role: Optional[str] = ""  # primary, mentioned, cc, participant, etc.
 
 class InteractionCreate(BaseModel):
-    text: str
-    channel: str  # must match a channel_type
-    entities: List[RelatedEntity] = []
-    metadata: Optional[Dict[str, Any]] = {}
-    # Files are handled separately via multipart upload
+    interaction_type: str           # email_sent, whatsapp_received, crm_note,
+                                    # ai_conversation, webhook_event, etc.
+    content: str                    # Full raw text of the interaction
+    primary_entity_type: str        # contact, institution, program, supplier, product
+    primary_entity_id: str          # External CRM reference key
+    primary_entity_subtype: Optional[str] = None
+    agent_name: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = {}     # CRM snapshot; may contain summary_field
+    metadata_field_map: Optional[Dict[str, str]] = {}  # {"summary_field": "ai_summary", ...}
+    has_attachments: bool = False
+    attachment_refs: Optional[List[Dict[str, Any]]] = []
+    source: str = "api"             # api | webhook | pull | ui
 
 class InteractionResponse(BaseModel):
     id: str
     timestamp: str
-    channel: str
-    summary_text: Optional[str]
-    has_documents: bool
-    entities: List[RelatedEntity]
-    metadata: Dict[str, Any]
+    interaction_type: str
+    agent_id: Optional[str]
+    agent_name: Optional[str]
+    primary_entity_type: str
+    primary_entity_id: str
+    primary_entity_subtype: Optional[str]
+    has_attachments: bool
+    source: str
+    status: str
+    created_at: str
 
-class MemoryDetailResponse(BaseModel):
+# ============================================
+# Tier 1: Memory Models
+# ============================================
+
+class MemoryResponse(BaseModel):
     id: str
-    timestamp: str
-    channel: str
-    raw_text: str
-    summary_text: Optional[str]
-    pii_stripped_text: Optional[str]
-    has_documents: bool
-    is_shared: bool
-    entities: List[RelatedEntity]
-    metadata: Dict[str, Any]
-    documents: List[Dict[str, Any]]
+    date: str
+    primary_entity_type: str
+    primary_entity_id: str
+    interaction_count: int
+    content_summary: Optional[str]
+    related_entities: List[RelatedEntity]
+    intents: List[str]
+    compacted: bool
+    created_at: str
 
-# Lesson Models
-class LessonCreate(BaseModel):
-    lesson_type: str
+# ============================================
+# Tier 2: Insight Models
+# ============================================
+
+class InsightCreate(BaseModel):
+    primary_entity_type: str
+    primary_entity_id: str
+    insight_type: Optional[str] = None  # behavior_pattern, risk_signal, opportunity,
+                                        # relationship_shift, preference, milestone
     name: str
-    body: str  # Markdown
-    related_entities: List[RelatedEntity] = []
-    source_memory_ids: List[str] = []
+    content: str                         # Markdown
+    summary: Optional[str] = None
+    source_memory_ids: Optional[List[str]] = []
+
+class InsightResponse(BaseModel):
+    id: str
+    primary_entity_type: str
+    primary_entity_id: str
+    source_memory_ids: List[str]
+    insight_type: Optional[str]
+    name: str
+    content: str
+    summary: Optional[str]
+    status: str                          # draft | confirmed | archived
+    created_by: str
+    confirmed_by: Optional[str]
+    confirmed_at: Optional[str]
+    created_at: str
+    updated_at: str
+
+class InsightUpdate(BaseModel):
+    name: Optional[str] = None
+    content: Optional[str] = None
+    summary: Optional[str] = None
+    insight_type: Optional[str] = None
+    status: Optional[str] = None
+
+# ============================================
+# Tier 3: Lesson Models
+# ============================================
+
+class LessonCreate(BaseModel):
+    lesson_type: Optional[str] = None
+    name: str
+    content: str                         # PII-stripped Markdown
+    summary: Optional[str] = None
+    source_insight_ids: Optional[List[str]] = []
+    visibility: str = "shared"           # shared | team | private
+    tags: Optional[List[str]] = []
 
 class LessonResponse(BaseModel):
     id: str
-    lesson_type: str
+    source_insight_ids: List[str]
+    lesson_type: Optional[str]
     name: str
-    body: str
+    content: str
     summary: Optional[str]
-    status: str  # draft, approved, archived
-    is_shared: bool
-    related_entities: List[RelatedEntity]
-    source_memory_ids: List[str]
+    visibility: str
+    tags: List[str]
     created_at: str
     updated_at: str
 
 class LessonUpdate(BaseModel):
     name: Optional[str] = None
-    body: Optional[str] = None
-    status: Optional[str] = None
-    related_entities: Optional[List[RelatedEntity]] = None
+    content: Optional[str] = None
+    summary: Optional[str] = None
+    lesson_type: Optional[str] = None
+    visibility: Optional[str] = None
+    tags: Optional[List[str]] = None
 
+# ============================================
+# Per Entity Type Configuration
+# ============================================
+
+class EntityTypeConfig(BaseModel):
+    entity_type: str
+    compaction_threshold: int = 10
+    insight_auto_approve: bool = False
+    lesson_auto_promote: bool = False
+    ner_enabled: bool = True
+    ner_confidence_threshold: float = 0.5
+    embedding_enabled: bool = True
+    pii_scrub_lessons: bool = True
+    metadata_field_map: Dict[str, str] = {}
+
+class EntityTypeConfigUpdate(BaseModel):
+    compaction_threshold: Optional[int] = None
+    insight_auto_approve: Optional[bool] = None
+    lesson_auto_promote: Optional[bool] = None
+    ner_enabled: Optional[bool] = None
+    ner_confidence_threshold: Optional[float] = None
+    embedding_enabled: Optional[bool] = None
+    pii_scrub_lessons: Optional[bool] = None
+    metadata_field_map: Optional[Dict[str, str]] = None
+
+# ============================================
 # Search Models
+# ============================================
+
 class SearchRequest(BaseModel):
     query: str
-    filters: Optional[Dict[str, Any]] = {}
-    types: str = "both"  # interactions, lessons, both
-    shared_only: bool = False
+    entity_id: Optional[str] = None
+    entity_type: Optional[str] = None
+    layers: str = "all"             # memories | insights | lessons | all
     limit: int = 20
     offset: int = 0
 
 class SearchResult(BaseModel):
     id: str
-    type: str  # interaction or lesson
+    layer: str                      # memory | insight | lesson
     score: float
+    name: Optional[str]
     snippet: str
-    timestamp: str
-    metadata: Dict[str, Any]
+    entity_id: Optional[str]
+    entity_type: Optional[str]
+    created_at: str
 
 class SearchResponse(BaseModel):
     results: List[SearchResult]
     total: int
     query: str
 
+# ============================================
 # Timeline Models
+# ============================================
+
 class TimelineRequest(BaseModel):
     entity_type: str
     entity_id: str
     since: Optional[str] = None
     until: Optional[str] = None
-    channel: Optional[str] = None
+    interaction_type: Optional[str] = None
     limit: int = 50
     offset: int = 0
 
 class TimelineEntry(BaseModel):
     id: str
     timestamp: str
-    type: str  # interaction or lesson
-    channel: Optional[str]
-    summary_text: str
-    has_documents: bool
-    is_shared: bool
+    interaction_type: str
+    content_preview: str
+    source: str
+    status: str
+
+

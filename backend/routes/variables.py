@@ -72,7 +72,7 @@ class AvailableVariableResponse(BaseModel):
 async def list_account_variables(user: dict = Depends(require_auth)):
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM account_variables WHERE user_id = ? ORDER BY name", (user["id"],))
+        cursor.execute("SELECT * FROM account_variables WHERE user_id = %s ORDER BY name", (user["id"],))
         return [
             AccountVariableResponse(
                 id=row["id"], user_id=row["user_id"], name=row["name"],
@@ -89,11 +89,11 @@ async def create_account_variable(data: VariableCreate, user: dict = Depends(req
     var_id = str(uuid.uuid4())
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT id FROM account_variables WHERE user_id = ? AND name = ?", (user["id"], data.name))
+        cursor.execute("SELECT id FROM account_variables WHERE user_id = %s AND name = %s", (user["id"], data.name))
         if cursor.fetchone():
             raise HTTPException(status_code=400, detail=f"Variable '{data.name}' already exists")
         cursor.execute(
-            "INSERT INTO account_variables (id, user_id, name, value, description, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO account_variables (id, user_id, name, value, description, created_at, updated_at) VALUES (%s,%s,%s,%s,%s,%s,%s)",
             (var_id, user["id"], data.name, data.value, data.description, now, now),
         )
     return AccountVariableResponse(
@@ -107,14 +107,14 @@ async def update_account_variable(name: str, data: VariableUpdate, user: dict = 
     now = datetime.now(timezone.utc).isoformat()
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM account_variables WHERE user_id = ? AND name = ?", (user["id"], name))
+        cursor.execute("SELECT * FROM account_variables WHERE user_id = %s AND name = %s", (user["id"], name))
         existing = cursor.fetchone()
         if not existing:
             raise HTTPException(status_code=404, detail=f"Variable '{name}' not found")
         new_value = data.value if data.value is not None else existing["value"]
         new_desc = data.description if data.description is not None else existing["description"]
         cursor.execute(
-            "UPDATE account_variables SET value=?, description=?, updated_at=? WHERE user_id=? AND name=?",
+            "UPDATE account_variables SET value=%s, description=%s, updated_at=%s WHERE user_id=%s AND name=%s",
             (new_value, new_desc, now, user["id"], name),
         )
     return AccountVariableResponse(
@@ -128,10 +128,10 @@ async def update_account_variable(name: str, data: VariableUpdate, user: dict = 
 async def delete_account_variable(name: str, user: dict = Depends(require_auth)):
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT id FROM account_variables WHERE user_id = ? AND name = ?", (user["id"], name))
+        cursor.execute("SELECT id FROM account_variables WHERE user_id = %s AND name = %s", (user["id"], name))
         if not cursor.fetchone():
             raise HTTPException(status_code=404, detail=f"Variable '{name}' not found")
-        cursor.execute("DELETE FROM account_variables WHERE user_id = ? AND name = ?", (user["id"], name))
+        cursor.execute("DELETE FROM account_variables WHERE user_id = %s AND name = %s", (user["id"], name))
     return {"message": f"Variable '{name}' deleted"}
 
 
@@ -143,11 +143,11 @@ async def delete_account_variable(name: str, user: dict = Depends(require_auth))
 async def list_prompt_variables(prompt_id: str, version: str = "v1", user: dict = Depends(require_auth)):
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM prompts WHERE id = ?", (prompt_id,))
+        cursor.execute("SELECT * FROM prompts WHERE id = %s", (prompt_id,))
         if not cursor.fetchone():
             raise HTTPException(status_code=404, detail="Prompt not found")
         cursor.execute(
-            "SELECT * FROM prompt_variables WHERE prompt_id = ? AND version = ? ORDER BY name",
+            "SELECT * FROM prompt_variables WHERE prompt_id = %s AND version = %s ORDER BY name",
             (prompt_id, version),
         )
         return [
@@ -166,17 +166,17 @@ async def create_prompt_variable(prompt_id: str, data: VariableCreate, version: 
     var_id = str(uuid.uuid4())
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM prompts WHERE id = ?", (prompt_id,))
+        cursor.execute("SELECT * FROM prompts WHERE id = %s", (prompt_id,))
         if not cursor.fetchone():
             raise HTTPException(status_code=404, detail="Prompt not found")
         cursor.execute(
-            "SELECT id FROM prompt_variables WHERE prompt_id = ? AND version = ? AND name = ?",
+            "SELECT id FROM prompt_variables WHERE prompt_id = %s AND version = %s AND name = %s",
             (prompt_id, version, data.name),
         )
         if cursor.fetchone():
             raise HTTPException(status_code=400, detail=f"Variable '{data.name}' already exists for this version")
         cursor.execute(
-            "INSERT INTO prompt_variables (id, prompt_id, version, name, value, description, required, created_at, updated_at) VALUES (?,?,?,?,?,?,0,?,?)",
+            "INSERT INTO prompt_variables (id, prompt_id, version, name, value, description, required, created_at, updated_at) VALUES (%s,%s,%s,%s,%s,%s,FALSE,%s,%s)",
             (var_id, prompt_id, version, data.name, data.value, data.description, now, now),
         )
     return PromptVariableResponse(
@@ -192,7 +192,7 @@ async def update_prompt_variable(prompt_id: str, name: str, data: VariableUpdate
     with get_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT * FROM prompt_variables WHERE prompt_id = ? AND version = ? AND name = ?",
+            "SELECT * FROM prompt_variables WHERE prompt_id = %s AND version = %s AND name = %s",
             (prompt_id, version, name),
         )
         existing = cursor.fetchone()
@@ -201,7 +201,7 @@ async def update_prompt_variable(prompt_id: str, name: str, data: VariableUpdate
         new_value = data.value if data.value is not None else existing["value"]
         new_desc = data.description if data.description is not None else existing["description"]
         cursor.execute(
-            "UPDATE prompt_variables SET value=?, description=?, updated_at=? WHERE prompt_id=? AND version=? AND name=?",
+            "UPDATE prompt_variables SET value=%s, description=%s, updated_at=%s WHERE prompt_id=%s AND version=%s AND name=%s",
             (new_value, new_desc, now, prompt_id, version, name),
         )
     return PromptVariableResponse(
@@ -216,13 +216,13 @@ async def delete_prompt_variable(prompt_id: str, name: str, version: str = "v1",
     with get_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT id FROM prompt_variables WHERE prompt_id = ? AND version = ? AND name = ?",
+            "SELECT id FROM prompt_variables WHERE prompt_id = %s AND version = %s AND name = %s",
             (prompt_id, version, name),
         )
         if not cursor.fetchone():
             raise HTTPException(status_code=404, detail=f"Variable '{name}' not found")
         cursor.execute(
-            "DELETE FROM prompt_variables WHERE prompt_id = ? AND version = ? AND name = ?",
+            "DELETE FROM prompt_variables WHERE prompt_id = %s AND version = %s AND name = %s",
             (prompt_id, version, name),
         )
     return {"message": f"Variable '{name}' deleted"}
@@ -239,11 +239,11 @@ async def get_available_variables(prompt_id: str, version: str = "v1", user: dic
     seen = set()
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM prompts WHERE id = ?", (prompt_id,))
+        cursor.execute("SELECT * FROM prompts WHERE id = %s", (prompt_id,))
         if not cursor.fetchone():
             raise HTTPException(status_code=404, detail="Prompt not found")
         # Prompt-level (higher priority)
-        cursor.execute("SELECT * FROM prompt_variables WHERE prompt_id = ? AND version = ?", (prompt_id, version))
+        cursor.execute("SELECT * FROM prompt_variables WHERE prompt_id = %s AND version = %s", (prompt_id, version))
         for row in cursor.fetchall():
             seen.add(row["name"])
             variables.append(AvailableVariableResponse(
@@ -251,7 +251,7 @@ async def get_available_variables(prompt_id: str, version: str = "v1", user: dic
                 source="prompt", required=bool(row["required"]),
             ))
         # Account-level (lower priority)
-        cursor.execute("SELECT * FROM account_variables WHERE user_id = ?", (user["id"],))
+        cursor.execute("SELECT * FROM account_variables WHERE user_id = %s", (user["id"],))
         for row in cursor.fetchall():
             if row["name"] not in seen:
                 seen.add(row["name"])

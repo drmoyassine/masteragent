@@ -16,7 +16,7 @@ from fastapi import Header, HTTPException
 
 from core.auth import verify_jwt_token
 from core.db import get_db_context
-from memory_db import get_memory_db_context
+from core.storage import get_memory_db_context
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,7 @@ async def require_admin_auth(authorization: str = Header(None)) -> dict:
 
         with get_db_context() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+            cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
             user = cursor.fetchone()
             if not user:
                 logger.warning(f"Memory system auth failed: User {user_id} not found in database")
@@ -60,32 +60,40 @@ async def verify_agent_key(x_api_key: str = Header(None, alias="X-API-Key")) -> 
     """Verify agent API key and return agent info"""
     if not x_api_key:
         raise HTTPException(status_code=401, detail="API key required")
-    
+
+    # Hash the incoming key before comparison (keys stored as SHA-256 hashes)
+    import hashlib
+    key_hash = hashlib.sha256(x_api_key.encode()).hexdigest()
+
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT * FROM memory_agents WHERE api_key_hash = ? AND is_active = 1",
-            (x_api_key,)
+            "SELECT * FROM memory_agents WHERE api_key_hash = %s AND is_active = TRUE",
+            (key_hash,)
         )
         agent = cursor.fetchone()
-        
+
         if not agent:
             raise HTTPException(status_code=401, detail="Invalid API key")
-        
-        # Update last used
+
+        # Update last used timestamp
         now = datetime.now(timezone.utc).isoformat()
-        cursor.execute("UPDATE memory_agents SET last_used = ? WHERE id = ?", (now, agent["id"]))
-        
+        cursor.execute(
+            "UPDATE memory_agents SET last_used = %s WHERE id = %s",
+            (now, agent["id"])
+        )
+
         return dict(agent)
 
 
+
 def log_audit(agent_id: str, action: str, resource_type: str = None, resource_id: str = None, details: dict = None):
-    """Log agent activity"""
+    """Log agent activity to the audit log."""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO memory_audit_log (id, agent_id, action, resource_type, resource_id, details_json, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO memory_audit_log (id, agent_id, action, resource_type, resource_id, details, timestamp)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
         """, (
             str(uuid.uuid4()),
             agent_id,
@@ -95,3 +103,7 @@ def log_audit(agent_id: str, action: str, resource_type: str = None, resource_id
             json.dumps(details or {}),
             datetime.now(timezone.utc).isoformat()
         ))
+
+
+# Alias: workspace.py and future modules can use either name
+require_agent_auth = verify_agent_key
