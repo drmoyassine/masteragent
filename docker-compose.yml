@@ -6,8 +6,11 @@ services:
       context: .
       args:
         REACT_APP_BACKEND_URL: ${REACT_APP_BACKEND_URL:-}
-    ports:
-      - "${PORT:-8080}:80"
+    # Port is managed by EasyPanel's docker-compose.override.yml.
+    # For local/manual runs: docker run -p 8080:80 or set PORT env var.
+    # ports:
+    #   - "${PORT:-8080}:80"
+
     environment:
       # JWT & Auth
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-change_this_secret_in_production}
