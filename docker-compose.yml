@@ -16,7 +16,7 @@ services:
       - GITHUB_REDIRECT_URI=${GITHUB_REDIRECT_URI:-}
       - FRONTEND_URL=${FRONTEND_URL:-}
       # Main app database (prompt manager)
-      - DATABASE_URL=${DATABASE_URL:-sqlite:///app/backend/promptsrc.db}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/memory}
       # Memory system: PostgreSQL + pgvector
       - MEMORY_POSTGRES_URL=${MEMORY_POSTGRES_URL:-postgresql://postgres:postgres@postgres:5432/memory}
       # Memory system: Redis cache

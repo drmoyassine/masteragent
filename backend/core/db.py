@@ -18,20 +18,21 @@ import psycopg2.extras
 
 logger = logging.getLogger(__name__)
 
-# Connection URL from DATABASE_URL env var.
-# Default: same postgres instance as the memory system.
-DATABASE_URL: str = os.environ.get(
-    "DATABASE_URL",
-    "postgresql://postgres:postgres@localhost:5432/memory"
-)
+# Connection URL.  Resolution order:
+#   1. DATABASE_URL env var (if set and not a SQLite URI)
+#   2. MEMORY_POSTGRES_URL env var (reuse the memory DB)
+#   3. Compile-time default pointing at the Docker Compose service name
+_DEFAULT_PG = "postgresql://postgres:postgres@postgres:5432/memory"
+DATABASE_URL: str = os.environ.get("DATABASE_URL", "")
 
-# Strip sqlite:// prefix if someone still passes a sqlite URL (safety net)
-if DATABASE_URL.startswith("sqlite:"):
-    logger.warning(
-        "DATABASE_URL is a SQLite URI — falling back to default PostgreSQL. "
-        "Set DATABASE_URL=postgresql://... to silence this warning."
-    )
-    DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/memory"
+if not DATABASE_URL or DATABASE_URL.startswith("sqlite:"):
+    if DATABASE_URL.startswith("sqlite:"):
+        logger.warning(
+            "DATABASE_URL is a SQLite URI — ignoring it. "
+            "Set DATABASE_URL=postgresql://... to silence this warning."
+        )
+    # Fall back to MEMORY_POSTGRES_URL or hard-coded Docker default
+    DATABASE_URL = os.environ.get("MEMORY_POSTGRES_URL", _DEFAULT_PG)
 
 # Expose DB_PATH as a string alias for startup logging compatibility
 DB_PATH = DATABASE_URL
