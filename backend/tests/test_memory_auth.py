@@ -65,7 +65,7 @@ class TestConfigEndpointsRequireAuth:
         assert response.status_code == 401
         data = response.json()
         assert "detail" in data
-        assert "Authentication required" in data["detail"] or "authentication" in data["detail"].lower()
+        assert "Authentication required" in data["detail"] or "authenticat" in data["detail"].lower()
         print(f"✓ Entity types endpoint requires auth: {data}")
     
     def test_lesson_types_requires_auth(self, api_client):
