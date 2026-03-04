@@ -522,3 +522,86 @@ async def get_audit_log(
         rows = cursor.fetchall()
 
     return {"entries": [dict(r) for r in rows]}
+
+
+# ============================================================
+# STATS
+# ============================================================
+
+@router.get("/stats")
+async def get_stats(admin: dict = Depends(require_admin_auth)):
+    """System-wide counts across all memory tiers and interactions."""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT COUNT(*) as total FROM interactions")
+        total_interactions = cursor.fetchone()["total"]
+
+        cursor.execute("SELECT COUNT(*) as total FROM memories")
+        total_memories = cursor.fetchone()["total"]
+
+        cursor.execute("SELECT COUNT(*) as total FROM insights")
+        total_insights = cursor.fetchone()["total"]
+
+        cursor.execute("SELECT COUNT(*) as total FROM insights WHERE status = 'confirmed'")
+        confirmed_insights = cursor.fetchone()["total"]
+
+        cursor.execute("SELECT COUNT(*) as total FROM lessons")
+        total_lessons = cursor.fetchone()["total"]
+
+        cursor.execute("SELECT COUNT(*) as total FROM memory_agents WHERE is_active = TRUE")
+        active_agents = cursor.fetchone()["total"]
+
+        cursor.execute("SELECT COUNT(*) as total FROM memory_agents")
+        total_agents = cursor.fetchone()["total"]
+
+        # Interactions in the last 24h
+        cursor.execute("""
+            SELECT COUNT(*) as total FROM interactions
+            WHERE timestamp >= NOW() - INTERVAL '24 hours'
+        """)
+        interactions_24h = cursor.fetchone()["total"]
+
+        # Interactions in the last 7 days
+        cursor.execute("""
+            SELECT COUNT(*) as total FROM interactions
+            WHERE timestamp >= NOW() - INTERVAL '7 days'
+        """)
+        interactions_7d = cursor.fetchone()["total"]
+
+    return {
+        "interactions": {
+            "total": total_interactions,
+            "last_24h": interactions_24h,
+            "last_7d": interactions_7d,
+        },
+        "memories": {"total": total_memories},
+        "insights": {"total": total_insights, "confirmed": confirmed_insights},
+        "lessons": {"total": total_lessons},
+        "agents": {"total": total_agents, "active": active_agents},
+    }
+
+
+@router.get("/stats/agents")
+async def get_agent_stats(admin: dict = Depends(require_admin_auth)):
+    """Per-agent interaction and memory counts."""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT
+                a.id,
+                a.name,
+                a.is_active,
+                a.created_at,
+                COUNT(DISTINCT i.id) AS interaction_count,
+                MAX(i.timestamp)     AS last_interaction_at
+            FROM memory_agents a
+            LEFT JOIN interactions i ON i.agent_id = a.id
+            GROUP BY a.id, a.name, a.is_active, a.created_at
+            ORDER BY interaction_count DESC
+        """)
+        agents = cursor.fetchall()
+
+    return {"agents": [dict(a) for a in agents]}
+
