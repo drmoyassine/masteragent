@@ -18,7 +18,7 @@ from pydantic import BaseModel as _BaseModel
 from core.storage import get_memory_db_context
 from core.utils import utcnow
 from memory.auth import require_admin_auth
-from memory.services.config_helpers import get_memory_settings
+from services.config_helpers import get_memory_settings
 from memory_models import (
     AgentCreate, AgentCreateResponse, AgentResponse,
     ChannelTypeCreate, ChannelTypeResponse,

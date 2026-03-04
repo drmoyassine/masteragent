@@ -1,11 +1,10 @@
 """
 memory_services.py — Backward-compatibility shim
 
-All logic now lives in memory/services/.
+All logic now lives in services/ (top-level package).
 This file re-exports everything so existing imports continue to work.
 """
-from memory.services import *  # noqa: F401, F403
-from memory.services import (
+from services import (  # noqa: F401
     call_llm,
     call_llm_vision,
     chunk_text,

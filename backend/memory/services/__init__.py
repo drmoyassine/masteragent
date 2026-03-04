@@ -1,47 +1,19 @@
 """
-memory/services — Memory system service layer
+memory/services — DEPRECATED sub-package stub.
 
-Public API: import from here or from the individual sub-modules directly.
+All service logic has been moved to the top-level `services/` package
+to avoid circular imports with memory/__init__.py.
+
+This __init__.py re-exports everything for any code that still imports
+from `memory.services` directly (e.g., during transition).
 """
-from memory.services.config_helpers import get_llm_config, get_memory_settings, get_system_prompt
-from memory.services.embeddings import generate_embedding, generate_embeddings_batch
-from memory.services.llm import call_llm, call_llm_vision
-from memory.services.processing import (
-    chunk_text,
-    extract_entities,
-    extract_entities_gliner,
-    extract_entities_llm,
-    parse_document,
-    scrub_pii,
+from services import *  # noqa: F401, F403
+from services import (  # noqa: F401
+    call_llm, call_llm_vision,
+    chunk_text, extract_entities, extract_entities_gliner, extract_entities_llm,
+    generate_embedding, generate_embeddings_batch,
+    get_llm_config, get_memory_settings, get_system_prompt,
+    parse_document, scrub_pii,
+    search_insights_by_vector, search_lessons_by_vector, search_memories_by_vector,
     summarize_text,
 )
-from memory.services.search import (
-    search_insights_by_vector,
-    search_lessons_by_vector,
-    search_memories_by_vector,
-)
-
-__all__ = [
-    # config
-    "get_llm_config",
-    "get_memory_settings",
-    "get_system_prompt",
-    # llm
-    "call_llm",
-    "call_llm_vision",
-    # embeddings
-    "generate_embedding",
-    "generate_embeddings_batch",
-    # search
-    "search_memories_by_vector",
-    "search_insights_by_vector",
-    "search_lessons_by_vector",
-    # processing
-    "chunk_text",
-    "scrub_pii",
-    "summarize_text",
-    "parse_document",
-    "extract_entities",
-    "extract_entities_gliner",
-    "extract_entities_llm",
-]
