@@ -281,7 +281,7 @@ export function LLMProviderSettings({
                                             <div>
                                                 <h3 className="font-semibold text-foreground">{taskInfo.label}</h3>
                                                 <p className="text-sm text-muted-foreground">
-                                                    {isEditing ? `Editing: ${activeProviderValue}` : `${config.name} (${config.provider})`}
+                                                    {isEditing ? `Editing: ${activeProviderValue}` : config.name}
                                                 </p>
                                             </div>
                                         </div>
