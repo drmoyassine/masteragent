@@ -370,9 +370,12 @@ async def update_entity_type_config(
         fields.append("ner_enabled = %s"); values.append(body.ner_enabled)
     if body.ner_confidence_threshold is not None:
         fields.append("ner_confidence_threshold = %s"); values.append(body.ner_confidence_threshold)
-    if body.ner_schema is not None:
-        fields.append("ner_schema = %s"); values.append(json.dumps(body.ner_schema))
-    if body.insight_trigger_days is not None:
+    # ner_schema and insight_trigger_days are legitimately nullable (None = clear them).
+    # Use model_fields_set to detect explicitly-sent null vs not-provided.
+    if "ner_schema" in body.model_fields_set:
+        fields.append("ner_schema = %s")
+        values.append(json.dumps(body.ner_schema) if body.ner_schema is not None else None)
+    if "insight_trigger_days" in body.model_fields_set:
         fields.append("insight_trigger_days = %s"); values.append(body.insight_trigger_days)
     if body.embedding_enabled is not None:
         fields.append("embedding_enabled = %s"); values.append(body.embedding_enabled)
@@ -421,6 +424,15 @@ async def trigger_memory_generation(admin: dict = Depends(require_admin_auth)):
     from memory_tasks import run_daily_memory_generation
     asyncio.create_task(run_daily_memory_generation())
     return {"message": "Memory generation triggered"}
+
+
+@router.post("/trigger/run-lesson-check")
+async def trigger_lesson_check(admin: dict = Depends(require_admin_auth)):
+    """Manually trigger the lesson accumulation check (mirrors nightly scheduler)."""
+    import asyncio
+    from memory_tasks import run_lesson_check
+    asyncio.create_task(run_lesson_check())
+    return {"message": "Lesson check triggered"}
 
 
 # ============================================================
