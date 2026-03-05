@@ -1,14 +1,14 @@
-# PromptSRC - Prompt Manager & Agent Memory System
+# MasterAgent — Prompt Manager & Agent Memory System
 
 <div align="center">
 
-![PromptSRC](https://img.shields.io/badge/PromptSRC-AI%20Agent%20Infrastructure-22C55E?style=for-the-badge)
+![MasterAgent](https://img.shields.io/badge/MasterAgent-AI%20Agent%20Infrastructure-22C55E?style=for-the-badge)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)
 ![React](https://img.shields.io/badge/React-61DAFB?style=flat-square&logo=react&logoColor=black)
-![Qdrant](https://img.shields.io/badge/Qdrant-FF6B6B?style=flat-square)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=flat-square&logo=postgresql&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white)
 
-**The complete infrastructure for AI agents: version-controlled prompts + persistent memory system**
+**Complete infrastructure for AI agents: version-controlled prompts + persistent memory**
 
 [Getting Started](#getting-started) • [Features](#features) • [API Reference](#api-reference) • [Deployment](#deployment)
 
@@ -18,31 +18,10 @@
 
 ## Overview
 
-PromptSRC provides two essential modules for building production-ready AI agents:
+MasterAgent provides two essential modules for building production-ready AI agents:
 
-1. **Prompt Manager** - Version-controlled prompts stored in GitHub, consumable via HTTP API
-2. **Memory System** - Persistent memory for agents with semantic search, entity tracking, and lesson extraction
-
-## Features
-
-### Prompt Manager
-- **Multi-file Markdown Structure** - Organize complex prompts as ordered sections
-- **Git-backed Versioning** - Every version maps to a GitHub branch
-- **Variable Injection** - Mustache-style placeholders with runtime injection
-- **Render API** - Clean HTTP endpoints for consuming compiled prompts
-- **Starter Templates** - Agent Persona, Task Executor, Knowledge Expert, and more
-- **API Key Authentication** - Secure access for your agents
-
-### Memory System
-- **Structured Storage** - Store interactions with metadata, entities, and documents
-- **Semantic Search** - Vector-powered search with Qdrant
-- **Entity Timelines** - Track interaction history for contacts, organizations, projects
-- **Curated Lessons** - Extract and organize knowledge from interactions
-- **GLiNER2 NER** - Automatic entity extraction using state-of-the-art NER
-- **PII Scrubbing** - Separate private and shared memories with configurable PII protection
-- **Admin-configurable LLMs** - Configure separate APIs for summarization, embedding, vision, NER, PII
-- **Rate Limiting** - Per-agent request throttling
-- **OpenClaw Sync** - Export memories to Markdown for external tools
+1. **Prompt Manager** — Version-controlled prompts stored in GitHub, consumable via HTTP API
+2. **Memory System** — Persistent 4-tier memory with pgvector semantic search, entity tracking, and lesson extraction
 
 ## Tech Stack
 
@@ -50,35 +29,53 @@ PromptSRC provides two essential modules for building production-ready AI agents
 |-----------|------------|
 | Backend | FastAPI (Python 3.11+) |
 | Frontend | React 18, Tailwind CSS, Shadcn/UI |
-| Database | SQLite (dev) / PostgreSQL (prod) |
-| Vector Store | Qdrant |
-| NER Engine | GLiNER2 |
+| Database | PostgreSQL 16 + pgvector (single unified instance) |
+| Cache | Redis 7 |
+| NER Engine | GLiNER (optional, Docker profile) |
 | Authentication | JWT (admin), API Keys (agents) |
 | Containerization | Docker, Docker Compose |
+
+## Features
+
+### Prompt Manager
+- **Multi-file Markdown Structure** — Organize complex prompts as ordered sections
+- **Git-backed Versioning** — Every version maps to a GitHub branch
+- **Variable Injection** — Mustache-style placeholders with runtime injection
+- **Render API** — Clean HTTP endpoints for consuming compiled prompts
+- **Starter Templates** — Agent Persona, Task Executor, Knowledge Expert, and more
+- **API Key Authentication** — Secure access for your agents
+
+### Memory System
+- **4-Tier Memory Architecture** — Interactions → Memories (T1) → Insights (T2) → Lessons (T3)
+- **Semantic Search** — pgvector-powered similarity search across all memory tiers
+- **Entity Timelines** — Track interaction history for contacts, organizations, projects
+- **Curated Lessons** — Extract and organize knowledge from interactions
+- **GLiNER NER** — Optional entity extraction (falls back to LLM)
+- **PII Scrubbing** — Configurable PII protection for shared memories
+- **Admin-configurable LLMs** — Separate APIs for summarization, embedding, vision, NER, PII
+- **Webhook Ingestion** — Ingest interactions from external systems via signed webhooks
+- **System Monitor** — Live stats dashboard with agent activity
 
 ## Getting Started
 
 ### Prerequisites
 - Docker and Docker Compose
-- Node.js 18+ (for local development)
-- Python 3.11+ (for local development)
-- GitHub account (for Prompt Manager)
+- Node.js 18+ (local frontend development only)
+- Python 3.11+ (local backend development only)
+- GitHub account (optional, for Prompt Manager cloud storage)
 
 ### Quick Start with Docker
 
 ```bash
-# Clone the repository
-git clone https://github.com/your-org/promptsrc.git
-cd promptsrc
+git clone https://github.com/drmoyassine/masteragent.git
+cd masteragent
 
-# Copy environment template
 cp .env.example .env
+# Edit .env: set JWT_SECRET_KEY, ADMIN_PASSWORD, and optionally LLM API keys
 
-# Start all services
-docker-compose up -d
+docker compose up -d
 
-# Access the application
-open http://localhost
+# App is available at http://localhost:8080 (or your configured PORT)
 ```
 
 ### Local Development
@@ -87,76 +84,76 @@ open http://localhost
 # Backend
 cd backend
 pip install -r requirements.txt
-uvicorn server:app --reload --port 8001
+export DATABASE_URL=postgresql://postgres:postgres@localhost:5432/memory
+export MEMORY_POSTGRES_URL=postgresql://postgres:postgres@localhost:5432/memory
+export REDIS_URL=redis://localhost:6379
+python -m uvicorn server:app --reload --port 8084
 
 # Frontend
 cd frontend
 yarn install
-yarn start
+yarn start   # http://localhost:3000
 
 # GLiNER Service (optional)
-cd gliner
-docker build -t gliner .
-docker run -p 8002:8002 gliner
+docker compose --profile gliner up gliner
 ```
 
 ### Environment Variables
 
+See [`.env.example`](.env.example) for the full reference. Key variables:
+
 ```bash
-# Backend (.env)
-JWT_SECRET_KEY=your_secret_key
-MONGO_URL=mongodb://localhost:27017
-DB_NAME=promptsrc
-
-# GitHub Integration
-GITHUB_CLIENT_ID=your_github_client_id
-GITHUB_CLIENT_SECRET=your_github_client_secret
-GITHUB_REDIRECT_URI=http://localhost/api/auth/github/callback
-
-# Vector Database
-QDRANT_URL=http://localhost:6333
-
-# GLiNER NER Service
-GLINER_URL=http://localhost:8002
-
-# Frontend (.env)
-REACT_APP_BACKEND_URL=http://localhost
+JWT_SECRET_KEY=<generate with: openssl rand -hex 32>
+DATABASE_URL=postgresql://postgres:postgres@postgres:5432/memory
+MEMORY_POSTGRES_URL=postgresql://postgres:postgres@postgres:5432/memory
+REDIS_URL=redis://redis:6379/0
+ADMIN_EMAIL=admin@example.com
+ADMIN_PASSWORD=change_me_in_production
 ```
 
 ## Project Structure
 
 ```
-promptsrc/
+masteragent/
 ├── backend/
-│   ├── core/                  # Shared DB and Auth logic
-│   ├── routes/                # Prompt Manager endpoints
-│   ├── memory/                # Memory System endpoints
-│   ├── server.py              # Main FastAPI application
-│   ├── memory_db.py           # Memory system database schema
+│   ├── core/                  # Shared DB and Auth utilities
+│   │   ├── db.py              # PostgreSQL connection, DATABASE_URL resolution
+│   │   ├── auth.py            # JWT + API key authentication
+│   │   └── storage.py         # Memory DB context manager
+│   ├── routes/                # Prompt Manager endpoints (auth, prompts, render, etc.)
+│   ├── memory/                # Memory System
+│   │   ├── __init__.py        # Router assembly (prefix: /api/memory)
+│   │   ├── admin.py           # Admin CRUD: insights, lessons, stats
+│   │   ├── agent.py           # Agent APIs: ingest, search, timeline
+│   │   ├── config.py          # Config endpoints: entity types, LLM configs, agents
+│   │   ├── auth.py            # Memory auth helpers
+│   │   ├── webhooks.py        # Webhook source management + inbound routing
+│   │   └── workspace.py       # Per-entity workspace chat
+│   ├── services/              # Shared service layer (top-level, no circular deps)
+│   │   ├── config_helpers.py  # DB-backed config lookups
+│   │   ├── llm.py             # LLM call abstraction
+│   │   ├── embeddings.py      # Embedding generation
+│   │   ├── search.py          # pgvector semantic search
+│   │   └── processing.py      # Text processing, PII, NER, chunking
+│   ├── memory_db.py           # Memory schema initialization + migrations
 │   ├── memory_models.py       # Pydantic models
-│   ├── memory_services.py     # LLM and vector services
-│   ├── memory_tasks.py        # Background tasks
+│   ├── memory_services.py     # Backward-compat shim → services/
+│   ├── memory_tasks.py        # Background tasks (OpenClaw sync, lesson mining)
+│   ├── db_init.py             # Prompt manager schema initialization
+│   ├── server.py              # FastAPI entry point
 │   └── requirements.txt
 ├── frontend/
 │   ├── src/
-│   │   ├── pages/
-│   │   │   ├── LandingPage.jsx
-│   │   │   ├── AuthPage.jsx
-│   │   │   ├── DashboardPage.jsx
-│   │   │   ├── MemorySettingsPage.jsx
-│   │   │   ├── MemoryExplorerPage.jsx
-│   │   │   └── MemoryMonitorPage.jsx
-│   │   ├── components/
-│   │   │   ├── ui/             # Shadcn components
-│   │   │   └── layout/
-│   │   └── lib/
-│   │       └── api.js          # API client
+│   │   ├── pages/             # PromptEditorPage, MemoryExplorerPage, SystemMonitor, etc.
+│   │   ├── components/        # Shared UI components (Shadcn/UI)
+│   │   └── lib/api.js         # API client
 │   └── package.json
-├── gliner/
-│   ├── app.py                  # GLiNER2 NER service
+├── gliner/                    # Optional GLiNER NER microservice
+│   ├── app.py
 │   └── Dockerfile
 ├── docker-compose.yml
 ├── Dockerfile
+├── .env.example
 └── README.md
 ```
 
@@ -164,18 +161,16 @@ promptsrc/
 
 ### Authentication
 
-All admin endpoints require JWT authentication:
+Admin JWT:
 ```bash
 curl -X POST /api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email": "admin@example.com", "password": "password"}'
+  -d '{"email": "admin@example.com", "password": "yourpassword"}'
 ```
 
-Agent endpoints require API key authentication:
+Agent API Key (returned when creating an agent):
 ```bash
-curl -X POST /api/memory/interactions \
-  -H "X-API-Key: mem_xxxx" \
-  -F "text=Meeting notes..."
+curl -H "X-API-Key: mem_xxxx" /api/memory/interactions
 ```
 
 ### Prompt Manager Endpoints
@@ -187,24 +182,21 @@ curl -X POST /api/memory/interactions \
 | GET | `/api/prompts/{id}` | Get prompt |
 | PUT | `/api/prompts/{id}` | Update prompt |
 | DELETE | `/api/prompts/{id}` | Delete prompt |
-| GET | `/api/prompts/{id}/sections` | List sections |
-| POST | `/api/prompts/{id}/sections` | Create section |
-| POST | `/api/prompts/{id}/{version}/render` | Render prompt |
-| GET | `/api/templates` | List templates |
+| POST | `/api/prompts/{id}/{version}/render` | Render compiled prompt |
+| GET | `/api/templates` | List starter templates |
 
 ### Memory System Endpoints
 
-#### Configuration (JWT Auth)
+#### Config (JWT Auth)
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/memory/config/entity-types` | List entity types |
-| POST | `/api/memory/config/entity-types` | Create entity type |
-| GET | `/api/memory/config/llm-configs` | List LLM configs |
-| PUT | `/api/memory/config/llm-configs/{id}` | Update LLM config |
-| GET | `/api/memory/config/agents` | List agents |
-| POST | `/api/memory/config/agents` | Create agent (returns API key) |
-| GET | `/api/memory/config/settings` | Get settings |
-| PUT | `/api/memory/config/settings` | Update settings |
+| GET/POST/DELETE | `/api/memory/config/entity-types` | Entity type management |
+| GET/POST/DELETE | `/api/memory/config/lesson-types` | Lesson type management |
+| GET/POST/DELETE | `/api/memory/config/channel-types` | Channel type management |
+| GET/POST/PATCH | `/api/memory/config/agents` | Agent management |
+| GET/PUT | `/api/memory/config/llm-configs/{task_type}` | LLM configuration |
+| GET/PUT | `/api/memory/config/settings` | Global memory settings |
+| GET/POST | `/api/memory/config/system-prompts` | System prompts |
 
 #### Agent APIs (API Key Auth)
 | Method | Endpoint | Description |
@@ -217,11 +209,20 @@ curl -X POST /api/memory/interactions \
 #### Admin APIs (JWT Auth)
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/memory/daily/{date}` | Daily memory log |
-| GET | `/api/memory/memories/{id}` | Memory detail |
-| GET | `/api/memory/admin/stats` | System statistics |
-| POST | `/api/memory/admin/sync/openclaw` | Trigger OpenClaw sync |
-| POST | `/api/memory/admin/tasks/mine-lessons` | Trigger lesson mining |
+| GET | `/api/memory/admin/stats` | System-wide counts |
+| GET | `/api/memory/admin/stats/agents` | Per-agent activity |
+| GET/POST/PATCH/DELETE | `/api/memory/insights` | Insight CRUD |
+| GET/POST/PATCH/DELETE | `/api/memory/lessons` | Lesson CRUD |
+| GET | `/api/memory/interactions` | Interaction log |
+| GET | `/api/memory/audit-log` | Audit log |
+| POST | `/api/memory/trigger/compact/{type}/{id}` | Trigger compaction |
+| POST | `/api/memory/trigger/generate-memories` | Trigger memory generation |
+
+#### Webhooks (JWT Auth for management, HMAC-signed for inbound)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET/POST | `/api/memory/webhooks/sources` | Webhook source management |
+| POST | `/api/memory/webhooks/inbound/{source_id}` | Receive signed webhook payload |
 
 ### Example: Ingest an Interaction
 
@@ -230,120 +231,74 @@ import requests
 
 response = requests.post(
     "https://your-domain.com/api/memory/interactions",
-    headers={"X-API-Key": "mem_YhZtU7wjp8-gFQKAjyT7ZwKzTC3L7R7I6cqHM3oJbYA"},
+    headers={"X-API-Key": "mem_xxxx"},
     data={
-        "text": "Had a meeting with John Smith from Acme Corp about the partnership deal.",
+        "text": "Meeting with John from Acme about the partnership deal.",
         "channel": "meeting",
-        "entities": '[{"type": "Contact", "name": "John Smith", "role": "primary"}, {"type": "Organization", "name": "Acme Corp", "role": "mentioned"}]',
-        "metadata": '{"duration": "45min", "location": "zoom"}'
+        "entities": '[{"type": "contact", "name": "John", "role": "primary"}]',
     }
 )
-
-print(response.json())
-# {
-#   "id": "abc123",
-#   "timestamp": "2026-02-25T10:30:00Z",
-#   "summary_text": "Partnership meeting with Acme Corp",
-#   "entities": [...],
-#   ...
-# }
 ```
 
-### Example: Search Memories
+### Example: Semantic Search
 
 ```python
 response = requests.post(
     "https://your-domain.com/api/memory/search",
-    headers={"Authorization": "Bearer <jwt_token>"},
-    json={
-        "query": "partnership discussions with Acme",
-        "filters": {"channel": "meeting"},
-        "limit": 10
-    }
+    headers={"X-API-Key": "mem_xxxx"},
+    json={"query": "Acme partnership discussions", "limit": 10}
 )
-
-print(response.json())
-# {"results": [...], "total": 5}
 ```
 
 ## Deployment
 
-### Docker Compose (Recommended)
+### Docker Compose (EasyPanel / VPS)
 
-```yaml
-version: '3.8'
+All ports are managed internally — no host port conflicts between instances:
 
-services:
-  promptsrc:
-    build: .
-    ports:
-      - "80:80"
-    environment:
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
-      - DATABASE_TYPE=postgresql
-      - POSTGRES_URL=${POSTGRES_URL}
-      - QDRANT_URL=http://qdrant:6333
-      - GLINER_URL=http://gliner:8002
-    depends_on:
-      - qdrant
-      - gliner
-
-  qdrant:
-    image: qdrant/qdrant:latest
-    ports:
-      - "6333:6333"
-    volumes:
-      - qdrant_data:/qdrant/storage
-
-  gliner:
-    build: ./gliner
-    ports:
-      - "8002:8002"
-
-volumes:
-  qdrant_data:
+```bash
+cp .env.example .env
+# Configure secrets in .env
+docker compose up -d
 ```
+
+The `masteragent` service runs nginx + uvicorn via supervisord in one container. PostgreSQL and Redis are internal-only (no exposed host ports).
 
 ### Production Checklist
 
-- [ ] Set strong `JWT_SECRET_KEY`
-- [ ] Configure PostgreSQL instead of SQLite
-- [ ] Set up Qdrant with persistence
-- [ ] Configure LLM API keys in admin UI
-- [ ] Enable HTTPS
-- [ ] Set up monitoring and logging
-- [ ] Configure rate limiting
-- [ ] Back up database regularly
+- [ ] Set a strong `JWT_SECRET_KEY` (`openssl rand -hex 32`)
+- [ ] Change `ADMIN_PASSWORD` from default
+- [ ] Configure LLM API keys in admin UI → Memory Settings → LLM APIs
+- [ ] Enable HTTPS (via reverse proxy / EasyPanel)
+- [ ] Set up regular PostgreSQL backups
 
-## Default Credentials
+## Default Admin Credentials
 
-For initial setup:
-- **Email**: `admin@promptsrc.com`
-- **Password**: `admin123`
+```
+Email:    admin@masteragent.ai   (set ADMIN_EMAIL in .env)
+Password: change_me_in_production (set ADMIN_PASSWORD in .env)
+```
 
 ⚠️ **Change these immediately in production!**
 
-## Contributing
+## Testing
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+```bash
+cd backend/tests
+# Requires a running server (see local dev above)
+export MEMORY_TEST_BASE_URL=http://localhost:8084
+python -m pytest . -v --timeout=30
+# Expected: 101 passed, 2 skipped
+```
+
+The 2 skipped tests require live LLM API keys (`test_interactions_with_valid_api_key`, `test_ingest_and_verify_storage`).
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
-
-## Support
-
-- **Architecture Details**: Review [ARCHITECTURE.md](ARCHITECTURE.md)
-- **Documentation**: [docs.promptsrc.com](https://docs.promptsrc.com)
-- **Issues**: [GitHub Issues](https://github.com/your-org/promptsrc/issues)
-- **Email**: support@promptsrc.com
+MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
 <div align="center">
-Built with ❤️ for AI Agent Developers
+Built for AI Agent Developers
 </div>

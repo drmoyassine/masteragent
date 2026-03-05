@@ -1,250 +1,116 @@
-# Agent Handoff Document - PromptSRC
+# MasterAgent — Handoff Document
 
-> **Last Updated**: February 27, 2026 (Session 3)
-> **Status**: Production-Ready MVP + Variables System Complete
-> **Priority**: Configure LLM APIs, test end-to-end flow
-
----
-
-## ✅ Completed This Session (2026-02-27)
-
-### High Priority - All Done!
-1. **@ Autocomplete Position Fix** ✅
-   - Fixed: Popover now appears inline at cursor position
-   - File: [`VariableAutocomplete.jsx`](frontend/src/components/VariableAutocomplete.jsx)
-   - Solution: Calculate cursor coordinates relative to container, not viewport
-
-2. **Section Drag-and-Drop** ✅
-   - Fixed: Sections can now be reordered via drag and drop
-   - File: [`PromptEditorPage.jsx`](frontend/src/pages/PromptEditorPage.jsx)
-   - Solution: Implemented using @dnd-kit/core and @dnd-kit/sortable
-
-3. **Variable Bar Styling** ✅
-   - Right-aligned "Variables:" label with variable list
-   - Variables highlighted in light green color
-   - Click on variable badge to insert at cursor
-
-### Files Modified This Session
-- `frontend/src/components/VariableAutocomplete.jsx` - Fixed popover positioning
-- `frontend/src/pages/PromptEditorPage.jsx` - Added DnD, improved variable bar styling
+> **Last Updated**: 2026-03-05
+> **Status**: Production-deployed MVP — PostgreSQL-only stack, 101/103 tests passing
+> **Priority**: Configure LLM API keys in admin UI to enable summarization and semantic search
 
 ---
 
-## 🔴 Pending Tasks (Next Session)
+## ✅ Current State Summary
 
-### Configuration (P0)
-1. **Configure LLM APIs**
-   - Navigate to `/app/memory` → LLM APIs tab
-   - Add API keys for: summarization, embedding, vision, entity_extraction, pii_scrubbing
-   - Test with sample interactions
+The platform is deployed and operational. All core functionality is implemented:
 
-2. **Start GLiNER Service**
-   ```bash
-   docker-compose up gliner
-   ```
+### Infrastructure (Complete)
+- **Single-DB Architecture**: PostgreSQL 16 + pgvector for both Prompt Manager and Memory System (Qdrant removed)
+- **Redis**: Operational for caching/queuing
+- **Docker Compose**: Multi-service stack with correct internal networking (no host port conflicts)
+- **EasyPanel deployment**: Tested and working with multiple concurrent instances
 
-3. **Initialize Qdrant**
-   ```bash
-   curl -X POST http://localhost:8001/api/memory/init
-   ```
+### Backend (Complete)
+- **Prompt Manager**: Full CRUD, GitHub storage, local fallback, variable injection, template system
+- **Memory System**: 4-tier memory (Interactions → Memories → Insights → Lessons)
+  - Ingestion pipeline with chunking, NER, summarization, embedding
+  - pgvector semantic search
+  - Entity timelines
+  - Webhook source management + HMAC-signed inbound routing
+  - Per-entity workspace chat
+  - Admin stats: `GET /api/memory/admin/stats` and `/api/memory/admin/stats/agents`
+- **Authentication**: JWT (admin), API Keys (agents), HMAC (webhooks)
+- **Refactoring complete**: `services/` top-level package extracted to resolve circular imports
 
----
-
-## Project Overview
-
-**PromptSRC** is a full-stack application providing infrastructure for AI agents:
-1. **Prompt Manager** - Version-controlled prompts stored in GitHub
-2. **Memory System** - Persistent memory with semantic search for AI agents
-
-### Quick Context
-- **Frontend**: React 18 + Tailwind CSS + Shadcn/UI
-- **Backend**: FastAPI (Python 3.11)
-- **Databases**: SQLite (dev), PostgreSQL (prod), Qdrant (vectors)
-- **NER**: GLiNER2 Docker service
-- **Auth**: JWT for admins, API Keys for agents
+### Tests (101/103 passing)
+- 2 skipped tests require live LLM API keys
+- Test suite covers auth, config, admin CRUD, interactions, search, webhooks, workspace chat
 
 ---
 
-## Current State
+## 🔴 Next Steps
 
-### 🔄 In Progress
+### P0 — Required for full functionality
+1. **Configure LLM API keys** in admin UI → Memory Settings → LLM APIs
+   - Add keys for: `summarization`, `embedding`, `vision`, `entity_extraction`, `pii_scrubbing`
+   - Without embedding config, semantic search returns 503
 
-#### Variables Management System (NEW - 2026-02-27)
-Backend complete, frontend needs polish:
-- **Database Tables**: `account_variables`, `prompt_variables`
-- **API Endpoints**:
-  - `GET/POST /api/variables/account` - Account-level variables
-  - `GET/POST/DELETE /api/variables/prompt/{prompt_id}` - Prompt-level variables
-  - `GET /api/prompts/{id}/available-variables` - Merged list for autocomplete
-- **Variable Injection**: Updated `inject_variables()` with resolution order:
-  1. Runtime variables (passed in request)
-  2. Prompt-level variables
-  3. Account-level variables
-- **Frontend Components**:
-  - [`VariablesPanel.jsx`](frontend/src/components/VariablesPanel.jsx) - Add/edit/delete UI
-  - [`VariableAutocomplete.jsx`](frontend/src/components/VariableAutocomplete.jsx) - @ trigger popover
-- **Known Issues**:
-  - @ autocomplete popover position incorrect (middle of page, not at cursor)
-  - Variable bar needs styling improvements (right-align, green highlights)
-  - Drag-and-drop from variable list to editor not implemented
+2. **Implement background task scheduler**
+   - `memory_tasks.py` has OpenClaw sync and lesson mining stubs
+   - Currently triggered manually via System Monitor UI buttons
+   - Add `asyncio` periodic task or APScheduler on server startup
 
-### ✅ Fully Implemented
-
-#### Prompt Manager
-- Multi-file Markdown prompts with ordered sections
-- GitHub integration for storage and versioning
-- Variable injection (Mustache-style)
-- Render API with API key authentication
-- Starter templates (Agent Persona, Task Executor, etc.)
-
-#### Memory System - Backend
-- **Database Schema**: All tables created (`memory_db.py`)
-  - Config: entity_types, subtypes, lesson_types, channel_types, agents, llm_configs, system_prompts, settings
-  - Data: memories, memory_documents, memory_lessons, memories_shared, lessons_shared, audit_log
-- **Ingestion Pipeline** (`POST /api/memory/interactions`)
-  - Text + file parsing
-  - Chunking (configurable)
-  - Entity extraction (GLiNER2 or LLM fallback)
-  - Summarization
-  - Embedding → Qdrant
-  - PII scrubbing for shared memories
-  - Rate limiting per agent
-- **Retrieval APIs**
-  - Semantic search
-  - Entity timeline
-  - Daily log
-  - Lessons CRUD
-- **Background Tasks** (`memory_tasks.py`)
-  - OpenClaw Markdown sync
-  - Automated lesson mining
-  - Agent stats/monitoring
-
-#### Memory System - Frontend
-- **Memory Settings** (`/app/memory`) - 6 tabs for admin configuration
-- **Memory Explorer** (`/app/memory/explore`) - Search, timeline, daily log, lessons
-- **System Monitor** (`/app/memory/monitor`) - Stats, sync triggers, agent activity
-
-#### Authentication & Security
-- JWT auth on all admin config endpoints
-- API key auth on agent endpoints
-- Rate limiting implemented
+### P1 — Important features
+3. **Bulk import/export** — JSON/CSV memory import, ZIP export
+4. **Real-time System Monitor** — WebSocket-based live activity stream
+5. **GLiNER model customization** — Custom entity labels per deployment
+6. **Deeper LLM tuning** — Model parameter configuration per task type
 
 ---
 
 ## File Reference
 
-### Backend (Key Files)
+### Backend
+
 ```
-/app/backend/
-├── server.py              # Main app, prompt routes, auth
-├── memory_db.py           # Database schema, initialization
-├── memory_models.py       # Pydantic models
-├── memory_routes.py       # All /api/memory/* endpoints (1500+ lines)
-├── memory_services.py     # LLM calls, embeddings, Qdrant, PII
-├── memory_tasks.py        # Background tasks (sync, mining, stats)
-└── requirements.txt
+backend/
+├── server.py              # FastAPI entry point — thin, mounts all routers
+├── db_init.py             # Prompt Manager schema (PostgreSQL)
+├── memory_db.py           # Memory System schema and idempotent migrations
+├── memory_models.py       # All Pydantic request/response models
+├── memory_services.py     # Backward-compat shim → services/
+├── memory_tasks.py        # Background: OpenClaw sync, lesson mining
+├── core/
+│   ├── db.py              # DATABASE_URL resolution, get_db_context()
+│   ├── auth.py            # JWT, API key, password hashing
+│   └── storage.py         # Memory DB context (get_memory_db_context())
+├── routes/                # Prompt Manager: auth, prompts, render, settings, templates
+├── memory/
+│   ├── __init__.py        # Assembles all memory routers under /api/memory
+│   ├── admin.py           # Admin CRUD: insights, lessons, stats, triggers, audit log
+│   ├── agent.py           # Agent APIs: ingest, search, timeline, lessons
+│   ├── config.py          # Config: entity types, agents, LLM configs, settings
+│   ├── auth.py            # require_admin_auth() for memory system
+│   ├── webhooks.py        # Webhook source management + HMAC-signed inbound
+│   └── workspace.py       # Per-entity workspace chat endpoint
+└── services/
+    ├── config_helpers.py  # DB-backed: get_memory_settings(), get_llm_config()
+    ├── llm.py             # call_llm() — OpenAI-compatible
+    ├── embeddings.py      # get_embedding()
+    ├── search.py          # pgvector_search()
+    └── processing.py      # chunk_text(), scrub_pii(), summarize(), extract_entities()
 ```
 
-### Frontend (Key Files)
+### Frontend
+
 ```
-/app/frontend/src/
+frontend/src/
 ├── pages/
-│   ├── LandingPage.jsx        # Updated with both modules
-│   ├── MemorySettingsPage.jsx # Admin config UI
-│   ├── MemoryExplorerPage.jsx # Search, timeline, lessons
-│   └── MemoryMonitorPage.jsx  # Stats, task triggers
-├── components/layout/
-│   └── MainLayout.jsx         # Navigation (7 items)
-└── lib/api.js                 # All API functions
+│   ├── DashboardPage.jsx          # Prompt list
+│   ├── PromptEditorPage.jsx       # Prompt editor with DnD sections
+│   ├── MemorySettingsPage.jsx     # Memory admin config (6 tabs)
+│   ├── MemoryExplorerPage.jsx     # Search, timeline, lessons
+│   └── MemoryMonitorPage.jsx      # System Monitor: stats, task triggers
+├── components/
+│   ├── layout/MainLayout.jsx      # Navigation (7 items)
+│   ├── VariableAutocomplete.jsx   # @ trigger popover
+│   └── ui/                        # Shadcn/UI components
+└── lib/api.js                     # All API functions
 ```
 
 ### Docker
+
 ```
-/app/
-├── docker-compose.yml     # Main app + Qdrant + GLiNER
-├── Dockerfile             # Multi-stage build
-└── gliner/
-    ├── app.py             # GLiNER2 NER service
-    └── Dockerfile
+docker-compose.yml      # masteragent + postgres + redis (+ gliner profile)
+Dockerfile              # Multi-stage: React build → nginx + Python + supervisord
+.env.example            # Full environment variable reference
 ```
-
----
-
-## Known Limitations & Technical Debt
-
-### 1. LLM Integration Not Configured
-- All LLM configs stored in DB but no API keys set
-- Summarization, embedding, vision parsing return empty until configured
-- **Fix**: Admin needs to add API keys in Memory Settings → LLM APIs tab
-
-### 2. GLiNER2 Service
-- Dockerfile created but not running in preview environment
-- Falls back to LLM-based extraction when unavailable
-- **Fix**: Run GLiNER service via `docker-compose up gliner`
-
-### 3. Qdrant Collections
-- Collections created on first use
-- No migrations for existing data
-- **Fix**: Call `POST /api/memory/init` to initialize
-
-### 4. Background Tasks
-- Currently triggered manually via UI buttons
-- Not running on a scheduler
-- **Fix**: Add `asyncio.create_task()` call on startup or use Celery
-
-### 5. Error Handling
-- Some LLM calls return empty strings on failure
-- Could add more specific error responses
-- **Priority**: Low (graceful degradation is acceptable)
-
----
-
-## Future Enhancements (Prioritized)
-
-### P0 - Critical for Production
-1. **Real LLM Configuration**
-   - Guide users to add OpenAI/Anthropic/Gemini API keys
-   - Test embedding generation and search quality
-
-2. **Startup Initialization**
-   - Auto-call `init_qdrant_collections()` on server start
-   - Run background task scheduler
-
-3. **PostgreSQL Migration**
-   - Test with PostgreSQL instead of SQLite
-   - Add migration scripts
-
-### P1 - Important Features
-4. **Bulk Import/Export**
-   - Endpoint to import memories from JSON/CSV
-   - Export memories and lessons as ZIP
-
-5. **Webhook Notifications**
-   - Notify external systems when lessons are created
-   - Real-time activity streaming
-
-6. **Agent Dashboard**
-   - Per-agent usage statistics
-   - Rate limit monitoring
-   - API key rotation
-
-### P2 - Nice to Have
-7. **Team Collaboration**
-   - Multi-user workspaces
-   - Role-based access control
-
-8. **Advanced Search**
-   - Faceted filtering
-   - Saved searches
-   - Search history
-
-9. **GLiNER Model Customization**
-   - Custom entity labels per tenant
-   - Fine-tuned models
-
-10. **Real-time Activity Dashboard**
-    - WebSocket-based live updates
-    - Streaming log view
 
 ---
 
@@ -252,20 +118,40 @@ Backend complete, frontend needs polish:
 
 ### Health
 ```
+GET  /api/health
 GET  /api/memory/health
-POST /api/memory/init
 ```
 
-### Config (JWT Required)
+### Auth
 ```
-GET/POST/DELETE  /api/memory/config/entity-types
-GET/POST/DELETE  /api/memory/config/entity-subtypes
-GET/POST/DELETE  /api/memory/config/lesson-types
-GET/POST/DELETE  /api/memory/config/channel-types
-GET/POST/PATCH/DELETE  /api/memory/config/agents
-GET/POST/PUT/DELETE  /api/memory/config/llm-configs
-GET/POST/PUT/DELETE  /api/memory/config/system-prompts
-GET/PUT  /api/memory/config/settings
+POST /api/auth/login
+POST /api/auth/logout
+GET  /api/auth/me
+```
+
+### Prompt Manager (JWT Required)
+```
+GET/POST                    /api/prompts
+GET/PUT/DELETE              /api/prompts/{id}
+GET/POST                    /api/prompts/{id}/sections
+PATCH                       /api/prompts/{id}/sections/reorder
+POST                        /api/prompts/{id}/{version}/render
+GET                         /api/templates
+GET/PUT                     /api/settings
+GET/POST/DELETE             /api/variables/account
+GET/POST/DELETE             /api/variables/prompt/{prompt_id}
+```
+
+### Memory Config (JWT Required)
+```
+GET/POST/DELETE             /api/memory/config/entity-types
+GET/POST/DELETE             /api/memory/config/entity-subtypes
+GET/POST/DELETE             /api/memory/config/lesson-types
+GET/POST/DELETE             /api/memory/config/channel-types
+GET/POST/PATCH/DELETE       /api/memory/config/agents
+GET/PUT                     /api/memory/config/llm-configs/{task_type}
+GET/POST/PUT/DELETE         /api/memory/config/system-prompts
+GET/PUT                     /api/memory/config/settings
 ```
 
 ### Agent APIs (API Key Required)
@@ -278,93 +164,56 @@ GET   /api/memory/lessons
 
 ### Admin APIs (JWT Required)
 ```
-GET   /api/memory/daily/{date}
-GET   /api/memory/memories/{id}
-POST  /api/memory/search
-GET/POST/PUT/DELETE  /api/memory/admin/lessons
-GET   /api/memory/admin/timeline/{type}/{id}
-GET   /api/memory/admin/stats
-GET   /api/memory/admin/stats/agents
-POST  /api/memory/admin/sync/openclaw
-POST  /api/memory/admin/tasks/mine-lessons
+GET                         /api/memory/admin/stats
+GET                         /api/memory/admin/stats/agents
+GET/POST/PATCH/DELETE       /api/memory/insights
+GET/POST/PATCH/DELETE       /api/memory/lessons
+GET                         /api/memory/interactions
+GET                         /api/memory/interactions/{id}
+GET                         /api/memory/audit-log
+GET/PATCH                   /api/memory/entity-type-config/{entity_type}
+POST                        /api/memory/trigger/compact/{entity_type}/{entity_id}
+POST                        /api/memory/trigger/generate-memories
 ```
 
----
-
-## Test Credentials
-
+### Webhooks
 ```
-Admin Email: admin@promptsrc.com
-Admin Password: admin123
-Agent API Key: mem_YhZtU7wjp8-gFQKAjyT7ZwKzTC3L7R7I6cqHM3oJbYA
+GET/POST                    /api/memory/webhooks/sources        (JWT required)
+PATCH/DELETE                /api/memory/webhooks/sources/{id}   (JWT required)
+POST                        /api/memory/webhooks/sources/{id}/rotate  (JWT required)
+POST                        /api/memory/webhooks/inbound/{source_id}  (HMAC signed)
 ```
 
----
-
-## Testing Checklist
-
-Before deploying:
-- [ ] Login with admin credentials
-- [ ] Navigate to Memory Settings → Configure at least one LLM API key
-- [ ] Create an agent and note the API key
-- [ ] Test ingestion: `curl -X POST /api/memory/interactions -H "X-API-Key: ..." -F "text=Test" -F "channel=note"`
-- [ ] Search memories via explorer
-- [ ] Check System Monitor stats
-- [ ] Test OpenClaw sync (enable in settings first)
-
----
-
-## Architecture Decisions
-
-### Why Separate Private/Shared Memories?
-- Private: Contains raw text with PII
-- Shared: PII-scrubbed for team/org-wide access
-- Configurable via admin settings
-
-### Why GLiNER2 Instead of LLM for NER?
-- Faster and cheaper than LLM calls
-- More consistent entity extraction
-- Can run locally without API keys
-- Falls back to LLM if GLiNER unavailable
-
-### Why Qdrant?
-- Purpose-built for vector search
-- Supports filtering and metadata
-- Easy to self-host
-- Good performance at scale
-
----
-
-## Contact & Resources
-
-- **Code Repository**: `/app/` (this directory)
-- **PRD**: `/app/memory/PRD.md`
-- **Test Reports**: `/app/test_reports/`
-- **Preview URL**: Check `REACT_APP_BACKEND_URL` in `/app/frontend/.env`
+### Workspace Chat
+```
+POST  /api/memory/workspace/{entity_type}/{entity_id}/chat          (API Key)
+POST  /api/memory/workspace/{entity_type}/{entity_id}/chat/admin    (JWT)
+```
 
 ---
 
 ## Quick Commands
 
-```bash
-# Restart backend
-sudo supervisorctl restart backend
+```powershell
+# Local server
+cd backend
+$env:DATABASE_URL="postgresql://postgres:postgres@localhost:5432/memory"
+$env:MEMORY_POSTGRES_URL="postgresql://postgres:postgres@localhost:5432/memory"
+$env:REDIS_URL="redis://localhost:6379"
+python -m uvicorn server:app --port 8084
 
-# Check backend logs
-tail -f /var/log/supervisor/backend.err.log
+# Run tests
+cd backend\tests
+$env:MEMORY_TEST_BASE_URL="http://localhost:8084"
+python -m pytest . -v --timeout=30
 
-# Test health
-curl $(grep REACT_APP_BACKEND_URL /app/frontend/.env | cut -d '=' -f2)/api/memory/health
-
-# Login and get token
-curl -X POST $API_URL/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"admin@promptsrc.com","password":"admin123"}'
-
-# Test with token
-curl -H "Authorization: Bearer $TOKEN" $API_URL/api/memory/admin/stats
+# Docker
+docker compose up -d            # Start all services
+docker compose logs -f          # Follow logs
+docker compose down             # Stop all
+docker compose build --no-cache # Force fresh image build
 ```
 
 ---
 
-**Good luck with the continued development!** 🚀
+Good luck! 🚀

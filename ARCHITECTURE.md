@@ -1,82 +1,152 @@
-# MasterAgent Architecture & Engineering Patterns
+# MasterAgent — Architecture Reference
 
-> **Last Updated**: 2026-03-01
-> **Purpose**: Serves as the living root reference document for the technical design, system boundaries, and structural patterns of the MasterAgent (PromptSRC) application.
-
----
-
-## 1. High-Level System Overview
-
-MasterAgent is built as an **API-first microservice** encompassing two major domains:
-1. **The Prompt Manager:** A Git-backed version control system for structured AI prompts, managed via UI and consumed via API.
-2. **The Memory System:** A persistent, searchable vector memory bank designed for AI agents to intelligently ingest, track, and recall interaction history, extracted entities, and curated lessons.
-
-These domains share the same FastAPI runtime but maintain strict separation laterally through dual databases, isolated authentication routes, and distinct routing namespaces.
+> **Last Updated**: 2026-03-05
+> **Purpose**: Living reference for technical design, system boundaries, and structural patterns.
 
 ---
 
-## 2. Infrastructure & Modules
+## 1. High-Level Overview
 
-### Modular Routing Structure
-The monolithic initialization script has been heavily refactored into domain-driven packages to prevent God Classes and isolate business logic.
+MasterAgent provides two tightly coupled but domain-separated modules within a single FastAPI runtime:
 
-- `backend/server.py` — The thin entry point. Exclusively responsible for booting FastAPI, loading environments, mounting CORSMiddleware, and registering `APIRouter` instances.
-- `backend/core/` — Domain-agnostic utilities shared universally.
-  - `core/db.py` — Database context managers and fallback settings.
-  - `core/auth.py` — Cryptography, password validation, JWT validation, and the SHA256 API Key verification layers.
-- `backend/routes/` — The Prompt Manager domain. Contains controllers for `/auth`, `/prompts`, `/render`, `/settings`, `/variables`, and `/templates`.
-- `backend/memory/` — The Memory System domain.
-  - `memory/config.py` — Admin configuration endpoints (Entity Types, Agents, Settings).
-  - `memory/admin.py` — Statistical read-only reporting endpoints.
-  - `memory/agent.py` — High-traffic, API-Key-secured agent interactions, searches, and timelines.
+1. **Prompt Manager** — Git-backed version control for structured AI prompts
+2. **Memory System** — 4-tier persistent agent memory with pgvector semantic search
 
-### The Storage Subsystem
-Prompts are stored using a **Pluggable Storage Service** factory pattern (`storage_service.py`):
-- **GitHub Node (`GitHubStorageService`)**: When a user provides a PAT (Personal Access Token), prompts are actively committed directly to the remote repository.
-- **Local Fallback (`LocalStorageService`)**: Automatically cascades back to local disk persistence inside `backend/local_prompts/{user_id}` when GitHub is disconnected or the token is invalid. 
+Both modules share a single **PostgreSQL 16 + pgvector** instance. Redis provides caching and queuing for the memory system.
 
 ---
 
-## 3. Databases & Persistence
+## 2. Infrastructure & Routing
 
-The application employs a strict **Dual Database Architecture** to prevent the Prompt Manager and the Memory Modules from entangling state models.
+### Entry Point
+`backend/server.py` — thin entry point responsible only for:
+- Loading environment variables
+- Mounting CORS middleware
+- Registering `APIRouter` instances
+- Calling `init_db()` and `init_memory_db()` on startup
 
-1. **Main Database (`prompt_manager.db`)**
-  - Managed by: `backend/db_init.py`
-  - Purpose: Global User Accounts, API Keys, System Settings, Variable definitions, and Prompt metadata.
-2. **Memory Database (`data/memory.db`)**
-  - Managed by: `backend/memory_db.py`
-  - Purpose: Entity logs, Daily interactions, Curated Lessons, and Agent identity mappings.
-  - *Note*: Operates alongside Qdrant vectors; strict boundaries exist between raw private interaction states and sanitized shared state pools.
+### Router Layout
 
----
+| Namespace | Module | Purpose |
+|---|---|---|
+| `/api/auth`, `/api/prompts`, `/api/render`, `/api/settings`, `/api/templates` | `backend/routes/` | Prompt Manager |
+| `/api/memory/config/*` | `backend/memory/config.py` | Memory admin config |
+| `/api/memory/admin/*`, `/api/memory/insights`, `/api/memory/lessons` | `backend/memory/admin.py` | Memory admin CRUD + stats |
+| `/api/memory/interactions`, `/api/memory/search`, `/api/memory/timeline`, `/api/memory/lessons` | `backend/memory/agent.py` | Agent-facing APIs |
+| `/api/memory/webhooks/*` | `backend/memory/webhooks.py` | Webhook sources + inbound routing |
+| `/api/memory/workspace/*` | `backend/memory/workspace.py` | Per-entity workspace chat |
 
-## 4. Authentication Matrix
-
-Authentication mechanisms are split linearly based on the intended consumer:
-
-| Consumer Type | Auth Mechanism | Header Spec | Handled By |
-| --- | --- | --- | --- |
-| **Human Admins/Builders** | JWT (JSON Web Tokens) | `Authorization: Bearer <token>` | `core.auth.require_admin_auth()` |
-| **AI Agents/Scripts** | Cryptographic API Key | `X-API-Key: <key>` | `core.auth.verify_agent_key()` |
-
-**Security Note:** Agent API Keys are one-way hashed natively within the `api_keys` relation using `hashlib.sha256`. At no point is a plaintext API key stored or logged within the backend. Validation is handled by dynamically hashing incoming payload variants and verifying absolute match properties.
+The `memory/` sub-package assembles all its routers in `memory/__init__.py` under the `APIRouter(prefix="/api/memory")`.
 
 ---
 
-## 5. Deployment Topology
+## 3. Service Layer
 
-The application is deployed via Docker Compose orchestrating multiple cohesive components:
+The `backend/services/` package contains all infrastructure-facing business logic, kept at the top level to avoid circular imports with the `memory/` sub-package:
 
-- **PromptSRC Container**: Runs Nginx proxy routing to the React Frontend (`:80`) and standardizes Uvicorn backend APIs (`:8001`).
-- **Qdrant Vector Database**: A high-performance Rust engine bound to the private network handling complex metadata filtering over high-dimensional tensor matrices (`:6333`).
-- **GLiNER2 Name Entity Recognition (Optional)**: A dedicated Python microservice providing zero-shot dynamic entity boundary recognition (`:8002`). The backend gracefully falls back to OpenAI function-calling if this service is inaccessible. 
+| Module | Responsibility |
+|---|---|
+| `services/config_helpers.py` | DB-backed config lookups (LLM configs, memory settings, system prompts) |
+| `services/llm.py` | OpenAI-compatible LLM call abstraction |
+| `services/embeddings.py` | Embedding generation via configured APIs |
+| `services/search.py` | pgvector semantic search across memory tiers |
+| `services/processing.py` | Text chunking, PII scrubbing, summarization, NER, document parsing |
+
+`memory_services.py` is a backward-compatibility shim that re-exports from `services/`.
 
 ---
 
-## 6. Frontend Conventions (React)
-- **Framework**: SPA via React 18, bootstrapped by a highly modified Vite/Craco pipeline to support deep path alias routing (`@/*` mapping strictly to `frontend/src/*`).
-- **State Routing**: `ConfigContext.jsx` acts as the root boundary defining whether a user operates against the GitHub layer (`storageMode === 'github'`) or local caching (`storageMode === 'local'`).
-- **Data Mutation**: Read/Write actions aggressively invoke local `.catch()` handlers piped explicitly into Shadcn's `toast` notification system for guaranteed visibility.
+## 4. Database Architecture
 
-*This document should be continually updated as significant infrastructural pivots or structural codebase patterns emerge during master development.*
+A single PostgreSQL instance hosts all tables. Schema is split by domain:
+
+### Prompt Manager Tables (`db_init.py`)
+- `users`, `api_keys`, `settings`, `prompts`, `prompt_sections`, `prompt_versions`, `templates`, `variables`, `account_variables`, `prompt_variables`
+
+### Memory System Tables (`memory_db.py`)
+- **Config**: `memory_entity_types`, `memory_entity_subtypes`, `memory_lesson_types`, `memory_channel_types`, `memory_agents`, `memory_llm_configs`, `memory_system_prompts`, `memory_settings`, `memory_entity_type_config`
+- **Data**: `interactions`, `memories`, `memory_documents`, `insights`, `lessons`, `memory_audit_log`, `webhook_sources`
+
+All memory tables have an `embedding vector(1536)` column (or equivalent) enabled by the `pgvector` extension for semantic search.
+
+### Context Managers
+- `core.db.get_db_context()` → Prompt Manager DB
+- `core.storage.get_memory_db_context()` → Memory DB (both point to the same PostgreSQL instance via `MEMORY_POSTGRES_URL`)
+
+---
+
+## 5. 4-Tier Memory Model
+
+```
+Tier 0: Interactions (raw events — POST /api/memory/interactions)
+    ↓  (batch processing / compaction)
+Tier 1: Memories (chunked, embedded, searchable)
+    ↓  (threshold-based compaction)
+Tier 2: Insights (patterns + trends, draft → confirmed)
+    ↓  (admin promotion)
+Tier 3: Lessons (organization-wide knowledge)
+```
+
+---
+
+## 6. Authentication Matrix
+
+| Consumer | Mechanism | Header | Handler |
+|---|---|---|---|
+| Human admins | JWT (Bearer) | `Authorization: Bearer <token>` | `memory.auth.require_admin_auth()` |
+| AI agents / scripts | API Key | `X-API-Key: <key>` | `core.auth.verify_agent_key()` |
+| Webhook sources | HMAC-SHA256 signature | `X-Webhook-Signature: <sig>` | `memory.webhooks` inline validation |
+
+Agent API Keys are SHA-256 hashed before storage. The plaintext key is returned only once at creation time.
+
+---
+
+## 7. Storage Subsystem (Prompt Manager)
+
+The Prompt Manager uses a pluggable storage factory (`storage_service.py`):
+
+- **`GitHubStorageService`** — Active when `github_token` is configured. Commits directly to the user's configured repo/branch.
+- **`LocalStorageService`** — Fallback when GitHub is not configured. Persists to `backend/local_prompts/{user_id}/`.
+
+---
+
+## 8. Deployment Topology
+
+```
+VPS / EasyPanel
+├── masteragent container (supervisord)
+│   ├── nginx :80          → serves React build, proxies /api/ → uvicorn
+│   └── uvicorn :8001      → FastAPI application
+├── postgres container (pgvector/pgvector:pg16)
+│   └── :5432 (internal only — not exposed to host)
+└── redis container (redis:7-alpine)
+    └── :6379 (internal only — not exposed to host)
+```
+
+All inter-container communication is via Docker Compose service names (`postgres`, `redis`). Only the `masteragent` service's HTTP port is managed externally (by EasyPanel's override file).
+
+GLiNER is optional, started with `docker compose --profile gliner up`.
+
+---
+
+## 9. DATABASE_URL Resolution Order
+
+`core/db.py` resolves the PostgreSQL connection URL as follows:
+
+1. `DATABASE_URL` env var (if set and not a SQLite URI)
+2. `MEMORY_POSTGRES_URL` env var
+3. Hard-coded default: `postgresql://postgres:postgres@postgres:5432/memory`
+
+This ensures the backend connects correctly inside Docker even without explicit configuration.
+
+---
+
+## 10. Frontend Conventions
+
+- **Framework**: React 18 SPA, bootstrapped with Create React App + CRACO
+- **State**: `ConfigContext.jsx` manages storage mode (`github` vs `local`)
+- **Path Alias**: `@/` maps to `frontend/src/`
+- **API Layer**: All calls centralized in `frontend/src/lib/api.js`
+- **UI Components**: Shadcn/UI component library
+
+*Update this document when significant infrastructure changes are made.*
