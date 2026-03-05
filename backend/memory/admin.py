@@ -528,7 +528,7 @@ async def get_audit_log(
 # STATS
 # ============================================================
 
-@router.get("/stats")
+@router.get("/admin/stats")
 async def get_stats(admin: dict = Depends(require_admin_auth)):
     """System-wide counts across all memory tiers and interactions."""
     with get_memory_db_context() as conn:
@@ -582,7 +582,7 @@ async def get_stats(admin: dict = Depends(require_admin_auth)):
     }
 
 
-@router.get("/stats/agents")
+@router.get("/admin/stats/agents")
 async def get_agent_stats(admin: dict = Depends(require_admin_auth)):
     """Per-agent interaction and memory counts."""
     with get_memory_db_context() as conn:
