@@ -145,6 +145,11 @@ export const fetchProviderModels = (data) => api.post('/memory/config/llm-config
 export const getMemorySettings = () => api.get('/memory/config/settings');
 export const updateMemorySettings = (data) => api.put('/memory/config/settings', data);
 
+// Entity Type Config (per-type NER schema, compaction thresholds, etc.)
+export const getEntityTypeConfig = (entityType) => api.get(`/memory/admin/entity-type-config/${entityType}`);
+export const updateEntityTypeConfig = (entityType, data) => api.patch(`/memory/admin/entity-type-config/${entityType}`, data);
+
+
 // Memory Explorer - Admin UI
 export const searchMemories = (data) => api.post('/memory/admin/search', data);
 export const getDailyMemories = (date) => api.get(`/memory/admin/daily/${date}`);

@@ -161,20 +161,20 @@ class SystemPromptResponse(BaseModel):
 
 class MemorySettingsUpdate(BaseModel):
     # Chunking settings
-    chunk_size: Optional[int] = 400  # tokens
-    chunk_overlap: Optional[int] = 80  # tokens
+    chunk_size: Optional[int] = 400         # tokens
+    chunk_overlap: Optional[int] = 80       # tokens
+    # Memory generation schedule
+    memory_generation_time: Optional[str] = "02:00"       # HH:MM UTC
+    memory_generation_mode: Optional[str] = "ner_and_raw" # 'ner_only' | 'ner_and_raw'
     # Lesson settings
     auto_lesson_enabled: Optional[bool] = True
-    auto_lesson_threshold: Optional[int] = 5  # min interactions to trigger
+    auto_lesson_threshold: Optional[int] = 5
+    lesson_threshold: Optional[int] = 5             # N confirmed insights → lesson
+    lesson_trigger_days: Optional[int] = None        # X days since oldest unused insight
     lesson_approval_required: Optional[bool] = True
     # PII settings
     pii_scrubbing_enabled: Optional[bool] = True
     auto_share_scrubbed: Optional[bool] = False
-    # OpenClaw sync
-    openclaw_sync_enabled: Optional[bool] = False
-    openclaw_sync_path: Optional[str] = ""
-    openclaw_sync_type: Optional[str] = "filesystem"  # filesystem, git
-    openclaw_sync_frequency: Optional[int] = 5  # minutes
     # Rate limits
     rate_limit_enabled: Optional[bool] = False
     rate_limit_per_minute: Optional[int] = 60
@@ -184,15 +184,15 @@ class MemorySettingsUpdate(BaseModel):
 class MemorySettingsResponse(BaseModel):
     chunk_size: int
     chunk_overlap: int
+    memory_generation_time: str = "02:00"
+    memory_generation_mode: str = "ner_and_raw"
     auto_lesson_enabled: bool
     auto_lesson_threshold: int
+    lesson_threshold: int = 5
+    lesson_trigger_days: Optional[int] = None
     lesson_approval_required: bool
     pii_scrubbing_enabled: bool
     auto_share_scrubbed: bool
-    openclaw_sync_enabled: bool
-    openclaw_sync_path: str
-    openclaw_sync_type: str
-    openclaw_sync_frequency: int
     rate_limit_enabled: bool
     rate_limit_per_minute: int
     default_agent_access: str
@@ -332,6 +332,8 @@ class EntityTypeConfig(BaseModel):
     lesson_auto_promote: bool = False
     ner_enabled: bool = True
     ner_confidence_threshold: float = 0.5
+    ner_schema: Optional[Dict[str, Any]] = None
+    insight_trigger_days: Optional[int] = None
     embedding_enabled: bool = True
     pii_scrub_lessons: bool = True
     metadata_field_map: Dict[str, str] = {}
@@ -342,6 +344,8 @@ class EntityTypeConfigUpdate(BaseModel):
     lesson_auto_promote: Optional[bool] = None
     ner_enabled: Optional[bool] = None
     ner_confidence_threshold: Optional[float] = None
+    ner_schema: Optional[Dict[str, Any]] = None
+    insight_trigger_days: Optional[int] = None
     embedding_enabled: Optional[bool] = None
     pii_scrub_lessons: Optional[bool] = None
     metadata_field_map: Optional[Dict[str, str]] = None

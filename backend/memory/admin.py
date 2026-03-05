@@ -370,6 +370,10 @@ async def update_entity_type_config(
         fields.append("ner_enabled = %s"); values.append(body.ner_enabled)
     if body.ner_confidence_threshold is not None:
         fields.append("ner_confidence_threshold = %s"); values.append(body.ner_confidence_threshold)
+    if body.ner_schema is not None:
+        fields.append("ner_schema = %s"); values.append(json.dumps(body.ner_schema))
+    if body.insight_trigger_days is not None:
+        fields.append("insight_trigger_days = %s"); values.append(body.insight_trigger_days)
     if body.embedding_enabled is not None:
         fields.append("embedding_enabled = %s"); values.append(body.embedding_enabled)
     if body.pii_scrub_lessons is not None:
