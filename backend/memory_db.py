@@ -113,18 +113,22 @@ def _create_config_tables(cursor):
     """)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS memory_settings (
-            id                      INT PRIMARY KEY CHECK (id = 1),
-            chunk_size              INT DEFAULT 400,
-            chunk_overlap           INT DEFAULT 80,
-            pii_scrubbing_enabled   BOOLEAN DEFAULT FALSE,
-            auto_lesson_enabled     BOOLEAN DEFAULT TRUE,
-            auto_lesson_threshold   INT DEFAULT 5,
-            rate_limit_enabled      BOOLEAN DEFAULT TRUE,
-            rate_limit_per_minute   INT DEFAULT 60,
-            supabase_url            TEXT,
-            supabase_db_url         TEXT,
-            supabase_connected      BOOLEAN DEFAULT FALSE,
-            updated_at              TIMESTAMPTZ DEFAULT NOW()
+            id                          INT PRIMARY KEY CHECK (id = 1),
+            chunk_size                  INT DEFAULT 400,
+            chunk_overlap               INT DEFAULT 80,
+            pii_scrubbing_enabled       BOOLEAN DEFAULT FALSE,
+            auto_lesson_enabled         BOOLEAN DEFAULT TRUE,
+            auto_lesson_threshold       INT DEFAULT 5,
+            rate_limit_enabled          BOOLEAN DEFAULT TRUE,
+            rate_limit_per_minute       INT DEFAULT 60,
+            supabase_url                TEXT,
+            supabase_db_url             TEXT,
+            supabase_connected          BOOLEAN DEFAULT FALSE,
+            memory_generation_time      TEXT DEFAULT '02:00',
+            memory_generation_mode      TEXT DEFAULT 'ner_and_raw',
+            lesson_threshold            INT DEFAULT 5,
+            lesson_trigger_days         INT DEFAULT NULL,
+            updated_at                  TIMESTAMPTZ DEFAULT NOW()
         )
     """)
     cursor.execute("""
@@ -135,10 +139,19 @@ def _create_config_tables(cursor):
             lesson_auto_promote         BOOLEAN DEFAULT FALSE,
             ner_enabled                 BOOLEAN DEFAULT TRUE,
             ner_confidence_threshold    FLOAT DEFAULT 0.5,
+            ner_schema                  JSONB DEFAULT NULL,
+            insight_trigger_days        INT DEFAULT NULL,
             embedding_enabled           BOOLEAN DEFAULT TRUE,
             pii_scrub_lessons           BOOLEAN DEFAULT TRUE,
             metadata_field_map          JSONB DEFAULT '{}',
             updated_at                  TIMESTAMPTZ DEFAULT NOW()
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS memory_job_log (
+            job_name    TEXT PRIMARY KEY,
+            last_run    TIMESTAMPTZ,
+            last_date   DATE
         )
     """)
 
@@ -304,10 +317,30 @@ def _run_migrations(cursor):
         cursor.execute(f"ALTER TABLE memory_llm_configs ADD COLUMN IF NOT EXISTS {col} {col_def}")
 
     # Settings columns
-    try:
-        cursor.execute("ALTER TABLE memory_settings ADD COLUMN IF NOT EXISTS supabase_db_url TEXT")
-    except Exception:
-        pass
+    for col, col_def in [
+        ("supabase_db_url", "TEXT"),
+        ("memory_generation_time", "TEXT DEFAULT '02:00'"),
+        ("memory_generation_mode", "TEXT DEFAULT 'ner_and_raw'"),
+        ("lesson_threshold", "INT DEFAULT 5"),
+        ("lesson_trigger_days", "INT DEFAULT NULL"),
+    ]:
+        cursor.execute(f"ALTER TABLE memory_settings ADD COLUMN IF NOT EXISTS {col} {col_def}")
+
+    # Entity type config columns
+    for col, col_def in [
+        ("ner_schema", "JSONB DEFAULT NULL"),
+        ("insight_trigger_days", "INT DEFAULT NULL"),
+    ]:
+        cursor.execute(f"ALTER TABLE memory_entity_type_config ADD COLUMN IF NOT EXISTS {col} {col_def}")
+
+    # Job log table (safe to CREATE IF NOT EXISTS in migration too)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS memory_job_log (
+            job_name    TEXT PRIMARY KEY,
+            last_run    TIMESTAMPTZ,
+            last_date   DATE
+        )
+    """)
 
     # Memories columns added after initial deploy
     for col, col_def in [
@@ -409,6 +442,10 @@ def _seed_defaults():
 
         # Default system prompts
         prompts = [
+            ("memory_generation", "Default Memory Generator",
+             "You are an AI memory system. Based on the provided interaction data, write a concise "
+             "factual memory record. Focus on key facts, decisions, named entities, and action items. "
+             "Return only the summary text, 2-5 sentences."),
             ("summarization", "Default Summarizer",
              "You are a concise summarizer. Summarize the following interaction in 2-3 sentences, "
              "focusing on key facts, decisions, and action items. Be factual and brief."),

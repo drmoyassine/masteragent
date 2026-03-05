@@ -2,29 +2,34 @@
 memory_tasks.py — Background task loop for the Memory System
 
 Tasks:
-  1. run_daily_memory_generation()
-     - For each entity with pending interactions from yesterday:
-       * Build NER text payload from content + metadata_field_map
-       * Run GLiNER NER (if enabled for entity type)
-       * Summarize (reuse metadata summary_field or call LLM)
-       * Generate embedding
-       * Upsert memory record (one per entity per day)
-       * Mark interactions as done, flush from Redis
-       * Check compaction threshold
+  1. _background_loop()
+     - Schedule-aware: fires at user-configured time (memory_generation_time) once per day
+     - Uses memory_job_log to prevent double-firing
 
-  2. run_compaction_check()
-     - For each entity where uncompacted memory count >= threshold:
-       * Call compact_entity() to generate an Insight
+  2. run_daily_memory_generation()
+     - For each entity with pending interactions older than today:
+       * Build NER text payload and run entity extraction (schema-constrained)
+       * Build LLM context based on memory_generation_mode:
+           'ner_only'     → NER output only → LLM → content_summary
+           'ner_and_raw'  → raw interactions + NER output → LLM → content_summary
+       * Generate embedding for content_summary
+       * Write one memory row per entity per day (once — no upsert if already done)
+       * Check compaction (count + days triggers)
 
   3. compact_entity()
-     - LLM distills N memories into a single Insight (draft)
-     - If entity_type.insight_auto_approve → auto-confirm
+     - Insight generation: N memories → LLM → Insight
 
-  4. promote_to_lesson()
-     - PII scrub + generalize an Insight into a Lesson
+  4. run_lesson_check()
+     - Lesson accumulation: N confirmed insights → PII scrub + LLM → Lesson
 
-  5. check_rate_limit()
+  5. promote_to_lesson()
+     - Keep for manual 1:1 admin promotion of a single insight
+
+  6. check_rate_limit()
      - Per-agent rate limiting (in-memory, single-instance)
+
+Embedding scope: ONLY memories, insights, and lessons are embedded.
+Interactions are never embedded.
 """
 import asyncio
 import json
@@ -43,13 +48,13 @@ from memory_services import (
     get_memory_settings,
     get_system_prompt,
     scrub_pii,
-    summarize_text,
 )
 
 logger = logging.getLogger(__name__)
 
 # ── Rate limiting (per-agent, in-memory) ────────────────────────────────────
 _rate_limit_counters: dict = defaultdict(lambda: {"count": 0, "window_start": None})
+
 
 def check_rate_limit(agent_id: str) -> bool:
     """Return True if agent is within rate limit, False if exceeded."""
@@ -67,6 +72,35 @@ def check_rate_limit(agent_id: str) -> bool:
 
     state["count"] += 1
     return state["count"] <= limit
+
+
+# ── Job log helpers (prevent double-firing) ───────────────────────────────────
+
+def get_job_last_date(job_name: str) -> Optional[date]:
+    """Return the date the job last ran, or None if never."""
+    try:
+        with get_memory_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT last_date FROM memory_job_log WHERE job_name = %s", (job_name,))
+            row = cursor.fetchone()
+            return row["last_date"] if row else None
+    except Exception as e:
+        logger.warning(f"get_job_last_date failed: {e}")
+        return None
+
+
+def set_job_last_date(job_name: str, run_date: date):
+    """Record that a job ran on run_date."""
+    try:
+        with get_memory_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO memory_job_log (job_name, last_run, last_date)
+                VALUES (%s, NOW(), %s)
+                ON CONFLICT (job_name) DO UPDATE SET last_run = NOW(), last_date = EXCLUDED.last_date
+            """, (job_name, run_date))
+    except Exception as e:
+        logger.warning(f"set_job_last_date failed: {e}")
 
 
 # ── Background task loop control ─────────────────────────────────────────────
@@ -97,18 +131,38 @@ async def stop_background_tasks():
 
 async def _background_loop():
     """
-    Main background loop.
-    Runs every 5 minutes:
-      - generate daily memories from pending interactions
-      - check compaction thresholds
+    Schedule-aware main background loop.
+    Wakes every 60 seconds and checks:
+      - Has the configured memory_generation_time passed today?
+      - Has the daily memory job already run today?
+    Fires once per day at the configured time.
     """
     while True:
         try:
-            await run_daily_memory_generation()
-            await run_compaction_check()
+            settings = get_memory_settings()
+            scheduled_time = settings.get("memory_generation_time", "02:00")
+            try:
+                sched_h, sched_m = map(int, scheduled_time.split(":"))
+            except Exception:
+                sched_h, sched_m = 2, 0
+
+            now_utc = datetime.now(timezone.utc)
+            today = now_utc.date()
+
+            # Fire if current time >= scheduled time and job hasn't run today
+            if now_utc.hour > sched_h or (now_utc.hour == sched_h and now_utc.minute >= sched_m):
+                last_date = get_job_last_date("daily_memory_generation")
+                if last_date != today:
+                    logger.info(f"Firing daily memory generation (scheduled={scheduled_time} UTC)")
+                    set_job_last_date("daily_memory_generation", today)  # mark first to prevent race
+                    await run_daily_memory_generation()
+                    await run_compaction_check()
+                    await run_lesson_check()
+
         except Exception as e:
             logger.error(f"Background loop error: {e}", exc_info=True)
-        await asyncio.sleep(300)  # 5 minutes
+
+        await asyncio.sleep(60)  # check every minute
 
 
 # ── Daily Memory Generation ──────────────────────────────────────────────────
@@ -117,11 +171,13 @@ async def run_daily_memory_generation():
     """
     For each entity with pending interactions from yesterday (or older),
     build a NER-enriched, embedded daily memory record.
+    One memory per entity per day — written once (not upserted).
     """
     yesterday = (date.today() - timedelta(days=1)).isoformat()
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
+        # Find entity+date combos with pending interactions
         cursor.execute("""
             SELECT DISTINCT primary_entity_type, primary_entity_id,
                    DATE(timestamp) AS interaction_date
@@ -139,6 +195,23 @@ async def run_daily_memory_generation():
         entity_type = row["primary_entity_type"]
         entity_id = row["primary_entity_id"]
         interaction_date = str(row["interaction_date"])
+
+        # Skip if memory already exists for this entity+date (once-per-day guarantee)
+        with get_memory_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id FROM memories
+                WHERE date = %s AND primary_entity_type = %s AND primary_entity_id = %s
+            """, (interaction_date, entity_type, entity_id))
+            if cursor.fetchone():
+                # Memory exists — still mark interactions as done
+                cursor.execute("""
+                    UPDATE interactions SET status = 'done'
+                    WHERE primary_entity_type = %s AND primary_entity_id = %s
+                      AND DATE(timestamp) = %s AND status = 'pending'
+                """, (entity_type, entity_id, interaction_date))
+                continue
+
         try:
             await _generate_memory_for_entity(entity_type, entity_id, interaction_date)
         except Exception as e:
@@ -148,8 +221,10 @@ async def run_daily_memory_generation():
 async def _generate_memory_for_entity(entity_type: str, entity_id: str, interaction_date: str):
     """Generate a single daily memory record for one entity on one date."""
 
-    # 1. Fetch entity type config
+    # 1. Fetch entity type config + global settings
     config = _get_entity_type_config(entity_type)
+    settings = get_memory_settings()
+    mode = settings.get("memory_generation_mode", "ner_and_raw")
 
     # 2. Fetch all pending interactions for this entity+date
     with get_memory_db_context() as conn:
@@ -170,10 +245,10 @@ async def _generate_memory_for_entity(entity_type: str, entity_id: str, interact
 
     interaction_ids = [i["id"] for i in interactions]
 
-    # 3. Build NER text payload from content + metadata
+    # 3. Build NER text payload
     ner_payload = _build_ner_text_payload(interactions)
 
-    # 4. NER extraction (if enabled for this entity type)
+    # 4. NER extraction (schema-constrained if configured)
     related_entities = []
     intents = []
     relationships = []
@@ -181,9 +256,11 @@ async def _generate_memory_for_entity(entity_type: str, entity_id: str, interact
     if config.get("ner_enabled", True):
         try:
             threshold = config.get("ner_confidence_threshold", 0.5)
+            ner_schema = config.get("ner_schema")  # None = use defaults
             ner_results = await extract_entities(
                 ner_payload,
-                confidence_threshold=threshold
+                confidence_threshold=threshold,
+                ner_schema=ner_schema,
             )
             related_entities = ner_results.get("entities", [])
             intents = ner_results.get("intents", [])
@@ -191,97 +268,112 @@ async def _generate_memory_for_entity(entity_type: str, entity_id: str, interact
         except Exception as e:
             logger.warning(f"NER failed for {entity_type}/{entity_id}: {e}")
 
-    # 5. Summarization (token-gated: reuse metadata summary if present)
-    content_summary = _extract_metadata_summary(interactions)
-    if not content_summary:
-        combined_text = "\n\n".join(i["content"] for i in interactions if i["content"])
-        if combined_text:
-            content_summary = await summarize_text(combined_text)
+    # 5. Build LLM context based on mode
+    #    'ner_only'    → feed only NER structured output to LLM
+    #    'ner_and_raw' → feed raw interaction content + NER output to LLM
+    ner_summary = _format_ner_output(related_entities, intents, relationships)
 
-    # 6. Embedding
+    if mode == "ner_only":
+        llm_context = (
+            f"Entity: {entity_type} / {entity_id}\n"
+            f"Date: {interaction_date}\n"
+            f"Interaction count: {len(interactions)}\n\n"
+            f"--- Extracted Signals ---\n{ner_summary}"
+        )
+    else:  # "ner_and_raw" (default)
+        raw_text = "\n\n---\n\n".join(
+            i["content"] for i in interactions if i.get("content")
+        )
+        llm_context = (
+            f"Entity: {entity_type} / {entity_id}\n"
+            f"Date: {interaction_date}\n"
+            f"Interaction count: {len(interactions)}\n\n"
+            f"--- Raw Interactions ---\n{raw_text}\n\n"
+            f"--- Extracted Signals ---\n{ner_summary}"
+        )
+
+    # 6. LLM generates memory content_summary
+    DEFAULT_MEMORY_PROMPT = (
+        "You are an AI memory system. Based on the provided interaction data, write a concise "
+        "factual memory record. Focus on key facts, decisions, named entities, and action items. "
+        "Return only the summary text, 2-5 sentences."
+    )
+    system_prompt = get_system_prompt("memory_generation") or DEFAULT_MEMORY_PROMPT
+    content_summary = ""
+    try:
+        content_summary = await call_llm(
+            llm_context[:8000],
+            system_prompt=system_prompt,
+            max_tokens=400,
+            task_type="summarization",
+        )
+    except Exception as e:
+        logger.warning(f"Memory LLM call failed for {entity_type}/{entity_id}: {e}")
+
+    # 7. Embedding (memories only — no interaction embedding)
     embedding = None
     if config.get("embedding_enabled", True) and content_summary:
         try:
-            embedding = await generate_embedding(content_summary)
+            embed_text = content_summary
+            if related_entities or intents:
+                entity_names = ", ".join(
+                    e.get("name", "") for e in related_entities if isinstance(e, dict)
+                )
+                signals = ", ".join(intents)
+                embed_text = f"{content_summary}\nEntities: {entity_names}\nSignals: {signals}"
+            embedding = await generate_embedding(embed_text)
         except Exception as e:
             logger.warning(f"Embedding failed for {entity_type}/{entity_id}: {e}")
 
-    # 7. Upsert memory (one per entity per day — ON CONFLICT UPDATE)
+    # 8. Write memory (INSERT only — skip if exists, checked above)
+    memory_id = str(uuid.uuid4())
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-
-        # Check if memory already exists for this entity+date
-        cursor.execute("""
-            SELECT id, interaction_ids, interaction_count
-            FROM memories
-            WHERE date = %s AND primary_entity_type = %s AND primary_entity_id = %s
-        """, (interaction_date, entity_type, entity_id))
-        existing = cursor.fetchone()
-
-        if existing:
-            # Merge interaction IDs
-            existing_ids = list(existing["interaction_ids"] or [])
-            merged_ids = list(set(existing_ids + interaction_ids))
-            vec_expr = "embedding = %s, " if embedding else ""
-            vec_params = [embedding] if embedding else []
-            cursor.execute(f"""
-                UPDATE memories
-                SET interaction_ids = %s, interaction_count = %s,
-                    content_summary = %s, related_entities = %s,
-                    intents = %s, relationships = %s,
-                    {vec_expr}updated_at = NOW()
-                WHERE id = %s
-            """, [
-                merged_ids, len(merged_ids),
-                content_summary,
-                json.dumps(related_entities),
-                intents,
-                json.dumps(relationships),
-            ] + vec_params + [existing["id"]])
-            memory_id = existing["id"]
+        if embedding:
+            cursor.execute("""
+                INSERT INTO memories (
+                    id, date, primary_entity_type, primary_entity_id,
+                    interaction_ids, interaction_count, content_summary,
+                    related_entities, intents, relationships, embedding
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (date, primary_entity_type, primary_entity_id) DO NOTHING
+            """, (
+                memory_id, interaction_date, entity_type, entity_id,
+                interaction_ids, len(interaction_ids), content_summary,
+                json.dumps(related_entities), intents,
+                json.dumps(relationships), embedding,
+            ))
         else:
-            memory_id = str(uuid.uuid4())
-            if embedding:
-                cursor.execute("""
-                    INSERT INTO memories (
-                        id, date, primary_entity_type, primary_entity_id,
-                        interaction_ids, interaction_count, content_summary,
-                        related_entities, intents, relationships, embedding
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """, (
-                    memory_id, interaction_date, entity_type, entity_id,
-                    interaction_ids, len(interaction_ids), content_summary,
-                    json.dumps(related_entities), intents,
-                    json.dumps(relationships), embedding,
-                ))
-            else:
-                cursor.execute("""
-                    INSERT INTO memories (
-                        id, date, primary_entity_type, primary_entity_id,
-                        interaction_ids, interaction_count, content_summary,
-                        related_entities, intents, relationships
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """, (
-                    memory_id, interaction_date, entity_type, entity_id,
-                    interaction_ids, len(interaction_ids), content_summary,
-                    json.dumps(related_entities), intents,
-                    json.dumps(relationships),
-                ))
+            cursor.execute("""
+                INSERT INTO memories (
+                    id, date, primary_entity_type, primary_entity_id,
+                    interaction_ids, interaction_count, content_summary,
+                    related_entities, intents, relationships
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (date, primary_entity_type, primary_entity_id) DO NOTHING
+            """, (
+                memory_id, interaction_date, entity_type, entity_id,
+                interaction_ids, len(interaction_ids), content_summary,
+                json.dumps(related_entities), intents,
+                json.dumps(relationships),
+            ))
 
-        # 8. Mark interactions as done
+        # 9. Mark interactions as done
         cursor.execute("""
             UPDATE interactions SET status = 'done'
             WHERE id = ANY(%s)
         """, (interaction_ids,))
 
-    # 9. Flush from Redis
+    # 10. Flush from Redis
     for iid in interaction_ids:
         flush_interaction_cache(iid)
 
-    logger.info(f"Generated memory {memory_id} for {entity_type}/{entity_id} on {interaction_date} "
-                f"({len(interaction_ids)} interactions)")
+    logger.info(
+        f"Generated memory {memory_id} for {entity_type}/{entity_id} on {interaction_date} "
+        f"({len(interaction_ids)} interactions, mode={mode})"
+    )
 
-    # 10. Check compaction threshold
+    # 11. Check compaction threshold
     await _check_compaction_trigger(entity_type, entity_id, config)
 
 
@@ -302,28 +394,47 @@ async def run_compaction_check():
     for row in entities:
         entity_type = row["primary_entity_type"]
         entity_id = row["primary_entity_id"]
-        count = row["uncompacted_count"]
         config = _get_entity_type_config(entity_type)
-        threshold = config.get("compaction_threshold", 10)
-        if count >= threshold:
-            try:
-                await compact_entity(entity_type, entity_id)
-            except Exception as e:
-                logger.error(f"Compaction failed for {entity_type}/{entity_id}: {e}")
+        try:
+            await _check_compaction_trigger(entity_type, entity_id, config)
+        except Exception as e:
+            logger.error(f"Compaction check failed for {entity_type}/{entity_id}: {e}")
 
 
 async def _check_compaction_trigger(entity_type: str, entity_id: str, config: dict):
-    """Check whether compaction should trigger for this entity right now."""
+    """
+    Check whether compaction should trigger for this entity.
+    Fires if:
+      - Uncompacted memory count >= compaction_threshold (count trigger), OR
+      - insight_trigger_days is set AND oldest uncompacted memory is >= that many days old
+        (minimum 2 memories to avoid generating insights from a single data point)
+    """
     threshold = config.get("compaction_threshold", 10)
+    trigger_days = config.get("insight_trigger_days")
+
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT COUNT(*) as cnt FROM memories
+            SELECT COUNT(*) as cnt, MIN(date) as oldest_date
+            FROM memories
             WHERE primary_entity_type = %s AND primary_entity_id = %s AND compacted = FALSE
         """, (entity_type, entity_id))
-        count = cursor.fetchone()["cnt"]
+        row = cursor.fetchone()
 
-    if count >= threshold:
+    count = row["cnt"]
+    oldest_date = row["oldest_date"]
+
+    count_trigger = count >= threshold
+    days_trigger = (
+        trigger_days is not None
+        and oldest_date is not None
+        and (date.today() - oldest_date).days >= trigger_days
+        and count >= 2
+    )
+
+    if count_trigger or days_trigger:
+        reason = "count" if count_trigger else "days"
+        logger.info(f"Compaction trigger ({reason}) for {entity_type}/{entity_id}: {count} memories, oldest={oldest_date}")
         await compact_entity(entity_type, entity_id)
 
 
@@ -332,6 +443,7 @@ async def _check_compaction_trigger(entity_type: str, entity_id: str, config: di
 async def compact_entity(entity_type: str, entity_id: str):
     """
     Generate an Insight from the N most recent uncompacted memories.
+    Embedding is generated for the insight (not for interactions).
     """
     config = _get_entity_type_config(entity_type)
     threshold = config.get("compaction_threshold", 10)
@@ -353,17 +465,17 @@ async def compact_entity(entity_type: str, entity_id: str):
 
     memory_ids = [m["id"] for m in memories]
 
-    # Build LLM context
+    # Build LLM context from memory summaries
     context_parts = []
     for m in memories:
         related = m.get("related_entities") or []
         if isinstance(related, str):
             related = json.loads(related)
-        intents = m.get("intents") or []
+        signals = m.get("intents") or []
         context_parts.append(
             f"[{m['date']}] {m.get('content_summary', '')}\n"
             f"  Entities: {', '.join(e.get('name', '') for e in related if isinstance(e, dict))}\n"
-            f"  Signals: {', '.join(intents)}"
+            f"  Signals: {', '.join(signals)}"
         )
 
     context = "\n\n".join(context_parts)
@@ -399,7 +511,7 @@ async def compact_entity(entity_type: str, entity_id: str):
     if not content:
         return
 
-    # Generate embedding for insight
+    # Generate embedding for the insight
     embedding = None
     try:
         embedding = await generate_embedding(f"{name}. {summary or content}")
@@ -413,7 +525,6 @@ async def compact_entity(entity_type: str, entity_id: str):
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-
         if embedding:
             cursor.execute("""
                 INSERT INTO insights (
@@ -447,17 +558,154 @@ async def compact_entity(entity_type: str, entity_id: str):
 
     logger.info(f"Created insight {insight_id} ({status}) for {entity_type}/{entity_id} from {len(memory_ids)} memories")
 
-    # Auto-promote to lesson if configured
-    lesson_auto_promote = config.get("lesson_auto_promote", False)
-    if auto_approve and lesson_auto_promote:
-        await promote_to_lesson(insight_id)
+
+# ── Lesson Check: Accumulation-Based ─────────────────────────────────────────
+
+async def run_lesson_check():
+    """
+    Check if enough confirmed insights have accumulated to generate a lesson.
+    Triggers on count (lesson_threshold) OR days since oldest unused insight (lesson_trigger_days).
+    Mirrors the memory → insight compaction pattern.
+    """
+    settings = get_memory_settings()
+    threshold = settings.get("lesson_threshold", 5)
+    trigger_days = settings.get("lesson_trigger_days")
+
+    # Find confirmed insights not yet used in any lesson
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT i.id, i.name, i.content, i.summary, i.insight_type, i.created_at
+            FROM insights i
+            WHERE i.status = 'confirmed'
+              AND NOT EXISTS (
+                  SELECT 1 FROM lessons l
+                  WHERE i.id = ANY(l.source_insight_ids)
+              )
+            ORDER BY i.created_at ASC
+        """)
+        unused_insights = [dict(r) for r in cursor.fetchall()]
+
+    count = len(unused_insights)
+    if count == 0:
+        return
+
+    oldest_dt = unused_insights[0].get("created_at")
+    oldest_date = oldest_dt.date() if hasattr(oldest_dt, "date") else None
+
+    count_trigger = count >= threshold
+    days_trigger = (
+        trigger_days is not None
+        and oldest_date is not None
+        and (date.today() - oldest_date).days >= trigger_days
+        and count >= 2
+    )
+
+    if not (count_trigger or days_trigger):
+        return
+
+    reason = "count" if count_trigger else "days"
+    logger.info(f"Lesson trigger ({reason}): {count} unused confirmed insights")
+    batch = unused_insights[:threshold] if count_trigger else unused_insights
+    await generate_lesson_from_insights(batch)
 
 
-# ── Lesson Promotion ─────────────────────────────────────────────────────────
+async def generate_lesson_from_insights(insights: list):
+    """
+    Generate a Lesson from a batch of confirmed insights.
+    Steps: PII scrub each insight → build LLM context → generalize → embed → write.
+    """
+    if not insights:
+        return
+
+    # PII scrub all insight content before using as LLM context
+    scrubbed_parts = []
+    for ins in insights:
+        content = ins.get("content", "")
+        summary = ins.get("summary", "")
+        try:
+            content = await scrub_pii(content)
+            summary = await scrub_pii(summary) if summary else ""
+        except Exception as e:
+            logger.warning(f"PII scrub failed for insight {ins['id']}: {e}")
+        scrubbed_parts.append(
+            f"[{ins.get('insight_type', 'other')}] {ins.get('name', '')}\n{content}"
+        )
+
+    context = "\n\n---\n\n".join(scrubbed_parts)
+    insight_ids = [ins["id"] for ins in insights]
+
+    system_prompt = (
+        "You are an AI knowledge curator. The following are de-identified insights from multiple interactions. "
+        "Synthesize them into a single generalizable lesson — a durable, reusable piece of knowledge "
+        "applicable beyond any specific entity. Remove all specific names. "
+        "Return JSON: {\"name\": \"...\", \"lesson_type\": \"...\", \"content\": \"...\", \"summary\": \"...\", \"tags\": [...]}\n"
+        "lesson_type must be one of: process, risk, sales, product, support, other"
+    )
+
+    try:
+        result_text = await call_llm(
+            context[:8000],
+            system_prompt=system_prompt,
+            max_tokens=600,
+            task_type="summarization",
+        )
+        result = json.loads(result_text)
+    except Exception as e:
+        logger.error(f"Lesson generation LLM call failed: {e}")
+        return
+
+    name = result.get("name", "Unnamed Lesson")
+    lesson_type = result.get("lesson_type", "other")
+    content = result.get("content", "")
+    summary = result.get("summary", "")
+    tags = result.get("tags", [])
+
+    if not content:
+        return
+
+    # Embed the lesson
+    embedding = None
+    try:
+        embedding = await generate_embedding(f"{name}. {summary or content}")
+    except Exception as e:
+        logger.warning(f"Lesson embedding failed: {e}")
+
+    lesson_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        if embedding:
+            cursor.execute("""
+                INSERT INTO lessons (
+                    id, source_insight_ids, lesson_type, name, content, summary,
+                    embedding, visibility, tags, created_at, updated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                lesson_id, insight_ids, lesson_type, name, content, summary,
+                embedding, "shared", tags, now, now,
+            ))
+        else:
+            cursor.execute("""
+                INSERT INTO lessons (
+                    id, source_insight_ids, lesson_type, name, content, summary,
+                    visibility, tags, created_at, updated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                lesson_id, insight_ids, lesson_type, name, content, summary,
+                "shared", tags, now, now,
+            ))
+
+    logger.info(f"Generated lesson {lesson_id} from {len(insight_ids)} insights")
+
+
+# ── Lesson Promotion (Manual 1:1 admin use) ───────────────────────────────────
 
 async def promote_to_lesson(insight_id: str):
     """
-    PII scrub + generalize an Insight and write it as a Lesson.
+    PII scrub + generalize a single Insight and write it as a Lesson.
+    Kept for manual admin promotion — not used by the automatic lesson accumulation path.
     """
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -482,18 +730,13 @@ async def promote_to_lesson(insight_id: str):
     except Exception as e:
         logger.warning(f"PII scrub failed for insight {insight_id}: {e}")
 
-    # Generalize (remove entity-specific references)
-    system_prompt = (
+    # Generalize entity names
+    generalize_prompt = (
         "You are an AI editor. Remove all specific entity names, organization names, and other "
         "identifying information from the following text, replacing with generic terms (e.g., 'the client', "
         "'the institution'). Preserve the insight's meaning. Return only the edited text."
     )
     try:
-        generalize_prompt = (
-            "You are an AI editor. Remove all specific entity names, organization names, and other "
-            "identifying information from the following text, replacing with generic terms (e.g., 'the client', "
-            "'the institution'). Preserve the insight's meaning. Return only the edited text."
-        )
         content = await call_llm(
             content,
             system_prompt=generalize_prompt,
@@ -566,31 +809,33 @@ def _get_entity_type_config(entity_type: str) -> dict:
         "lesson_auto_promote": False,
         "ner_enabled": True,
         "ner_confidence_threshold": 0.5,
+        "ner_schema": None,
+        "insight_trigger_days": None,
         "embedding_enabled": True,
         "pii_scrub_lessons": True,
         "metadata_field_map": {},
     }
 
 
-def _extract_metadata_summary(interactions: list) -> Optional[str]:
-    """
-    Try to extract a pre-computed summary from interaction metadata
-    using the metadata_field_map. Avoids an LLM call if summary exists.
-    """
-    for interaction in interactions:
-        field_map = interaction.get("metadata_field_map") or {}
-        if isinstance(field_map, str):
-            field_map = json.loads(field_map)
-        metadata = interaction.get("metadata") or {}
-        if isinstance(metadata, str):
-            metadata = json.loads(metadata)
-
-        summary_field = field_map.get("summary_field") or "ai_summary"
-        value = metadata.get(summary_field)
-        if value and isinstance(value, str) and len(value.strip()) > 20:
-            return value.strip()
-
-    return None
+def _format_ner_output(entities: list, intents: list, relationships: list) -> str:
+    """Format NER output as readable text for LLM context."""
+    parts = []
+    if entities:
+        entity_lines = [
+            f"  - {e.get('name', '?')} ({e.get('entity_type', '?')}, role: {e.get('role', '?')})"
+            for e in entities if isinstance(e, dict)
+        ]
+        parts.append("Entities:\n" + "\n".join(entity_lines))
+    if intents:
+        parts.append("Signals: " + ", ".join(intents))
+    if relationships:
+        rel_lines = [
+            f"  - {r.get('from', '?')} → {r.get('relation', '?')} → {r.get('to', '?')}"
+            for r in relationships if isinstance(r, dict)
+        ]
+        if rel_lines:
+            parts.append("Relationships:\n" + "\n".join(rel_lines))
+    return "\n".join(parts) if parts else "(no structured signals extracted)"
 
 
 def _build_ner_text_payload(interactions: list) -> str:
@@ -616,7 +861,6 @@ def _build_ner_text_payload(interactions: list) -> str:
                 if field_name and metadata.get(field_name):
                     meta_text_parts.append(str(metadata[field_name]))
         else:
-            # Fallback: concatenate all string leaf values
             meta_text_parts = [
                 str(v) for v in metadata.values()
                 if isinstance(v, str) and len(v) > 2

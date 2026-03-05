@@ -147,7 +147,10 @@ async def parse_document(file_content: bytes, filename: str, mime_type: str) -> 
 
 # ── Entity Extraction ──────────────────────────────────────────────────────────
 
-async def extract_entities_gliner(text: str, confidence_threshold: float = 0.5) -> dict:
+DEFAULT_NER_LABELS = ["person", "organization", "location", "product", "event", "date"]
+
+
+async def extract_entities_gliner(text: str, confidence_threshold: float = 0.5, ner_schema: dict = None) -> dict:
     """Extract entities using GLiNER NER service."""
     config = get_llm_config("entity_extraction")
     if not config or config.get("provider") != "gliner":
@@ -155,7 +158,10 @@ async def extract_entities_gliner(text: str, confidence_threshold: float = 0.5) 
 
     gliner_url = config.get("api_base_url", GLINER_URL)
     threshold = config.get("extra_config", {}).get("threshold", confidence_threshold)
-    labels = ["person", "organization", "location", "product", "event", "date"]
+    labels = (
+        ner_schema.get("labels", DEFAULT_NER_LABELS)
+        if ner_schema else DEFAULT_NER_LABELS
+    )
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -184,13 +190,20 @@ async def extract_entities_gliner(text: str, confidence_threshold: float = 0.5) 
     return _EMPTY_EXTRACTION
 
 
-async def extract_entities_llm(text: str, confidence_threshold: float = 0.5) -> dict:
+async def extract_entities_llm(text: str, confidence_threshold: float = 0.5, ner_schema: dict = None) -> dict:
     """Extract entities using LLM fallback."""
     prompt_template = get_system_prompt("entity_extraction")
     if not prompt_template:
         return _EMPTY_EXTRACTION
+    if ner_schema and ner_schema.get("labels"):
+        labels_str = ", ".join(ner_schema["labels"])
+        prompt_template = (
+            f"Extract named entities from the text. Focus only on these types: {labels_str}.\n"
+            "Return a JSON array: [{\"entity_id\": \"uuid\", \"entity_type\": \"...\", "
+            "\"name\": \"...\", \"role\": \"...\"}]"
+        )
     response = await call_llm(
-        text[:4000], system_prompt=prompt_template, max_tokens=500, task_type="summarization"
+        text[:4000], system_prompt=prompt_template, max_tokens=500, task_type="entity_extraction"
     )
     try:
         parsed = json.loads(response)
@@ -201,14 +214,15 @@ async def extract_entities_llm(text: str, confidence_threshold: float = 0.5) -> 
     return _EMPTY_EXTRACTION
 
 
-async def extract_entities(text: str, confidence_threshold: float = 0.5) -> dict:
+async def extract_entities(text: str, confidence_threshold: float = 0.5, ner_schema: dict = None) -> dict:
     """
     Extract entity mentions from text using configured extractor (GLiNER or LLM).
+    Pass ner_schema to constrain extraction to specific labels.
     Returns dict: {entities: [...], intents: [...], relationships: [...]}
     """
     if not text:
         return _EMPTY_EXTRACTION
     config = get_llm_config("entity_extraction")
     if config and config.get("provider") == "gliner":
-        return await extract_entities_gliner(text, confidence_threshold=confidence_threshold)
-    return await extract_entities_llm(text, confidence_threshold=confidence_threshold)
+        return await extract_entities_gliner(text, confidence_threshold=confidence_threshold, ner_schema=ner_schema)
+    return await extract_entities_llm(text, confidence_threshold=confidence_threshold, ner_schema=ner_schema)
