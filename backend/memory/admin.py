@@ -24,7 +24,7 @@ from memory_models import (
     InsightCreate, InsightResponse, InsightUpdate,
     LessonCreate, LessonResponse, LessonUpdate,
     EntityTypeConfig, EntityTypeConfigUpdate,
-    InteractionResponse,
+    InteractionResponse, TimelineEntry,
 )
 from memory.auth import require_admin_auth
 
@@ -439,6 +439,47 @@ async def trigger_lesson_check(admin: dict = Depends(require_admin_auth)):
 # INTERACTIONS (read-only in admin)
 # ============================================================
 
+@router.get("/admin/timeline/{entity_type}/{entity_id}")
+async def admin_get_timeline(
+    entity_type: str,
+    entity_id: str,
+    limit: int = Query(50, le=200),
+    offset: int = Query(0),
+    admin: dict = Depends(require_admin_auth)
+):
+    """Admin endpoint to fetch the raw interaction timeline for an entity."""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT id, timestamp, interaction_type, content, source, status, created_at
+            FROM interactions
+            WHERE primary_entity_type = %s AND primary_entity_id = %s
+            ORDER BY timestamp DESC
+            LIMIT %s OFFSET %s
+        """, (entity_type, entity_id, limit, offset))
+        rows = cursor.fetchall()
+
+        cursor.execute("""
+            SELECT COUNT(*) as total FROM interactions 
+            WHERE primary_entity_type = %s AND primary_entity_id = %s
+        """, (entity_type, entity_id))
+        total = cursor.fetchone()["total"]
+
+    entries = [
+        TimelineEntry(
+            id=row["id"],
+            timestamp=str(row["timestamp"]),
+            interaction_type=row["interaction_type"],
+            content_preview=(row["content"] or "")[:200],
+            source=row["source"],
+            status=row["status"],
+        )
+        for row in rows
+    ]
+
+    return {"entries": entries, "total": total, "entity_type": entity_type, "entity_id": entity_id}
+    
 @router.get("/interactions")
 async def list_interactions(
     entity_type: Optional[str] = Query(None),
