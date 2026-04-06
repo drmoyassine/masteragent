@@ -79,7 +79,7 @@ class FetchModelsRequest(BaseModel):
     provider: str
     api_key: Optional[str] = ""
     api_base_url: Optional[str] = ""
-    config_id: Optional[str] = None  # If set, backend looks up stored key as fallback
+    provider_id: Optional[str] = None  # If set, backend looks up stored key as fallback
 
 class FetchModelsResponse(BaseModel):
     models: List[str]
