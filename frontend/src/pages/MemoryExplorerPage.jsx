@@ -171,7 +171,7 @@ export default function MemoryExplorerPage() {
     setLoading(true);
     try {
       const res = await getTimeline(selectedEntityType, entityId);
-      setTimeline(res.data || []);
+      setTimeline(res.data?.entries || []);
     } catch (error) {
       toast.error("Failed to load timeline");
       setTimeline([]);
@@ -407,36 +407,32 @@ export default function MemoryExplorerPage() {
                 <ScrollArea className="h-[500px]">
                   <div className="space-y-3">
                     {searchResults.map((result) => {
-                      const ChannelIcon = CHANNEL_ICONS[result.channel] || MessageSquare;
+                      const ChannelIcon = CHANNEL_ICONS[result.layer] || MessageSquare;
                       return (
                         <div
                           key={result.id}
                           className="p-4 border rounded-lg hover:bg-accent/50 cursor-pointer transition-colors"
-                          onClick={() => loadMemoryDetail(result.memory_id)}
+                          onClick={() => loadMemoryDetail(result.id)}
                           data-testid={`search-result-${result.id}`}
                         >
                           <div className="flex items-start justify-between">
                             <div className="flex items-center gap-2">
                               <ChannelIcon className="w-4 h-4 text-muted-foreground" />
-                              <Badge variant="outline">{result.channel}</Badge>
+                              <Badge variant="outline">{result.layer}</Badge>
                               <span className="text-sm text-muted-foreground">
-                                {format(new Date(result.timestamp), "MMM d, yyyy h:mm a")}
+                                {format(new Date(result.created_at || new Date()), "MMM d, yyyy h:mm a")}
                               </span>
                             </div>
                             <Badge variant="secondary">{(result.score * 100).toFixed(0)}% match</Badge>
                           </div>
-                          <p className="mt-2 text-sm line-clamp-3">{result.text}</p>
-                          {result.entities?.length > 0 && (
+                          {result.name && <h4 className="mt-2 font-medium">{result.name}</h4>}
+                          <p className={`text-sm line-clamp-3 ${result.name ? 'mt-1' : 'mt-2'}`}>{result.snippet}</p>
+                          {(result.entity_type || result.entity_id) && (
                             <div className="mt-2 flex flex-wrap gap-1">
-                              {result.entities.map((entity, i) => {
-                                const EntityIcon = ENTITY_ICONS[entity.type] || User;
-                                return (
-                                  <Badge key={i} variant="outline" className="text-xs">
-                                    <EntityIcon className="w-3 h-3 mr-1" />
-                                    {entity.name}
-                                  </Badge>
-                                );
-                              })}
+                              <Badge variant="outline" className="text-xs">
+                                <User className="w-3 h-3 mr-1" />
+                                {result.entity_type} / {result.entity_id}
+                              </Badge>
                             </div>
                           )}
                         </div>
@@ -497,19 +493,19 @@ export default function MemoryExplorerPage() {
                 <ScrollArea className="h-[500px]">
                   <div className="relative border-l-2 border-muted ml-4 space-y-6">
                     {timeline.map((entry, i) => {
-                      const ChannelIcon = CHANNEL_ICONS[entry.channel] || MessageSquare;
+                      const ChannelIcon = CHANNEL_ICONS[entry.source] || MessageSquare;
                       return (
                         <div key={entry.id} className="relative pl-6">
                           <div className="absolute -left-2 top-1 w-4 h-4 rounded-full bg-primary" />
                           <div className="p-4 border rounded-lg">
                             <div className="flex items-center gap-2 mb-2">
                               <ChannelIcon className="w-4 h-4" />
-                              <Badge variant="outline">{entry.channel}</Badge>
+                              <Badge variant="outline">{entry.source || entry.interaction_type || "unknown"}</Badge>
                               <span className="text-sm text-muted-foreground">
                                 {format(new Date(entry.timestamp), "MMM d, yyyy h:mm a")}
                               </span>
                             </div>
-                            <p className="text-sm">{entry.summary_text || entry.raw_text?.slice(0, 200)}</p>
+                            <p className="text-sm whitespace-pre-wrap">{entry.content_preview}</p>
                           </div>
                         </div>
                       );
@@ -551,7 +547,6 @@ export default function MemoryExplorerPage() {
                 <ScrollArea className="h-[500px]">
                   <div className="space-y-3">
                     {dailyMemories.map((memory) => {
-                      const ChannelIcon = CHANNEL_ICONS[memory.channel] || MessageSquare;
                       return (
                         <div
                           key={memory.id}
@@ -559,19 +554,13 @@ export default function MemoryExplorerPage() {
                           onClick={() => loadMemoryDetail(memory.id)}
                         >
                           <div className="flex items-center gap-2 mb-2">
-                            <ChannelIcon className="w-4 h-4" />
-                            <Badge variant="outline">{memory.channel}</Badge>
+                            <Database className="w-4 h-4 text-muted-foreground" />
+                            <Badge variant="outline">{memory.interaction_count} Interactions</Badge>
                             <span className="text-sm text-muted-foreground">
-                              {format(new Date(memory.timestamp), "h:mm a")}
+                              {format(new Date(memory.created_at || memory.date), "h:mm a")}
                             </span>
-                            {memory.has_documents && (
-                              <Badge variant="secondary">
-                                <FileText className="w-3 h-3 mr-1" />
-                                Attachments
-                              </Badge>
-                            )}
                           </div>
-                          <p className="text-sm line-clamp-2">{memory.summary_text || memory.raw_text?.slice(0, 150)}</p>
+                          <p className="text-sm line-clamp-2">{memory.content_summary || "No summary available"}</p>
                         </div>
                       );
                     })}
@@ -667,55 +656,44 @@ export default function MemoryExplorerPage() {
           {selectedMemory && (
             <div className="space-y-4">
               <div className="flex items-center gap-2">
-                <Badge variant="outline">{selectedMemory.channel}</Badge>
+                <Badge variant="outline">Memory Object</Badge>
                 <span className="text-sm text-muted-foreground">
-                  {format(new Date(selectedMemory.timestamp), "MMMM d, yyyy h:mm a")}
+                  {format(new Date(selectedMemory.created_at || new Date()), "MMMM d, yyyy h:mm a")}
                 </span>
               </div>
 
-              {selectedMemory.summary_text && (
+              {selectedMemory.content_summary && (
                 <div>
                   <Label className="text-xs text-muted-foreground">Summary</Label>
-                  <p className="mt-1 p-3 bg-muted rounded-lg text-sm">{selectedMemory.summary_text}</p>
+                  <p className="mt-1 p-3 bg-muted rounded-lg text-sm">{selectedMemory.content_summary}</p>
                 </div>
               )}
 
-              <div>
-                <Label className="text-xs text-muted-foreground">Full Text</Label>
-                <ScrollArea className="h-48 mt-1 p-3 bg-muted rounded-lg">
-                  <p className="text-sm whitespace-pre-wrap">{selectedMemory.raw_text}</p>
-                </ScrollArea>
-              </div>
-
-              {selectedMemory.entities?.length > 0 && (
+              {selectedMemory.intents?.length > 0 && (
                 <div>
-                  <Label className="text-xs text-muted-foreground">Related Entities</Label>
+                  <Label className="text-xs text-muted-foreground">Intents Detected</Label>
                   <div className="flex flex-wrap gap-2 mt-1">
-                    {selectedMemory.entities.map((entity, i) => {
-                      const EntityIcon = ENTITY_ICONS[entity.type] || User;
-                      return (
-                        <Badge key={i} variant="secondary">
-                          <EntityIcon className="w-3 h-3 mr-1" />
-                          {entity.name}
-                          <span className="ml-1 text-xs opacity-70">({entity.role})</span>
-                        </Badge>
-                      );
-                    })}
+                    {selectedMemory.intents.map((intent, i) => (
+                      <Badge key={i} variant="secondary">
+                        {intent}
+                      </Badge>
+                    ))}
                   </div>
                 </div>
               )}
 
-              {selectedMemory.documents?.length > 0 && (
+              {selectedMemory.related_entities?.length > 0 && (
                 <div>
-                  <Label className="text-xs text-muted-foreground">Attachments</Label>
-                  <div className="space-y-2 mt-1">
-                    {selectedMemory.documents.map((doc) => (
-                      <div key={doc.id} className="flex items-center gap-2 p-2 bg-muted rounded">
-                        <FileText className="w-4 h-4" />
-                        <span className="text-sm">{doc.filename}</span>
-                        <span className="text-xs text-muted-foreground">({(doc.file_size / 1024).toFixed(1)} KB)</span>
-                      </div>
-                    ))}
+                  <Label className="text-xs text-muted-foreground">Related Entities</Label>
+                  <div className="flex flex-wrap gap-2 mt-1">
+                    {selectedMemory.related_entities.map((entity, i) => {
+                      return (
+                        <Badge key={i} variant="outline">
+                          <User className="w-3 h-3 mr-1" />
+                          {entity}
+                        </Badge>
+                      );
+                    })}
                   </div>
                 </div>
               )}
