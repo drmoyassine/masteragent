@@ -267,10 +267,10 @@ async def create_system_prompt(data: SystemPromptCreate, user: dict = Depends(re
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         if data.is_active:
-            cursor.execute("UPDATE memory_system_prompts SET is_active = 0 WHERE prompt_type = %s", (data.prompt_type,))
+            cursor.execute("UPDATE memory_system_prompts SET is_active = FALSE WHERE prompt_type = %s", (data.prompt_type,))
         cursor.execute(
             "INSERT INTO memory_system_prompts (id, prompt_type, name, prompt_text, is_active, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-            (prompt_id, data.prompt_type, data.name, data.prompt_text, 1 if data.is_active else 0, now, now)
+            (prompt_id, data.prompt_type, data.name, data.prompt_text, bool(data.is_active), now, now)
         )
         cursor.execute("SELECT * FROM memory_system_prompts WHERE id = %s", (prompt_id,))
         result = dict(cursor.fetchone())
@@ -287,10 +287,10 @@ async def update_system_prompt(prompt_id: str, data: SystemPromptCreate, user: d
         if not current:
             raise HTTPException(status_code=404, detail="Prompt not found")
         if data.is_active:
-            cursor.execute("UPDATE memory_system_prompts SET is_active = 0 WHERE prompt_type = %s AND id != %s", (data.prompt_type, prompt_id))
+            cursor.execute("UPDATE memory_system_prompts SET is_active = FALSE WHERE prompt_type = %s AND id != %s", (data.prompt_type, prompt_id))
         cursor.execute(
             "UPDATE memory_system_prompts SET prompt_type = %s, name = %s, prompt_text = %s, is_active = %s, updated_at = %s WHERE id = %s",
-            (data.prompt_type, data.name, data.prompt_text, 1 if data.is_active else 0, now, prompt_id)
+            (data.prompt_type, data.name, data.prompt_text, bool(data.is_active), now, prompt_id)
         )
         cursor.execute("SELECT * FROM memory_system_prompts WHERE id = %s", (prompt_id,))
         result = dict(cursor.fetchone())
@@ -351,10 +351,10 @@ async def create_llm_config(data: LLMConfigCreate, user: dict = Depends(require_
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         if data.is_active:
-            cursor.execute("UPDATE memory_llm_configs SET is_active = 0 WHERE task_type = %s", (data.task_type,))
+            cursor.execute("UPDATE memory_llm_configs SET is_active = FALSE WHERE task_type = %s", (data.task_type,))
         cursor.execute(
             "INSERT INTO memory_llm_configs (id, task_type, provider, name, api_base_url, api_key_encrypted, api_key_preview, model_name, is_active, extra_config_json, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-            (config_id, data.task_type, data.provider, data.name, data.api_base_url or "", data.api_key or "", api_key_preview, data.model_name or "", 1 if data.is_active else 0, json.dumps(data.extra_config or {}), now, now)
+            (config_id, data.task_type, data.provider, data.name, data.api_base_url or "", data.api_key or "", api_key_preview, data.model_name or "", bool(data.is_active), json.dumps(data.extra_config or {}), now, now)
         )
         return LLMConfigResponse(
             id=config_id, task_type=data.task_type, provider=data.provider, name=data.name,
@@ -388,8 +388,8 @@ async def update_llm_config(config_id: str, data: LLMConfigUpdate, user: dict = 
             updates.append("model_name = %s"); params.append(data.model_name)
         if data.is_active is not None:
             if data.is_active:
-                cursor.execute("UPDATE memory_llm_configs SET is_active = 0 WHERE task_type = %s AND id != %s", (existing["task_type"], config_id))
-            updates.append("is_active = %s"); params.append(1 if data.is_active else 0)
+                cursor.execute("UPDATE memory_llm_configs SET is_active = FALSE WHERE task_type = %s AND id != %s", (existing["task_type"], config_id))
+            updates.append("is_active = %s"); params.append(bool(data.is_active))
         if data.extra_config is not None:
             updates.append("extra_config_json = %s"); params.append(json.dumps(data.extra_config))
         params.append(config_id)
@@ -561,7 +561,6 @@ async def update_settings_endpoint(data: MemorySettingsUpdate, user: dict = Depe
         updates, params = [], []
         for field, value in data.dict(exclude_unset=True).items():
             if value is not None:
-                if isinstance(value, bool): value = 1 if value else 0
                 updates.append(f"{field} = %s"); params.append(value)
         if updates:
             updates.append("updated_at = %s"); params.append(now)
