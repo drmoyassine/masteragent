@@ -306,6 +306,85 @@ async def delete_system_prompt(prompt_id: str, user: dict = Depends(require_admi
 
 
 # ============================================
+# Admin Config Endpoints - LLM Providers
+# ============================================
+
+from memory_models import LLMProviderCreate, LLMProviderResponse, LLMProviderUpdate
+
+@router.get("/config/llm-providers", response_model=List[LLMProviderResponse])
+async def list_llm_providers(user: dict = Depends(require_admin_auth)):
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM memory_llm_providers ORDER BY created_at DESC")
+        providers = []
+        for row in cursor.fetchall():
+            provider = dict(row)
+            providers.append(LLMProviderResponse(
+                id=provider["id"], name=provider["name"], provider=provider["provider"],
+                api_base_url=provider.get("api_base_url", ""), api_key_preview=provider.get("api_key_preview", ""),
+                created_at=provider["created_at"], updated_at=provider["updated_at"]
+            ))
+        return providers
+
+@router.post("/config/llm-providers", response_model=LLMProviderResponse)
+async def create_llm_provider(data: LLMProviderCreate, user: dict = Depends(require_admin_auth)):
+    now = utcnow()
+    provider_id = str(uuid.uuid4())
+    api_key_preview = f"{data.api_key[:4]}...{data.api_key[-4:]}" if data.api_key and len(data.api_key) > 8 else ("****" if data.api_key else "")
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO memory_llm_providers (id, name, provider, api_base_url, api_key_encrypted, api_key_preview, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (provider_id, data.name, data.provider, data.api_base_url or "", data.api_key or "", api_key_preview, now, now)
+        )
+        return LLMProviderResponse(
+            id=provider_id, name=data.name, provider=data.provider,
+            api_base_url=data.api_base_url or "", api_key_preview=api_key_preview,
+            created_at=now, updated_at=now
+        )
+
+@router.put("/config/llm-providers/{provider_id}", response_model=LLMProviderResponse)
+async def update_llm_provider(provider_id: str, data: LLMProviderUpdate, user: dict = Depends(require_admin_auth)):
+    now = utcnow()
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM memory_llm_providers WHERE id = %s", (provider_id,))
+        existing = cursor.fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="LLM provider not found")
+        updates, params = ["updated_at = %s"], [now]
+        if data.name is not None:
+            updates.append("name = %s"); params.append(data.name)
+        if data.provider is not None:
+            updates.append("provider = %s"); params.append(data.provider)
+        if data.api_base_url is not None:
+            updates.append("api_base_url = %s"); params.append(data.api_base_url)
+        if data.api_key is not None:
+            updates.append("api_key_encrypted = %s"); params.append(data.api_key)
+            api_key_preview = f"{data.api_key[:4]}...{data.api_key[-4:]}" if len(data.api_key) > 8 else "****"
+            updates.append("api_key_preview = %s"); params.append(api_key_preview)
+        params.append(provider_id)
+        cursor.execute(f"UPDATE memory_llm_providers SET {', '.join(updates)} WHERE id = %s", params)
+        cursor.execute("SELECT * FROM memory_llm_providers WHERE id = %s", (provider_id,))
+        updated = dict(cursor.fetchone())
+        return LLMProviderResponse(
+            id=updated["id"], name=updated["name"], provider=updated["provider"],
+            api_base_url=updated.get("api_base_url", ""), api_key_preview=updated.get("api_key_preview", ""),
+            created_at=updated["created_at"], updated_at=updated["updated_at"]
+        )
+
+@router.delete("/config/llm-providers/{provider_id}")
+async def delete_llm_provider(provider_id: str, user: dict = Depends(require_admin_auth)):
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM memory_llm_providers WHERE id = %s", (provider_id,))
+    return {"message": "Deleted"}
+
+@router.post("/config/llm-providers/test")
+async def test_llm_provider(data: FetchModelsRequest, user: dict = Depends(require_admin_auth)):
+    return await fetch_provider_models(data, user)
+
+# ============================================
 # Admin Config Endpoints - LLM Configurations
 # ============================================
 
@@ -318,8 +397,7 @@ async def list_llm_configs(user: dict = Depends(require_admin_auth)):
         for row in cursor.fetchall():
             config = dict(row)
             configs.append(LLMConfigResponse(
-                id=config["id"], task_type=config["task_type"], provider=config["provider"], name=config["name"],
-                api_base_url=config.get("api_base_url", ""), api_key_preview=config.get("api_key_preview", ""),
+                id=config["id"], task_type=config["task_type"], provider_id=config.get("provider_id"),
                 model_name=config.get("model_name", ""), is_active=bool(config.get("is_active", 0)),
                 extra_config=json.loads(config.get("extra_config_json", "{}")),
                 created_at=config["created_at"], updated_at=config["updated_at"]
@@ -336,8 +414,7 @@ async def get_llm_config_by_task(task_type: str, user: dict = Depends(require_ad
             raise HTTPException(status_code=404, detail=f"No active LLM config for {task_type}")
         config = dict(row)
         return LLMConfigResponse(
-            id=config["id"], task_type=config["task_type"], provider=config["provider"], name=config["name"],
-            api_base_url=config.get("api_base_url", ""), api_key_preview=config.get("api_key_preview", ""),
+            id=config["id"], task_type=config["task_type"], provider_id=config.get("provider_id"),
             model_name=config.get("model_name", ""), is_active=bool(config.get("is_active", 0)),
             extra_config=json.loads(config.get("extra_config_json", "{}")),
             created_at=config["created_at"], updated_at=config["updated_at"]
@@ -347,18 +424,16 @@ async def get_llm_config_by_task(task_type: str, user: dict = Depends(require_ad
 async def create_llm_config(data: LLMConfigCreate, user: dict = Depends(require_admin_auth)):
     now = utcnow()
     config_id = str(uuid.uuid4())
-    api_key_preview = f"{data.api_key[:4]}...{data.api_key[-4:]}" if data.api_key and len(data.api_key) > 8 else ("****" if data.api_key else "")
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         if data.is_active:
             cursor.execute("UPDATE memory_llm_configs SET is_active = FALSE WHERE task_type = %s", (data.task_type,))
         cursor.execute(
-            "INSERT INTO memory_llm_configs (id, task_type, provider, name, api_base_url, api_key_encrypted, api_key_preview, model_name, is_active, extra_config_json, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-            (config_id, data.task_type, data.provider, data.name, data.api_base_url or "", data.api_key or "", api_key_preview, data.model_name or "", bool(data.is_active), json.dumps(data.extra_config or {}), now, now)
+            "INSERT INTO memory_llm_configs (id, task_type, provider_id, model_name, is_active, extra_config_json, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (config_id, data.task_type, data.provider_id, data.model_name or "", bool(data.is_active), json.dumps(data.extra_config or {}), now, now)
         )
         return LLMConfigResponse(
-            id=config_id, task_type=data.task_type, provider=data.provider, name=data.name,
-            api_base_url=data.api_base_url or "", api_key_preview=api_key_preview, model_name=data.model_name or "",
+            id=config_id, task_type=data.task_type, provider_id=data.provider_id, model_name=data.model_name or "",
             is_active=data.is_active, extra_config=data.extra_config or {},
             created_at=now, updated_at=now
         )
@@ -374,16 +449,8 @@ async def update_llm_config(config_id: str, data: LLMConfigUpdate, user: dict = 
             raise HTTPException(status_code=404, detail="LLM config not found")
         existing = dict(existing)
         updates, params = ["updated_at = %s"], [now]
-        if data.name is not None:
-            updates.append("name = %s"); params.append(data.name)
-        if data.provider is not None:
-            updates.append("provider = %s"); params.append(data.provider)
-        if data.api_base_url is not None:
-            updates.append("api_base_url = %s"); params.append(data.api_base_url)
-        if data.api_key is not None:
-            updates.append("api_key_encrypted = %s"); params.append(data.api_key)
-            api_key_preview = f"{data.api_key[:4]}...{data.api_key[-4:]}" if len(data.api_key) > 8 else "****"
-            updates.append("api_key_preview = %s"); params.append(api_key_preview)
+        if data.provider_id is not None:
+            updates.append("provider_id = %s"); params.append(data.provider_id)
         if data.model_name is not None:
             updates.append("model_name = %s"); params.append(data.model_name)
         if data.is_active is not None:
@@ -397,8 +464,7 @@ async def update_llm_config(config_id: str, data: LLMConfigUpdate, user: dict = 
         cursor.execute("SELECT * FROM memory_llm_configs WHERE id = %s", (config_id,))
         updated = dict(cursor.fetchone())
         return LLMConfigResponse(
-            id=updated["id"], task_type=updated["task_type"], provider=updated["provider"], name=updated["name"],
-            api_base_url=updated.get("api_base_url", ""), api_key_preview=updated.get("api_key_preview", ""),
+            id=updated["id"], task_type=updated["task_type"], provider_id=updated.get("provider_id"),
             model_name=updated.get("model_name", ""), is_active=bool(updated.get("is_active", 0)),
             extra_config=json.loads(updated.get("extra_config_json", "{}")),
             created_at=updated["created_at"], updated_at=updated["updated_at"]
@@ -415,33 +481,16 @@ async def fetch_provider_models(data: FetchModelsRequest, user: dict = Depends(r
     api_key = data.api_key or ""
     api_base_url = (data.api_base_url or "").rstrip("/")
 
-    # If no key was supplied, fall back to:
-    # 1. The stored key for this specific config_id
-    # 2. ANY stored key for this provider (global sharing)
     if not api_key:
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
-            if data.config_id:
-                cursor.execute("SELECT api_key_encrypted, api_base_url FROM memory_llm_configs WHERE id = %s", (data.config_id,))
+            if data.provider_id:
+                cursor.execute("SELECT api_key_encrypted, api_base_url FROM memory_llm_providers WHERE id = %s", (data.provider_id,))
                 row = cursor.fetchone()
                 if row and row["api_key_encrypted"]:
                     api_key = row["api_key_encrypted"]
                     if not api_base_url and row["api_base_url"]:
                         api_base_url = row["api_base_url"].rstrip("/")
-
-            # If still no key, search globally for this provider
-            if not api_key:
-                cursor.execute("""
-                    SELECT api_key_encrypted, api_base_url FROM memory_llm_configs 
-                    WHERE provider = %s AND api_key_encrypted IS NOT NULL AND api_key_encrypted != ''
-                    ORDER BY updated_at DESC LIMIT 1
-                """, (provider,))
-                row = cursor.fetchone()
-                if row:
-                    api_key = row["api_key_encrypted"]
-                    if not api_base_url and row["api_base_url"]:
-                        api_base_url = row["api_base_url"].rstrip("/")
-                    logger.info(f"Using globally shared API key for model fetching from provider {provider}")
 
     # Final check: do we have a key? (except for Ollama which might be local)
     if not api_key and provider != "ollama":

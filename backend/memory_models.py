@@ -31,12 +31,30 @@ class LLMProviderType(str, Enum):
     GLINER = "gliner"   # For entity extraction
     ZENDATA = "zendata"  # For PII scrubbing
 
-class LLMConfigCreate(BaseModel):
-    task_type: str  # summarization, embedding, vision, entity_extraction, pii_scrubbing
-    provider: str  # openai, anthropic, gemini, custom, gliner, zendata
+class LLMProviderCreate(BaseModel):
     name: str
+    provider: str
     api_base_url: Optional[str] = ""
     api_key: Optional[str] = ""
+
+class LLMProviderResponse(BaseModel):
+    id: str
+    name: str
+    provider: str
+    api_base_url: Optional[str] = None
+    api_key_preview: Optional[str] = None
+    created_at: Timestamp
+    updated_at: Timestamp
+
+class LLMProviderUpdate(BaseModel):
+    name: Optional[str] = None
+    provider: Optional[str] = None
+    api_base_url: Optional[str] = None
+    api_key: Optional[str] = None
+
+class LLMConfigCreate(BaseModel):
+    task_type: str
+    provider_id: Optional[str] = None
     model_name: Optional[str] = ""
     is_active: bool = True
     extra_config: Optional[Dict[str, Any]] = {}
@@ -44,10 +62,7 @@ class LLMConfigCreate(BaseModel):
 class LLMConfigResponse(BaseModel):
     id: str
     task_type: str
-    provider: str
-    name: str = ""
-    api_base_url: Optional[str] = None
-    api_key_preview: Optional[str] = None  # Only show preview, not full key
+    provider_id: Optional[str] = None
     model_name: Optional[str] = None
     is_active: bool = True
     extra_config: Dict[str, Any] = {}
@@ -55,10 +70,7 @@ class LLMConfigResponse(BaseModel):
     updated_at: Timestamp
 
 class LLMConfigUpdate(BaseModel):
-    name: Optional[str] = None
-    provider: Optional[str] = None
-    api_base_url: Optional[str] = None
-    api_key: Optional[str] = None
+    provider_id: Optional[str] = None
     model_name: Optional[str] = None
     is_active: Optional[bool] = None
     extra_config: Optional[Dict[str, Any]] = None

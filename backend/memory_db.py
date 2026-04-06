@@ -92,14 +92,22 @@ def _create_config_tables(cursor):
         )
     """)
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS memory_llm_configs (
+        CREATE TABLE IF NOT EXISTS memory_llm_providers (
             id                  TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
-            task_type           TEXT NOT NULL,
+            name                TEXT NOT NULL,
             provider            TEXT NOT NULL,
-            name                TEXT NOT NULL DEFAULT '',
             api_base_url        TEXT,
             api_key_encrypted   TEXT,
             api_key_preview     TEXT DEFAULT '',
+            created_at          TIMESTAMPTZ DEFAULT NOW(),
+            updated_at          TIMESTAMPTZ DEFAULT NOW()
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS memory_llm_configs (
+            id                  TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            task_type           TEXT NOT NULL,
+            provider_id         TEXT REFERENCES memory_llm_providers(id) ON DELETE SET NULL,
             model_name          TEXT,
             extra_config_json   TEXT DEFAULT '{}',
             is_active           BOOLEAN DEFAULT TRUE,
@@ -308,13 +316,14 @@ def _run_migrations(cursor):
         except Exception:
             pass
 
-    # LLM config columns
-    for col, col_def in [
-        ("name", "TEXT NOT NULL DEFAULT ''"),
-        ("api_key_preview", "TEXT DEFAULT ''"),
-        ("extra_config_json", "TEXT DEFAULT '{}'"),
-    ]:
-        cursor.execute(f"ALTER TABLE memory_llm_configs ADD COLUMN IF NOT EXISTS {col} {col_def}")
+    # LLM config columns migration
+    try:
+        cursor.execute("ALTER TABLE memory_llm_configs ADD COLUMN IF NOT EXISTS provider_id TEXT REFERENCES memory_llm_providers(id) ON DELETE SET NULL")
+        cursor.execute("ALTER TABLE memory_llm_configs ADD COLUMN IF NOT EXISTS extra_config_json TEXT DEFAULT '{}'")
+        for col in ["provider", "name", "api_base_url", "api_key_encrypted", "api_key_preview"]:
+            cursor.execute(f"ALTER TABLE memory_llm_configs DROP COLUMN IF EXISTS {col}")
+    except Exception as e:
+        logger.error(f"Failed to migrate llm configs: {e}")
 
     # Settings columns
     for col, col_def in [
@@ -423,8 +432,24 @@ def _seed_defaults():
                 (name, icon)
             )
 
-        # Default LLM configs (placeholders — user must add API keys)
-        for task_type, provider, model in [
+        # Default LLM Providers
+        default_providers = {
+            "openai": ("Default OpenAI", "openai", ""),
+            "gliner": ("Local GLiNER", "gliner", "http://gliner:8002"),
+            "zendata": ("Zendata PII", "zendata", "")
+        }
+
+        for p_key, (p_name, p_type, base_url) in default_providers.items():
+            cursor.execute("""
+                INSERT INTO memory_llm_providers (name, provider, api_base_url)
+                SELECT %s, %s, %s
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM memory_llm_providers WHERE name = %s
+                )
+            """, (p_name, p_type, base_url, p_name))
+        
+        # Default LLM configs
+        for task_type, provider_key, model in [
             ("summarization", "openai", "gpt-4o-mini"),
             ("embedding", "openai", "text-embedding-3-small"),
             ("vision", "openai", "gpt-4o"),
@@ -433,12 +458,12 @@ def _seed_defaults():
             ("insight_generation", "openai", "gpt-4o-mini"),
         ]:
             cursor.execute("""
-                INSERT INTO memory_llm_configs (task_type, provider, model_name, is_active)
-                SELECT %s, %s, %s, TRUE
+                INSERT INTO memory_llm_configs (task_type, provider_id, model_name, is_active)
+                SELECT %s, (SELECT id FROM memory_llm_providers WHERE provider = %s LIMIT 1), %s, TRUE
                 WHERE NOT EXISTS (
                     SELECT 1 FROM memory_llm_configs WHERE task_type = %s AND is_active = TRUE
                 )
-            """, (task_type, provider, model, task_type))
+            """, (task_type, provider_key, model, task_type))
 
         # Default system prompts
         prompts = [

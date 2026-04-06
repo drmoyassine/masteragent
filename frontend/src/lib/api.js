@@ -133,13 +133,19 @@ export const createSystemPrompt = (data) => api.post('/memory/config/system-prom
 export const updateSystemPrompt = (id, data) => api.put(`/memory/config/system-prompts/${id}`, data);
 export const deleteSystemPrompt = (id) => api.delete(`/memory/config/system-prompts/${id}`);
 
+// LLM Providers
+export const getLLMProviders = () => api.get('/memory/config/llm-providers');
+export const createLLMProvider = (data) => api.post('/memory/config/llm-providers', data);
+export const updateLLMProvider = (id, data) => api.put(`/memory/config/llm-providers/${id}`, data);
+export const deleteLLMProvider = (id) => api.delete(`/memory/config/llm-providers/${id}`);
+export const testLLMProvider = (data) => api.post('/memory/config/llm-providers/test', data);
+
 // LLM Configurations
 export const getLLMConfigs = () => api.get('/memory/config/llm-configs');
 export const getLLMConfigByTask = (taskType) => api.get(`/memory/config/llm-configs/${taskType}`);
 export const createLLMConfig = (data) => api.post('/memory/config/llm-configs', data);
 export const updateLLMConfig = (id, data) => api.put(`/memory/config/llm-configs/${id}`, data);
 export const deleteLLMConfig = (id) => api.delete(`/memory/config/llm-configs/${id}`);
-export const fetchProviderModels = (data) => api.post('/memory/config/llm-configs/fetch-models', data);
 
 // Memory Settings
 export const getMemorySettings = () => api.get('/memory/config/settings');

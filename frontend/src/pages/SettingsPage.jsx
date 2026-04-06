@@ -18,6 +18,10 @@ import {
   saveSettings,
   deleteSettings,
   setStorageMode as setStorageModeApi,
+  getLLMProviders,
+  createLLMProvider,
+  updateLLMProvider,
+  deleteLLMProvider,
   getLLMConfigs,
   updateLLMConfig,
   getApiKeys,
@@ -66,6 +70,7 @@ export default function SettingsPage({ onDisconnect }) {
   // --- Shared State ---
   const [settings, setSettings] = useState(null);
   const [memorySettings, setMemorySettings] = useState({});
+  const [llmProviders, setLLMProviders] = useState([]);
   const [llmConfigs, setLLMConfigs] = useState([]);
   const [promptsKeys, setPromptsKeys] = useState([]);
   const [memoryKeys, setMemoryKeys] = useState([]);
@@ -107,6 +112,7 @@ export default function SettingsPage({ onDisconnect }) {
       const [
         promptSettingsRes,
         memorySettingsRes,
+        llmProvidersRes,
         llmRes,
         pKeysRes,
         mKeysRes,
@@ -116,6 +122,7 @@ export default function SettingsPage({ onDisconnect }) {
       ] = await Promise.all([
         getSettings(),
         getMemorySettings(),
+        getLLMProviders(),
         getLLMConfigs(),
         getApiKeys(),
         getAgents(),
@@ -131,6 +138,7 @@ export default function SettingsPage({ onDisconnect }) {
         github_repo: promptSettingsRes.data.github_repo || "",
       });
       setMemorySettings(memorySettingsRes.data);
+      setLLMProviders(llmProvidersRes.data);
       setLLMConfigs(llmRes.data);
       setPromptsKeys(pKeysRes.data);
       setMemoryKeys(mKeysRes.data);
@@ -187,7 +195,7 @@ export default function SettingsPage({ onDisconnect }) {
     }
   };
 
-  // LLM Configs
+  // LLM Providers & Configs
   const handleSaveLLMConfig = async (configId, data) => {
     try {
       await updateLLMConfig(configId, data);
@@ -196,6 +204,33 @@ export default function SettingsPage({ onDisconnect }) {
       loadAllData();
     } catch (error) {
       toast.error("Failed to save configuration");
+    }
+  };
+
+  const handleSaveLLMProvider = async (data) => {
+    try {
+      if (data.id) {
+        await updateLLMProvider(data.id, data);
+      } else {
+        await createLLMProvider(data);
+      }
+      toast.success("Provider account saved");
+      loadAllData();
+      return true;
+    } catch (error) {
+      toast.error("Failed to save provider account");
+      return false;
+    }
+  };
+
+  const handleDeleteLLMProvider = async (providerId) => {
+    if (!window.confirm("Are you sure you want to delete this provider account? Tasks relying on it might stop working.")) return;
+    try {
+      await deleteLLMProvider(providerId);
+      toast.success("Provider account deleted");
+      loadAllData();
+    } catch (error) {
+      toast.error("Failed to delete provider account");
     }
   };
 
@@ -391,12 +426,15 @@ export default function SettingsPage({ onDisconnect }) {
 
           {activeTab === "llm" && (
             <LLMProviderSettings
+              llmProviders={llmProviders}
               llmConfigs={llmConfigs}
               editingConfig={editingConfig}
               setEditingConfig={setEditingConfig}
               showApiKey={showApiKey}
               setShowApiKey={setShowApiKey}
               onSaveConfig={handleSaveLLMConfig}
+              onSaveProvider={handleSaveLLMProvider}
+              onDeleteProvider={handleDeleteLLMProvider}
             />
           )}
 

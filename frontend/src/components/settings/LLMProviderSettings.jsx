@@ -1,5 +1,5 @@
-import React, { useState, useCallback } from "react";
-import { Brain, Layers, Eye, EyeOff, AlertCircle, CheckCircle2, FileText, ExternalLink, RefreshCw, Search, ChevronDown, Cpu } from "lucide-react";
+import React, { useState, useCallback, useEffect } from "react";
+import { Brain, Layers, Eye, EyeOff, AlertCircle, CheckCircle2, FileText, ExternalLink, RefreshCw, Search, ChevronDown, Cpu, Plus, Edit2, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -23,7 +23,16 @@ import {
     PopoverContent,
     PopoverTrigger,
 } from "@/components/ui/popover";
-import { fetchProviderModels } from "@/lib/api";
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog";
+import { fetchProviderModels, testLLMProvider } from "@/lib/api";
+import { toast } from "sonner";
 
 // ─── Task type display metadata ───────────────────────────────────────────────
 const TASK_TYPE_LABELS = {
@@ -34,50 +43,17 @@ const TASK_TYPE_LABELS = {
     pii_scrubbing: { label: "PII Scrubbing", icon: EyeOff, color: "bg-red-500" },
 };
 
-// ─── Providers valid per task type ────────────────────────────────────────────
-const PROVIDERS_BY_TASK = {
-    embedding: [
-        { value: "openai", label: "OpenAI", hasModelFetch: true },
-        { value: "openrouter", label: "OpenRouter", hasModelFetch: true },
-        { value: "ollama", label: "Ollama", hasModelFetch: true, needsBaseUrl: true },
-        { value: "gemini", label: "Google Gemini", hasModelFetch: true },
-        { value: "custom", label: "Custom API", hasModelFetch: false },
-    ],
-    summarization: [
-        { value: "openai", label: "OpenAI", hasModelFetch: true },
-        { value: "openrouter", label: "OpenRouter", hasModelFetch: true },
-        { value: "ollama", label: "Ollama", hasModelFetch: true, needsBaseUrl: true },
-        { value: "anthropic", label: "Anthropic", hasModelFetch: true },
-        { value: "gemini", label: "Google Gemini", hasModelFetch: true },
-        { value: "custom", label: "Custom API", hasModelFetch: false },
-    ],
-    vision: [
-        { value: "openai", label: "OpenAI", hasModelFetch: true },
-        { value: "openrouter", label: "OpenRouter", hasModelFetch: true },
-        { value: "anthropic", label: "Anthropic", hasModelFetch: true },
-        { value: "gemini", label: "Google Gemini", hasModelFetch: true },
-        { value: "custom", label: "Custom API", hasModelFetch: false },
-    ],
-    entity_extraction: [
-        { value: "gliner", label: "GLiNER (Local)", hasModelFetch: false },
-        { value: "openai", label: "OpenAI", hasModelFetch: true },
-        { value: "openrouter", label: "OpenRouter", hasModelFetch: true },
-        { value: "anthropic", label: "Anthropic", hasModelFetch: true },
-        { value: "gemini", label: "Google Gemini", hasModelFetch: true },
-        { value: "ollama", label: "Ollama", hasModelFetch: true, needsBaseUrl: true },
-        { value: "custom", label: "Custom API", hasModelFetch: false },
-    ],
-    pii_scrubbing: [
-        { value: "zendata", label: "Zendata (PII)", hasModelFetch: false },
-        { value: "openai", label: "OpenAI", hasModelFetch: true },
-        { value: "openrouter", label: "OpenRouter", hasModelFetch: true },
-        { value: "anthropic", label: "Anthropic", hasModelFetch: true },
-        { value: "gemini", label: "Google Gemini", hasModelFetch: true },
-        { value: "custom", label: "Custom API", hasModelFetch: false },
-    ],
-};
+const PROVIDER_META = [
+    { value: "openai", label: "OpenAI", hasModelFetch: true },
+    { value: "anthropic", label: "Anthropic", hasModelFetch: true },
+    { value: "gemini", label: "Google Gemini", hasModelFetch: true },
+    { value: "openrouter", label: "OpenRouter", hasModelFetch: true },
+    { value: "ollama", label: "Ollama", hasModelFetch: true, needsBaseUrl: true },
+    { value: "gliner", label: "GLiNER (Local)", hasModelFetch: false },
+    { value: "zendata", label: "Zendata (PII)", hasModelFetch: false },
+    { value: "custom", label: "Custom API", hasModelFetch: false },
+];
 
-// Default base URLs per provider
 const DEFAULT_BASE_URLS = {
     openai: "https://api.openai.com/v1",
     anthropic: "https://api.anthropic.com/v1",
@@ -90,7 +66,7 @@ const DEFAULT_BASE_URLS = {
 };
 
 // ─── Searchable Model Combobox ────────────────────────────────────────────────
-function ModelCombobox({ value, onChange, models, loading, error, onFetch, canFetch, provider }) {
+function ModelCombobox({ value, onChange, models, loading, error, onFetch, canFetch }) {
     const [open, setOpen] = useState(false);
     const [search, setSearch] = useState("");
 
@@ -99,7 +75,6 @@ function ModelCombobox({ value, onChange, models, loading, error, onFetch, canFe
     );
 
     if (!canFetch) {
-        // Free-text input for providers that don't support model fetching
         return (
             <Input
                 value={value || ""}
@@ -134,7 +109,6 @@ function ModelCombobox({ value, onChange, models, loading, error, onFetch, canFe
                         />
                     </div>
                     <div className="max-h-56 overflow-y-auto py-1">
-                        {/* Allow typing a custom value */}
                         {search && !filtered.includes(search) && (
                             <div
                                 className="flex cursor-pointer items-center px-3 py-2 text-sm hover:bg-accent"
@@ -178,97 +152,276 @@ function ModelCombobox({ value, onChange, models, loading, error, onFetch, canFe
     );
 }
 
+// ─── Provider Dialog ──────────────────────────────────────────────────────────
+function ProviderDialog({ open, onClose, onSave, existingProvider }) {
+    const [formData, setFormData] = useState({
+        name: "",
+        provider: "openai",
+        api_base_url: DEFAULT_BASE_URLS["openai"],
+        api_key: ""
+    });
+    const [showKey, setShowKey] = useState(false);
+    const [testing, setTesting] = useState(false);
+    const [testResult, setTestResult] = useState(null);
+
+    useEffect(() => {
+        if (open) {
+            if (existingProvider) {
+                setFormData({
+                    id: existingProvider.id,
+                    name: existingProvider.name || "",
+                    provider: existingProvider.provider || "openai",
+                    api_base_url: existingProvider.api_base_url || "",
+                    api_key: "" // keep empty, relying on the preview placeholder if exists
+                });
+            } else {
+                setFormData({
+                    name: "",
+                    provider: "openai",
+                    api_base_url: DEFAULT_BASE_URLS["openai"],
+                    api_key: ""
+                });
+            }
+            setTestResult(null);
+        }
+    }, [open, existingProvider]);
+
+    const handleTest = async () => {
+        setTesting(true);
+        setTestResult(null);
+        try {
+            const payload = {
+                provider: formData.provider,
+                api_base_url: formData.api_base_url,
+            };
+            if (formData.api_key) payload.api_key = formData.api_key;
+            if (formData.id) payload.provider_id = formData.id; // fallback to saved key
+
+            const res = await testLLMProvider(payload);
+            setTestResult({ success: true, count: res.data.models.length });
+            toast.success(`Successfully fetched ${res.data.models.length} models`);
+        } catch (error) {
+            setTestResult({ success: false, error: error.response?.data?.detail || "Connection failed" });
+            toast.error("Failed to fetch models");
+        } finally {
+            setTesting(false);
+        }
+    };
+
+    const handleSave = async () => {
+        if (!formData.name.trim()) {
+            toast.error("Account name is required");
+            return;
+        }
+        
+        const payload = { ...formData };
+        if (!payload.api_key) {
+            delete payload.api_key; // Don't override with empty string
+        }
+        
+        const success = await onSave(payload);
+        if (success) {
+            onClose();
+        }
+    };
+
+    return (
+        <Dialog open={open} onOpenChange={onClose}>
+            <DialogContent className="sm:max-w-[425px]">
+                <DialogHeader>
+                    <DialogTitle>{existingProvider ? "Edit" : "Add"} Provider Account</DialogTitle>
+                    <DialogDescription>
+                        Set up a reusable LLM credential that can be assigned to different tasks.
+                    </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                    <div className="space-y-2">
+                        <Label>Account Name</Label>
+                        <Input 
+                            value={formData.name} 
+                            onChange={e => setFormData({ ...formData, name: e.target.value })} 
+                            placeholder="e.g. My Prod OpenAI Key" 
+                        />
+                    </div>
+                    <div className="space-y-2">
+                        <Label>Provider Type</Label>
+                        <Select
+                            value={formData.provider}
+                            onValueChange={v => setFormData({ ...formData, provider: v, api_base_url: DEFAULT_BASE_URLS[v] || "" })}
+                        >
+                            <SelectTrigger>
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {PROVIDER_META.map(p => (
+                                    <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div className="space-y-2">
+                        <Label>Base URL</Label>
+                        <Input 
+                            value={formData.api_base_url} 
+                            onChange={e => setFormData({ ...formData, api_base_url: e.target.value })} 
+                        />
+                    </div>
+                    <div className="space-y-2">
+                        <Label>API Key</Label>
+                        <div className="flex gap-2">
+                            <Input 
+                                type={showKey ? "text" : "password"}
+                                value={formData.api_key} 
+                                onChange={e => setFormData({ ...formData, api_key: e.target.value })} 
+                                placeholder={existingProvider?.api_key_preview ? `Configured: ${existingProvider.api_key_preview}` : "Enter API key"}
+                            />
+                            <Button type="button" variant="outline" size="icon" onClick={() => setShowKey(!showKey)}>
+                                {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                            </Button>
+                        </div>
+                    </div>
+
+                    {testResult && (
+                        <div className={`p-3 text-sm rounded-md border ${testResult.success ? "bg-green-500/10 border-green-500/20 text-green-600" : "bg-red-500/10 border-red-500/20 text-red-600"}`}>
+                            {testResult.success ? (
+                                <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4" /> Connection successful</div>
+                            ) : (
+                                <div className="flex items-center gap-2"><AlertCircle className="w-4 h-4" /> {testResult.error}</div>
+                            )}
+                        </div>
+                    )}
+                </div>
+                <DialogFooter className="flex justify-between items-center sm:justify-between">
+                    <Button type="button" variant="outline" onClick={handleTest} disabled={testing}>
+                        {testing ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : "Test Connection"}
+                    </Button>
+                    <Button type="button" onClick={handleSave}>Save Account</Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+    );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 export function LLMProviderSettings({
+    llmProviders,
     llmConfigs,
     editingConfig,
     setEditingConfig,
-    showApiKey,
-    setShowApiKey,
-    onSaveConfig
+    onSaveConfig,
+    onSaveProvider,
+    onDeleteProvider
 }) {
-    const [modelLists, setModelLists] = useState({}); // { [configId]: string[] }
-    const [fetchingModels, setFetchingModels] = useState({}); // { [configId]: bool }
-    const [fetchErrors, setFetchErrors] = useState({}); // { [configId]: string }
+    const [modelLists, setModelLists] = useState({});
+    const [fetchingModels, setFetchingModels] = useState({});
+    const [fetchErrors, setFetchErrors] = useState({});
 
-    const handleFetchModels = useCallback(async (configId) => {
-        if (!editingConfig) return;
-        const provider = editingConfig.provider;
-        const apiKey = editingConfig.api_key || "";
-        const apiBaseUrl = editingConfig.api_base_url || DEFAULT_BASE_URLS[provider] || "";
+    // Provider Dialog State
+    const [providerDialogOpen, setProviderDialogOpen] = useState(false);
+    const [editingProvider, setEditingProvider] = useState(null);
 
+    const handleFetchModels = useCallback(async (configId, providerId) => {
+        if (!providerId) return;
         setFetchingModels((prev) => ({ ...prev, [configId]: true }));
         setFetchErrors((prev) => ({ ...prev, [configId]: null }));
 
         try {
-            const payload = {
-                provider,
-                api_base_url: apiBaseUrl,
-                config_id: configId, // allows backend to use stored key as fallback
-            };
+            // we use the test provider endpoint using the saved provider_id
+            const selectedProvider = llmProviders.find(p => p.id === providerId);
+            if (!selectedProvider) throw new Error("Provider not found");
 
-            // Only include api_key in the payload if it's not empty
-            if (apiKey && apiKey.trim() !== "") {
-                payload.api_key = apiKey.trim();
-            }
-
-            const response = await fetchProviderModels(payload);
+            const response = await fetchProviderModels({
+                provider: selectedProvider.provider,
+                provider_id: providerId
+            });
             setModelLists((prev) => ({ ...prev, [configId]: response.data.models }));
         } catch (err) {
-            const detail = err.response?.data?.detail || "Failed to fetch models. Check API key.";
+            const detail = err.response?.data?.detail || "Failed to fetch models.";
             setFetchErrors((prev) => ({ ...prev, [configId]: detail }));
         } finally {
             setFetchingModels((prev) => ({ ...prev, [configId]: false }));
         }
-    }, [editingConfig]);
+    }, [llmProviders]);
 
     return (
-        <div className="space-y-4 max-w-4xl">
+        <div className="space-y-8 max-w-4xl">
+            {/* ─── Part 1: Provider Accounts ─── */}
             <Card>
                 <CardHeader>
                     <div className="flex items-center justify-between">
                         <div>
-                            <CardTitle>LLM API Configurations</CardTitle>
+                            <CardTitle>LLM Provider Accounts</CardTitle>
                             <CardDescription>
-                                Configure API keys and endpoints for each task type. These are used by the Memory System for processing data.
+                                Set up reusable credentials to assign to engine tasks.
                             </CardDescription>
                         </div>
-                        <Button asChild variant="outline" size="sm">
-                            <a href="/api/docs" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2">
-                                <FileText className="w-4 h-4" />
-                                API Endpoints Docs
-                            </a>
+                        <Button onClick={() => { setEditingProvider(null); setProviderDialogOpen(true); }}>
+                            <Plus className="w-4 h-4 mr-2" />
+                            Add Account
                         </Button>
                     </div>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                    {llmProviders.length === 0 ? (
+                        <div className="text-center p-6 border border-dashed rounded-lg text-muted-foreground">
+                            No provider accounts configured yet.
+                        </div>
+                    ) : (
+                        llmProviders.map(provider => (
+                            <div key={provider.id} className="flex items-center justify-between p-4 border rounded-lg bg-card/50">
+                                <div>
+                                    <div className="font-semibold flex items-center gap-2">
+                                        {provider.name}
+                                        <Badge variant="outline" className="text-xs uppercase">{provider.provider}</Badge>
+                                    </div>
+                                    <div className="text-xs text-muted-foreground mt-1">
+                                        Base URL: {provider.api_base_url || "Default"}
+                                    </div>
+                                    {provider.api_key_preview && (
+                                        <div className="text-xs text-muted-foreground">
+                                            Key: {provider.api_key_preview}
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <Button variant="ghost" size="icon" onClick={() => { setEditingProvider(provider); setProviderDialogOpen(true); }}>
+                                        <Edit2 className="w-4 h-4 text-muted-foreground" />
+                                    </Button>
+                                    <Button variant="ghost" size="icon" onClick={() => onDeleteProvider(provider.id)}>
+                                        <Trash2 className="w-4 h-4 text-red-400" />
+                                    </Button>
+                                </div>
+                            </div>
+                        ))
+                    )}
+                </CardContent>
+            </Card>
+
+            {/* ─── Part 2: Task Assignments ─── */}
+            <Card>
+                <CardHeader>
+                    <CardTitle>Task Assignments</CardTitle>
+                    <CardDescription>
+                        Assign provider accounts and models to specific memory engine tasks.
+                    </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                     {llmConfigs.map((config) => {
                         const taskInfo = TASK_TYPE_LABELS[config.task_type] || { label: config.task_type, icon: Brain, color: "bg-gray-500" };
                         const TaskIcon = taskInfo.icon;
                         const isEditing = editingConfig?.id === config.id;
-                        const taskProviders = PROVIDERS_BY_TASK[config.task_type] || [];
+                        
+                        // Check if it's correctly assigned
+                        const assignedProvider = llmProviders.find(p => p.id === config.provider_id);
+                        const isConfigured = !!assignedProvider && !!config.model_name;
 
-                        // Use the currently selected provider in the editor, or the stored one if not editing
-                        const activeProviderValue = isEditing ? editingConfig.provider : config.provider;
-                        const currentProviderMeta = taskProviders.find((p) => p.value === activeProviderValue);
-
-                        const canFetchModels = isEditing && (currentProviderMeta?.hasModelFetch ?? false);
-                        const needsBaseUrl = currentProviderMeta?.needsBaseUrl ?? false;
-
-                        // Key inheritance check: Does ANY other configuration have a key for this ACTIVE provider?
-                        const otherConfigWithKey = llmConfigs.find(c =>
-                            c.id !== config.id &&
-                            c.provider === activeProviderValue &&
-                            c.api_key_preview
-                        );
-
-                        // It's considered 'configured' if the specific config for this task has a key for the ACTIVE provider
-                        const isSpecificallyConfigured = config.provider === activeProviderValue && !!config.api_key_preview;
-
-                        // It's considered 'inherited' if NOT specifically configured, but some OTHER config has a key.
-                        const hasInheritedKey = !isSpecificallyConfigured && !!otherConfigWithKey;
-
-                        const isGloballyConfigured = isSpecificallyConfigured || hasInheritedKey;
+                        // Temporary edit state models
+                        const meta = isEditing 
+                            ? (llmProviders.find(p => p.id === editingConfig.provider_id)
+                                ? PROVIDER_META.find(m => m.value === llmProviders.find(p => p.id === editingConfig.provider_id).provider)
+                                : null)
+                            : null;
+                        const canFetchModels = isEditing && meta?.hasModelFetch;
 
                         return (
                             <Card key={config.id} className={`border-l-4 ${taskInfo.color} bg-card/50`}>
@@ -281,24 +434,40 @@ export function LLMProviderSettings({
                                             <div>
                                                 <h3 className="font-semibold text-foreground">{taskInfo.label}</h3>
                                                 <p className="text-sm text-muted-foreground">
-                                                    {isEditing ? `Editing: ${activeProviderValue}` : config.name}
+                                                    {isEditing 
+                                                        ? "Assigning Account & Model" 
+                                                        : (isConfigured ? `${assignedProvider.name} (${config.model_name})` : "Not assigned")}
                                                 </p>
                                             </div>
                                         </div>
                                         <div className="flex items-center gap-2">
-                                            {isGloballyConfigured ? (
-                                                <Badge variant="default" className="bg-green-500">
-                                                    <CheckCircle2 className="w-3 h-3 mr-1" /> Configured
-                                                </Badge>
-                                            ) : (
-                                                <Badge variant="outline" className="border-amber-500 text-amber-500">
-                                                    <AlertCircle className="w-3 h-3 mr-1" /> Needs API Key
-                                                </Badge>
+                                            {!isEditing && (
+                                                <>
+                                                    {isConfigured ? (
+                                                        <Badge variant="default" className="bg-green-500">
+                                                            <CheckCircle2 className="w-3 h-3 mr-1" /> Ready
+                                                        </Badge>
+                                                    ) : (
+                                                        <Badge variant="outline" className="border-amber-500 text-amber-500">
+                                                            <AlertCircle className="w-3 h-3 mr-1" /> Unassigned
+                                                        </Badge>
+                                                    )}
+                                                </>
                                             )}
                                             <Button
                                                 variant="outline"
                                                 size="sm"
-                                                onClick={() => setEditingConfig(isEditing ? null : { ...config, api_key: null })}
+                                                onClick={() => {
+                                                    if (isEditing) {
+                                                        setEditingConfig(null);
+                                                    } else {
+                                                        setEditingConfig({ ...config });
+                                                        // Automatically fetch models if already assigned
+                                                        if (config.provider_id) {
+                                                            handleFetchModels(config.id, config.provider_id);
+                                                        }
+                                                    }
+                                                }}
                                             >
                                                 {isEditing ? "Cancel" : "Edit"}
                                             </Button>
@@ -307,123 +476,58 @@ export function LLMProviderSettings({
 
                                     {isEditing && (
                                         <div className="mt-4 pt-4 border-t space-y-4">
-                                            {/* Provider Selection */}
+                                            {/* Account Selection */}
                                             <div className="space-y-2">
-                                                <Label>Provider</Label>
+                                                <Label>Provider Account</Label>
                                                 <Select
-                                                    value={editingConfig.provider}
+                                                    value={editingConfig.provider_id || ""}
                                                     onValueChange={(v) => {
-                                                        const defaultUrl = DEFAULT_BASE_URLS[v] || "";
                                                         setEditingConfig({
                                                             ...editingConfig,
-                                                            provider: v,
-                                                            api_base_url: defaultUrl,
-                                                            model_name: "", // Reset model when provider changes
+                                                            provider_id: v,
+                                                            model_name: "", // Reset model
                                                         });
-                                                        // Clear cached model list when provider changes
                                                         setModelLists((prev) => ({ ...prev, [config.id]: [] }));
+                                                        handleFetchModels(config.id, v);
                                                     }}
                                                 >
                                                     <SelectTrigger>
-                                                        <SelectValue />
+                                                        <SelectValue placeholder="Select a saved account" />
                                                     </SelectTrigger>
                                                     <SelectContent>
-                                                        {taskProviders.map((opt) => (
-                                                            <SelectItem key={opt.value} value={opt.value}>
-                                                                {opt.label}
+                                                        {llmProviders.map((opt) => (
+                                                            <SelectItem key={opt.id} value={opt.id}>
+                                                                {opt.name} ({opt.provider})
                                                             </SelectItem>
                                                         ))}
                                                     </SelectContent>
                                                 </Select>
-                                                {editingConfig.provider === "ollama" && (
-                                                    <p className="text-xs text-muted-foreground">
-                                                        Ollama supports both local (<code>http://localhost:11434</code>) and cloud-hosted instances.
-                                                    </p>
-                                                )}
-                                                {editingConfig.provider === "openrouter" && (
-                                                    <p className="text-xs text-muted-foreground">
-                                                        Get your API key at{" "}
-                                                        <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-primary underline">
-                                                            openrouter.ai/keys
-                                                        </a>
-                                                    </p>
-                                                )}
-                                            </div>
-
-                                            {/* API Base URL — always shown, pre-populated with defaults */}
-                                            <div className="space-y-2">
-                                                <Label>API Base URL {needsBaseUrl && <span className="text-primary ml-1 text-xs">(required)</span>}</Label>
-                                                <Input
-                                                    value={editingConfig.api_base_url || ""}
-                                                    onChange={(e) => setEditingConfig({ ...editingConfig, api_base_url: e.target.value })}
-                                                    placeholder={DEFAULT_BASE_URLS[editingConfig.provider] || "https://..."}
-                                                />
                                             </div>
 
                                             {/* Model Selection */}
-                                            <div className="space-y-2">
-                                                <Label>Model</Label>
-                                                <ModelCombobox
-                                                    value={editingConfig.model_name || ""}
-                                                    onChange={(v) => setEditingConfig({ ...editingConfig, model_name: v })}
-                                                    models={modelLists[config.id] || []}
-                                                    loading={fetchingModels[config.id] || false}
-                                                    error={fetchErrors[config.id]}
-                                                    onFetch={() => handleFetchModels(config.id)}
-                                                    canFetch={canFetchModels}
-                                                    provider={editingConfig.provider}
-                                                />
-                                                {canFetchModels && !isGloballyConfigured && !editingConfig.api_key && (
-                                                    <p className="text-xs text-amber-400">Save an API key first to enable model fetching.</p>
-                                                )}
-                                                {canFetchModels && hasInheritedKey && !editingConfig.api_key && (
-                                                    <p className="text-xs text-blue-400 flex items-center gap-1">
-                                                        <CheckCircle2 className="w-3 h-3" /> Using shared provider API key.
-                                                    </p>
-                                                )}
-                                                {fetchErrors[config.id] && (
-                                                    <p className="text-xs text-red-400">{fetchErrors[config.id]}</p>
-                                                )}
-                                            </div>
-
-                                            {/* API Key */}
-                                            <div className="space-y-2">
-                                                <Label>API Key</Label>
-                                                <div className="flex gap-2">
-                                                    <Input
-                                                        type={showApiKey[config.id] ? "text" : "password"}
-                                                        value={editingConfig.api_key || ""}
-                                                        onChange={(e) => setEditingConfig({ ...editingConfig, api_key: e.target.value })}
-                                                        placeholder={
-                                                            hasInheritedKey
-                                                                ? "Already configured (enter to override)"
-                                                                : editingConfig.provider === "ollama"
-                                                                    ? "No key required for local"
-                                                                    : "Enter API key"
-                                                        }
+                                            {editingConfig.provider_id && (
+                                                <div className="space-y-2">
+                                                    <Label>Model</Label>
+                                                    <ModelCombobox
+                                                        value={editingConfig.model_name || ""}
+                                                        onChange={(v) => setEditingConfig({ ...editingConfig, model_name: v })}
+                                                        models={modelLists[config.id] || []}
+                                                        loading={fetchingModels[config.id] || false}
+                                                        error={fetchErrors[config.id]}
+                                                        onFetch={() => handleFetchModels(config.id, editingConfig.provider_id)}
+                                                        canFetch={canFetchModels}
                                                     />
-                                                    <Button
-                                                        type="button"
-                                                        variant="outline"
-                                                        size="icon"
-                                                        onClick={() => setShowApiKey({ ...showApiKey, [config.id]: !showApiKey[config.id] })}
-                                                    >
-                                                        {showApiKey[config.id] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                                                    </Button>
                                                 </div>
-                                                {config.api_key_preview && !editingConfig.api_key && (
-                                                    <p className="text-xs text-muted-foreground mt-1">Current: {config.api_key_preview}</p>
-                                                )}
-                                            </div>
+                                            )}
 
                                             <Button onClick={() => {
-                                                const payload = { ...editingConfig };
-                                                if (!payload.api_key || payload.api_key.trim() === "") {
-                                                    delete payload.api_key;
-                                                }
+                                                const payload = {
+                                                    provider_id: editingConfig.provider_id,
+                                                    model_name: editingConfig.model_name,
+                                                };
                                                 onSaveConfig(config.id, payload);
-                                            }}>
-                                                Save Configuration
+                                            }} disabled={!editingConfig.provider_id || !editingConfig.model_name}>
+                                                Save Assignation
                                             </Button>
                                         </div>
                                     )}
@@ -434,32 +538,12 @@ export function LLMProviderSettings({
                 </CardContent>
             </Card>
 
-            {/* API Documentation */}
-            <Card className="border-primary/20 bg-primary/5">
-                <CardHeader className="pb-3">
-                    <div className="flex items-center gap-3">
-                        <div className="p-2 rounded-lg bg-primary/10">
-                            <FileText className="w-5 h-5 text-primary" />
-                        </div>
-                        <div>
-                            <CardTitle>API Documentation</CardTitle>
-                            <CardDescription>
-                                View the interactive OpenAPI (Swagger) documentation to explore and test the available endpoints.
-                            </CardDescription>
-                        </div>
-                    </div>
-                </CardHeader>
-                <CardContent>
-                    <div className="flex gap-4">
-                        <Button asChild variant="default" className="font-mono">
-                            <a href="/api/docs" target="_blank" rel="noopener noreferrer">
-                                <ExternalLink className="w-4 h-4 mr-2" />
-                                Swagger UI
-                            </a>
-                        </Button>
-                    </div>
-                </CardContent>
-            </Card>
+            <ProviderDialog 
+                open={providerDialogOpen} 
+                onClose={() => setProviderDialogOpen(false)} 
+                onSave={onSaveProvider}
+                existingProvider={editingProvider}
+            />
         </div>
     );
 }
