@@ -245,9 +245,9 @@ export default function MemoryMonitorPage() {
                 <div key={agent.agent_id} className="space-y-2">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <Badge variant="outline">{agent.agent_id.slice(0, 8)}...</Badge>
+                      <Badge variant="outline">{(agent.id || agent.agent_id || '').slice(0, 8)}...</Badge>
                       <span className="text-sm text-muted-foreground">
-                        {agent.active_days} active days
+                        {agent.interaction_count} total interactions
                       </span>
                     </div>
                     <span className="font-medium">{agent.total_actions} actions</span>

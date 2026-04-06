@@ -25,6 +25,11 @@ from memory_models import (
     LessonCreate, LessonResponse, LessonUpdate,
     EntityTypeConfig, EntityTypeConfigUpdate,
     InteractionResponse, TimelineEntry,
+    SearchRequest, SearchResponse, SearchResult
+)
+from memory_services import (
+    generate_embedding, search_memories_by_vector,
+    search_insights_by_vector, search_lessons_by_vector
 )
 from memory.auth import require_admin_auth
 
@@ -661,4 +666,91 @@ async def get_agent_stats(admin: dict = Depends(require_admin_auth)):
         agents = cursor.fetchall()
 
     return {"agents": [dict(a) for a in agents]}
+
+# ============================================================
+# DASHBOARD / EXPLORER ENDPOINTS
+# ============================================================
+
+@router.get("/admin/daily/{date_str}")
+async def admin_get_daily_memories(
+    date_str: str,
+    limit: int = Query(50, le=200),
+    offset: int = Query(0),
+    admin: dict = Depends(require_admin_auth)
+):
+    """Fetch daily memories for the explorer UI."""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, date, primary_entity_type, primary_entity_id,
+                   interaction_count, content_summary, related_entities,
+                   intents, compacted, created_at
+            FROM memories
+            WHERE date = %s
+            ORDER BY created_at DESC
+            LIMIT %s OFFSET %s
+        """, (date_str, limit, offset))
+        rows = cursor.fetchall()
+        
+        cursor.execute("SELECT COUNT(*) as total FROM memories WHERE date = %s", (date_str,))
+        total = cursor.fetchone()["total"]
+
+    return {"memories": [dict(r) for r in rows], "total": total}
+
+@router.get("/admin/memories/{memory_id}")
+async def admin_get_memory_detail(memory_id: str, admin: dict = Depends(require_admin_auth)):
+    """Fetch a single memory details."""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM memories WHERE id = %s", (memory_id,))
+        row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return dict(row)
+
+@router.post("/admin/search", response_model=SearchResponse)
+async def admin_search_memories(
+    request: SearchRequest,
+    admin: dict = Depends(require_admin_auth)
+):
+    """Semantic search accessible via the dashboard UI."""
+    query_embedding = await generate_embedding(request.query)
+    if not query_embedding:
+        return SearchResponse(results=[], total=0, query=request.query)
+
+    results: list[SearchResult] = []
+    layers = request.layers.lower()
+
+    if layers in ("memories", "all"):
+        mem_hits = await search_memories_by_vector(query_embedding, request.entity_id, request.entity_type, request.limit)
+        for hit in mem_hits:
+            results.append(SearchResult(
+                id=hit["id"], layer="memory", score=float(hit.get("score", 0)),
+                name=None, snippet=(hit.get("content_summary") or "")[:200],
+                entity_id=hit["primary_entity_id"], entity_type=hit["primary_entity_type"],
+                created_at=str(hit.get("created_at", ""))
+            ))
+
+    if layers in ("insights", "all"):
+        ins_hits = await search_insights_by_vector(query_embedding, request.entity_id, request.entity_type, request.limit)
+        for hit in ins_hits:
+            results.append(SearchResult(
+                id=hit["id"], layer="insight", score=float(hit.get("score", 0)),
+                name=hit.get("name"), snippet=(hit.get("summary") or "")[:200],
+                entity_id=hit["primary_entity_id"], entity_type=hit["primary_entity_type"],
+                created_at=str(hit.get("created_at", ""))
+            ))
+
+    if layers in ("lessons", "all"):
+        les_hits = await search_lessons_by_vector(query_embedding, request.limit)
+        for hit in les_hits:
+            results.append(SearchResult(
+                id=hit["id"], layer="lesson", score=float(hit.get("score", 0)),
+                name=hit.get("name"), snippet=(hit.get("summary") or "")[:200],
+                entity_id=None, entity_type=None, created_at=str(hit.get("created_at", ""))
+            ))
+
+    results.sort(key=lambda r: r.score, reverse=True)
+    paginated = results[request.offset: request.offset + request.limit]
+    return SearchResponse(results=paginated, total=len(results), query=request.query)
 

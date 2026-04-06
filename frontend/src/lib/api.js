@@ -153,8 +153,8 @@ export const getMemorySettings = () => api.get('/memory/config/settings');
 export const updateMemorySettings = (data) => api.put('/memory/config/settings', data);
 
 // Entity Type Config (per-type NER schema, compaction thresholds, etc.)
-export const getEntityTypeConfig = (entityType) => api.get(`/memory/admin/entity-type-config/${entityType}`);
-export const updateEntityTypeConfig = (entityType, data) => api.patch(`/memory/admin/entity-type-config/${entityType}`, data);
+export const getEntityTypeConfig = (entityType) => api.get(`/memory/entity-type-config/${entityType}`);
+export const updateEntityTypeConfig = (entityType, data) => api.patch(`/memory/entity-type-config/${entityType}`, data);
 
 
 // Memory Explorer - Admin UI
@@ -164,10 +164,10 @@ export const getMemoryDetail = (id) => api.get(`/memory/admin/memories/${id}`);
 export const getTimeline = (entityType, entityId) => api.get(`/memory/admin/timeline/${entityType}/${entityId}`);
 
 // Lessons - Admin UI
-export const getLessonsAdmin = (params) => api.get('/memory/admin/lessons', { params });
-export const createLessonAdmin = (data) => api.post('/memory/admin/lessons', data);
-export const updateLessonAdmin = (id, data) => api.put(`/memory/admin/lessons/${id}`, data);
-export const deleteLessonAdmin = (id) => api.delete(`/memory/admin/lessons/${id}`);
+export const getLessonsAdmin = (params) => api.get('/memory/lessons', { params });
+export const createLessonAdmin = (data) => api.post('/memory/lessons', data);
+export const updateLessonAdmin = (id, data) => api.put(`/memory/lessons/${id}`, data);
+export const deleteLessonAdmin = (id) => api.delete(`/memory/lessons/${id}`);
 
 // ============================================
 // Variables System APIs
