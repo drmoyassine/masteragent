@@ -146,6 +146,7 @@ export const getLLMConfigByTask = (taskType) => api.get(`/memory/config/llm-conf
 export const createLLMConfig = (data) => api.post('/memory/config/llm-configs', data);
 export const updateLLMConfig = (id, data) => api.put(`/memory/config/llm-configs/${id}`, data);
 export const deleteLLMConfig = (id) => api.delete(`/memory/config/llm-configs/${id}`);
+export const fetchProviderModels = (data) => api.post('/memory/config/llm-configs/fetch-models', data);
 
 // Memory Settings
 export const getMemorySettings = () => api.get('/memory/config/settings');
