@@ -82,18 +82,49 @@ async def ingest_interaction(
     content = body.content
 
     for attachment in attachment_refs:
-        # attachment_refs items may carry base64 or raw content
-        raw_bytes = attachment.get("raw_bytes")
+        attach_type = attachment.get("type", "base64")
+        raw_blob = None
+        
+        # 1. Acquire bytes
+        if attach_type == "url":
+            url = attachment.get("url")
+            if url:
+                import httpx
+                try:
+                    async with httpx.AsyncClient(timeout=30.0) as client:
+                        resp = await client.get(url)
+                        resp.raise_for_status()
+                        raw_blob = resp.content
+                except Exception as e:
+                    logger.warning(f"Failed to fetch attachment URL {url}: {e}")
+        else:
+            b64_data = attachment.get("data") or attachment.get("raw_bytes")
+            if b64_data:
+                import base64
+                try:
+                    raw_blob = base64.b64decode(b64_data)
+                except Exception as e:
+                    logger.warning(f"Failed to decode base64 attachment: {e}")
+
+        if not raw_blob:
+            continue
+
+        # 2. MIME Inference
+        import filetype
+        inferred_mime = None
+        kind = filetype.guess(raw_blob)
+        if kind:
+            inferred_mime = kind.mime
+        
+        mime_type = inferred_mime or attachment.get("mime_type", "application/octet-stream")
         filename = attachment.get("filename", "attachment")
-        mime_type = attachment.get("mime_type", "application/octet-stream")
-        if raw_bytes:
-            import base64
-            parsed = await parse_document(
-                base64.b64decode(raw_bytes), filename, mime_type
-            )
-            if parsed.get("text"):
-                content += f"\n\n---\n[Attachment: {filename}]\n{parsed['text']}"
-                attachment["parsed_content"] = parsed["text"]
+
+        # 3. Ship to Document Parser
+        parsed = await parse_document(raw_blob, filename, mime_type)
+        if parsed.get("text"):
+            content += f"\n\n---\n[Attachment ({mime_type}): {filename}]\n{parsed['text']}"
+            attachment["parsed_content"] = parsed["text"]
+            attachment["inferred_mime"] = mime_type
 
     # Write interaction to PostgreSQL
     with get_memory_db_context() as conn:

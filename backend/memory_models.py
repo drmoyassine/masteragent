@@ -1,4 +1,5 @@
 # Memory System Models and Database Schema
+import json
 import uuid
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any, Union
@@ -220,18 +221,25 @@ class RelatedEntity(BaseModel):
     role: Optional[str] = ""  # primary, mentioned, cc, participant, etc.
 
 class InteractionCreate(BaseModel):
-    interaction_type: str           # email_sent, whatsapp_received, crm_note,
-                                    # ai_conversation, webhook_event, etc.
-    content: str                    # Full raw text of the interaction
-    primary_entity_type: str        # contact, institution, program, supplier, product
-    primary_entity_id: str          # External CRM reference key
-    primary_entity_subtype: Optional[str] = None
-    agent_name: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = {}     # CRM snapshot; may contain summary_field
-    metadata_field_map: Optional[Dict[str, str]] = {}  # {"summary_field": "ai_summary", ...}
-    has_attachments: bool = False
-    attachment_refs: Optional[List[Dict[str, Any]]] = []
-    source: str = "api"             # api | webhook | pull | ui
+    interaction_type: str = Field(..., description="An identifier for the event (e.g., email_sent, whatsapp_received, crm_note, ai_conversation, webhook_event)")
+    content: Union[str, Dict[str, Any], List[Any]] = Field(..., description="The raw content of the interaction. Can be a string or a JSON object/array which will be auto-stringified.")
+    primary_entity_type: str = Field(..., description="The category over which this memory is stored (e.g., contact, institution, program, supplier, product)")
+    primary_entity_id: str = Field(..., description="The unique ID of the entity from your source system")
+    primary_entity_subtype: Optional[str] = Field(None, description="Optional sub-categorization for the entity")
+    agent_name: Optional[str] = Field(None, description="An optional override for the name of the agent/source logging this")
+    metadata: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Arbitrary JSON dictionary for passing a continuous snapshot or contextual metadata")
+    metadata_field_map: Optional[Dict[str, str]] = Field(default_factory=dict, description="Used for mapping specific fields inside metadata")
+    has_attachments: bool = Field(False, description="Flag indicating if attachments exist")
+    attachment_refs: Optional[List[Dict[str, Any]]] = Field(default_factory=list, description="List of attachment objects. Supports type=base64 or type=url.")
+    source: str = Field("api", description="Source of ingestion (api, webhook, pull, ui)")
+
+    @model_validator(mode='before')
+    @classmethod
+    def serialize_content_blob(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "content" in data:
+            if not isinstance(data["content"], str):
+                data["content"] = json.dumps(data["content"], indent=2)
+        return data
 
 class InteractionResponse(BaseModel):
     id: str
