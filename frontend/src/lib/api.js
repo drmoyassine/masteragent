@@ -159,6 +159,10 @@ export const updateEntityTypeConfig = (entityType, data) => api.patch(`/memory/e
 
 // Memory Explorer - Admin UI
 export const searchMemories = (data) => api.post('/memory/admin/search', data);
+export const getInteractionsAdmin = (params) => api.get('/memory/interactions', { params });
+export const updateInteractionAdmin = (id, data) => api.put(`/memory/interactions/${id}`, data);
+export const getMemoriesAdmin = (params) => api.get('/memory/admin/memories', { params });
+export const getInsightsAdmin = (params) => api.get('/memory/insights', { params });
 export const getDailyMemories = (date) => api.get(`/memory/admin/daily/${date}`);
 export const getMemoryDetail = (id) => api.get(`/memory/admin/memories/${id}`);
 export const getTimeline = (entityType, entityId) => api.get(`/memory/admin/timeline/${entityType}/${entityId}`);

@@ -2,17 +2,18 @@ import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import api, {
-  searchMemories,
-  getDailyMemories,
-  getMemoryDetail,
+  getInteractionsAdmin,
+  getMemoriesAdmin,
+  getInsightsAdmin,
   getLessonsAdmin,
+  getMemoryDetail,
+  updateInteractionAdmin,
   createLessonAdmin,
   updateLessonAdmin,
   deleteLessonAdmin,
   getEntityTypes,
   getLessonTypes,
-  getChannelTypes,
-  getTimeline
+  getChannelTypes
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -43,73 +44,42 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
-  Search,
-  Calendar,
+  Database,
   User,
-  Building2,
-  FolderKanban,
   MessageSquare,
-  Mail,
-  Phone,
-  FileText,
-  Video,
-  StickyNote,
   GraduationCap,
-  Clock,
-  ChevronRight,
-  Filter,
-  X,
-  Check,
+  Calendar,
   Edit,
   Trash2,
   Plus,
+  Check,
   RefreshCw,
+  Lightbulb,
+  Search
 } from "lucide-react";
 
-const CHANNEL_ICONS = {
-  email: Mail,
-  call: Phone,
-  meeting: Video,
-  chat: MessageSquare,
-  document: FileText,
-  note: StickyNote,
-};
-
-const ENTITY_ICONS = {
-  Contact: User,
-  Organization: Building2,
-  Program: FolderKanban,
-};
-
 export default function MemoryExplorerPage() {
-  const [activeTab, setActiveTab] = useState("search");
+  const [activeTab, setActiveTab] = useState("interactions");
   const [loading, setLoading] = useState(false);
 
-  // Search state
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState([]);
-  const [searchFilters, setSearchFilters] = useState({
-    channel: "",
-    entity_type: "",
-    date_from: "",
-    date_to: "",
-  });
+  // Global filters
+  const [draftFilter, setDraftFilter] = useState({ entity_type: "all", entity_id: "" });
+  const [appliedFilter, setAppliedFilter] = useState({ entity_type: "all", entity_id: "" });
 
-  // Timeline state
+  // Config meta
   const [entityTypes, setEntityTypes] = useState([]);
-  const [selectedEntityType, setSelectedEntityType] = useState("");
-  const [entityId, setEntityId] = useState("");
-  const [timeline, setTimeline] = useState([]);
-
-  // Daily log state
-  const [selectedDate, setSelectedDate] = useState(format(new Date(), "yyyy-MM-dd"));
-  const [dailyMemories, setDailyMemories] = useState([]);
-
-  // Lessons state
-  const [lessons, setLessons] = useState([]);
   const [lessonTypes, setLessonTypes] = useState([]);
-  const [lessonFilter, setLessonFilter] = useState("all");
+
+  // Datasets
+  const [interactions, setInteractions] = useState([]);
+  const [memories, setMemories] = useState([]);
+  const [insights, setInsights] = useState([]);
+  const [lessons, setLessons] = useState([]);
+
+  // Additional lesson state
+  const [lessonStatusFilter, setLessonStatusFilter] = useState("all");
   const [editingLesson, setEditingLesson] = useState(null);
   const [newLesson, setNewLesson] = useState({ name: "", type: "", body: "", status: "draft" });
   const [showNewLessonDialog, setShowNewLessonDialog] = useState(false);
@@ -117,8 +87,8 @@ export default function MemoryExplorerPage() {
   // Memory detail state
   const [selectedMemory, setSelectedMemory] = useState(null);
 
-  // Channel types
-  const [channelTypes, setChannelTypes] = useState([]);
+  // Interaction Inspector State
+  const [editingInteraction, setEditingInteraction] = useState(null);
 
   useEffect(() => {
     loadInitialData();
@@ -126,109 +96,100 @@ export default function MemoryExplorerPage() {
 
   const loadInitialData = async () => {
     try {
-      const [entityRes, lessonTypeRes, channelRes] = await Promise.all([
+      const [entityRes, lessonTypeRes] = await Promise.all([
         getEntityTypes(),
         getLessonTypes(),
-        getChannelTypes(),
       ]);
       setEntityTypes(entityRes.data);
       setLessonTypes(lessonTypeRes.data);
-      setChannelTypes(channelRes.data);
     } catch (error) {
       console.error("Failed to load config data:", error);
     }
   };
 
-  // Search memories
-  const handleSearch = async () => {
-    if (!searchQuery.trim()) return;
-
-    setLoading(true);
-    try {
-      const filters = {};
-      if (searchFilters.channel) filters.channel = searchFilters.channel;
-      if (searchFilters.entity_type) filters.entity_type = searchFilters.entity_type;
-      if (searchFilters.date_from) filters.date_from = searchFilters.date_from;
-      if (searchFilters.date_to) filters.date_to = searchFilters.date_to;
-
-      const res = await searchMemories({
-        query: searchQuery,
-        filters: Object.keys(filters).length > 0 ? filters : undefined,
-        limit: 50,
-      });
-      setSearchResults(res.data.results || []);
-    } catch (error) {
-      toast.error("Search failed");
-    } finally {
-      setLoading(false);
-    }
+  const applyFilters = () => {
+    setAppliedFilter({ ...draftFilter });
   };
 
-  // Load timeline for entity
-  const loadTimeline = async () => {
-    if (!selectedEntityType || !entityId) return;
-
-    setLoading(true);
-    try {
-      const res = await getTimeline(selectedEntityType, entityId);
-      setTimeline(res.data?.entries || []);
-    } catch (error) {
-      toast.error("Failed to load timeline");
-      setTimeline([]);
-    } finally {
-      setLoading(false);
+  const getFetchParams = () => {
+    const params = {};
+    if (appliedFilter.entity_type && appliedFilter.entity_type !== "all") {
+      params.entity_type = appliedFilter.entity_type;
     }
+    if (appliedFilter.entity_id && appliedFilter.entity_id.trim() !== "") {
+      params.entity_id = appliedFilter.entity_id.trim();
+    }
+    return params;
   };
 
-  // Load daily memories
-  const loadDailyMemories = useCallback(async () => {
+  // Loaders
+  const loadInteractions = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await getDailyMemories(selectedDate);
-      setDailyMemories(res.data || []);
+      const res = await getInteractionsAdmin(getFetchParams());
+      setInteractions(res.data?.interactions || []);
     } catch (error) {
-      console.error("Failed to load daily memories:", error);
-      setDailyMemories([]);
+      toast.error("Failed to load interactions");
+      setInteractions([]);
     } finally {
       setLoading(false);
     }
-  }, [selectedDate]);
+  }, [appliedFilter]);
 
-  useEffect(() => {
-    if (activeTab === "daily") {
-      loadDailyMemories();
+  const loadMemories = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await getMemoriesAdmin(getFetchParams());
+      setMemories(res.data?.memories || []);
+    } catch (error) {
+      toast.error("Failed to load memories");
+      setMemories([]);
+    } finally {
+      setLoading(false);
     }
-  }, [activeTab, selectedDate, loadDailyMemories]);
+  }, [appliedFilter]);
 
-  // Load lessons
+  const loadInsights = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await getInsightsAdmin(getFetchParams());
+      setInsights(res.data?.insights || []);
+    } catch (error) {
+      toast.error("Failed to load insights");
+      setInsights([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [appliedFilter]);
+
   const loadLessons = useCallback(async () => {
     setLoading(true);
     try {
-      const params = {};
-      if (lessonFilter !== "all") params.status = lessonFilter;
+      const params = getFetchParams();
+      if (lessonStatusFilter !== "all") params.status = lessonStatusFilter;
       const res = await getLessonsAdmin(params);
-      setLessons(res.data || []);
+      setLessons(res.data?.lessons || []);
     } catch (error) {
       console.error("Failed to load lessons:", error);
       setLessons([]);
     } finally {
       setLoading(false);
     }
-  }, [lessonFilter]);
+  }, [appliedFilter, lessonStatusFilter]);
 
   useEffect(() => {
-    if (activeTab === "lessons") {
-      loadLessons();
-    }
-  }, [activeTab, lessonFilter, loadLessons]);
+    if (activeTab === "interactions") loadInteractions();
+    else if (activeTab === "memories") loadMemories();
+    else if (activeTab === "insights") loadInsights();
+    else if (activeTab === "lessons") loadLessons();
+  }, [activeTab, loadInteractions, loadMemories, loadInsights, loadLessons]);
 
-  // Create lesson
+  // Modals interaction logic
   const handleCreateLesson = async () => {
     if (!newLesson.name || !newLesson.type || !newLesson.body) {
       toast.error("Please fill all fields");
       return;
     }
-
     try {
       await createLessonAdmin(newLesson);
       toast.success("Lesson created");
@@ -240,10 +201,8 @@ export default function MemoryExplorerPage() {
     }
   };
 
-  // Update lesson
   const handleUpdateLesson = async () => {
     if (!editingLesson) return;
-
     try {
       await updateLessonAdmin(editingLesson.id, {
         name: editingLesson.name,
@@ -259,7 +218,6 @@ export default function MemoryExplorerPage() {
     }
   };
 
-  // Approve lesson
   const handleApproveLesson = async (lessonId) => {
     try {
       await updateLessonAdmin(lessonId, { status: "approved" });
@@ -270,10 +228,8 @@ export default function MemoryExplorerPage() {
     }
   };
 
-  // Delete lesson
   const handleDeleteLesson = async (lessonId) => {
     if (!window.confirm("Delete this lesson?")) return;
-
     try {
       await deleteLessonAdmin(lessonId);
       toast.success("Lesson deleted");
@@ -283,7 +239,6 @@ export default function MemoryExplorerPage() {
     }
   };
 
-  // Load memory detail
   const loadMemoryDetail = async (memoryId) => {
     try {
       const res = await getMemoryDetail(memoryId);
@@ -293,13 +248,28 @@ export default function MemoryExplorerPage() {
     }
   };
 
-  const clearFilters = () => {
-    setSearchFilters({ channel: "", entity_type: "", date_from: "", date_to: "" });
-  };
-
   const getLessonTypeColor = (typeName) => {
     const type = lessonTypes.find(t => t.name === typeName);
     return type?.color || "#6B7280";
+  };
+
+  const handleUpdateInteraction = async () => {
+    if (!editingInteraction) return;
+    try {
+      await updateInteractionAdmin(editingInteraction.id, {
+        interaction_type: editingInteraction.interaction_type,
+        primary_entity_type: editingInteraction.primary_entity_type,
+        primary_entity_subtype: editingInteraction.primary_entity_subtype,
+        primary_entity_id: editingInteraction.primary_entity_id,
+        content: editingInteraction.content,
+        source: editingInteraction.source,
+      });
+      toast.success("Interaction updated successfully");
+      setEditingInteraction(null);
+      loadInteractions();
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || "Failed to update interaction");
+    }
   };
 
   return (
@@ -307,341 +277,277 @@ export default function MemoryExplorerPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Memory Explorer</h1>
-          <p className="text-muted-foreground">Search, browse, and curate your agent memories</p>
+          <p className="text-muted-foreground">View and curate agent memories across all 4 interaction tiers</p>
         </div>
       </div>
 
+      {/* Global Filter Bar */}
+      <Card className="bg-card">
+        <CardContent className="p-4 flex flex-wrap gap-4 items-end">
+          <div className="space-y-1 w-64">
+            <Label>Entity Type</Label>
+            <Select value={draftFilter.entity_type} onValueChange={(v) => setDraftFilter({ ...draftFilter, entity_type: v })}>
+              <SelectTrigger>
+                <SelectValue placeholder="All" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All</SelectItem>
+                {entityTypes.map(e => (
+                  <SelectItem key={e.id} value={e.name}>{e.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1 flex-1 min-w-[200px]">
+            <Label>Entity ID (Optional)</Label>
+            <Input
+              placeholder="Filter by specific entity ID..."
+              value={draftFilter.entity_id}
+              onChange={(e) => setDraftFilter({ ...draftFilter, entity_id: e.target.value })}
+              onKeyDown={(e) => e.key === "Enter" && applyFilters()}
+            />
+          </div>
+          <Button onClick={applyFilters} disabled={loading} className="gap-2">
+             <Search className="w-4 h-4" /> Apply Filters
+          </Button>
+        </CardContent>
+      </Card>
+
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <TabsList className="grid w-full grid-cols-4 lg:w-auto lg:inline-grid">
-          <TabsTrigger value="search" className="gap-2" data-testid="tab-search">
-            <Search className="w-4 h-4" /> Search
+          <TabsTrigger value="interactions" className="gap-2" data-testid="tab-interactions">
+            <User className="w-4 h-4" /> Interactions
           </TabsTrigger>
-          <TabsTrigger value="timeline" className="gap-2" data-testid="tab-timeline">
-            <User className="w-4 h-4" /> Timeline
+          <TabsTrigger value="memories" className="gap-2" data-testid="tab-daily">
+            <Calendar className="w-4 h-4" /> Memories
           </TabsTrigger>
-          <TabsTrigger value="daily" className="gap-2" data-testid="tab-daily">
-            <Calendar className="w-4 h-4" /> Daily Log
+          <TabsTrigger value="insights" className="gap-2" data-testid="tab-insights">
+            <Lightbulb className="w-4 h-4" /> Insights
           </TabsTrigger>
           <TabsTrigger value="lessons" className="gap-2" data-testid="tab-lessons">
             <GraduationCap className="w-4 h-4" /> Lessons
           </TabsTrigger>
         </TabsList>
 
-        {/* Search Tab */}
-        <TabsContent value="search" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Semantic Search</CardTitle>
-              <CardDescription>Search through all memories using natural language</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex gap-2">
-                <Input
-                  placeholder="Search memories..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-                  className="flex-1"
-                  data-testid="search-input"
-                />
-                <Button onClick={handleSearch} disabled={loading} data-testid="search-button">
-                  <Search className="w-4 h-4 mr-2" />
-                  Search
-                </Button>
-              </div>
-
-              {/* Filters */}
-              <div className="flex flex-wrap gap-3 items-end">
-                <div className="space-y-1">
-                  <Label className="text-xs">Channel</Label>
-                  <Select value={searchFilters.channel || "all"} onValueChange={(v) => setSearchFilters({ ...searchFilters, channel: v === "all" ? "" : v })}>
-                    <SelectTrigger className="w-32">
-                      <SelectValue placeholder="Any" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Any</SelectItem>
-                      {channelTypes.map(c => (
-                        <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Entity Type</Label>
-                  <Select value={searchFilters.entity_type || "all"} onValueChange={(v) => setSearchFilters({ ...searchFilters, entity_type: v === "all" ? "" : v })}>
-                    <SelectTrigger className="w-32">
-                      <SelectValue placeholder="Any" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Any</SelectItem>
-                      {entityTypes.map(e => (
-                        <SelectItem key={e.id} value={e.name}>{e.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">From</Label>
-                  <Input type="date" value={searchFilters.date_from} onChange={(e) => setSearchFilters({ ...searchFilters, date_from: e.target.value })} className="w-36" />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">To</Label>
-                  <Input type="date" value={searchFilters.date_to} onChange={(e) => setSearchFilters({ ...searchFilters, date_to: e.target.value })} className="w-36" />
-                </div>
-                {(searchFilters.channel || searchFilters.entity_type || searchFilters.date_from || searchFilters.date_to) && (
-                  <Button variant="ghost" size="sm" onClick={clearFilters}>
-                    <X className="w-4 h-4 mr-1" /> Clear
-                  </Button>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Search Results */}
-          {searchResults.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Results ({searchResults.length})</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ScrollArea className="h-[500px]">
-                  <div className="space-y-3">
-                    {searchResults.map((result) => {
-                      const ChannelIcon = CHANNEL_ICONS[result.layer] || MessageSquare;
-                      return (
-                        <div
-                          key={result.id}
-                          className="p-4 border rounded-lg hover:bg-accent/50 cursor-pointer transition-colors"
-                          onClick={() => loadMemoryDetail(result.id)}
-                          data-testid={`search-result-${result.id}`}
-                        >
-                          <div className="flex items-start justify-between">
-                            <div className="flex items-center gap-2">
-                              <ChannelIcon className="w-4 h-4 text-muted-foreground" />
-                              <Badge variant="outline">{result.layer}</Badge>
-                              <span className="text-sm text-muted-foreground">
-                                {format(new Date(result.created_at || new Date()), "MMM d, yyyy h:mm a")}
-                              </span>
-                            </div>
-                            <Badge variant="secondary">{(result.score * 100).toFixed(0)}% match</Badge>
-                          </div>
-                          {result.name && <h4 className="mt-2 font-medium">{result.name}</h4>}
-                          <p className={`text-sm line-clamp-3 ${result.name ? 'mt-1' : 'mt-2'}`}>{result.snippet}</p>
-                          {(result.entity_type || result.entity_id) && (
-                            <div className="mt-2 flex flex-wrap gap-1">
-                              <Badge variant="outline" className="text-xs">
-                                <User className="w-3 h-3 mr-1" />
-                                {result.entity_type} / {result.entity_id}
-                              </Badge>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </ScrollArea>
-              </CardContent>
-            </Card>
-          )}
-        </TabsContent>
-
-        {/* Timeline Tab */}
-        <TabsContent value="timeline" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Entity Timeline</CardTitle>
-              <CardDescription>View interaction history for a specific entity</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex gap-3">
-                <div className="space-y-1 flex-1">
-                  <Label>Entity Type</Label>
-                  <Select value={selectedEntityType} onValueChange={setSelectedEntityType}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {entityTypes.map(e => (
-                        <SelectItem key={e.id} value={e.name}>{e.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1 flex-1">
-                  <Label>Entity ID / Name</Label>
-                  <Input
-                    placeholder="Enter entity ID or name"
-                    value={entityId}
-                    onChange={(e) => setEntityId(e.target.value)}
-                  />
-                </div>
-                <div className="flex items-end">
-                  <Button onClick={loadTimeline} disabled={loading || !selectedEntityType || !entityId}>
-                    Load Timeline
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {timeline.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Timeline ({timeline.length} interactions)</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ScrollArea className="h-[500px]">
-                  <div className="relative border-l-2 border-muted ml-4 space-y-6">
-                    {timeline.map((entry, i) => {
-                      const ChannelIcon = CHANNEL_ICONS[entry.source] || MessageSquare;
-                      return (
-                        <div key={entry.id} className="relative pl-6">
-                          <div className="absolute -left-2 top-1 w-4 h-4 rounded-full bg-primary" />
-                          <div className="p-4 border rounded-lg">
-                            <div className="flex items-center gap-2 mb-2">
-                              <ChannelIcon className="w-4 h-4" />
-                              <Badge variant="outline">{entry.source || entry.interaction_type || "unknown"}</Badge>
-                              <span className="text-sm text-muted-foreground">
-                                {format(new Date(entry.timestamp), "MMM d, yyyy h:mm a")}
-                              </span>
-                            </div>
-                            <p className="text-sm whitespace-pre-wrap">{entry.content_preview}</p>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </ScrollArea>
-              </CardContent>
-            </Card>
-          )}
-        </TabsContent>
-
-        {/* Daily Log Tab */}
-        <TabsContent value="daily" className="space-y-4">
+        {/* Tab 1: Interactions */}
+        <TabsContent value="interactions" className="space-y-4">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
-                <CardTitle>Daily Log</CardTitle>
-                <CardDescription>Browse memories by date</CardDescription>
+                <CardTitle>Interactions (Tier 0)</CardTitle>
+                <CardDescription>Raw inbound and outbound events</CardDescription>
               </div>
-              <div className="flex items-center gap-2">
-                <Input
-                  type="date"
-                  value={selectedDate}
-                  onChange={(e) => setSelectedDate(e.target.value)}
-                  className="w-40"
-                />
-                <Button variant="outline" size="icon" onClick={loadDailyMemories}>
-                  <RefreshCw className="w-4 h-4" />
-                </Button>
-              </div>
+              <Button variant="outline" size="icon" onClick={loadInteractions} disabled={loading}>
+                 <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+              </Button>
             </CardHeader>
             <CardContent>
-              {dailyMemories.length === 0 ? (
-                <div className="text-center py-12 text-muted-foreground">
-                  <Calendar className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                  <p>No memories for {format(new Date(selectedDate), "MMMM d, yyyy")}</p>
-                </div>
-              ) : (
-                <ScrollArea className="h-[500px]">
-                  <div className="space-y-3">
-                    {dailyMemories.map((memory) => {
-                      return (
-                        <div
-                          key={memory.id}
-                          className="p-4 border rounded-lg hover:bg-accent/50 cursor-pointer"
-                          onClick={() => loadMemoryDetail(memory.id)}
-                        >
-                          <div className="flex items-center gap-2 mb-2">
-                            <Database className="w-4 h-4 text-muted-foreground" />
-                            <Badge variant="outline">{memory.interaction_count} Interactions</Badge>
-                            <span className="text-sm text-muted-foreground">
-                              {format(new Date(memory.created_at || memory.date), "h:mm a")}
-                            </span>
-                          </div>
-                          <p className="text-sm line-clamp-2">{memory.content_summary || "No summary available"}</p>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </ScrollArea>
-              )}
+               <ScrollArea className="h-[500px]">
+                 <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Time</TableHead>
+                        <TableHead>Interaction Type</TableHead>
+                        <TableHead>Entity Type</TableHead>
+                        <TableHead>Entity Sub-Type</TableHead>
+                        <TableHead>Entity ID</TableHead>
+                        <TableHead>Interaction Blob</TableHead>
+                        <TableHead>Agent</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                       {interactions.length === 0 ? (
+                          <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-8">No interactions found.</TableCell></TableRow>
+                       ) : interactions.map(i => (
+                         <TableRow key={i.id}>
+                            <TableCell className="whitespace-nowrap">{format(new Date(i.timestamp), "MMM d, yyyy h:mm a")}</TableCell>
+                            <TableCell><Badge variant="outline">{i.interaction_type}</Badge></TableCell>
+                            <TableCell>{i.primary_entity_type}</TableCell>
+                            <TableCell>{i.primary_entity_subtype || "-"}</TableCell>
+                            <TableCell className="font-mono text-xs">{i.primary_entity_id}</TableCell>
+                            <TableCell className="max-w-xs truncate">{i.content}</TableCell>
+                            <TableCell>{i.agent_name || i.agent_id}</TableCell>
+                            <TableCell>{i.status}</TableCell>
+                            <TableCell>
+                               <Button variant="ghost" size="icon" onClick={() => setEditingInteraction(i)}>
+                                  <Edit className="w-4 h-4" />
+                               </Button>
+                            </TableCell>
+                         </TableRow>
+                       ))}
+                    </TableBody>
+                 </Table>
+               </ScrollArea>
             </CardContent>
           </Card>
         </TabsContent>
 
-        {/* Lessons Tab */}
+        {/* Tab 2: Memories */}
+        <TabsContent value="memories" className="space-y-4">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div>
+                <CardTitle>Memories (Tier 1)</CardTitle>
+                <CardDescription>Daily summaries of interactions for entities</CardDescription>
+              </div>
+              <Button variant="outline" size="icon" onClick={loadMemories} disabled={loading}>
+                 <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+              </Button>
+            </CardHeader>
+            <CardContent>
+               <ScrollArea className="h-[500px]">
+                 <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Date</TableHead>
+                        <TableHead>Entity</TableHead>
+                        <TableHead>Interactions</TableHead>
+                        <TableHead>Summary</TableHead>
+                        <TableHead>Compacted</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                       {memories.length === 0 ? (
+                          <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">No memories found.</TableCell></TableRow>
+                       ) : memories.map(m => (
+                         <TableRow key={m.id} className="cursor-pointer hover:bg-accent/50" onClick={() => loadMemoryDetail(m.id)}>
+                            <TableCell className="whitespace-nowrap">{m.date}</TableCell>
+                            <TableCell>{m.primary_entity_type}: <span className="font-mono text-xs">{m.primary_entity_id}</span></TableCell>
+                            <TableCell>{m.interaction_count}</TableCell>
+                            <TableCell className="max-w-md truncate">{m.content_summary}</TableCell>
+                            <TableCell>{m.compacted ? <Check className="w-4 h-4 text-green-500" /> : ""}</TableCell>
+                         </TableRow>
+                       ))}
+                    </TableBody>
+                 </Table>
+               </ScrollArea>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Tab 3: Insights */}
+        <TabsContent value="insights" className="space-y-4">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div>
+                <CardTitle>Insights (Tier 2)</CardTitle>
+                <CardDescription>Entity facts and preferences extracted from memories</CardDescription>
+              </div>
+              <Button variant="outline" size="icon" onClick={loadInsights} disabled={loading}>
+                 <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+              </Button>
+            </CardHeader>
+            <CardContent>
+               <ScrollArea className="h-[500px]">
+                 <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Created</TableHead>
+                        <TableHead>Entity</TableHead>
+                        <TableHead>Type</TableHead>
+                        <TableHead>Name / Summary</TableHead>
+                        <TableHead>Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                       {insights.length === 0 ? (
+                          <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">No insights found.</TableCell></TableRow>
+                       ) : insights.map(ins => (
+                         <TableRow key={ins.id}>
+                            <TableCell className="whitespace-nowrap">{format(new Date(ins.created_at), "MMM d, yyyy")}</TableCell>
+                            <TableCell>{ins.primary_entity_type}: <span className="font-mono text-xs">{ins.primary_entity_id}</span></TableCell>
+                            <TableCell><Badge variant="outline">{ins.insight_type}</Badge></TableCell>
+                            <TableCell>
+                               <div className="font-medium">{ins.name}</div>
+                               <div className="text-sm text-muted-foreground line-clamp-1">{ins.summary}</div>
+                            </TableCell>
+                            <TableCell><Badge variant="secondary">{ins.status}</Badge></TableCell>
+                         </TableRow>
+                       ))}
+                    </TableBody>
+                 </Table>
+               </ScrollArea>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Tab 4: Lessons */}
         <TabsContent value="lessons" className="space-y-4">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
-                <CardTitle>Curated Lessons</CardTitle>
-                <CardDescription>Knowledge extracted from interactions</CardDescription>
+                <CardTitle>Lessons (Tier 3)</CardTitle>
+                <CardDescription>Global system-wide rules extracted from insights</CardDescription>
               </div>
               <div className="flex items-center gap-2">
-                <Select value={lessonFilter} onValueChange={setLessonFilter}>
+                <Select value={lessonStatusFilter} onValueChange={setLessonStatusFilter}>
                   <SelectTrigger className="w-32">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All</SelectItem>
+                    <SelectItem value="all">All Status</SelectItem>
                     <SelectItem value="draft">Drafts</SelectItem>
                     <SelectItem value="approved">Approved</SelectItem>
                   </SelectContent>
                 </Select>
-                <Button onClick={() => setShowNewLessonDialog(true)} data-testid="new-lesson-button">
+                <Button onClick={() => setShowNewLessonDialog(true)}>
                   <Plus className="w-4 h-4 mr-2" />
                   New Lesson
                 </Button>
               </div>
             </CardHeader>
             <CardContent>
-              {lessons.length === 0 ? (
-                <div className="text-center py-12 text-muted-foreground">
-                  <GraduationCap className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                  <p>No lessons yet. Create one or let the system extract them automatically.</p>
-                </div>
-              ) : (
-                <ScrollArea className="h-[500px]">
-                  <div className="space-y-3">
-                    {lessons.map((lesson) => (
-                      <div key={lesson.id} className="p-4 border rounded-lg">
-                        <div className="flex items-start justify-between">
-                          <div className="flex items-center gap-2">
-                            <div
-                              className="w-3 h-3 rounded-full"
-                              style={{ backgroundColor: getLessonTypeColor(lesson.type) }}
-                            />
-                            <Badge variant="outline">{lesson.type}</Badge>
-                            <Badge variant={lesson.status === "approved" ? "default" : "secondary"}>
-                              {lesson.status}
-                            </Badge>
-                          </div>
-                          <div className="flex gap-1">
-                            {lesson.status === "draft" && (
-                              <Button variant="ghost" size="icon" onClick={() => handleApproveLesson(lesson.id)}>
-                                <Check className="w-4 h-4 text-green-500" />
-                              </Button>
-                            )}
-                            <Button variant="ghost" size="icon" onClick={() => setEditingLesson(lesson)}>
-                              <Edit className="w-4 h-4" />
-                            </Button>
-                            <Button variant="ghost" size="icon" onClick={() => handleDeleteLesson(lesson.id)}>
-                              <Trash2 className="w-4 h-4 text-destructive" />
-                            </Button>
-                          </div>
-                        </div>
-                        <h3 className="font-semibold mt-2">{lesson.name}</h3>
-                        <p className="text-sm text-muted-foreground mt-1 line-clamp-3">{lesson.body}</p>
-                        <p className="text-xs text-muted-foreground mt-2">
-                          Created {format(new Date(lesson.created_at), "MMM d, yyyy")}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </ScrollArea>
-              )}
+               <ScrollArea className="h-[500px]">
+                 <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Type</TableHead>
+                        <TableHead>Name</TableHead>
+                        <TableHead>Content</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                       {lessons.length === 0 ? (
+                          <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">No lessons found.</TableCell></TableRow>
+                       ) : lessons.map(lesson => (
+                         <TableRow key={lesson.id}>
+                            <TableCell>
+                               <div className="flex items-center gap-2">
+                                 <div className="w-3 h-3 rounded-full" style={{ backgroundColor: getLessonTypeColor(lesson.type) }} />
+                                 <Badge variant="outline">{lesson.type}</Badge>
+                               </div>
+                            </TableCell>
+                            <TableCell className="font-medium">{lesson.name}</TableCell>
+                            <TableCell className="max-w-[250px] truncate" title={lesson.body}>{lesson.body}</TableCell>
+                            <TableCell>
+                               <Badge variant={lesson.status === "approved" ? "default" : "secondary"}>
+                                 {lesson.status}
+                               </Badge>
+                            </TableCell>
+                            <TableCell>
+                               <div className="flex gap-1">
+                                 {lesson.status === "draft" && (
+                                   <Button variant="ghost" size="icon" onClick={() => handleApproveLesson(lesson.id)}>
+                                     <Check className="w-4 h-4 text-green-500" />
+                                   </Button>
+                                 )}
+                                 <Button variant="ghost" size="icon" onClick={() => setEditingLesson(lesson)}>
+                                   <Edit className="w-4 h-4" />
+                                 </Button>
+                                 <Button variant="ghost" size="icon" onClick={() => handleDeleteLesson(lesson.id)}>
+                                   <Trash2 className="w-4 h-4 text-destructive" />
+                                 </Button>
+                               </div>
+                            </TableCell>
+                         </TableRow>
+                       ))}
+                    </TableBody>
+                 </Table>
+               </ScrollArea>
             </CardContent>
           </Card>
         </TabsContent>
@@ -661,39 +567,32 @@ export default function MemoryExplorerPage() {
                   {format(new Date(selectedMemory.created_at || new Date()), "MMMM d, yyyy h:mm a")}
                 </span>
               </div>
-
               {selectedMemory.content_summary && (
                 <div>
                   <Label className="text-xs text-muted-foreground">Summary</Label>
                   <p className="mt-1 p-3 bg-muted rounded-lg text-sm">{selectedMemory.content_summary}</p>
                 </div>
               )}
-
               {selectedMemory.intents?.length > 0 && (
                 <div>
                   <Label className="text-xs text-muted-foreground">Intents Detected</Label>
                   <div className="flex flex-wrap gap-2 mt-1">
                     {selectedMemory.intents.map((intent, i) => (
-                      <Badge key={i} variant="secondary">
-                        {intent}
-                      </Badge>
+                      <Badge key={i} variant="secondary">{intent}</Badge>
                     ))}
                   </div>
                 </div>
               )}
-
               {selectedMemory.related_entities?.length > 0 && (
                 <div>
                   <Label className="text-xs text-muted-foreground">Related Entities</Label>
                   <div className="flex flex-wrap gap-2 mt-1">
-                    {selectedMemory.related_entities.map((entity, i) => {
-                      return (
-                        <Badge key={i} variant="outline">
-                          <User className="w-3 h-3 mr-1" />
-                          {entity}
-                        </Badge>
-                      );
-                    })}
+                    {selectedMemory.related_entities.map((entity, i) => (
+                      <Badge key={i} variant="outline">
+                        <User className="w-3 h-3 mr-1" />
+                        {entity}
+                      </Badge>
+                    ))}
                   </div>
                 </div>
               )}
@@ -704,118 +603,178 @@ export default function MemoryExplorerPage() {
 
       {/* New Lesson Dialog */}
       <Dialog open={showNewLessonDialog} onOpenChange={setShowNewLessonDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Create New Lesson</DialogTitle>
-            <DialogDescription>Add a curated lesson to your knowledge base</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div>
-              <Label>Name</Label>
-              <Input
-                value={newLesson.name}
-                onChange={(e) => setNewLesson({ ...newLesson, name: e.target.value })}
-                placeholder="Lesson title"
-              />
-            </div>
-            <div>
-              <Label>Type</Label>
-              <Select value={newLesson.type} onValueChange={(v) => setNewLesson({ ...newLesson, type: v })}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select type" />
-                </SelectTrigger>
-                <SelectContent>
-                  {lessonTypes.map(t => (
-                    <SelectItem key={t.id} value={t.name}>{t.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>Body</Label>
-              <Textarea
-                value={newLesson.body}
-                onChange={(e) => setNewLesson({ ...newLesson, body: e.target.value })}
-                placeholder="Lesson content (Markdown supported)"
-                rows={6}
-              />
-            </div>
-            <div>
-              <Label>Status</Label>
-              <Select value={newLesson.status} onValueChange={(v) => setNewLesson({ ...newLesson, status: v })}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="draft">Draft</SelectItem>
-                  <SelectItem value="approved">Approved</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowNewLessonDialog(false)}>Cancel</Button>
-            <Button onClick={handleCreateLesson}>Create Lesson</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+         <DialogContent>
+           <DialogHeader>
+             <DialogTitle>Create New Lesson</DialogTitle>
+             <DialogDescription>Add a curated lesson to your knowledge base</DialogDescription>
+           </DialogHeader>
+           <div className="space-y-4 py-4">
+             <div>
+               <Label>Name</Label>
+               <Input value={newLesson.name} onChange={(e) => setNewLesson({ ...newLesson, name: e.target.value })} placeholder="Lesson title" />
+             </div>
+             <div>
+               <Label>Type</Label>
+               <Select value={newLesson.type} onValueChange={(v) => setNewLesson({ ...newLesson, type: v })}>
+                 <SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger>
+                 <SelectContent>
+                   {lessonTypes.map(t => <SelectItem key={t.id} value={t.name}>{t.name}</SelectItem>)}
+                 </SelectContent>
+               </Select>
+             </div>
+             <div>
+               <Label>Body</Label>
+               <Textarea value={newLesson.body} onChange={(e) => setNewLesson({ ...newLesson, body: e.target.value })} placeholder="Lesson content (Markdown supported)" rows={6} />
+             </div>
+             <div>
+               <Label>Status</Label>
+               <Select value={newLesson.status} onValueChange={(v) => setNewLesson({ ...newLesson, status: v })}>
+                 <SelectTrigger><SelectValue /></SelectTrigger>
+                 <SelectContent>
+                   <SelectItem value="draft">Draft</SelectItem>
+                   <SelectItem value="approved">Approved</SelectItem>
+                 </SelectContent>
+               </Select>
+             </div>
+           </div>
+           <DialogFooter>
+             <Button variant="outline" onClick={() => setShowNewLessonDialog(false)}>Cancel</Button>
+             <Button onClick={handleCreateLesson}>Create Lesson</Button>
+           </DialogFooter>
+         </DialogContent>
+       </Dialog>
 
-      {/* Edit Lesson Dialog */}
-      <Dialog open={!!editingLesson} onOpenChange={() => setEditingLesson(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Edit Lesson</DialogTitle>
-          </DialogHeader>
-          {editingLesson && (
-            <div className="space-y-4 py-4">
-              <div>
-                <Label>Name</Label>
-                <Input
-                  value={editingLesson.name}
-                  onChange={(e) => setEditingLesson({ ...editingLesson, name: e.target.value })}
-                />
-              </div>
-              <div>
-                <Label>Type</Label>
-                <Select value={editingLesson.type} onValueChange={(v) => setEditingLesson({ ...editingLesson, type: v })}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {lessonTypes.map(t => (
-                      <SelectItem key={t.id} value={t.name}>{t.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>Body</Label>
-                <Textarea
-                  value={editingLesson.body}
-                  onChange={(e) => setEditingLesson({ ...editingLesson, body: e.target.value })}
-                  rows={6}
-                />
-              </div>
-              <div>
-                <Label>Status</Label>
-                <Select value={editingLesson.status} onValueChange={(v) => setEditingLesson({ ...editingLesson, status: v })}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="draft">Draft</SelectItem>
-                    <SelectItem value="approved">Approved</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditingLesson(null)}>Cancel</Button>
-            <Button onClick={handleUpdateLesson}>Save Changes</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+       {/* Edit Lesson Dialog */}
+       <Dialog open={!!editingLesson} onOpenChange={() => setEditingLesson(null)}>
+         <DialogContent>
+           <DialogHeader><DialogTitle>Edit Lesson</DialogTitle></DialogHeader>
+           {editingLesson && (
+             <div className="space-y-4 py-4">
+               <div>
+                 <Label>Name</Label>
+                 <Input value={editingLesson.name} onChange={(e) => setEditingLesson({ ...editingLesson, name: e.target.value })} />
+               </div>
+               <div>
+                 <Label>Type</Label>
+                 <Select value={editingLesson.type} onValueChange={(v) => setEditingLesson({ ...editingLesson, type: v })}>
+                   <SelectTrigger><SelectValue /></SelectTrigger>
+                   <SelectContent>
+                     {lessonTypes.map(t => <SelectItem key={t.id} value={t.name}>{t.name}</SelectItem>)}
+                   </SelectContent>
+                 </Select>
+               </div>
+               <div>
+                 <Label>Body</Label>
+                 <Textarea value={editingLesson.body} onChange={(e) => setEditingLesson({ ...editingLesson, body: e.target.value })} rows={6} />
+               </div>
+               <div>
+                 <Label>Status</Label>
+                 <Select value={editingLesson.status} onValueChange={(v) => setEditingLesson({ ...editingLesson, status: v })}>
+                   <SelectTrigger><SelectValue /></SelectTrigger>
+                   <SelectContent>
+                     <SelectItem value="draft">Draft</SelectItem>
+                     <SelectItem value="approved">Approved</SelectItem>
+                   </SelectContent>
+                 </Select>
+               </div>
+             </div>
+           )}
+           <DialogFooter>
+             <Button variant="outline" onClick={() => setEditingLesson(null)}>Cancel</Button>
+             <Button onClick={handleUpdateLesson}>Update Lesson</Button>
+           </DialogFooter>
+         </DialogContent>
+       </Dialog>
+
+       {/* Interaction Inspector Dialog */}
+       <Dialog open={!!editingInteraction} onOpenChange={() => setEditingInteraction(null)}>
+         <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col">
+           <DialogHeader>
+             <DialogTitle>Interaction Inspector</DialogTitle>
+             <DialogDescription>
+               {editingInteraction?.status === "pending" 
+                 ? "Edit raw interaction properties before they are processed by the memory pipeline."
+                 : "This interaction is locked because it has already been processed."}
+             </DialogDescription>
+           </DialogHeader>
+           
+           {editingInteraction && (
+             <ScrollArea className="flex-1 pr-4">
+               <div className="space-y-4 py-4">
+                 <div className="grid grid-cols-2 gap-4">
+                   <div>
+                     <Label>Interaction Type</Label>
+                     <Input 
+                       value={editingInteraction.interaction_type} 
+                       onChange={(e) => setEditingInteraction({ ...editingInteraction, interaction_type: e.target.value })}
+                       disabled={editingInteraction.status !== "pending"}
+                     />
+                   </div>
+                   <div>
+                     <Label>Source</Label>
+                     <Input 
+                       value={editingInteraction.source} 
+                       onChange={(e) => setEditingInteraction({ ...editingInteraction, source: e.target.value })}
+                       disabled={editingInteraction.status !== "pending"}
+                     />
+                   </div>
+                   <div>
+                     <Label>Entity Type</Label>
+                     <Select 
+                       value={editingInteraction.primary_entity_type} 
+                       onValueChange={(v) => setEditingInteraction({ ...editingInteraction, primary_entity_type: v })}
+                       disabled={editingInteraction.status !== "pending"}
+                     >
+                       <SelectTrigger><SelectValue /></SelectTrigger>
+                       <SelectContent>
+                         {entityTypes.map(t => <SelectItem key={t.id} value={t.name}>{t.name}</SelectItem>)}
+                       </SelectContent>
+                     </Select>
+                   </div>
+                   <div>
+                     <Label>Entity Sub-Type</Label>
+                     <Input 
+                       value={editingInteraction.primary_entity_subtype || ""} 
+                       onChange={(e) => setEditingInteraction({ ...editingInteraction, primary_entity_subtype: e.target.value })}
+                       disabled={editingInteraction.status !== "pending"}
+                     />
+                   </div>
+                   <div className="col-span-2">
+                     <Label>Entity ID</Label>
+                     <Input 
+                       value={editingInteraction.primary_entity_id} 
+                       onChange={(e) => setEditingInteraction({ ...editingInteraction, primary_entity_id: e.target.value })}
+                       disabled={editingInteraction.status !== "pending"}
+                       className="font-mono text-sm"
+                     />
+                   </div>
+                 </div>
+                 
+                 <div>
+                   <Label>Interaction Blob</Label>
+                   <Textarea 
+                     value={editingInteraction.content} 
+                     onChange={(e) => setEditingInteraction({ ...editingInteraction, content: e.target.value })} 
+                     rows={10} 
+                     disabled={editingInteraction.status !== "pending"}
+                     className="font-mono text-sm"
+                   />
+                 </div>
+               </div>
+             </ScrollArea>
+           )}
+
+           <DialogFooter className="mt-4">
+             <Button variant="outline" onClick={() => setEditingInteraction(null)}>Cancel</Button>
+             <Button 
+               onClick={handleUpdateInteraction} 
+               disabled={!editingInteraction || editingInteraction.status !== "pending"}
+             >
+               Save Changes
+             </Button>
+           </DialogFooter>
+         </DialogContent>
+       </Dialog>
     </div>
   );
 }

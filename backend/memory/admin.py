@@ -24,7 +24,7 @@ from memory_models import (
     InsightCreate, InsightResponse, InsightUpdate,
     LessonCreate, LessonResponse, LessonUpdate,
     EntityTypeConfig, EntityTypeConfigUpdate,
-    InteractionResponse, TimelineEntry,
+    InteractionResponse, InteractionUpdate, TimelineEntry,
     SearchRequest, SearchResponse, SearchResult
 )
 from memory_services import (
@@ -524,7 +524,7 @@ async def list_interactions(
         cursor.execute(f"""
             SELECT id, timestamp, interaction_type, agent_id, agent_name,
                    primary_entity_type, primary_entity_id, primary_entity_subtype,
-                   has_attachments, source, status, created_at
+                   has_attachments, source, status, created_at, content
             FROM interactions {where}
             ORDER BY timestamp DESC
             LIMIT %s OFFSET %s
@@ -545,6 +545,62 @@ async def get_interaction(interaction_id: str, admin: dict = Depends(require_adm
     if not row:
         raise HTTPException(status_code=404, detail="Interaction not found")
     return dict(row)
+
+
+@router.put("/interactions/{interaction_id}")
+async def update_interaction(
+    interaction_id: str,
+    payload: InteractionUpdate,
+    admin: dict = Depends(require_admin_auth)
+):
+    """Update a pending interaction's fields."""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        
+        # Verify interaction exists and is pending
+        cursor.execute("SELECT status FROM interactions WHERE id = %s", (interaction_id,))
+        row = cursor.fetchone()
+        
+        if not row:
+            raise HTTPException(status_code=404, detail="Interaction not found")
+            
+        if row["status"] != "pending":
+            raise HTTPException(status_code=400, detail="Only pending interactions can be edited")
+
+        updates = []
+        params = []
+        
+        if payload.interaction_type is not None:
+            updates.append("interaction_type = %s")
+            params.append(payload.interaction_type)
+        if payload.primary_entity_type is not None:
+            updates.append("primary_entity_type = %s")
+            params.append(payload.primary_entity_type)
+        if payload.primary_entity_id is not None:
+            updates.append("primary_entity_id = %s")
+            params.append(payload.primary_entity_id)
+        if payload.primary_entity_subtype is not None:
+            updates.append("primary_entity_subtype = %s")
+            params.append(payload.primary_entity_subtype)
+        if payload.content is not None:
+            updates.append("content = %s")
+            params.append(payload.content)
+        if payload.source is not None:
+            updates.append("source = %s")
+            params.append(payload.source)
+        if payload.status is not None:
+            updates.append("status = %s")
+            params.append(payload.status)
+
+        if not updates:
+            return {"status": "no internal updates"}
+
+        params.append(interaction_id)
+        query = f"UPDATE interactions SET {', '.join(updates)} WHERE id = %s"
+        cursor.execute(query, params)
+        conn.commit()
+
+    return {"status": "updated"}
 
 
 # ============================================================
@@ -694,6 +750,42 @@ async def admin_get_daily_memories(
         
         cursor.execute("SELECT COUNT(*) as total FROM memories WHERE date = %s", (date_str,))
         total = cursor.fetchone()["total"]
+
+    return {"memories": [dict(r) for r in rows], "total": total}
+
+@router.get("/admin/memories")
+async def list_admin_memories(
+    entity_type: Optional[str] = Query(None),
+    entity_id: Optional[str] = Query(None),
+    limit: int = Query(50, le=200),
+    offset: int = Query(0),
+    admin: dict = Depends(require_admin_auth)
+):
+    """Fetch paginated memories globally."""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        conditions = []
+        params = []
+
+        if entity_type:
+            conditions.append("primary_entity_type = %s"); params.append(entity_type)
+        if entity_id:
+            conditions.append("primary_entity_id = %s"); params.append(entity_id)
+
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        cursor.execute(f"SELECT COUNT(*) as total FROM memories {where}", list(params))
+        total = cursor.fetchone()["total"]
+
+        params_page = list(params) + [limit, offset]
+        cursor.execute(f"""
+            SELECT id, date, primary_entity_type, primary_entity_id,
+                   interaction_count, content_summary, related_entities,
+                   intents, compacted, created_at
+            FROM memories {where}
+            ORDER BY created_at DESC
+            LIMIT %s OFFSET %s
+        """, params_page)
+        rows = cursor.fetchall()
 
     return {"memories": [dict(r) for r in rows], "total": total}
 

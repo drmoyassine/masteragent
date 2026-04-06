@@ -255,6 +255,15 @@ class InteractionResponse(BaseModel):
     status: str
     created_at: str
 
+class InteractionUpdate(BaseModel):
+    interaction_type: Optional[str] = None
+    primary_entity_type: Optional[str] = None
+    primary_entity_id: Optional[str] = None
+    primary_entity_subtype: Optional[str] = None
+    content: Optional[str] = None
+    source: Optional[str] = None
+    status: Optional[str] = None
+
 # ============================================
 # Tier 1: Memory Models
 # ============================================
