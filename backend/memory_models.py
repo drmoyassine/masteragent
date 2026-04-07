@@ -427,4 +427,14 @@ class TimelineEntry(BaseModel):
     source: str
     status: str
 
-
+class ContextStatusResponse(BaseModel):
+    has_context: bool
+    interactions_count: int
+    last_interaction_date: Optional[str] = None
+    interactions_ids: List[str] = []
+    memories_count: int
+    last_memory_date: Optional[str] = None
+    memories_ids: List[str] = []
+    insights_count: int
+    last_insight_date: Optional[str] = None
+    insights_ids: List[str] = []

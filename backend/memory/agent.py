@@ -25,6 +25,7 @@ from memory_models import (
     MemoryResponse,
     SearchRequest, SearchResponse, SearchResult,
     TimelineRequest, TimelineEntry,
+    ContextStatusResponse,
 )
 from memory_services import (
     generate_embedding,
@@ -269,6 +270,69 @@ async def search_memory(
 
     log_audit(agent["id"], "search", "memory", None, {"query": request.query, "layers": layers})
     return SearchResponse(results=paginated, total=len(results), query=request.query)
+
+
+# ============================================
+# GET /has-context — Check Context Existence
+# ============================================
+
+@router.get("/has-context", response_model=ContextStatusResponse)
+async def get_has_context(
+    entity_type: str = Query(...),
+    entity_id: str = Query(...),
+    agent: dict = Depends(verify_agent_key)
+):
+    """Check if any context exists for an entity and return IDs and dates."""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        
+        # Interactions
+        cursor.execute("""
+            SELECT id, timestamp
+            FROM interactions
+            WHERE primary_entity_type = %s AND primary_entity_id = %s
+            ORDER BY timestamp DESC
+        """, (entity_type, entity_id))
+        i_rows = cursor.fetchall()
+        i_ids = [r["id"] for r in i_rows]
+        i_last = str(i_rows[0]["timestamp"]) if i_rows else None
+        
+        # Memories
+        cursor.execute("""
+            SELECT id, date
+            FROM memories
+            WHERE primary_entity_type = %s AND primary_entity_id = %s
+            ORDER BY date DESC
+        """, (entity_type, entity_id))
+        m_rows = cursor.fetchall()
+        m_ids = [r["id"] for r in m_rows]
+        m_last = str(m_rows[0]["date"]) if m_rows else None
+        
+        # Insights
+        cursor.execute("""
+            SELECT id, created_at
+            FROM insights
+            WHERE primary_entity_type = %s AND primary_entity_id = %s
+            ORDER BY created_at DESC
+        """, (entity_type, entity_id))
+        ins_rows = cursor.fetchall()
+        ins_ids = [r["id"] for r in ins_rows]
+        ins_last = str(ins_rows[0]["created_at"]) if ins_rows else None
+        
+    total = len(i_ids) + len(m_ids) + len(ins_ids)
+
+    return ContextStatusResponse(
+        has_context=(total > 0),
+        interactions_count=len(i_ids),
+        last_interaction_date=i_last,
+        interactions_ids=i_ids,
+        memories_count=len(m_ids),
+        last_memory_date=m_last,
+        memories_ids=m_ids,
+        insights_count=len(ins_ids),
+        last_insight_date=ins_last,
+        insights_ids=ins_ids
+    )
 
 
 # ============================================
