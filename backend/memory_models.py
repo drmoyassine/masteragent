@@ -238,7 +238,7 @@ class InteractionCreate(BaseModel):
     def serialize_content_blob(cls, data: Any) -> Any:
         if isinstance(data, dict) and "content" in data:
             if not isinstance(data["content"], str):
-                data["content"] = json.dumps(data["content"], indent=2)
+                data["content"] = json.dumps(data["content"], indent=2, ensure_ascii=False)
         return data
 
 class InteractionResponse(BaseModel):

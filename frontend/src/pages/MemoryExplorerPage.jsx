@@ -8,6 +8,7 @@ import api, {
   getLessonsAdmin,
   getMemoryDetail,
   updateInteractionAdmin,
+  deleteInteractionAdmin,
   createLessonAdmin,
   updateLessonAdmin,
   deleteLessonAdmin,
@@ -269,6 +270,19 @@ export default function MemoryExplorerPage() {
       loadInteractions();
     } catch (error) {
       toast.error(error?.response?.data?.detail || "Failed to update interaction");
+    }
+  };
+
+  const handleDeleteInteraction = async () => {
+    if (!editingInteraction) return;
+    if (!window.confirm("Delete this interaction? This action cannot be reversed.")) return;
+    try {
+      await deleteInteractionAdmin(editingInteraction.id);
+      toast.success("Interaction deleted successfully");
+      setEditingInteraction(null);
+      loadInteractions();
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || "Failed to delete interaction");
     }
   };
 
@@ -772,14 +786,24 @@ export default function MemoryExplorerPage() {
              </ScrollArea>
            )}
 
-           <DialogFooter className="mt-4">
-             <Button variant="outline" onClick={() => setEditingInteraction(null)}>Cancel</Button>
+           <DialogFooter className="mt-4 sm:justify-between">
              <Button 
-               onClick={handleUpdateInteraction} 
-               disabled={!editingInteraction || editingInteraction.status !== "pending"}
+               variant="destructive" 
+               onClick={handleDeleteInteraction}
+               disabled={!editingInteraction}
              >
-               Save Changes
+               <Trash2 className="w-4 h-4 mr-2" />
+               Delete
              </Button>
+             <div className="flex gap-2">
+               <Button variant="outline" onClick={() => setEditingInteraction(null)}>Cancel</Button>
+               <Button 
+                 onClick={handleUpdateInteraction} 
+                 disabled={!editingInteraction || editingInteraction.status !== "pending"}
+               >
+                 Save Changes
+               </Button>
+             </div>
            </DialogFooter>
          </DialogContent>
        </Dialog>

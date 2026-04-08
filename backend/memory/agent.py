@@ -128,8 +128,8 @@ async def ingest_interaction(
             """, (
                 interaction_id, now, body.interaction_type, agent["id"], body.agent_name or agent.get("name"),
                 content, body.primary_entity_type, body.primary_entity_subtype, body.primary_entity_id,
-                json.dumps(body.metadata or {}), json.dumps(body.metadata_field_map or {}),
-                body.has_attachments, json.dumps(attachment_refs), embedding, body.source, "pending", now
+                json.dumps(body.metadata or {}, ensure_ascii=False), json.dumps(body.metadata_field_map or {}, ensure_ascii=False),
+                body.has_attachments, json.dumps(attachment_refs, ensure_ascii=False), embedding, body.source, "pending", now
             ))
         else:
             cursor.execute("""
@@ -142,8 +142,8 @@ async def ingest_interaction(
             """, (
                 interaction_id, now, body.interaction_type, agent["id"], body.agent_name or agent.get("name"),
                 content, body.primary_entity_type, body.primary_entity_subtype, body.primary_entity_id,
-                json.dumps(body.metadata or {}), json.dumps(body.metadata_field_map or {}),
-                body.has_attachments, json.dumps(attachment_refs), body.source, "pending", now
+                json.dumps(body.metadata or {}, ensure_ascii=False), json.dumps(body.metadata_field_map or {}, ensure_ascii=False),
+                body.has_attachments, json.dumps(attachment_refs, ensure_ascii=False), body.source, "pending", now
             ))
 
     cache_interaction(interaction_id, {
