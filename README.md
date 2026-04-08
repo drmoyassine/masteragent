@@ -56,6 +56,13 @@ MasterAgent provides two essential modules for building production-ready AI agen
 - **Webhook Ingestion** — Ingest interactions from external systems via signed webhooks
 - **System Monitor** — Live stats dashboard with agent activity
 
+### Multimodal Data Ingestion
+- **Native PDF OCR** — intercepts scanned contracts and documents via PyMuPDF and routes highly-compressed, visually optimized frames to Edge Vision LLMs.
+- **Smart Spreadsheets (`.xlsx`)** — Natively evaluates modern Excel grids and serializes active cells into highly token-efficient Markdown tables.
+- **XML Documents (`.docx`)** — High-speed, dependency-free text isolation natively from `.docx` XML trees.
+- **Image Processing** — Seamless image content extraction and indexing (`.jpg`, `.png`, `.webp`)
+- **Graceful Formatting** — Advanced fallback protocol to safely handle legacy binaries (`.doc`, `.xls`) without triggering container crashes.
+
 ## Getting Started
 
 ### Prerequisites
