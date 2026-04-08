@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 async def test_agent_interaction_ingestion_queues_job():
     """Verify that hitting the interactions API endpoint enqueues a job without synchronous execution"""
     from memory.agent import ingest_interaction
-    from models import InteractionCreate
+    from memory_models import InteractionCreate
 
     # Mock dependencies
     req_body = InteractionCreate(
