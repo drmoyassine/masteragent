@@ -178,6 +178,33 @@ async def parse_document(file_content: bytes, filename: str, mime_type: str) -> 
                     result["text"] = "\n\n".join(p for p in parts if p)
         except Exception as e:
             logger.error(f"DOCX parsing error: {e}")
+
+    if mime_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+        try:
+            import openpyxl
+            from io import BytesIO
+            wb = openpyxl.load_workbook(BytesIO(file_content), data_only=True)
+            text_blocks = []
+            
+            for sheet_name in wb.sheetnames:
+                ws = wb[sheet_name]
+                text_blocks.append(f"### Sheet: {sheet_name}")
+                
+                for row in ws.iter_rows(values_only=True):
+                    # Filter out purely empty rows
+                    if any(cell is not None and str(cell).strip() != "" for cell in row):
+                        row_md = " | ".join(str(cell).strip().replace("\n", " ") if cell is not None else "" for cell in row)
+                        text_blocks.append(f"| {row_md} |")
+                        
+            result["text"] = "\n".join(text_blocks)
+            result["pages"] = len(wb.sheetnames)
+        except Exception as e:
+            logger.error(f"XLSX parsing error: {e}")
+            
+    if mime_type in ("application/msword", "application/vnd.ms-excel"):
+        logger.warning(f"Unsupported legacy format encountered: {mime_type}")
+        result["text"] = "[Format Unsupported: Legacy binary formats (.doc, .xls) require manual conversion to .docx or .xlsx]"
+        
     return result
 
 
