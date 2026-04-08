@@ -502,7 +502,7 @@ async def fetch_provider_models(data: FetchModelsRequest, user: dict = Depends(r
     models: List[str] = []
 
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             if provider == "openai":
                 base = api_base_url or "https://api.openai.com/v1"
                 resp = await client.get(
@@ -564,10 +564,10 @@ async def fetch_provider_models(data: FetchModelsRequest, user: dict = Depends(r
     except httpx.HTTPStatusError as e:
         logger.error(f"HTTP error fetching models for {provider}: {e.response.status_code} - {e.response.text}")
         raise HTTPException(status_code=e.response.status_code, detail=f"Provider API error: {e.response.text[:200]}")
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail=f"Timeout connecting to {provider} endpoint. Try increasing timeout or check network.")
     except httpx.ConnectError:
         raise HTTPException(status_code=503, detail=f"Cannot connect to {provider} endpoint. Check the base URL and ensure the service is running.")
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail=f"Timeout connecting to {provider} endpoint.")
     except HTTPException:
         raise
     except Exception as e:
