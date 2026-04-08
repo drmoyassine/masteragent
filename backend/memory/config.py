@@ -541,6 +541,8 @@ async def fetch_provider_models(data: FetchModelsRequest, user: dict = Depends(r
 
             elif provider == "ollama":
                 base = api_base_url or "http://localhost:11434"
+                if base.endswith("/v1"):
+                    base = base[:-3]
                 resp = await client.get(f"{base}/api/tags")
                 resp.raise_for_status()
                 data_json = resp.json()

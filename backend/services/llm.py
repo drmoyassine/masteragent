@@ -10,10 +10,10 @@ logger = logging.getLogger(__name__)
 
 
 def _build_llm_headers(api_key: str) -> dict:
-    return {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    return headers
 
 
 async def call_llm(
@@ -24,12 +24,12 @@ async def call_llm(
 ) -> str:
     """Call OpenAI-compatible LLM using admin-configured settings."""
     config = get_llm_config(task_type)
-    if not config or not config.get("api_key_encrypted"):
-        logger.warning(f"LLM config for {task_type} not configured or missing API key")
+    if not config:
+        logger.warning(f"LLM config for {task_type} not configured")
         return ""
 
-    api_key = config["api_key_encrypted"]
-    api_base = config.get("api_base_url", "https://api.openai.com/v1")
+    api_key = config.get("api_key_encrypted", "")
+    api_base = config.get("api_base_url", "https://api.openai.com/v1").rstrip("/")
     model = config.get("model_name", "gpt-4o-mini")
 
     messages = []
@@ -57,12 +57,12 @@ async def call_llm(
 async def call_llm_vision(prompt: str, image_base64: str, mime_type: str = "image/png") -> str:
     """Call OpenAI-compatible LLM with vision for document parsing."""
     config = get_llm_config("vision")
-    if not config or not config.get("api_key_encrypted"):
-        logger.warning("Vision LLM config not configured or missing API key")
+    if not config:
+        logger.warning("Vision LLM config not configured")
         return ""
 
-    api_key = config["api_key_encrypted"]
-    api_base = config.get("api_base_url", "https://api.openai.com/v1")
+    api_key = config.get("api_key_encrypted", "")
+    api_base = config.get("api_base_url", "https://api.openai.com/v1").rstrip("/")
     model = config.get("model_name", "gpt-4o")
 
     messages = [{"role": "user", "content": [
