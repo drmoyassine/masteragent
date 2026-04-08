@@ -1,0 +1,77 @@
+/* backend/static/custom-swagger.css */
+
+/* 1. Base Swagger UI Structural CSS */
+@import url('https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css');
+
+/* 2. Amoenus SwaggerDark Theme CSS Overlay */
+@import url('https://raw.githubusercontent.com/Amoenus/SwaggerDark/master/SwaggerDark.css');
+
+/* 3. Custom Frontbase Fonts & Tweaks */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+body {
+    background-color: #0A0A0A !important;
+    font-family: 'Inter', sans-serif !important;
+    color: #E2E8F0 !important;
+}
+
+.swagger-ui {
+    font-family: 'Inter', sans-serif !important;
+}
+
+.swagger-ui .topbar { 
+    display: none !important; 
+}
+
+/* Guaranteeing perfect opblock contrast against Amoenus theme */
+.swagger-ui .scheme-container {
+    background-color: #121212 !important;
+    border-bottom: 1px solid #2D3748 !important;
+}
+
+.swagger-ui .info .title {
+    color: #FFFFFF !important;
+    font-family: 'Inter', sans-serif !important;
+}
+
+/* Force all text inside opblocks to be pure white */
+.swagger-ui .opblock .opblock-summary-path,
+.swagger-ui .opblock .opblock-summary-path__deprecated,
+.swagger-ui .opblock .opblock-summary-description,
+.swagger-ui .opblock .opblock-summary-operation-id,
+.swagger-ui .parameter__name,
+.swagger-ui .parameter__type,
+.swagger-ui .parameter__in,
+.swagger-ui table thead tr th,
+.swagger-ui table tbody tr td,
+.swagger-ui .response-col_status,
+.swagger-ui .response-col_description,
+.swagger-ui .response-col_links,
+.swagger-ui .responses-inner h4,
+.swagger-ui .responses-inner h5,
+.swagger-ui .opblock-description-wrapper p,
+.swagger-ui .markdown p,
+.swagger-ui .renderedmarkdown p,
+.swagger-ui .opblock-tag,
+.swagger-ui .opblock-tag a,
+.swagger-ui .opblock-tag small {
+    color: #FFFFFF !important;
+}
+
+/* Fix the bright gray background on Parameters and Responses headers */
+.swagger-ui .opblock .opblock-section-header,
+.swagger-ui .responses-wrapper .opblock-section-header {
+    background-color: #1A1A1A !important;
+    border-bottom: 1px solid #333333 !important;
+}
+
+/* Ensure the text inside those headers remains white */
+.swagger-ui .opblock .opblock-section-header h4,
+.swagger-ui .opblock .opblock-section-header > label {
+    color: #FFFFFF !important;
+}
+
+/* Completely hide the bloated Schemas/Models section at the bottom */
+.swagger-ui section.models {
+    display: none !important;
+}

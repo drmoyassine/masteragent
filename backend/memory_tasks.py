@@ -358,9 +358,9 @@ async def _generate_memory_for_entity(entity_type: str, entity_id: str, interact
                 json.dumps(relationships),
             ))
 
-        # 9. Mark interactions as done
+        # 9. Mark interactions as done and clear ephemeral embeddings to prevent DB bloat
         cursor.execute("""
-            UPDATE interactions SET status = 'done'
+            UPDATE interactions SET status = 'done', embedding = NULL
             WHERE id = ANY(%s)
         """, (interaction_ids,))
 

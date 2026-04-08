@@ -72,12 +72,35 @@ async def lifespan(app: FastAPI):
 # FastAPI app
 # ─────────────────────────────────────────────
 app = FastAPI(
-    title="Prompt Manager & Memory System API",
-    docs_url="/api/docs",
+    title="MasterAgent Platform SDK",
+    docs_url=None,  # We manually override this below for custom CSS
     redoc_url=None,
     openapi_url="/api/openapi.json",
     lifespan=lifespan
 )
+
+# ─────────────────────────────────────────────
+# Custom Swagger UI (Dark Mode)
+# ─────────────────────────────────────────────
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.staticfiles import StaticFiles
+import os
+
+static_dir = os.path.join(ROOT_DIR, "static")
+if not os.path.exists(static_dir):
+    os.makedirs(static_dir)
+
+app.mount("/api/static", StaticFiles(directory=static_dir), name="static")
+
+@app.get("/api/docs", include_in_schema=False)
+async def custom_swagger_ui_html():
+    return get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title=app.title + " - API Reference",
+        oauth2_redirect_url=app.swagger_ui_oauth2_redirect_url,
+        swagger_js_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js",
+        swagger_css_url="/api/static/custom-swagger.css",
+    )
 
 # ─────────────────────────────────────────────
 # Route modules
@@ -105,11 +128,15 @@ async def health_check():
 async def root():
     return {"message": "Prompt Manager & Memory System API", "version": "1.0.0"}
 
-# Register all routers under /api prefix
-for _router in [auth_router, settings_router, templates_router,
-                prompts_router, render_router, api_keys_router,
-                variables_router, _meta_router]:
-    app.include_router(_router, prefix="/api")
+# Register all routers under /api prefix. Only expose prompts to public Swagger
+app.include_router(auth_router, prefix="/api", include_in_schema=False)
+app.include_router(settings_router, prefix="/api", include_in_schema=False)
+app.include_router(templates_router, prefix="/api", include_in_schema=False)
+app.include_router(prompts_router, prefix="/api", tags=["📝 Prompts"]) # Agent SDK visible
+app.include_router(render_router, prefix="/api", include_in_schema=False)
+app.include_router(api_keys_router, prefix="/api", include_in_schema=False)
+app.include_router(variables_router, prefix="/api", include_in_schema=False)
+app.include_router(_meta_router, prefix="/api", include_in_schema=False)
 
 # Memory system (already carries its own /api/memory prefix)
 app.include_router(memory_router)

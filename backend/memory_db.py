@@ -180,8 +180,8 @@ def _create_interaction_tables(cursor):
             primary_entity_id       TEXT NOT NULL,
             metadata                JSONB DEFAULT '{}',
             metadata_field_map      JSONB DEFAULT '{}',
-            has_attachments         BOOLEAN DEFAULT FALSE,
             attachment_refs         JSONB DEFAULT '[]',
+            embedding               vector,
             source                  TEXT DEFAULT 'api',
             status                  TEXT DEFAULT 'pending',
             created_at              TIMESTAMPTZ DEFAULT NOW()
@@ -313,6 +313,12 @@ def _run_migrations(cursor):
             cursor.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS seq_id BIGSERIAL")
         except Exception as e:
             logger.error(f"Failed to add seq_id to {tbl}: {e}")
+
+    # Add embedding vector to interactions for Ephemeral Search
+    try:
+        cursor.execute("ALTER TABLE interactions ADD COLUMN IF NOT EXISTS embedding vector")
+    except Exception as e:
+        logger.error(f"Failed to add embedding vector to interactions: {e}")
 
     # Agent columns that were added iteratively
     for col, col_def in [

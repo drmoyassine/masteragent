@@ -269,6 +269,22 @@ class InteractionUpdate(BaseModel):
 # Tier 1: Memory Models
 # ============================================
 
+class MemoryCreate(BaseModel):
+    date: str
+    primary_entity_type: str
+    primary_entity_id: str
+    interaction_count: int = 1
+    content_summary: str
+    related_entities: Optional[List[RelatedEntity]] = []
+    intents: Optional[List[str]] = []
+    interaction_ids: Optional[List[str]] = []
+
+class MemoryUpdate(BaseModel):
+    content_summary: Optional[str] = None
+    related_entities: Optional[List[RelatedEntity]] = None
+    intents: Optional[List[str]] = None
+    compacted: Optional[bool] = None
+
 class MemoryResponse(BaseModel):
     id: str
     seq_id: Optional[int] = None
@@ -389,9 +405,12 @@ class EntityTypeConfigUpdate(BaseModel):
 
 class SearchRequest(BaseModel):
     query: str
-    entity_id: Optional[str] = None
+    layers: List[str] = Field(default_factory=lambda: ["interactions", "memories", "insights", "lessons"])
     entity_type: Optional[str] = None
-    layers: str = "all"             # memories | insights | lessons | all
+    entity_subtype: Optional[str] = None
+    entity_id: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
     limit: int = 20
     offset: int = 0
 

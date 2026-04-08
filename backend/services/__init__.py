@@ -18,16 +18,24 @@ from services.processing import (
     summarize_text,
 )
 from services.search import (
+    search_interactions_by_vector,
+    search_interactions_by_fulltext,
     search_insights_by_vector,
+    search_insights_by_fulltext,
     search_lessons_by_vector,
+    search_lessons_by_fulltext,
     search_memories_by_vector,
+    search_memories_by_fulltext,
 )
 
 __all__ = [
     "get_llm_config", "get_memory_settings", "get_system_prompt",
     "call_llm", "call_llm_vision",
     "generate_embedding", "generate_embeddings_batch",
-    "search_memories_by_vector", "search_insights_by_vector", "search_lessons_by_vector",
+    "search_interactions_by_vector", "search_interactions_by_fulltext",
+    "search_memories_by_vector", "search_memories_by_fulltext",
+    "search_insights_by_vector", "search_insights_by_fulltext",
+    "search_lessons_by_vector", "search_lessons_by_fulltext",
     "chunk_text", "scrub_pii", "summarize_text", "parse_document",
     "extract_entities", "extract_entities_gliner", "extract_entities_llm",
 ]

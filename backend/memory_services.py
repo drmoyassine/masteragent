@@ -18,8 +18,13 @@ from services import (  # noqa: F401
     get_system_prompt,
     parse_document,
     scrub_pii,
+    search_interactions_by_vector,
+    search_interactions_by_fulltext,
     search_insights_by_vector,
+    search_insights_by_fulltext,
     search_lessons_by_vector,
+    search_lessons_by_fulltext,
     search_memories_by_vector,
+    search_memories_by_fulltext,
     summarize_text,
 )
