@@ -58,8 +58,12 @@ import {
   Check,
   RefreshCw,
   Lightbulb,
-  Search
+  Search,
+  XCircle,
+  CheckCircle2,
+  AlertCircle
 } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 export default function MemoryExplorerPage() {
   const [activeTab, setActiveTab] = useState("interactions");
@@ -366,6 +370,7 @@ export default function MemoryExplorerPage() {
                         <TableHead>Entity Type</TableHead>
                         <TableHead>Entity Sub-Type</TableHead>
                         <TableHead>Entity ID</TableHead>
+                        <TableHead>Pipeline Nodes</TableHead>
                         <TableHead>Interaction Blob</TableHead>
                         <TableHead>Agent</TableHead>
                         <TableHead>Status</TableHead>
@@ -383,6 +388,34 @@ export default function MemoryExplorerPage() {
                             <TableCell>{i.primary_entity_type}</TableCell>
                             <TableCell>{i.primary_entity_subtype || "-"}</TableCell>
                             <TableCell className="font-mono text-xs">{i.primary_entity_id}</TableCell>
+                            <TableCell>
+                               <div className="flex gap-2 items-center">
+                                 {i.has_attachments && (
+                                   <TooltipProvider>
+                                     <Tooltip>
+                                       <TooltipTrigger>
+                                         <Badge variant="outline" className={i.processing_errors?.vision ? "border-red-500/50 text-red-500" : "border-emerald-500/50 text-emerald-500"}>
+                                           {i.processing_errors?.vision ? <XCircle className="w-3 h-3 mr-1" /> : <CheckCircle2 className="w-3 h-3 mr-1" />}
+                                           Vision
+                                         </Badge>
+                                       </TooltipTrigger>
+                                       {i.processing_errors?.vision && <TooltipContent className="bg-red-950 text-red-100 border-red-900"><p className="max-w-xs">{i.processing_errors.vision}</p></TooltipContent>}
+                                     </Tooltip>
+                                   </TooltipProvider>
+                                 )}
+                                 <TooltipProvider>
+                                   <Tooltip>
+                                     <TooltipTrigger>
+                                       <Badge variant="outline" className={i.processing_errors?.embeddings ? "border-red-500/50 text-red-500" : "border-emerald-500/50 text-emerald-500"}>
+                                         {i.processing_errors?.embeddings ? <XCircle className="w-3 h-3 mr-1" /> : <CheckCircle2 className="w-3 h-3 mr-1" />}
+                                         Embedding
+                                       </Badge>
+                                     </TooltipTrigger>
+                                     {i.processing_errors?.embeddings && <TooltipContent className="bg-red-950 text-red-100 border-red-900"><p className="max-w-xs">{i.processing_errors.embeddings}</p></TooltipContent>}
+                                   </Tooltip>
+                                 </TooltipProvider>
+                               </div>
+                            </TableCell>
                             <TableCell className="max-w-xs truncate">{i.content}</TableCell>
                             <TableCell>{i.agent_name || i.agent_id}</TableCell>
                             <TableCell>{i.status}</TableCell>
@@ -782,6 +815,15 @@ export default function MemoryExplorerPage() {
                      className="font-mono text-sm"
                    />
                  </div>
+
+                 {editingInteraction.processing_errors && Object.keys(editingInteraction.processing_errors).length > 0 && (
+                   <div className="bg-red-950/20 border border-red-900/50 rounded-md p-3 mt-4">
+                     <Label className="text-red-400 mb-2 block flex items-center"><AlertCircle className="w-4 h-4 mr-2" /> Captured Pipeline Errors</Label>
+                     <pre className="text-xs text-red-300/80 font-mono overflow-x-auto">
+                       {JSON.stringify(editingInteraction.processing_errors, null, 2)}
+                     </pre>
+                   </div>
+                 )}
                </div>
              </ScrollArea>
            )}

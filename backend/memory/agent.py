@@ -58,6 +58,7 @@ async def ingest_interaction(
 
     attachment_refs = list(body.attachment_refs or [])
     content = body.content
+    processing_errors = {}
 
     # Document OCR parsing logic
     for attachment in attachment_refs:
@@ -95,7 +96,12 @@ async def ingest_interaction(
         mime_type = inferred_mime or attachment.get("mime_type", "application/octet-stream")
         filename = attachment.get("filename", "attachment")
 
-        parsed = await parse_document(raw_blob, filename, mime_type)
+        try:
+            parsed = await parse_document(raw_blob, filename, mime_type)
+        except Exception as e:
+            logger.error(f"Vision/Processing failed for {filename}: {e}")
+            processing_errors["vision"] = str(e)
+            parsed = {}
         
         url_context = f" ({url})" if attach_type == "url" and 'url' in locals() else ""
         pages_context = f" (Parsed {parsed.get('parsed_pages', parsed.get('pages', 1))} out of {parsed.get('pages', 1)} pages)" if mime_type == "application/pdf" and parsed.get("pages", 0) > 0 else ""
@@ -104,7 +110,8 @@ async def ingest_interaction(
             content += f"\n\n---\n[Attachment ({mime_type}): {filename}]{url_context}{pages_context}\n{parsed['text']}"
             attachment["parsed_content"] = parsed["text"]
         else:
-            content += f"\n\n---\n[Attachment ({mime_type}): {filename}]{url_context}{pages_context}\n[Parsing Failed or Document is Empty]"
+            err_msg = processing_errors.get("vision", "Parsing Failed or Document is Empty")
+            content += f"\n\n---\n[Attachment ({mime_type}): {filename}]{url_context}{pages_context}\n[Error: {err_msg}]"
 
         attachment["inferred_mime"] = mime_type
 
@@ -115,6 +122,7 @@ async def ingest_interaction(
             embedding = await generate_embedding(content)
     except Exception as e:
         logger.warning(f"Failed to generate ephemeral interaction embedding: {e}")
+        processing_errors["embeddings"] = str(e)
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -124,13 +132,13 @@ async def ingest_interaction(
                     id, timestamp, interaction_type, agent_id, agent_name,
                     content, primary_entity_type, primary_entity_subtype, primary_entity_id,
                     metadata, metadata_field_map, has_attachments, attachment_refs,
-                    embedding, source, status, created_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    embedding, processing_errors, source, status, created_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 interaction_id, now, body.interaction_type, agent["id"], body.agent_name or agent.get("name"),
                 content, body.primary_entity_type, body.primary_entity_subtype, body.primary_entity_id,
                 json.dumps(body.metadata or {}, ensure_ascii=False), json.dumps(body.metadata_field_map or {}, ensure_ascii=False),
-                body.has_attachments, json.dumps(attachment_refs, ensure_ascii=False), embedding, body.source, "pending", now
+                body.has_attachments, json.dumps(attachment_refs, ensure_ascii=False), embedding, json.dumps(processing_errors, ensure_ascii=False), body.source, "pending", now
             ))
         else:
             cursor.execute("""
@@ -138,13 +146,13 @@ async def ingest_interaction(
                     id, timestamp, interaction_type, agent_id, agent_name,
                     content, primary_entity_type, primary_entity_subtype, primary_entity_id,
                     metadata, metadata_field_map, has_attachments, attachment_refs,
-                    source, status, created_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    processing_errors, source, status, created_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 interaction_id, now, body.interaction_type, agent["id"], body.agent_name or agent.get("name"),
                 content, body.primary_entity_type, body.primary_entity_subtype, body.primary_entity_id,
                 json.dumps(body.metadata or {}, ensure_ascii=False), json.dumps(body.metadata_field_map or {}, ensure_ascii=False),
-                body.has_attachments, json.dumps(attachment_refs, ensure_ascii=False), body.source, "pending", now
+                body.has_attachments, json.dumps(attachment_refs, ensure_ascii=False), json.dumps(processing_errors, ensure_ascii=False), body.source, "pending", now
             ))
 
     cache_interaction(interaction_id, {

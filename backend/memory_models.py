@@ -231,6 +231,7 @@ class InteractionCreate(BaseModel):
     metadata_field_map: Optional[Dict[str, str]] = Field(default_factory=dict, description="Used for mapping specific fields inside metadata")
     has_attachments: bool = Field(False, description="Flag indicating if attachments exist")
     attachment_refs: Optional[List[Dict[str, Any]]] = Field(default_factory=list, description="List of attachment objects. Supports type=base64 or type=url.")
+    processing_errors: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Dictionary tracking pipeline execution failures (vision, embedding, etc)")
     source: str = Field("api", description="Source of ingestion (api, webhook, pull, ui)")
 
     @model_validator(mode='before')
@@ -254,6 +255,7 @@ class InteractionResponse(BaseModel):
     has_attachments: bool
     source: str
     status: str
+    processing_errors: Optional[Dict[str, Any]] = None
     created_at: str
 
 class InteractionUpdate(BaseModel):
