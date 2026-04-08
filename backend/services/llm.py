@@ -47,8 +47,10 @@ async def call_llm(
             if response.status_code == 200:
                 return response.json()["choices"][0]["message"]["content"]
             logger.error(f"LLM call failed: {response.status_code} - {response.text}")
+            raise RuntimeError(f"LLM call failed: {response.status_code} - {response.text}")
     except Exception as e:
         logger.error(f"LLM call error: {e}")
+        raise RuntimeError(str(e))
     return ""
 
 
@@ -78,6 +80,8 @@ async def call_llm_vision(prompt: str, image_base64: str, mime_type: str = "imag
             if response.status_code == 200:
                 return response.json()["choices"][0]["message"]["content"]
             logger.error(f"Vision LLM call failed: {response.status_code}")
+            raise RuntimeError(f"Vision LLM call failed: {response.status_code} - {response.text}")
     except Exception as e:
         logger.error(f"Vision LLM call error: {e}")
+        raise RuntimeError(str(e))
     return ""

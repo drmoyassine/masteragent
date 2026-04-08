@@ -31,8 +31,10 @@ async def generate_embedding(text: str) -> List[float]:
             if response.status_code == 200:
                 return response.json()["data"][0]["embedding"]
             logger.error(f"Embedding call failed: {response.status_code}")
+            raise RuntimeError(f"Embedding call failed: {response.status_code} - {response.text}")
     except Exception as e:
         logger.error(f"Embedding call error: {e}")
+        raise RuntimeError(str(e))
     return []
 
 
@@ -56,6 +58,9 @@ async def generate_embeddings_batch(texts: List[str]) -> List[List[float]]:
             )
             if response.status_code == 200:
                 return [item["embedding"] for item in response.json()["data"]]
+            logger.error(f"Batch embedding failed: {response.status_code}")
+            raise RuntimeError(f"Batch embedding failed: {response.status_code} - {response.text}")
     except Exception as e:
         logger.error(f"Batch embedding error: {e}")
+        raise RuntimeError(str(e))
     return []
