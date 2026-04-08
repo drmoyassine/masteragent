@@ -39,7 +39,7 @@ from collections import defaultdict
 from datetime import datetime, date, timedelta, timezone
 from typing import Optional
 
-from core.storage import get_memory_db_context, flush_interaction_cache
+from core.storage import get_memory_db_context, flush_interaction_cache, cache_interaction
 from memory_services import (
     call_llm,
     extract_entities,
