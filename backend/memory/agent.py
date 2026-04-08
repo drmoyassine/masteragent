@@ -123,6 +123,7 @@ async def ingest_interaction(
     except Exception as e:
         logger.warning(f"Failed to generate ephemeral interaction embedding: {e}")
         processing_errors["embeddings"] = str(e)
+        content += f"\n\n[Processing Error: Embedding Failed - {e}]"
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()

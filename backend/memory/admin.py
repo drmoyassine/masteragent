@@ -528,7 +528,7 @@ async def list_interactions(
         cursor.execute(f"""
             SELECT id, seq_id, timestamp, interaction_type, agent_id, agent_name,
                    primary_entity_type, primary_entity_id, primary_entity_subtype,
-                   has_attachments, source, status, created_at, content
+                   has_attachments, source, status, created_at, content, processing_errors
             FROM interactions {where}
             ORDER BY timestamp DESC
             LIMIT %s OFFSET %s
