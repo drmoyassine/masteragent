@@ -74,6 +74,149 @@ def check_rate_limit(agent_id: str) -> bool:
     return state["count"] <= limit
 
 
+# ── Ingestion Logic (Worker Flow) ─────────────────────────────────────────────
+
+async def process_interaction(interaction_id: str):
+    """
+    Worker Task: Fetches a pending interaction, extracts attachments, runs vision AI,
+    computes ephemeral embeddings, and flags the interaction as processed or failed.
+    """
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM interactions WHERE id = %s", (interaction_id,))
+        row = cursor.fetchone()
+        
+    if not row:
+        logger.warning(f"process_interaction: Interaction {interaction_id} not found.")
+        return
+        
+    interaction = dict(row)
+    # If the interaction is already done or failed, skip processing
+    if interaction["status"] not in ["pending", "queued"]:
+        logger.info(f"Interaction {interaction_id} is already in status: {interaction['status']}")
+        return
+
+    content = interaction.get("content") or ""
+    try:
+        attachment_refs = json.loads(interaction["attachment_refs"]) if isinstance(interaction.get("attachment_refs"), str) else (interaction.get("attachment_refs") or [])
+    except json.JSONDecodeError:
+        attachment_refs = []
+        
+    processing_errors = {}
+    if interaction.get("processing_errors"):
+        try:
+            processing_errors = json.loads(interaction["processing_errors"]) if isinstance(interaction.get("processing_errors"), str) else interaction["processing_errors"]
+        except json.JSONDecodeError:
+            pass
+
+    # Document OCR parsing logic
+    from memory_services import parse_document
+    for attachment in attachment_refs:
+        if not isinstance(attachment, dict):
+            continue
+            
+        attach_type = attachment.get("type", "base64")
+        raw_blob = None
+        url = attachment.get("url")
+        
+        if attach_type == "url":
+            if url:
+                import httpx
+                try:
+                    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                        resp = await client.get(url)
+                        resp.raise_for_status()
+                        raw_blob = resp.content
+                except Exception as e:
+                    logger.warning(f"Failed to fetch attachment URL {url}: {e}")
+        else:
+            b64_data = attachment.get("data") or attachment.get("raw_bytes")
+            if b64_data:
+                import base64
+                try:
+                    raw_blob = base64.b64decode(b64_data)
+                except Exception as e:
+                    logger.warning(f"Failed to decode base64 attachment: {e}")
+
+        if not raw_blob:
+            continue
+
+        import filetype
+        inferred_mime = None
+        kind = filetype.guess(raw_blob)
+        if kind: inferred_mime = kind.mime
+        
+        mime_type = inferred_mime or attachment.get("mime_type", "application/octet-stream")
+        filename = attachment.get("filename", "attachment")
+
+        try:
+            parsed = await parse_document(raw_blob, filename, mime_type)
+        except Exception as e:
+            logger.error(f"Vision/Processing failed for {filename}: {e}")
+            processing_errors["vision"] = str(e)
+            parsed = {}
+        
+        url_context = f" ({url})" if attach_type == "url" and url else ""
+        pages_context = f" (Parsed {parsed.get('parsed_pages', parsed.get('pages', 1))} out of {parsed.get('pages', 1)} pages)" if mime_type == "application/pdf" and parsed.get("pages", 0) > 0 else ""
+        
+        if parsed.get("text"):
+            content += f"\n\n---\n[Attachment ({mime_type}): {filename}]{url_context}{pages_context}\n{parsed['text']}"
+            attachment["parsed_content"] = parsed["text"]
+        else:
+            err_msg = processing_errors.get("vision", "Parsing Failed or Document is Empty")
+            content += f"\n\n---\n[Attachment ({mime_type}): {filename}]{url_context}{pages_context}\n[Error: {err_msg}]"
+
+        attachment["inferred_mime"] = mime_type
+
+    # Real-time Embeddings generation for Pending Interactions (Ephemeral Vectors)
+    embedding = None
+    try:
+        if content.strip():
+            embedding = await generate_embedding(content)
+    except Exception as e:
+        logger.warning(f"Failed to generate ephemeral interaction embedding: {e}")
+        processing_errors["embeddings"] = str(e)
+        content += f"\n\n[Processing Error: Embedding Failed - {e}]"
+
+    # Save outputs to Database
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        
+        # update query blocks
+        if embedding:
+            cursor.execute("""
+                UPDATE interactions 
+                SET content = %s, attachment_refs = %s, embedding = %s, processing_errors = %s
+                WHERE id = %s
+            """, (
+                content, json.dumps(attachment_refs, ensure_ascii=False), embedding, 
+                json.dumps(processing_errors, ensure_ascii=False), interaction_id
+            ))
+        else:
+            cursor.execute("""
+                UPDATE interactions 
+                SET content = %s, attachment_refs = %s, processing_errors = %s
+                WHERE id = %s
+            """, (
+                content, json.dumps(attachment_refs, ensure_ascii=False), 
+                json.dumps(processing_errors, ensure_ascii=False), interaction_id
+            ))
+            
+    # Cache invalidation to reflect accurate embedding in ephemeral searches
+    flush_interaction_cache(interaction_id)
+    cache_interaction(interaction_id, {
+        "id": interaction_id,
+        "interaction_type": interaction["interaction_type"],
+        "agent_id": interaction.get("agent_id"),
+        "content": content,
+        "primary_entity_type": interaction["primary_entity_type"],
+        "primary_entity_id": interaction["primary_entity_id"],
+        "timestamp": str(interaction["timestamp"]),
+        "metadata_field_map": json.loads(interaction.get("metadata_field_map") or "{}"),
+    })
+
+
+
 # ── Job log helpers (prevent double-firing) ───────────────────────────────────
 
 def get_job_last_date(job_name: str) -> Optional[date]:
@@ -155,9 +298,12 @@ async def _background_loop():
                 if last_date != today:
                     logger.info(f"Firing daily memory generation (scheduled={scheduled_time} UTC)")
                     set_job_last_date("daily_memory_generation", today)  # mark first to prevent race
+                    await run_orphan_sweeper()
                     await run_daily_memory_generation()
                     await run_compaction_check()
-                    await run_lesson_check()
+                    
+                    from memory.queue import memory_bulk_queue
+                    await memory_bulk_queue.add("generate_lesson", {}, {"priority": 3})
 
         except Exception as e:
             logger.error(f"Background loop error: {e}", exc_info=True)
@@ -166,6 +312,32 @@ async def _background_loop():
 
 
 # ── Daily Memory Generation ──────────────────────────────────────────────────
+
+async def run_orphan_sweeper():
+    """Find interactions stuck in pending state for > 6 hours and re-enqueue them."""
+    try:
+        with get_memory_db_context() as conn:
+            cursor = conn.cursor()
+            # Compatible with PostgreSQL INTERVAL
+            cursor.execute("""
+                SELECT id FROM interactions
+                WHERE status = 'pending'
+                  AND CAST(created_at AS timestamp) < NOW() - INTERVAL '6 hours'
+            """)
+            orphans = [row["id"] for row in cursor.fetchall()]
+            
+        if orphans:
+            from memory.queue import memory_bulk_queue
+            logger.warning(f"Orphan Sweeper: Found {len(orphans)} stuck interactions. Re-enqueueing.")
+            for interaction_id in orphans:
+                await memory_bulk_queue.add(
+                    "ingest_interaction", 
+                    {"interaction_id": interaction_id}, 
+                    {"attempts": 3, "backoff": {"type": "exponential", "delay": 2000}}
+                )
+    except Exception as e:
+        logger.error(f"Orphan Sweeper failed: {e}")
+
 
 async def run_daily_memory_generation(include_today: bool = False):
     """
@@ -213,9 +385,14 @@ async def run_daily_memory_generation(include_today: bool = False):
                 continue
 
         try:
-            await _generate_memory_for_entity(entity_type, entity_id, interaction_date)
+            from memory.queue import memory_bulk_queue
+            await memory_bulk_queue.add(
+                "generate_memory", 
+                {"entity_type": entity_type, "entity_id": entity_id, "interaction_date": interaction_date},
+                {"priority": 5}
+            )
         except Exception as e:
-            logger.error(f"Memory generation failed for {entity_type}/{entity_id} on {interaction_date}: {e}")
+            logger.error(f"Memory enqueue failed for {entity_type}/{entity_id} on {interaction_date}: {e}")
 
 
 async def _generate_memory_for_entity(entity_type: str, entity_id: str, interaction_date: str):
@@ -437,8 +614,13 @@ async def _check_compaction_trigger(entity_type: str, entity_id: str, config: di
 
     if count_trigger or days_trigger:
         reason = "count" if count_trigger else "days"
-        logger.info(f"Compaction trigger ({reason}) for {entity_type}/{entity_id}: {count} memories, oldest={oldest_date}")
-        await compact_entity(entity_type, entity_id)
+        logger.info(f"Compaction trigger enqueue ({reason}) for {entity_type}/{entity_id}: {count} memories, oldest={oldest_date}")
+        from memory.queue import memory_bulk_queue
+        await memory_bulk_queue.add(
+            "generate_insight", 
+            {"entity_type": entity_type, "entity_id": entity_id},
+            {"priority": 4}
+        )
 
 
 # ── Compaction: Insight Generation ───────────────────────────────────────────

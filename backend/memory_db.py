@@ -378,8 +378,23 @@ def _run_migrations(cursor):
     for col, col_def in [
         ("updated_at", "TIMESTAMPTZ DEFAULT NOW()"),
         ("compacted_at", "TIMESTAMPTZ"),
+        ("processing_errors", "JSONB DEFAULT '{}'"),
     ]:
-        cursor.execute(f"ALTER TABLE memories ADD COLUMN IF NOT EXISTS {col} {col_def}")
+        try:
+            cursor.execute(f"ALTER TABLE memories ADD COLUMN IF NOT EXISTS {col} {col_def}")
+        except Exception as e:
+            logger.error(f"Failed to add {col} to memories: {e}")
+
+    # LLM Providers columns added after initial deploy
+    for col, col_def in [
+        ("rate_limit_rpm", "INT DEFAULT 60"),
+        ("max_retries", "INT DEFAULT 3"),
+        ("retry_delay_ms", "INT DEFAULT 1000"),
+    ]:
+        try:
+            cursor.execute(f"ALTER TABLE memory_llm_providers ADD COLUMN IF NOT EXISTS {col} {col_def}")
+        except Exception as e:
+            logger.error(f"Failed to add {col} to memory_llm_providers: {e}")
 
 
 def init_memory_db():
@@ -529,11 +544,5 @@ def _seed_defaults():
                 VALUES (%s)
                 ON CONFLICT (entity_type) DO NOTHING
             """, (entity_type,))
-
-        # Run manual migrations on existing db deployments
-        cursor.execute("ALTER TABLE memories ADD COLUMN IF NOT EXISTS processing_errors JSONB DEFAULT '{}'")
-        cursor.execute("ALTER TABLE memory_llm_providers ADD COLUMN IF NOT EXISTS rate_limit_rpm INT DEFAULT 60")
-        cursor.execute("ALTER TABLE memory_llm_providers ADD COLUMN IF NOT EXISTS max_retries INT DEFAULT 3")
-        cursor.execute("ALTER TABLE memory_llm_providers ADD COLUMN IF NOT EXISTS retry_delay_ms INT DEFAULT 1000")
 
         logger.info("Memory system defaults seeded")

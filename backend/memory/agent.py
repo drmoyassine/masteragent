@@ -44,12 +44,13 @@ logger = logging.getLogger(__name__)
 # TIER 0: 🔄 Interactions
 # ============================================
 
-@router.post("/interactions", response_model=InteractionResponse, tags=["🔄 Interactions"])
+@router.post("/interactions", response_model=InteractionResponse, tags=["🔄 Interactions"], status_code=202)
 async def ingest_interaction(
     body: InteractionCreate,
+    response: Response,
     agent: dict = Depends(verify_agent_key)
 ):
-    """Ingest a raw interaction event, parse documents, embed vector, and cache."""
+    """Ingest a raw interaction event, insert as pending, and enqueue for processing."""
     if not check_rate_limit(agent["id"]):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
 
@@ -58,120 +59,40 @@ async def ingest_interaction(
 
     attachment_refs = list(body.attachment_refs or [])
     content = body.content
-    processing_errors = {}
 
-    # Document OCR parsing logic
-    for attachment in attachment_refs:
-        attach_type = attachment.get("type", "base64")
-        raw_blob = None
-        
-        if attach_type == "url":
-            url = attachment.get("url")
-            if url:
-                import httpx
-                try:
-                    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-                        resp = await client.get(url)
-                        resp.raise_for_status()
-                        raw_blob = resp.content
-                except Exception as e:
-                    logger.warning(f"Failed to fetch attachment URL {url}: {e}")
-        else:
-            b64_data = attachment.get("data") or attachment.get("raw_bytes")
-            if b64_data:
-                import base64
-                try:
-                    raw_blob = base64.b64decode(b64_data)
-                except Exception as e:
-                    logger.warning(f"Failed to decode base64 attachment: {e}")
-
-        if not raw_blob:
-            continue
-
-        import filetype
-        inferred_mime = None
-        kind = filetype.guess(raw_blob)
-        if kind: inferred_mime = kind.mime
-        
-        mime_type = inferred_mime or attachment.get("mime_type", "application/octet-stream")
-        filename = attachment.get("filename", "attachment")
-
-        try:
-            parsed = await parse_document(raw_blob, filename, mime_type)
-        except Exception as e:
-            logger.error(f"Vision/Processing failed for {filename}: {e}")
-            processing_errors["vision"] = str(e)
-            parsed = {}
-        
-        url_context = f" ({url})" if attach_type == "url" and 'url' in locals() else ""
-        pages_context = f" (Parsed {parsed.get('parsed_pages', parsed.get('pages', 1))} out of {parsed.get('pages', 1)} pages)" if mime_type == "application/pdf" and parsed.get("pages", 0) > 0 else ""
-        
-        if parsed.get("text"):
-            content += f"\n\n---\n[Attachment ({mime_type}): {filename}]{url_context}{pages_context}\n{parsed['text']}"
-            attachment["parsed_content"] = parsed["text"]
-        else:
-            err_msg = processing_errors.get("vision", "Parsing Failed or Document is Empty")
-            content += f"\n\n---\n[Attachment ({mime_type}): {filename}]{url_context}{pages_context}\n[Error: {err_msg}]"
-
-        attachment["inferred_mime"] = mime_type
-
-    # Real-time Embeddings generation for Pending Interactions (Ephemeral Vectors)
-    embedding = None
-    try:
-        if content.strip():
-            embedding = await generate_embedding(content)
-    except Exception as e:
-        logger.warning(f"Failed to generate ephemeral interaction embedding: {e}")
-        processing_errors["embeddings"] = str(e)
-        content += f"\n\n[Processing Error: Embedding Failed - {e}]"
-
+    # Insert bare row (state=pending) to PostgreSQL
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        if embedding:
-            cursor.execute("""
-                INSERT INTO interactions (
-                    id, timestamp, interaction_type, agent_id, agent_name,
-                    content, primary_entity_type, primary_entity_subtype, primary_entity_id,
-                    metadata, metadata_field_map, has_attachments, attachment_refs,
-                    embedding, processing_errors, source, status, created_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (
-                interaction_id, now, body.interaction_type, agent["id"], body.agent_name or agent.get("name"),
-                content, body.primary_entity_type, body.primary_entity_subtype, body.primary_entity_id,
-                json.dumps(body.metadata or {}, ensure_ascii=False), json.dumps(body.metadata_field_map or {}, ensure_ascii=False),
-                body.has_attachments, json.dumps(attachment_refs, ensure_ascii=False), embedding, json.dumps(processing_errors, ensure_ascii=False), body.source, "pending", now
-            ))
-        else:
-            cursor.execute("""
-                INSERT INTO interactions (
-                    id, timestamp, interaction_type, agent_id, agent_name,
-                    content, primary_entity_type, primary_entity_subtype, primary_entity_id,
-                    metadata, metadata_field_map, has_attachments, attachment_refs,
-                    processing_errors, source, status, created_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (
-                interaction_id, now, body.interaction_type, agent["id"], body.agent_name or agent.get("name"),
-                content, body.primary_entity_type, body.primary_entity_subtype, body.primary_entity_id,
-                json.dumps(body.metadata or {}, ensure_ascii=False), json.dumps(body.metadata_field_map or {}, ensure_ascii=False),
-                body.has_attachments, json.dumps(attachment_refs, ensure_ascii=False), json.dumps(processing_errors, ensure_ascii=False), body.source, "pending", now
-            ))
+        cursor.execute("""
+            INSERT INTO interactions (
+                id, timestamp, interaction_type, agent_id, agent_name,
+                content, primary_entity_type, primary_entity_subtype, primary_entity_id,
+                metadata, metadata_field_map, has_attachments, attachment_refs,
+                processing_errors, source, status, created_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            interaction_id, now, body.interaction_type, agent["id"], body.agent_name or agent.get("name"),
+            content, body.primary_entity_type, body.primary_entity_subtype, body.primary_entity_id,
+            json.dumps(body.metadata or {}, ensure_ascii=False), json.dumps(body.metadata_field_map or {}, ensure_ascii=False),
+            body.has_attachments, json.dumps(attachment_refs, ensure_ascii=False), json.dumps({}), body.source, "pending", now
+        ))
+        # Ensure commit happens here seamlessly by context manager exiting before passing to BullMQ
 
-    cache_interaction(interaction_id, {
-        "id": interaction_id,
-        "interaction_type": body.interaction_type,
-        "agent_id": agent["id"],
-        "content": content,
-        "primary_entity_type": body.primary_entity_type,
-        "primary_entity_id": body.primary_entity_id,
-        "timestamp": now,
-        "metadata_field_map": body.metadata_field_map or {},
-    })
+    # Enqueue standard DLQ compliant backend task
+    from memory.queue import memory_bulk_queue
+    await memory_bulk_queue.add(
+        "ingest_interaction", 
+        {"interaction_id": interaction_id}, 
+        {"attempts": 3, "backoff": {"type": "exponential", "delay": 2000}}
+    )
 
     log_audit(agent["id"], "ingest_interaction", "interaction", interaction_id, {
         "interaction_type": body.interaction_type,
         "entity": f"{body.primary_entity_type}/{body.primary_entity_id}",
     })
 
+    # Return HTTP 202 Accepted instantly
+    response.status_code = 202
     return InteractionResponse(
         id=interaction_id, timestamp=now, interaction_type=body.interaction_type,
         agent_id=agent["id"], agent_name=body.agent_name or agent.get("name"),

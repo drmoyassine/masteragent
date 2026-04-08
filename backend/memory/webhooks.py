@@ -314,6 +314,14 @@ async def receive_webhook(
             now,
         ))
 
+    # Enqueue standard DLQ compliant backend task for embeddings logic
+    from memory.queue import memory_bulk_queue
+    await memory_bulk_queue.add(
+        "ingest_interaction", 
+        {"interaction_id": interaction_id}, 
+        {"attempts": 3, "backoff": {"type": "exponential", "delay": 2000}}
+    )
+
     # 9. Cache in Redis
     cache_interaction(interaction_id, {
         "id": interaction_id,

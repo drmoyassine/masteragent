@@ -202,11 +202,10 @@ async def promote_insight_to_lesson(
     if not row:
         raise HTTPException(status_code=404, detail="Insight not found")
 
-    # Run promotion in background
-    import asyncio
-    from memory_tasks import promote_to_lesson
-    asyncio.create_task(promote_to_lesson(insight_id))
-    return {"message": "Promotion started", "insight_id": insight_id}
+    # Enqueue promotion job directly to orchestrator
+    from memory.queue import memory_bulk_queue
+    await memory_bulk_queue.add("promote_to_lesson", {"insight_id": insight_id})
+    return {"message": "Promotion queued", "insight_id": insight_id}
 
 
 # ============================================================
@@ -415,11 +414,10 @@ async def trigger_compact_entity(
     entity_id: str,
     admin: dict = Depends(require_admin_auth)
 ):
-    """Manually trigger compaction (insight generation) for an entity."""
-    import asyncio
-    from memory_tasks import compact_entity
-    asyncio.create_task(compact_entity(entity_type, entity_id))
-    return {"message": "Compaction triggered", "entity_type": entity_type, "entity_id": entity_id}
+    """Manually trigger compaction (insight generation) for an entity via queue drop."""
+    from memory.queue import memory_bulk_queue
+    await memory_bulk_queue.add("generate_insight", {"entity_type": entity_type, "entity_id": entity_id}, {"priority": 1})
+    return {"message": "Compaction triggered via queue", "entity_type": entity_type, "entity_id": entity_id}
 
 
 @router.post("/trigger/generate-memories")
@@ -427,20 +425,18 @@ async def trigger_memory_generation(
     include_today: bool = Query(False, description="Whether to include interactions logged today"),
     admin: dict = Depends(require_admin_auth)
 ):
-    """Manually trigger daily memory generation."""
-    import asyncio
+    """Manually trigger daily memory generation. Iterates and enqueues payload synchronously, no LLM cost."""
     from memory_tasks import run_daily_memory_generation
-    asyncio.create_task(run_daily_memory_generation(include_today=include_today))
-    return {"message": "Memory generation triggered", "include_today": include_today}
+    await run_daily_memory_generation(include_today=include_today)
+    return {"message": "Memory generation queueing completed", "include_today": include_today}
 
 
 @router.post("/trigger/run-lesson-check")
 async def trigger_lesson_check(admin: dict = Depends(require_admin_auth)):
-    """Manually trigger the lesson accumulation check (mirrors nightly scheduler)."""
-    import asyncio
-    from memory_tasks import run_lesson_check
-    asyncio.create_task(run_lesson_check())
-    return {"message": "Lesson check triggered"}
+    """Manually trigger the lesson accumulation check via queue drop."""
+    from memory.queue import memory_bulk_queue
+    await memory_bulk_queue.add("generate_lesson", {}, {"priority": 1})
+    return {"message": "Lesson check queued"}
 
 
 # ============================================================
