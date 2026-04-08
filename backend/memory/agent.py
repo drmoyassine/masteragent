@@ -69,7 +69,7 @@ async def ingest_interaction(
             if url:
                 import httpx
                 try:
-                    async with httpx.AsyncClient(timeout=30.0) as client:
+                    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
                         resp = await client.get(url)
                         resp.raise_for_status()
                         raw_blob = resp.content
@@ -111,7 +111,8 @@ async def ingest_interaction(
     # Real-time Embeddings generation for Pending Interactions (Ephemeral Vectors)
     embedding = None
     try:
-        embedding = await generate_embedding(content)
+        if content.strip():
+            embedding = await generate_embedding(content)
     except Exception as e:
         logger.warning(f"Failed to generate ephemeral interaction embedding: {e}")
 
