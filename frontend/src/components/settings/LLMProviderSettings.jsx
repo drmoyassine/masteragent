@@ -287,6 +287,7 @@ function ProviderDialog({ open, onClose, onSave, existingProvider }) {
                             <Button type="button" variant="outline" size="icon" onClick={() => setShowKey(!showKey)}>
                                 {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                             </Button>
+                        </div>
                     </div>
 
                     <div className="grid grid-cols-3 gap-4 pt-2 border-t">
