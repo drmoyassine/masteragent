@@ -58,15 +58,18 @@ seed_admin_user()
 # Background tasks (lifespan)
 # ─────────────────────────────────────────────
 from memory_tasks import start_background_tasks, stop_background_tasks
+from memory.queue import start_bullmq_workers, stop_bullmq_workers
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Start background tasks on boot, stop cleanly on shutdown."""
     logger.info("Starting memory system background tasks")
     await start_background_tasks()
+    await start_bullmq_workers()
     yield
     logger.info("Stopping memory system background tasks")
     await stop_background_tasks()
+    await stop_bullmq_workers()
 
 # ─────────────────────────────────────────────
 # FastAPI app

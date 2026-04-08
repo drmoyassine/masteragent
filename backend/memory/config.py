@@ -322,6 +322,9 @@ async def list_llm_providers(user: dict = Depends(require_admin_auth)):
             providers.append(LLMProviderResponse(
                 id=provider["id"], name=provider["name"], provider=provider["provider"],
                 api_base_url=provider.get("api_base_url", ""), api_key_preview=provider.get("api_key_preview", ""),
+                rate_limit_rpm=provider.get("rate_limit_rpm", 60),
+                max_retries=provider.get("max_retries", 3),
+                retry_delay_ms=provider.get("retry_delay_ms", 1000),
                 created_at=provider["created_at"], updated_at=provider["updated_at"]
             ))
         return providers
@@ -334,12 +337,13 @@ async def create_llm_provider(data: LLMProviderCreate, user: dict = Depends(requ
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO memory_llm_providers (id, name, provider, api_base_url, api_key_encrypted, api_key_preview, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-            (provider_id, data.name, data.provider, data.api_base_url or "", data.api_key or "", api_key_preview, now, now)
+            "INSERT INTO memory_llm_providers (id, name, provider, api_base_url, api_key_encrypted, api_key_preview, rate_limit_rpm, max_retries, retry_delay_ms, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (provider_id, data.name, data.provider, data.api_base_url or "", data.api_key or "", api_key_preview, data.rate_limit_rpm, data.max_retries, data.retry_delay_ms, now, now)
         )
         return LLMProviderResponse(
             id=provider_id, name=data.name, provider=data.provider,
             api_base_url=data.api_base_url or "", api_key_preview=api_key_preview,
+            rate_limit_rpm=data.rate_limit_rpm, max_retries=data.max_retries, retry_delay_ms=data.retry_delay_ms,
             created_at=now, updated_at=now
         )
 
@@ -363,6 +367,13 @@ async def update_llm_provider(provider_id: str, data: LLMProviderUpdate, user: d
             updates.append("api_key_encrypted = %s"); params.append(data.api_key)
             api_key_preview = f"{data.api_key[:4]}...{data.api_key[-4:]}" if len(data.api_key) > 8 else "****"
             updates.append("api_key_preview = %s"); params.append(api_key_preview)
+        if data.rate_limit_rpm is not None:
+            updates.append("rate_limit_rpm = %s"); params.append(data.rate_limit_rpm)
+        if data.max_retries is not None:
+            updates.append("max_retries = %s"); params.append(data.max_retries)
+        if data.retry_delay_ms is not None:
+            updates.append("retry_delay_ms = %s"); params.append(data.retry_delay_ms)
+            
         params.append(provider_id)
         cursor.execute(f"UPDATE memory_llm_providers SET {', '.join(updates)} WHERE id = %s", params)
         cursor.execute("SELECT * FROM memory_llm_providers WHERE id = %s", (provider_id,))
@@ -370,6 +381,9 @@ async def update_llm_provider(provider_id: str, data: LLMProviderUpdate, user: d
         return LLMProviderResponse(
             id=updated["id"], name=updated["name"], provider=updated["provider"],
             api_base_url=updated.get("api_base_url", ""), api_key_preview=updated.get("api_key_preview", ""),
+            rate_limit_rpm=updated.get("rate_limit_rpm", 60),
+            max_retries=updated.get("max_retries", 3),
+            retry_delay_ms=updated.get("retry_delay_ms", 1000),
             created_at=updated["created_at"], updated_at=updated["updated_at"]
         )
 

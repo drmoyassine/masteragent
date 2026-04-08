@@ -99,6 +99,9 @@ def _create_config_tables(cursor):
             api_base_url        TEXT,
             api_key_encrypted   TEXT,
             api_key_preview     TEXT DEFAULT '',
+            rate_limit_rpm      INT DEFAULT 60,
+            max_retries         INT DEFAULT 3,
+            retry_delay_ms      INT DEFAULT 1000,
             created_at          TIMESTAMPTZ DEFAULT NOW(),
             updated_at          TIMESTAMPTZ DEFAULT NOW()
         )
@@ -529,5 +532,8 @@ def _seed_defaults():
 
         # Run manual migrations on existing db deployments
         cursor.execute("ALTER TABLE memories ADD COLUMN IF NOT EXISTS processing_errors JSONB DEFAULT '{}'")
+        cursor.execute("ALTER TABLE memory_llm_providers ADD COLUMN IF NOT EXISTS rate_limit_rpm INT DEFAULT 60")
+        cursor.execute("ALTER TABLE memory_llm_providers ADD COLUMN IF NOT EXISTS max_retries INT DEFAULT 3")
+        cursor.execute("ALTER TABLE memory_llm_providers ADD COLUMN IF NOT EXISTS retry_delay_ms INT DEFAULT 1000")
 
         logger.info("Memory system defaults seeded")

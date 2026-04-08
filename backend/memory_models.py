@@ -37,6 +37,9 @@ class LLMProviderCreate(BaseModel):
     provider: str
     api_base_url: Optional[str] = ""
     api_key: Optional[str] = ""
+    rate_limit_rpm: Optional[int] = 60
+    max_retries: Optional[int] = 3
+    retry_delay_ms: Optional[int] = 1000
 
 class LLMProviderResponse(BaseModel):
     id: str
@@ -44,6 +47,9 @@ class LLMProviderResponse(BaseModel):
     provider: str
     api_base_url: Optional[str] = None
     api_key_preview: Optional[str] = None
+    rate_limit_rpm: int
+    max_retries: int
+    retry_delay_ms: int
     created_at: Timestamp
     updated_at: Timestamp
 
@@ -52,6 +58,9 @@ class LLMProviderUpdate(BaseModel):
     provider: Optional[str] = None
     api_base_url: Optional[str] = None
     api_key: Optional[str] = None
+    rate_limit_rpm: Optional[int] = None
+    max_retries: Optional[int] = None
+    retry_delay_ms: Optional[int] = None
 
 class LLMConfigCreate(BaseModel):
     task_type: str

@@ -158,7 +158,10 @@ function ProviderDialog({ open, onClose, onSave, existingProvider }) {
         name: "",
         provider: "openai",
         api_base_url: DEFAULT_BASE_URLS["openai"],
-        api_key: ""
+        api_key: "",
+        rate_limit_rpm: 60,
+        max_retries: 3,
+        retry_delay_ms: 1000
     });
     const [showKey, setShowKey] = useState(false);
     const [testing, setTesting] = useState(false);
@@ -172,14 +175,20 @@ function ProviderDialog({ open, onClose, onSave, existingProvider }) {
                     name: existingProvider.name || "",
                     provider: existingProvider.provider || "openai",
                     api_base_url: existingProvider.api_base_url || "",
-                    api_key: "" // keep empty, relying on the preview placeholder if exists
+                    api_key: "", // keep empty, relying on the preview placeholder if exists
+                    rate_limit_rpm: existingProvider.rate_limit_rpm || 60,
+                    max_retries: existingProvider.max_retries !== undefined ? existingProvider.max_retries : 3,
+                    retry_delay_ms: existingProvider.retry_delay_ms || 1000
                 });
             } else {
                 setFormData({
                     name: "",
                     provider: "openai",
                     api_base_url: DEFAULT_BASE_URLS["openai"],
-                    api_key: ""
+                    api_key: "",
+                    rate_limit_rpm: 60,
+                    max_retries: 3,
+                    retry_delay_ms: 1000
                 });
             }
             setTestResult(null);
@@ -278,6 +287,35 @@ function ProviderDialog({ open, onClose, onSave, existingProvider }) {
                             <Button type="button" variant="outline" size="icon" onClick={() => setShowKey(!showKey)}>
                                 {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                             </Button>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-4 pt-2 border-t">
+                        <div className="space-y-2">
+                            <Label className="text-xs">Max RPM Limit</Label>
+                            <Input 
+                                type="number" 
+                                min="1"
+                                value={formData.rate_limit_rpm} 
+                                onChange={e => setFormData({ ...formData, rate_limit_rpm: parseInt(e.target.value) || 60 })} 
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <Label className="text-xs">Auto Retries</Label>
+                            <Input 
+                                type="number"
+                                min="0" 
+                                value={formData.max_retries} 
+                                onChange={e => setFormData({ ...formData, max_retries: parseInt(e.target.value) || 0 })} 
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <Label className="text-xs">Retry Delay (ms)</Label>
+                            <Input 
+                                type="number" 
+                                min="0" step="100"
+                                value={formData.retry_delay_ms} 
+                                onChange={e => setFormData({ ...formData, retry_delay_ms: parseInt(e.target.value) || 1000 })} 
+                            />
                         </div>
                     </div>
 

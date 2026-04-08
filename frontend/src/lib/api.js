@@ -162,6 +162,8 @@ export const searchMemories = (data) => api.post('/memory/admin/search', data);
 export const getInteractionsAdmin = (params) => api.get('/memory/interactions', { params });
 export const updateInteractionAdmin = (id, data) => api.put(`/memory/interactions/${id}`, data);
 export const deleteInteractionAdmin = (id) => api.delete(`/memory/interactions/${id}`);
+export const bulkDeleteInteractionsAdmin = (data) => api.post('/memory/interactions/bulk-delete', data);
+export const bulkReprocessInteractionsAdmin = (data) => api.post('/memory/interactions/bulk-reprocess', data);
 export const getMemoriesAdmin = (params) => api.get('/memory/admin/memories', { params });
 export const getInsightsAdmin = (params) => api.get('/memory/insights', { params });
 export const getDailyMemories = (date) => api.get(`/memory/admin/daily/${date}`);

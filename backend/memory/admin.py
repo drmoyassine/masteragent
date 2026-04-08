@@ -606,6 +606,48 @@ async def update_interaction(
 
     return {"status": "updated"}
 
+@router.post("/interactions/bulk-delete")
+async def bulk_delete_interactions(
+    payload: dict = Body(...),
+    admin: dict = Depends(require_admin_auth)
+):
+    """Bulk delete an array of interactions natively"""
+    interaction_ids = payload.get("interaction_ids", [])
+    if not interaction_ids:
+        return {"deleted": 0}
+        
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM interactions WHERE id = ANY(%s)", (interaction_ids,))
+        deleted = cursor.rowcount
+    return {"deleted": deleted}
+
+@router.post("/interactions/bulk-reprocess")
+async def bulk_reprocess_interactions(
+    payload: dict = Body(...),
+    admin: dict = Depends(require_admin_auth)
+):
+    """Bulk re-process an array of interactions via native BullMQ sequencing"""
+    from memory.queue import memory_bulk_queue
+    interaction_ids = payload.get("interaction_ids", [])
+    if not interaction_ids:
+        return {"queued": 0}
+
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        # Immediately reset error states and flags to cleanly re-read sequence.
+        cursor.execute(
+            "UPDATE interactions SET status = 'pending', processing_errors = '{}' WHERE id = ANY(%s)",
+            (interaction_ids,)
+        )
+        
+    queued_count = 0
+    # Linearly drop into Redis Array (this honors memory sleep configurations in the worker task natively)
+    for i_id in interaction_ids:
+        await memory_bulk_queue.add("reprocess", {"interaction_id": i_id})
+        queued_count += 1
+        
+    return {"queued": queued_count}
 
 # ============================================================
 # AUDIT LOG

@@ -12,6 +12,8 @@ import api, {
   createLessonAdmin,
   updateLessonAdmin,
   deleteLessonAdmin,
+  bulkDeleteInteractionsAdmin,
+  bulkReprocessInteractionsAdmin,
   getEntityTypes,
   getLessonTypes,
   getChannelTypes
@@ -45,6 +47,7 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   Database,
@@ -68,6 +71,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 export default function MemoryExplorerPage() {
   const [activeTab, setActiveTab] = useState("interactions");
   const [loading, setLoading] = useState(false);
+  const [processingBulk, setProcessingBulk] = useState(false);
 
   // Global filters
   const [draftFilter, setDraftFilter] = useState({ entity_type: "all", entity_id: "" });
@@ -94,6 +98,9 @@ export default function MemoryExplorerPage() {
 
   // Interaction Inspector State
   const [editingInteraction, setEditingInteraction] = useState(null);
+  
+  // Bulk Operations State
+  const [selectedInteractionIds, setSelectedInteractionIds] = useState([]);
 
   useEffect(() => {
     loadInitialData();
@@ -290,6 +297,51 @@ export default function MemoryExplorerPage() {
     }
   };
 
+  // Bulk Handlers
+  const toggleSelectAllInteractions = (checked) => {
+    if (checked) {
+      setSelectedInteractionIds(interactions.map(i => i.id));
+    } else {
+      setSelectedInteractionIds([]);
+    }
+  };
+
+  const toggleInteraction = (id) => {
+    setSelectedInteractionIds(prev => 
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    );
+  };
+
+  const handleBulkDelete = async () => {
+    if (!window.confirm(`Delete ${selectedInteractionIds.length} interactions? This cannot be reversed.`)) return;
+    setProcessingBulk(true);
+    try {
+      const res = await bulkDeleteInteractionsAdmin({ interaction_ids: selectedInteractionIds });
+      toast.success(`Deleted ${res.data.deleted} interactions`);
+      setSelectedInteractionIds([]);
+      loadInteractions();
+    } catch (error) {
+      toast.error("Failed to delete interactions");
+    } finally {
+      setProcessingBulk(false);
+    }
+  };
+
+  const handleBulkReprocess = async () => {
+    if (!window.confirm(`Queue ${selectedInteractionIds.length} interactions for background reprocessing?`)) return;
+    setProcessingBulk(true);
+    try {
+      const res = await bulkReprocessInteractionsAdmin({ interaction_ids: selectedInteractionIds });
+      toast.success(`Queued ${res.data.queued} interactions sequentially`);
+      setSelectedInteractionIds([]);
+      loadInteractions();
+    } catch (error) {
+      toast.error("Failed to queue interactions");
+    } finally {
+      setProcessingBulk(false);
+    }
+  };
+
   return (
     <div className="space-y-6" data-testid="memory-explorer-page">
       <div className="flex items-center justify-between">
@@ -355,15 +407,36 @@ export default function MemoryExplorerPage() {
                 <CardTitle>Interactions (Tier 0)</CardTitle>
                 <CardDescription>Raw inbound and outbound events</CardDescription>
               </div>
-              <Button variant="outline" size="icon" onClick={loadInteractions} disabled={loading}>
-                 <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
-              </Button>
+              <div className="flex items-center gap-2">
+                {selectedInteractionIds.length > 0 && (
+                    <div className="flex gap-2 bg-accent px-4 py-1.5 rounded-md items-center border shadow-sm animate-in fade-in zoom-in-95 duration-200">
+                        <span className="text-sm font-medium mr-2">{selectedInteractionIds.length} selected</span>
+                        <Button variant="outline" size="sm" onClick={handleBulkReprocess} disabled={processingBulk}>
+                             {processingBulk ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+                             Re-Process
+                        </Button>
+                        <Button variant="destructive" size="sm" onClick={handleBulkDelete} disabled={processingBulk}>
+                             <Trash2 className="w-4 h-4 mr-2" />
+                             Delete
+                        </Button>
+                    </div>
+                )}
+                <Button variant="outline" size="icon" onClick={loadInteractions} disabled={loading}>
+                   <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
                <ScrollArea className="h-[500px]">
                  <Table>
                     <TableHeader>
                       <TableRow>
+                        <TableHead className="w-[40px]">
+                            <Checkbox 
+                                checked={interactions.length > 0 && selectedInteractionIds.length === interactions.length} 
+                                onCheckedChange={(c) => toggleSelectAllInteractions(c)} 
+                            />
+                        </TableHead>
                         <TableHead>ID</TableHead>
                         <TableHead>Time</TableHead>
                         <TableHead>Interaction Type</TableHead>
@@ -381,7 +454,14 @@ export default function MemoryExplorerPage() {
                        {interactions.length === 0 ? (
                           <TableRow><TableCell colSpan={10} className="text-center text-muted-foreground py-8">No interactions found.</TableCell></TableRow>
                        ) : interactions.map(i => (
-                         <TableRow key={i.id}>
+                         <TableRow key={i.id} className={selectedInteractionIds.includes(i.id) ? "bg-accent/30" : ""}>
+                            <TableCell>
+                               <Checkbox 
+                                   checked={selectedInteractionIds.includes(i.id)} 
+                                   onCheckedChange={() => toggleInteraction(i.id)}
+                                   onClick={(e) => e.stopPropagation()}
+                               />
+                            </TableCell>
                             <TableCell className="font-mono text-muted-foreground">#{i.seq_id}</TableCell>
                             <TableCell className="whitespace-nowrap">{format(new Date(i.timestamp), "MMM d, yyyy h:mm a")}</TableCell>
                             <TableCell><Badge variant="outline">{i.interaction_type}</Badge></TableCell>
