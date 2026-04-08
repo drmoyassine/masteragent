@@ -1,8 +1,11 @@
-import React from "react";
-import { Settings, Scissors, GraduationCap, ShieldAlert, Zap, Clock, Brain } from "lucide-react";
+import React, { useState } from "react";
+import { Settings, Scissors, GraduationCap, ShieldAlert, Zap, Clock, Brain, Play } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
+import { triggerMemoryGeneration } from "@/lib/api";
 import {
     Card,
     CardContent,
@@ -19,19 +22,45 @@ import {
 } from "@/components/ui/select";
 
 export function GeneralMemorySettings({ settings, onUpdateSettings }) {
+    const [isTriggering, setIsTriggering] = useState(false);
+
+    const handleRunNow = async () => {
+        setIsTriggering(true);
+        try {
+            await triggerMemoryGeneration(true); // include_today = true
+            toast.success("Generation task scheduled in background. Check docker logs.");
+        } catch (error) {
+            toast.error(error?.response?.data?.detail || "Failed to trigger task");
+        } finally {
+            setIsTriggering(false);
+        }
+    };
+
     return (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-5xl">
 
             {/* Memory Generation Schedule */}
             <Card>
-                <CardHeader className="pb-3">
-                    <div className="flex items-center gap-2">
-                        <Clock className="w-5 h-5 text-blue-500" />
-                        <CardTitle className="text-lg">Memory Generation</CardTitle>
+                <CardHeader className="pb-3 flex flex-row items-start justify-between">
+                    <div>
+                        <div className="flex items-center gap-2">
+                            <Clock className="w-5 h-5 text-blue-500" />
+                            <CardTitle className="text-lg">Memory Generation</CardTitle>
+                        </div>
+                        <CardDescription className="text-xs mt-1.5">
+                            When and how daily memories are generated from interactions
+                        </CardDescription>
                     </div>
-                    <CardDescription className="text-xs">
-                        When and how daily memories are generated from interactions
-                    </CardDescription>
+                    <Button 
+                        size="sm" 
+                        variant="outline" 
+                        className="gap-1.5"
+                        onClick={handleRunNow}
+                        disabled={isTriggering}
+                    >
+                        <Play className="w-3.5 h-3.5" />
+                        Run Now
+                    </Button>
                 </CardHeader>
                 <CardContent className="space-y-4">
                     <div className="space-y-2">

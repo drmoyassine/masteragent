@@ -347,6 +347,7 @@ export default function MemoryExplorerPage() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Time</TableHead>
+                        <TableHead>ID</TableHead>
                         <TableHead>Interaction Type</TableHead>
                         <TableHead>Entity Type</TableHead>
                         <TableHead>Entity Sub-Type</TableHead>
@@ -359,10 +360,11 @@ export default function MemoryExplorerPage() {
                     </TableHeader>
                     <TableBody>
                        {interactions.length === 0 ? (
-                          <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-8">No interactions found.</TableCell></TableRow>
+                          <TableRow><TableCell colSpan={10} className="text-center text-muted-foreground py-8">No interactions found.</TableCell></TableRow>
                        ) : interactions.map(i => (
                          <TableRow key={i.id}>
                             <TableCell className="whitespace-nowrap">{format(new Date(i.timestamp), "MMM d, yyyy h:mm a")}</TableCell>
+                            <TableCell className="font-mono text-muted-foreground">#{i.seq_id}</TableCell>
                             <TableCell><Badge variant="outline">{i.interaction_type}</Badge></TableCell>
                             <TableCell>{i.primary_entity_type}</TableCell>
                             <TableCell>{i.primary_entity_subtype || "-"}</TableCell>
@@ -402,6 +404,7 @@ export default function MemoryExplorerPage() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Date</TableHead>
+                        <TableHead>ID</TableHead>
                         <TableHead>Entity</TableHead>
                         <TableHead>Interactions</TableHead>
                         <TableHead>Summary</TableHead>
@@ -410,10 +413,11 @@ export default function MemoryExplorerPage() {
                     </TableHeader>
                     <TableBody>
                        {memories.length === 0 ? (
-                          <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">No memories found.</TableCell></TableRow>
+                          <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">No memories found.</TableCell></TableRow>
                        ) : memories.map(m => (
                          <TableRow key={m.id} className="cursor-pointer hover:bg-accent/50" onClick={() => loadMemoryDetail(m.id)}>
                             <TableCell className="whitespace-nowrap">{m.date}</TableCell>
+                            <TableCell className="font-mono text-muted-foreground">#{m.seq_id}</TableCell>
                             <TableCell>{m.primary_entity_type}: <span className="font-mono text-xs">{m.primary_entity_id}</span></TableCell>
                             <TableCell>{m.interaction_count}</TableCell>
                             <TableCell className="max-w-md truncate">{m.content_summary}</TableCell>
@@ -445,6 +449,7 @@ export default function MemoryExplorerPage() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Created</TableHead>
+                        <TableHead>ID</TableHead>
                         <TableHead>Entity</TableHead>
                         <TableHead>Type</TableHead>
                         <TableHead>Name / Summary</TableHead>
@@ -453,10 +458,11 @@ export default function MemoryExplorerPage() {
                     </TableHeader>
                     <TableBody>
                        {insights.length === 0 ? (
-                          <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">No insights found.</TableCell></TableRow>
+                          <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">No insights found.</TableCell></TableRow>
                        ) : insights.map(ins => (
                          <TableRow key={ins.id}>
                             <TableCell className="whitespace-nowrap">{format(new Date(ins.created_at), "MMM d, yyyy")}</TableCell>
+                            <TableCell className="font-mono text-muted-foreground">#{ins.seq_id}</TableCell>
                             <TableCell>{ins.primary_entity_type}: <span className="font-mono text-xs">{ins.primary_entity_id}</span></TableCell>
                             <TableCell><Badge variant="outline">{ins.insight_type}</Badge></TableCell>
                             <TableCell>
@@ -503,6 +509,7 @@ export default function MemoryExplorerPage() {
                  <Table>
                     <TableHeader>
                       <TableRow>
+                        <TableHead>ID</TableHead>
                         <TableHead>Type</TableHead>
                         <TableHead>Name</TableHead>
                         <TableHead>Content</TableHead>
@@ -512,9 +519,10 @@ export default function MemoryExplorerPage() {
                     </TableHeader>
                     <TableBody>
                        {lessons.length === 0 ? (
-                          <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">No lessons found.</TableCell></TableRow>
+                          <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">No lessons found.</TableCell></TableRow>
                        ) : lessons.map(lesson => (
                          <TableRow key={lesson.id}>
+                            <TableCell className="font-mono text-muted-foreground">#{lesson.seq_id}</TableCell>
                             <TableCell>
                                <div className="flex items-center gap-2">
                                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: getLessonTypeColor(lesson.type) }} />

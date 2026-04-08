@@ -243,6 +243,7 @@ class InteractionCreate(BaseModel):
 
 class InteractionResponse(BaseModel):
     id: str
+    seq_id: Optional[int] = None
     timestamp: str
     interaction_type: str
     agent_id: Optional[str]
@@ -270,6 +271,7 @@ class InteractionUpdate(BaseModel):
 
 class MemoryResponse(BaseModel):
     id: str
+    seq_id: Optional[int] = None
     date: str
     primary_entity_type: str
     primary_entity_id: str
@@ -296,6 +298,7 @@ class InsightCreate(BaseModel):
 
 class InsightResponse(BaseModel):
     id: str
+    seq_id: Optional[int] = None
     primary_entity_type: str
     primary_entity_id: str
     source_memory_ids: List[str]
@@ -332,6 +335,7 @@ class LessonCreate(BaseModel):
 
 class LessonResponse(BaseModel):
     id: str
+    seq_id: Optional[int] = None
     source_insight_ids: List[str]
     lesson_type: Optional[str]
     name: str
@@ -421,6 +425,7 @@ class TimelineRequest(BaseModel):
 
 class TimelineEntry(BaseModel):
     id: str
+    seq_id: Optional[int] = None
     timestamp: str
     interaction_type: str
     content_preview: str

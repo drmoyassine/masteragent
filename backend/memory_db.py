@@ -207,7 +207,7 @@ def _create_memory_tier_tables(cursor):
             related_entities    JSONB DEFAULT '[]',
             intents             TEXT[] DEFAULT '{}',
             relationships       JSONB DEFAULT '[]',
-            embedding           vector(1536),
+            embedding           vector,
             compaction_count    INT DEFAULT 0,
             compacted           BOOLEAN DEFAULT FALSE,
             created_at          TIMESTAMPTZ DEFAULT NOW(),
@@ -217,7 +217,8 @@ def _create_memory_tier_tables(cursor):
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_memories_entity ON memories (primary_entity_type, primary_entity_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_memories_date ON memories (date)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_memories_uncompacted ON memories (primary_entity_id) WHERE compacted = FALSE")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_memories_embedding ON memories USING hnsw (embedding vector_cosine_ops)")
+    # vector indexing omitted to support flexible embedding sizes:
+    # cursor.execute("CREATE INDEX IF NOT EXISTS idx_memories_embedding ON memories USING hnsw (embedding vector_cosine_ops)")
 
     # Tier 2 — LLM-compacted insights
     cursor.execute("""
@@ -230,7 +231,7 @@ def _create_memory_tier_tables(cursor):
             name                TEXT NOT NULL,
             content             TEXT NOT NULL,
             summary             TEXT,
-            embedding           vector(1536),
+            embedding           vector,
             status              TEXT DEFAULT 'draft',
             created_by          TEXT DEFAULT 'auto',
             confirmed_by        TEXT,
@@ -241,7 +242,7 @@ def _create_memory_tier_tables(cursor):
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_insights_entity ON insights (primary_entity_type, primary_entity_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_insights_status ON insights (status)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_insights_embedding ON insights USING hnsw (embedding vector_cosine_ops)")
+    # cursor.execute("CREATE INDEX IF NOT EXISTS idx_insights_embedding ON insights USING hnsw (embedding vector_cosine_ops)")
 
     # Tier 3 — PII-scrubbed shareable lessons
     cursor.execute("""
@@ -252,7 +253,7 @@ def _create_memory_tier_tables(cursor):
             name                TEXT NOT NULL,
             content             TEXT NOT NULL,
             summary             TEXT,
-            embedding           vector(1536),
+            embedding           vector,
             visibility          TEXT DEFAULT 'shared',
             tags                TEXT[] DEFAULT '{}',
             created_at          TIMESTAMPTZ DEFAULT NOW(),
@@ -260,7 +261,7 @@ def _create_memory_tier_tables(cursor):
         )
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_lessons_type ON lessons (lesson_type)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_lessons_embedding ON lessons USING hnsw (embedding vector_cosine_ops)")
+    # cursor.execute("CREATE INDEX IF NOT EXISTS idx_lessons_embedding ON lessons USING hnsw (embedding vector_cosine_ops)")
 
     # Audit log
     cursor.execute("""

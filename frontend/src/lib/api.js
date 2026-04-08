@@ -166,6 +166,7 @@ export const getInsightsAdmin = (params) => api.get('/memory/insights', { params
 export const getDailyMemories = (date) => api.get(`/memory/admin/daily/${date}`);
 export const getMemoryDetail = (id) => api.get(`/memory/admin/memories/${id}`);
 export const getTimeline = (entityType, entityId) => api.get(`/memory/admin/timeline/${entityType}/${entityId}`);
+export const triggerMemoryGeneration = (includeToday = false) => api.post('/memory/trigger/generate-memories', null, { params: { include_today: includeToday } });
 
 // Lessons - Admin UI
 export const getLessonsAdmin = (params) => api.get('/memory/lessons', { params });

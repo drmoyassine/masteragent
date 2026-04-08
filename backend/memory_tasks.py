@@ -167,13 +167,13 @@ async def _background_loop():
 
 # ── Daily Memory Generation ──────────────────────────────────────────────────
 
-async def run_daily_memory_generation():
+async def run_daily_memory_generation(include_today: bool = False):
     """
     For each entity with pending interactions from yesterday (or older),
     build a NER-enriched, embedded daily memory record.
     One memory per entity per day — written once (not upserted).
     """
-    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    cutoff_date = date.today().isoformat() if include_today else (date.today() - timedelta(days=1)).isoformat()
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -185,7 +185,7 @@ async def run_daily_memory_generation():
             WHERE status = 'pending'
               AND DATE(timestamp) <= %s
             ORDER BY interaction_date
-        """, (yesterday,))
+        """, (cutoff_date,))
         entities_with_pending = cursor.fetchall()
 
     if not entities_with_pending:

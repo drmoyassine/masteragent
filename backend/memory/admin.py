@@ -77,7 +77,7 @@ async def list_insights(
 
         params += [limit, offset]
         cursor.execute(f"""
-            SELECT id, primary_entity_type, primary_entity_id, source_memory_ids,
+            SELECT id, seq_id, primary_entity_type, primary_entity_id, source_memory_ids,
                    insight_type, name, content, summary, status,
                    created_by, confirmed_by, confirmed_at, created_at, updated_at
             FROM insights {where}
@@ -239,7 +239,7 @@ async def list_lessons(
 
         params += [limit, offset]
         cursor.execute(f"""
-            SELECT id, source_insight_ids, lesson_type, name, content,
+            SELECT id, seq_id, source_insight_ids, lesson_type, name, content,
                    summary, visibility, tags, created_at, updated_at
             FROM lessons {where}
             ORDER BY created_at DESC
@@ -423,12 +423,15 @@ async def trigger_compact_entity(
 
 
 @router.post("/trigger/generate-memories")
-async def trigger_memory_generation(admin: dict = Depends(require_admin_auth)):
+async def trigger_memory_generation(
+    include_today: bool = Query(False, description="Whether to include interactions logged today"),
+    admin: dict = Depends(require_admin_auth)
+):
     """Manually trigger daily memory generation."""
     import asyncio
     from memory_tasks import run_daily_memory_generation
-    asyncio.create_task(run_daily_memory_generation())
-    return {"message": "Memory generation triggered"}
+    asyncio.create_task(run_daily_memory_generation(include_today=include_today))
+    return {"message": "Memory generation triggered", "include_today": include_today}
 
 
 @router.post("/trigger/run-lesson-check")
@@ -457,7 +460,7 @@ async def admin_get_timeline(
         cursor = conn.cursor()
         
         cursor.execute("""
-            SELECT id, timestamp, interaction_type, content, source, status, created_at
+            SELECT id, seq_id, timestamp, interaction_type, content, source, status, created_at
             FROM interactions
             WHERE primary_entity_type = %s AND primary_entity_id = %s
             ORDER BY timestamp DESC
@@ -474,6 +477,7 @@ async def admin_get_timeline(
     entries = [
         TimelineEntry(
             id=row["id"],
+            seq_id=row["seq_id"],
             timestamp=str(row["timestamp"]),
             interaction_type=row["interaction_type"],
             content_preview=(row["content"] or "")[:200],
@@ -522,7 +526,7 @@ async def list_interactions(
 
         params_page = list(params) + [limit, offset]
         cursor.execute(f"""
-            SELECT id, timestamp, interaction_type, agent_id, agent_name,
+            SELECT id, seq_id, timestamp, interaction_type, agent_id, agent_name,
                    primary_entity_type, primary_entity_id, primary_entity_subtype,
                    has_attachments, source, status, created_at, content
             FROM interactions {where}
@@ -738,7 +742,7 @@ async def admin_get_daily_memories(
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, date, primary_entity_type, primary_entity_id,
+            SELECT id, seq_id, date, primary_entity_type, primary_entity_id,
                    interaction_count, content_summary, related_entities,
                    intents, compacted, created_at
             FROM memories
@@ -778,7 +782,7 @@ async def list_admin_memories(
 
         params_page = list(params) + [limit, offset]
         cursor.execute(f"""
-            SELECT id, date, primary_entity_type, primary_entity_id,
+            SELECT id, seq_id, date, primary_entity_type, primary_entity_id,
                    interaction_count, content_summary, related_entities,
                    intents, compacted, created_at
             FROM memories {where}

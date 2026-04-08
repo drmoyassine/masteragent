@@ -122,10 +122,17 @@ async def ingest_interaction(
 
         # 3. Ship to Document Parser
         parsed = await parse_document(raw_blob, filename, mime_type)
+        
+        url_context = f" ({url})" if attach_type == "url" and 'url' in locals() else ""
+        pages_context = f" (Parsed {parsed.get('parsed_pages', parsed.get('pages', 1))} out of {parsed.get('pages', 1)} pages)" if mime_type == "application/pdf" and parsed.get("pages", 0) > 0 else ""
+        
         if parsed.get("text"):
-            content += f"\n\n---\n[Attachment ({mime_type}): {filename}]\n{parsed['text']}"
+            content += f"\n\n---\n[Attachment ({mime_type}): {filename}]{url_context}{pages_context}\n{parsed['text']}"
             attachment["parsed_content"] = parsed["text"]
-            attachment["inferred_mime"] = mime_type
+        else:
+            content += f"\n\n---\n[Attachment ({mime_type}): {filename}]{url_context}{pages_context}\n[Parsing Failed or Document is Empty]"
+
+        attachment["inferred_mime"] = mime_type
 
     # Write interaction to PostgreSQL
     with get_memory_db_context() as conn:
@@ -373,7 +380,7 @@ async def get_timeline(
         params += [limit, offset]
 
         cursor.execute(f"""
-            SELECT id, timestamp, interaction_type, content, source, status, created_at
+            SELECT id, seq_id, timestamp, interaction_type, content, source, status, created_at
             FROM interactions
             WHERE {where}
             ORDER BY timestamp DESC
@@ -390,6 +397,7 @@ async def get_timeline(
     entries = [
         TimelineEntry(
             id=row["id"],
+            seq_id=row["seq_id"],
             timestamp=str(row["timestamp"]),
             interaction_type=row["interaction_type"],
             content_preview=(row["content"] or "")[:200],
@@ -440,7 +448,7 @@ async def get_memories(
         params += [limit, offset]
 
         cursor.execute(f"""
-            SELECT id, date, primary_entity_type, primary_entity_id,
+            SELECT id, seq_id, date, primary_entity_type, primary_entity_id,
                    interaction_count, content_summary, related_entities,
                    intents, compacted, created_at
             FROM memories
@@ -484,7 +492,7 @@ async def get_insights(
         params += [limit, offset]
 
         cursor.execute(f"""
-            SELECT id, primary_entity_type, primary_entity_id, source_memory_ids,
+            SELECT id, seq_id, primary_entity_type, primary_entity_id, source_memory_ids,
                    insight_type, name, content, summary, status,
                    created_by, confirmed_by, confirmed_at, created_at, updated_at
             FROM insights

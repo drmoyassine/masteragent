@@ -19,40 +19,30 @@ def get_memory_settings() -> Dict[str, Any]:
 
 def get_llm_config(task_type: str) -> Optional[Dict[str, Any]]:
     """
-    Get active LLM configuration for a task type.
-    Includes fallback logic to share API keys across task types for the same provider.
+    Get active LLM configuration for a task type by joining with the provider table.
     """
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT * FROM memory_llm_configs
-            WHERE task_type = %s AND is_active = TRUE
-            ORDER BY updated_at DESC LIMIT 1
+            SELECT c.*, p.provider, p.api_base_url, p.api_key_encrypted 
+            FROM memory_llm_configs c
+            LEFT JOIN memory_llm_providers p ON c.provider_id = p.id
+            WHERE c.task_type = %s AND c.is_active = TRUE
+            ORDER BY c.updated_at DESC LIMIT 1
         """, (task_type,))
         row = cursor.fetchone()
         if not row:
             return None
 
         config = dict(row)
-        extra = config.get("extra_settings") or {}
-        config["extra_config"] = extra if isinstance(extra, dict) else json.loads(extra)
-
-        # Key Fallback: share keys across task types for the same provider
-        if not config.get("api_key_encrypted"):
-            provider = config.get("provider")
-            if provider not in ["gliner", "zendata", "custom"]:
-                cursor.execute("""
-                    SELECT api_key_encrypted, api_base_url
-                    FROM memory_llm_configs
-                    WHERE provider = %s AND api_key_encrypted IS NOT NULL AND api_key_encrypted != ''
-                    ORDER BY updated_at DESC LIMIT 1
-                """, (provider,))
-                fallback = cursor.fetchone()
-                if fallback:
-                    config["api_key_encrypted"] = fallback["api_key_encrypted"]
-                    if not config.get("api_base_url") and fallback["api_base_url"]:
-                        config["api_base_url"] = fallback["api_base_url"]
-                    logger.info(f"Using inherited API key for {task_type} from provider {provider}")
+        extra = config.get("extra_config_json") or "{}"
+        if isinstance(extra, str):
+            try:
+                config["extra_config"] = json.loads(extra)
+            except Exception:
+                config["extra_config"] = {}
+        else:
+            config["extra_config"] = extra
 
         return config
 

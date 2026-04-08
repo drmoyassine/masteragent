@@ -113,12 +113,48 @@ async def parse_document(file_content: bytes, filename: str, mime_type: str) -> 
             logger.error(f"Failed to decode text file: {e}")
         return result
 
-    if mime_type in ("application/pdf", "image/png", "image/jpeg", "image/webp", "image/gif"):
-        file_b64 = base64.b64encode(file_content).decode()
+    if mime_type == "application/pdf":
+        try:
+            import fitz
+            doc = fitz.open(stream=file_content, filetype="pdf")
+            result["pages"] = len(doc)
+            
+            # Use a smaller scaling matrix to compress PNG sizes. 
+            # High-res PNGs hit Cloudflare Worker CPU limits, causing 500 errors.
+            zoom = 0.5
+            mat = fitz.Matrix(zoom, zoom)
+            
+            parsed_pages_count = min(3, len(doc))
+            result["parsed_pages"] = parsed_pages_count
+            text_parts = []
+            
+            for page_num in range(parsed_pages_count):
+                page = doc.load_page(page_num)
+                pix = page.get_pixmap(matrix=mat, alpha=False)
+                png_bytes = pix.tobytes("jpeg", 85) # Use compressed JPEG internally to cut down 90% of base64 JSON weight!
+                png_b64 = base64.b64encode(png_bytes).decode("utf-8")
+                
+                prompt = (
+                    f"Extract all text content from page {page_num + 1} of this document. "
+                    "Include all readable text, table contents (as markdown tables), "
+                    "and important visual information in [brackets]. Output clean markdown without conversational filler:"
+                )
+                extracted = await call_llm_vision(prompt, png_b64, "image/jpeg")
+                if extracted:
+                    text_parts.append(extracted)
+                    result["has_images"] = True
+            
+            result["text"] = "\n\n---\n\n".join(text_parts)
+        except Exception as e:
+            logger.error(f"Failed to parse PDF with PyMuPDF: {e}")
+        return result
+
+    if mime_type in ("image/png", "image/jpeg", "image/webp", "image/gif"):
+        file_b64 = base64.b64encode(file_content).decode("utf-8")
         prompt = (
-            "Extract all text content from this document/image. "
+            "Extract all text content from this image. "
             "Include all readable text, table contents (as markdown tables), "
-            "and important visual information in [brackets]. Preserve structure.\n\nOutput as clean markdown:"
+            "and important visual information in [brackets]. Output clean markdown:"
         )
         extracted = await call_llm_vision(prompt, file_b64, mime_type)
         if extracted:
@@ -205,8 +241,20 @@ async def extract_entities_llm(text: str, confidence_threshold: float = 0.5, ner
     response = await call_llm(
         text[:4000], system_prompt=prompt_template, max_tokens=500, task_type="entity_extraction"
     )
+    if not response:
+        return _EMPTY_EXTRACTION
+    
     try:
-        parsed = json.loads(response)
+        raw_text = response.strip()
+        if raw_text.startswith("```"):
+            lines = raw_text.split("\n")
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines[-1].startswith("```"):
+                lines = lines[:-1]
+            raw_text = "\n".join(lines).strip()
+            
+        parsed = json.loads(raw_text)
         if isinstance(parsed, list):
             return {"entities": parsed, "intents": [], "relationships": []}
     except Exception as e:
