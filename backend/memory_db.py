@@ -169,6 +169,7 @@ def _create_interaction_tables(cursor):
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS interactions (
             id                      TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            seq_id                  BIGSERIAL,
             timestamp               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             interaction_type        TEXT NOT NULL,
             agent_id                TEXT,
@@ -198,6 +199,7 @@ def _create_memory_tier_tables(cursor):
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS memories (
             id                  TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            seq_id              BIGSERIAL,
             date                DATE NOT NULL,
             primary_entity_type TEXT NOT NULL,
             primary_entity_id   TEXT NOT NULL,
@@ -224,6 +226,7 @@ def _create_memory_tier_tables(cursor):
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS insights (
             id                  TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            seq_id              BIGSERIAL,
             primary_entity_type TEXT NOT NULL,
             primary_entity_id   TEXT NOT NULL,
             source_memory_ids   TEXT[] NOT NULL DEFAULT '{}',
@@ -248,6 +251,7 @@ def _create_memory_tier_tables(cursor):
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS lessons (
             id                  TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            seq_id              BIGSERIAL,
             source_insight_ids  TEXT[] NOT NULL DEFAULT '{}',
             lesson_type         TEXT,
             name                TEXT NOT NULL,
@@ -302,6 +306,13 @@ def _run_migrations(cursor):
     for tbl in ["memory_entity_types", "memory_entity_subtypes",
                 "memory_lesson_types", "memory_channel_types"]:
         cursor.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS description TEXT")
+
+    # Add seq_id to all core memory tier tables
+    for tbl in ["interactions", "memories", "insights", "lessons"]:
+        try:
+            cursor.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS seq_id BIGSERIAL")
+        except Exception as e:
+            logger.error(f"Failed to add seq_id to {tbl}: {e}")
 
     # Agent columns that were added iteratively
     for col, col_def in [
