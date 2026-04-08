@@ -481,16 +481,17 @@ async def fetch_provider_models(data: FetchModelsRequest, user: dict = Depends(r
     api_key = data.api_key or ""
     api_base_url = (data.api_base_url or "").rstrip("/")
 
-    if not api_key:
+    # If missing api_key OR missing api_base_url, try to fetch from DB
+    if (not api_key or not api_base_url) and data.provider_id:
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
-            if data.provider_id:
-                cursor.execute("SELECT api_key_encrypted, api_base_url FROM memory_llm_providers WHERE id = %s", (data.provider_id,))
-                row = cursor.fetchone()
-                if row and row["api_key_encrypted"]:
+            cursor.execute("SELECT api_key_encrypted, api_base_url FROM memory_llm_providers WHERE id = %s", (data.provider_id,))
+            row = cursor.fetchone()
+            if row:
+                if not api_key and row["api_key_encrypted"]:
                     api_key = row["api_key_encrypted"]
-                    if not api_base_url and row["api_base_url"]:
-                        api_base_url = row["api_base_url"].rstrip("/")
+                if not api_base_url and row["api_base_url"]:
+                    api_base_url = row["api_base_url"].rstrip("/")
 
     # Final check: do we have a key? (except for Ollama which might be local)
     if not api_key and provider != "ollama":
