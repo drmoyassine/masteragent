@@ -456,7 +456,6 @@ export default function MemoryExplorerPage() {
                         <TableHead>Entity Subtype</TableHead>
                         <TableHead>Entity ID</TableHead>
                         <TableHead>Interactions</TableHead>
-                        <TableHead>Summary</TableHead>
                         <TableHead>Service Status</TableHead>
                         <TableHead>Compacted</TableHead>
                       </TableRow>
@@ -465,42 +464,50 @@ export default function MemoryExplorerPage() {
                        {memories.length === 0 ? (
                           <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">No memories found.</TableCell></TableRow>
                        ) : memories.map(m => (
-                         <TableRow key={m.id} className="cursor-pointer hover:bg-accent/50" onClick={() => loadMemoryDetail(m.id)}>
-                            <TableCell className="font-mono text-muted-foreground">#{m.seq_id}</TableCell>
-                            <TableCell className="whitespace-nowrap">{m.date}</TableCell>
-                            <TableCell>{m.primary_entity_type}</TableCell>
-                            <TableCell>-</TableCell>
-                            <TableCell className="font-mono text-xs">{m.primary_entity_id}</TableCell>
-                            <TableCell>{m.interaction_count}</TableCell>
-                            <TableCell className="max-w-md truncate">{m.content_summary}</TableCell>
-                            <TableCell>
-                               <div className="flex gap-2 items-center">
-                                 <TooltipProvider>
-                                   <Tooltip>
-                                     <TooltipTrigger>
-                                       <Badge variant="outline" className={m.processing_errors?.summarization ? "border-red-500/50 text-red-500" : "border-emerald-500/50 text-emerald-500"}>
-                                         {m.processing_errors?.summarization ? <XCircle className="w-3 h-3 mr-1" /> : <CheckCircle2 className="w-3 h-3 mr-1" />}
-                                         Summarization
-                                       </Badge>
-                                     </TooltipTrigger>
-                                     {m.processing_errors?.summarization && <TooltipContent className="bg-red-950 text-red-100 border-red-900"><p className="max-w-xs">{m.processing_errors.summarization}</p></TooltipContent>}
-                                   </Tooltip>
-                                 </TooltipProvider>
-                                 <TooltipProvider>
-                                   <Tooltip>
-                                     <TooltipTrigger>
-                                       <Badge variant="outline" className={m.processing_errors?.embeddings ? "border-red-500/50 text-red-500" : "border-emerald-500/50 text-emerald-500"}>
-                                         {m.processing_errors?.embeddings ? <XCircle className="w-3 h-3 mr-1" /> : <CheckCircle2 className="w-3 h-3 mr-1" />}
-                                         Embedding
-                                       </Badge>
-                                     </TooltipTrigger>
-                                     {m.processing_errors?.embeddings && <TooltipContent className="bg-red-950 text-red-100 border-red-900"><p className="max-w-xs">{m.processing_errors.embeddings}</p></TooltipContent>}
-                                   </Tooltip>
-                                 </TooltipProvider>
-                               </div>
-                            </TableCell>
-                            <TableCell>{m.compacted ? <Check className="w-4 h-4 text-green-500" /> : ""}</TableCell>
-                         </TableRow>
+                         <TooltipProvider key={m.id}>
+                           <Tooltip delayDuration={300}>
+                             <TooltipTrigger asChild>
+                               <TableRow className="cursor-pointer hover:bg-accent/50" onClick={() => loadMemoryDetail(m.id)}>
+                                  <TableCell className="font-mono text-muted-foreground">#{m.seq_id}</TableCell>
+                                  <TableCell className="whitespace-nowrap">{m.date}</TableCell>
+                                  <TableCell>{m.primary_entity_type}</TableCell>
+                                  <TableCell>-</TableCell>
+                                  <TableCell className="font-mono text-xs">{m.primary_entity_id}</TableCell>
+                                  <TableCell>{m.interaction_count}</TableCell>
+                                  <TableCell>
+                                     <div className="flex gap-2 items-center">
+                                       <TooltipProvider>
+                                         <Tooltip>
+                                           <TooltipTrigger>
+                                             <Badge variant="outline" className={m.processing_errors?.summarization ? "border-red-500/50 text-red-500" : "border-emerald-500/50 text-emerald-500"}>
+                                               {m.processing_errors?.summarization ? <XCircle className="w-3 h-3 mr-1" /> : <CheckCircle2 className="w-3 h-3 mr-1" />}
+                                               Summarization
+                                             </Badge>
+                                           </TooltipTrigger>
+                                           {m.processing_errors?.summarization && <TooltipContent side="top" className="bg-red-950 text-red-100 border-red-900 z-50"><p className="max-w-xs">{m.processing_errors.summarization}</p></TooltipContent>}
+                                         </Tooltip>
+                                       </TooltipProvider>
+                                       <TooltipProvider>
+                                         <Tooltip>
+                                           <TooltipTrigger>
+                                             <Badge variant="outline" className={m.processing_errors?.embeddings ? "border-red-500/50 text-red-500" : "border-emerald-500/50 text-emerald-500"}>
+                                               {m.processing_errors?.embeddings ? <XCircle className="w-3 h-3 mr-1" /> : <CheckCircle2 className="w-3 h-3 mr-1" />}
+                                               Embedding
+                                             </Badge>
+                                           </TooltipTrigger>
+                                           {m.processing_errors?.embeddings && <TooltipContent side="top" className="bg-red-950 text-red-100 border-red-900 z-50"><p className="max-w-xs">{m.processing_errors.embeddings}</p></TooltipContent>}
+                                         </Tooltip>
+                                       </TooltipProvider>
+                                     </div>
+                                  </TableCell>
+                                  <TableCell>{m.compacted ? <Check className="w-4 h-4 text-green-500" /> : ""}</TableCell>
+                               </TableRow>
+                             </TooltipTrigger>
+                             <TooltipContent side="bottom" align="start" className="max-w-2xl bg-secondary text-secondary-foreground border-border break-words shadow-lg pointer-events-none z-40">
+                               <p className="text-sm leading-relaxed whitespace-pre-wrap">{m.content_summary}</p>
+                             </TooltipContent>
+                           </Tooltip>
+                         </TooltipProvider>
                        ))}
                     </TableBody>
                  </Table>

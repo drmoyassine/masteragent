@@ -212,6 +212,7 @@ def _create_memory_tier_tables(cursor):
             embedding           vector,
             compaction_count    INT DEFAULT 0,
             compacted           BOOLEAN DEFAULT FALSE,
+            processing_errors   JSONB DEFAULT '{}',
             created_at          TIMESTAMPTZ DEFAULT NOW(),
             UNIQUE (date, primary_entity_type, primary_entity_id)
         )
@@ -525,5 +526,8 @@ def _seed_defaults():
                 VALUES (%s)
                 ON CONFLICT (entity_type) DO NOTHING
             """, (entity_type,))
+
+        # Run manual migrations on existing db deployments
+        cursor.execute("ALTER TABLE memories ADD COLUMN IF NOT EXISTS processing_errors JSONB DEFAULT '{}'")
 
         logger.info("Memory system defaults seeded")

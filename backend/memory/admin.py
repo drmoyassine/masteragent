@@ -744,7 +744,7 @@ async def admin_get_daily_memories(
         cursor.execute("""
             SELECT id, seq_id, date, primary_entity_type, primary_entity_id,
                    interaction_count, content_summary, related_entities,
-                   intents, compacted, created_at
+                   intents, compacted, processing_errors, created_at
             FROM memories
             WHERE date = %s
             ORDER BY created_at DESC
@@ -784,7 +784,7 @@ async def list_admin_memories(
         cursor.execute(f"""
             SELECT id, seq_id, date, primary_entity_type, primary_entity_id,
                    interaction_count, content_summary, related_entities,
-                   intents, compacted, created_at
+                   intents, compacted, processing_errors, created_at
             FROM memories {where}
             ORDER BY created_at DESC
             LIMIT %s OFFSET %s

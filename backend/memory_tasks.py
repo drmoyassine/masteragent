@@ -300,6 +300,7 @@ async def _generate_memory_for_entity(entity_type: str, entity_id: str, interact
     )
     system_prompt = get_system_prompt("memory_generation") or DEFAULT_MEMORY_PROMPT
     content_summary = ""
+    processing_errors = {}
     try:
         content_summary = await call_llm(
             llm_context[:8000],
@@ -308,6 +309,7 @@ async def _generate_memory_for_entity(entity_type: str, entity_id: str, interact
             task_type="summarization",
         )
     except Exception as e:
+        processing_errors["summarization"] = str(e)
         logger.warning(f"Memory LLM call failed for {entity_type}/{entity_id}: {e}")
 
     # 7. Embedding (memories only — no interaction embedding)
@@ -323,6 +325,7 @@ async def _generate_memory_for_entity(entity_type: str, entity_id: str, interact
                 embed_text = f"{content_summary}\nEntities: {entity_names}\nSignals: {signals}"
             embedding = await generate_embedding(embed_text)
         except Exception as e:
+            processing_errors["embeddings"] = str(e)
             logger.warning(f"Embedding failed for {entity_type}/{entity_id}: {e}")
 
     # 8. Write memory (INSERT only — skip if exists, checked above)
@@ -334,28 +337,28 @@ async def _generate_memory_for_entity(entity_type: str, entity_id: str, interact
                 INSERT INTO memories (
                     id, date, primary_entity_type, primary_entity_id,
                     interaction_ids, interaction_count, content_summary,
-                    related_entities, intents, relationships, embedding
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    related_entities, intents, relationships, embedding, processing_errors
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (date, primary_entity_type, primary_entity_id) DO NOTHING
             """, (
                 memory_id, interaction_date, entity_type, entity_id,
                 interaction_ids, len(interaction_ids), content_summary,
                 json.dumps(related_entities), intents,
-                json.dumps(relationships), embedding,
+                json.dumps(relationships), embedding, json.dumps(processing_errors)
             ))
         else:
             cursor.execute("""
                 INSERT INTO memories (
                     id, date, primary_entity_type, primary_entity_id,
                     interaction_ids, interaction_count, content_summary,
-                    related_entities, intents, relationships
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    related_entities, intents, relationships, processing_errors
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (date, primary_entity_type, primary_entity_id) DO NOTHING
             """, (
                 memory_id, interaction_date, entity_type, entity_id,
                 interaction_ids, len(interaction_ids), content_summary,
                 json.dumps(related_entities), intents,
-                json.dumps(relationships),
+                json.dumps(relationships), json.dumps(processing_errors)
             ))
 
         # 9. Mark interactions as done and clear ephemeral embeddings to prevent DB bloat
