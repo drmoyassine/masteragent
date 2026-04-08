@@ -370,10 +370,10 @@ export default function MemoryExplorerPage() {
                         <TableHead>Entity Type</TableHead>
                         <TableHead>Entity Sub-Type</TableHead>
                         <TableHead>Entity ID</TableHead>
-                        <TableHead>Pipeline Nodes</TableHead>
                         <TableHead>Interaction Blob</TableHead>
                         <TableHead>Agent</TableHead>
-                        <TableHead>Status</TableHead>
+                        <TableHead>Service Status</TableHead>
+                        <TableHead>Memorization</TableHead>
                         <TableHead>Actions</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -388,6 +388,8 @@ export default function MemoryExplorerPage() {
                             <TableCell>{i.primary_entity_type}</TableCell>
                             <TableCell>{i.primary_entity_subtype || "-"}</TableCell>
                             <TableCell className="font-mono text-xs">{i.primary_entity_id}</TableCell>
+                            <TableCell className="max-w-xs truncate">{i.content}</TableCell>
+                            <TableCell>{i.agent_name || i.agent_id}</TableCell>
                             <TableCell>
                                <div className="flex gap-2 items-center">
                                  {i.has_attachments && (
@@ -416,8 +418,6 @@ export default function MemoryExplorerPage() {
                                  </TooltipProvider>
                                </div>
                             </TableCell>
-                            <TableCell className="max-w-xs truncate">{i.content}</TableCell>
-                            <TableCell>{i.agent_name || i.agent_id}</TableCell>
                             <TableCell>{i.status}</TableCell>
                             <TableCell>
                                <Button variant="ghost" size="icon" onClick={() => setEditingInteraction(i)}>
