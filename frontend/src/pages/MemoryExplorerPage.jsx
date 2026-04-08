@@ -452,9 +452,12 @@ export default function MemoryExplorerPage() {
                       <TableRow>
                         <TableHead>ID</TableHead>
                         <TableHead>Date</TableHead>
-                        <TableHead>Entity</TableHead>
+                        <TableHead>Entity Type</TableHead>
+                        <TableHead>Entity Subtype</TableHead>
+                        <TableHead>Entity ID</TableHead>
                         <TableHead>Interactions</TableHead>
                         <TableHead>Summary</TableHead>
+                        <TableHead>Service Status</TableHead>
                         <TableHead>Compacted</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -465,9 +468,37 @@ export default function MemoryExplorerPage() {
                          <TableRow key={m.id} className="cursor-pointer hover:bg-accent/50" onClick={() => loadMemoryDetail(m.id)}>
                             <TableCell className="font-mono text-muted-foreground">#{m.seq_id}</TableCell>
                             <TableCell className="whitespace-nowrap">{m.date}</TableCell>
-                            <TableCell>{m.primary_entity_type}: <span className="font-mono text-xs">{m.primary_entity_id}</span></TableCell>
+                            <TableCell>{m.primary_entity_type}</TableCell>
+                            <TableCell>-</TableCell>
+                            <TableCell className="font-mono text-xs">{m.primary_entity_id}</TableCell>
                             <TableCell>{m.interaction_count}</TableCell>
                             <TableCell className="max-w-md truncate">{m.content_summary}</TableCell>
+                            <TableCell>
+                               <div className="flex gap-2 items-center">
+                                 <TooltipProvider>
+                                   <Tooltip>
+                                     <TooltipTrigger>
+                                       <Badge variant="outline" className={m.processing_errors?.summarization ? "border-red-500/50 text-red-500" : "border-emerald-500/50 text-emerald-500"}>
+                                         {m.processing_errors?.summarization ? <XCircle className="w-3 h-3 mr-1" /> : <CheckCircle2 className="w-3 h-3 mr-1" />}
+                                         Summarization
+                                       </Badge>
+                                     </TooltipTrigger>
+                                     {m.processing_errors?.summarization && <TooltipContent className="bg-red-950 text-red-100 border-red-900"><p className="max-w-xs">{m.processing_errors.summarization}</p></TooltipContent>}
+                                   </Tooltip>
+                                 </TooltipProvider>
+                                 <TooltipProvider>
+                                   <Tooltip>
+                                     <TooltipTrigger>
+                                       <Badge variant="outline" className={m.processing_errors?.embeddings ? "border-red-500/50 text-red-500" : "border-emerald-500/50 text-emerald-500"}>
+                                         {m.processing_errors?.embeddings ? <XCircle className="w-3 h-3 mr-1" /> : <CheckCircle2 className="w-3 h-3 mr-1" />}
+                                         Embedding
+                                       </Badge>
+                                     </TooltipTrigger>
+                                     {m.processing_errors?.embeddings && <TooltipContent className="bg-red-950 text-red-100 border-red-900"><p className="max-w-xs">{m.processing_errors.embeddings}</p></TooltipContent>}
+                                   </Tooltip>
+                                 </TooltipProvider>
+                               </div>
+                            </TableCell>
                             <TableCell>{m.compacted ? <Check className="w-4 h-4 text-green-500" /> : ""}</TableCell>
                          </TableRow>
                        ))}
