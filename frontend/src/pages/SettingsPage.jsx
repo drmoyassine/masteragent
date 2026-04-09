@@ -428,6 +428,7 @@ export default function SettingsPage({ onDisconnect }) {
             <LLMProviderSettings
               llmProviders={llmProviders}
               llmConfigs={llmConfigs}
+              memorySettings={memorySettings}
               editingConfig={editingConfig}
               setEditingConfig={setEditingConfig}
               showApiKey={showApiKey}
@@ -435,6 +436,7 @@ export default function SettingsPage({ onDisconnect }) {
               onSaveConfig={handleSaveLLMConfig}
               onSaveProvider={handleSaveLLMProvider}
               onDeleteProvider={handleDeleteLLMProvider}
+              onUpdateMemorySettings={handleUpdateGeneralSettings}
             />
           )}
 

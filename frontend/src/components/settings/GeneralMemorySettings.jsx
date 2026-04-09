@@ -155,35 +155,6 @@ export function GeneralMemorySettings({ settings, onUpdateSettings }) {
                 </CardContent>
             </Card>
 
-            {/* Chunking Settings */}
-            <Card>
-                <CardHeader className="pb-3">
-                    <div className="flex items-center gap-2">
-                        <Scissors className="w-5 h-5 text-purple-500" />
-                        <CardTitle className="text-lg">Chunking Strategy</CardTitle>
-                    </div>
-                    <CardDescription className="text-xs">Configure text chunking for vector storage</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                    <div className="space-y-2">
-                        <Label className="text-xs font-mono">Chunk Size (tokens)</Label>
-                        <Input
-                            type="number"
-                            value={settings.chunk_size || 400}
-                            onChange={(e) => onUpdateSettings("chunk_size", parseInt(e.target.value))}
-                        />
-                    </div>
-                    <div className="space-y-2">
-                        <Label className="text-xs font-mono">Chunk Overlap (tokens)</Label>
-                        <Input
-                            type="number"
-                            value={settings.chunk_overlap || 80}
-                            onChange={(e) => onUpdateSettings("chunk_overlap", parseInt(e.target.value))}
-                        />
-                    </div>
-                </CardContent>
-            </Card>
-
             {/* PII Settings */}
             <Card>
                 <CardHeader className="pb-3">

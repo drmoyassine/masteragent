@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from "react";
-import { Brain, Layers, Eye, EyeOff, AlertCircle, CheckCircle2, FileText, ExternalLink, RefreshCw, Search, ChevronDown, Cpu, Plus, Edit2, Trash2 } from "lucide-react";
+import { Brain, Layers, Eye, EyeOff, AlertCircle, CheckCircle2, FileText, ExternalLink, RefreshCw, Search, ChevronDown, Cpu, Plus, Edit2, Trash2, Scissors } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -341,15 +341,161 @@ function ProviderDialog({ open, onClose, onSave, existingProvider }) {
     );
 }
 
+// ─── Task Config Dialog ────────────────────────────────────────────────────────
+function TaskConfigDialog({
+    open,
+    onClose,
+    config,
+    llmProviders,
+    onSaveConfig,
+    memorySettings,
+    onUpdateMemorySettings,
+    models,
+    loadingModels,
+    error,
+    onFetchModels
+}) {
+    const [formData, setFormData] = useState({ provider_id: "", model_name: "" });
+    const [chunkSize, setChunkSize] = useState("");
+    const [chunkOverlap, setChunkOverlap] = useState("");
+
+    useEffect(() => {
+        if (open && config) {
+            setFormData({
+                provider_id: config.provider_id || "",
+                model_name: config.model_name || ""
+            });
+            if (config.task_type === "embedding" && memorySettings) {
+                setChunkSize(memorySettings.chunk_size || 400);
+                setChunkOverlap(memorySettings.chunk_overlap || 80);
+            }
+            if (config.provider_id) {
+                onFetchModels(config.id, config.provider_id);
+            }
+        }
+    }, [open, config]);
+
+    const handleProviderChange = (v) => {
+        setFormData({ provider_id: v, model_name: "" });
+        onFetchModels(config.id, v);
+    };
+
+    const handleSave = async () => {
+        const payload = {
+            provider_id: formData.provider_id,
+            model_name: formData.model_name
+        };
+        onSaveConfig(config.id, payload);
+        
+        if (config.task_type === "embedding" && onUpdateMemorySettings) {
+            const newSize = parseInt(chunkSize);
+            const newOverlap = parseInt(chunkOverlap);
+            let p1, p2;
+            if (newSize && newSize !== memorySettings.chunk_size) {
+                 p1 = onUpdateMemorySettings("chunk_size", newSize);
+            }
+            if (newOverlap && newOverlap !== memorySettings.chunk_overlap) {
+                 p2 = onUpdateMemorySettings("chunk_overlap", newOverlap);
+            }
+            if (p1) await p1;
+            if (p2) await p2;
+        }
+        onClose();
+    };
+
+    if (!config) return null;
+    const taskInfo = TASK_TYPE_LABELS[config.task_type] || { label: config.task_type };
+
+    const selectedProviderMeta = formData.provider_id 
+        ? PROVIDER_META.find(m => m.value === llmProviders.find(p => p.id === formData.provider_id)?.provider)
+        : null;
+    const canFetchModels = selectedProviderMeta?.hasModelFetch;
+
+    return (
+        <Dialog open={open} onOpenChange={onClose}>
+            <DialogContent className="sm:max-w-[450px]">
+                <DialogHeader>
+                    <DialogTitle>Assign {taskInfo.label}</DialogTitle>
+                    <DialogDescription>Assign a provider account and model for this task.</DialogDescription>
+                </DialogHeader>
+
+                <div className="space-y-4 py-4">
+                     <div className="space-y-2">
+                          <Label>Provider Account</Label>
+                          <Select value={formData.provider_id} onValueChange={handleProviderChange}>
+                              <SelectTrigger><SelectValue placeholder="Select an account" /></SelectTrigger>
+                              <SelectContent>
+                                  {llmProviders.map((opt) => (
+                                     <SelectItem key={opt.id} value={opt.id}>{opt.name} ({opt.provider})</SelectItem>
+                                  ))}
+                              </SelectContent>
+                          </Select>
+                     </div>
+
+                     {formData.provider_id && canFetchModels && (
+                         <div className="space-y-2">
+                             <Label>Model</Label>
+                             <ModelCombobox 
+                                 value={formData.model_name}
+                                 onChange={(v) => setFormData({ ...formData, model_name: v })}
+                                 models={models}
+                                 loading={loadingModels}
+                                 error={error}
+                                 onFetch={() => onFetchModels(config.id, formData.provider_id)}
+                                 canFetch={canFetchModels}
+                             />
+                         </div>
+                     )}
+                     {formData.provider_id && !canFetchModels && (
+                         <div className="space-y-2">
+                             <Label>Model Name</Label>
+                             <Input 
+                                 value={formData.model_name}
+                                 onChange={(e) => setFormData({ ...formData, model_name: e.target.value })}
+                                 placeholder="e.g. gpt-4o"
+                             />
+                         </div>
+                     )}
+
+                     {config.task_type === 'embedding' && (
+                         <div className="pt-4 mt-2 border-t space-y-4">
+                             <div className="flex items-center gap-2 mb-2">
+                                 <h4 className="text-sm font-semibold flex items-center gap-1.5"><Scissors className="w-4 h-4 text-purple-500"/> Chunking Strategy</h4>
+                             </div>
+                             <div className="grid grid-cols-2 gap-4">
+                                  <div className="space-y-2">
+                                      <Label className="text-xs">Chunk Size (tokens)</Label>
+                                      <Input type="number" value={chunkSize} onChange={(e) => setChunkSize(e.target.value)} />
+                                  </div>
+                                  <div className="space-y-2">
+                                      <Label className="text-xs">Chunk Overlap</Label>
+                                      <Input type="number" value={chunkOverlap} onChange={(e) => setChunkOverlap(e.target.value)} />
+                                  </div>
+                             </div>
+                         </div>
+                     )}
+                </div>
+
+                <DialogFooter>
+                     <Button variant="outline" onClick={onClose}>Cancel</Button>
+                     <Button onClick={handleSave} disabled={!formData.provider_id || !formData.model_name}>Save Assignation</Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+    );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 export function LLMProviderSettings({
     llmProviders,
     llmConfigs,
+    memorySettings,
     editingConfig,
     setEditingConfig,
     onSaveConfig,
     onSaveProvider,
-    onDeleteProvider
+    onDeleteProvider,
+    onUpdateMemorySettings
 }) {
     const [modelLists, setModelLists] = useState({});
     const [fetchingModels, setFetchingModels] = useState({});
@@ -358,6 +504,10 @@ export function LLMProviderSettings({
     // Provider Dialog State
     const [providerDialogOpen, setProviderDialogOpen] = useState(false);
     const [editingProvider, setEditingProvider] = useState(null);
+    
+    // Task Config Dialog State
+    const [taskConfigDialogOpen, setTaskConfigDialogOpen] = useState(false);
+    const [currentTaskConfig, setCurrentTaskConfig] = useState(null);
 
     const handleFetchModels = useCallback(async (configId, providerId) => {
         if (!providerId) return;
@@ -448,19 +598,9 @@ export function LLMProviderSettings({
                     {llmConfigs.map((config) => {
                         const taskInfo = TASK_TYPE_LABELS[config.task_type] || { label: config.task_type, icon: Brain, color: "bg-gray-500" };
                         const TaskIcon = taskInfo.icon;
-                        const isEditing = editingConfig?.id === config.id;
-                        
                         // Check if it's correctly assigned
                         const assignedProvider = llmProviders.find(p => p.id === config.provider_id);
                         const isConfigured = !!assignedProvider && !!config.model_name;
-
-                        // Temporary edit state models
-                        const meta = isEditing 
-                            ? (llmProviders.find(p => p.id === editingConfig.provider_id)
-                                ? PROVIDER_META.find(m => m.value === llmProviders.find(p => p.id === editingConfig.provider_id).provider)
-                                : null)
-                            : null;
-                        const canFetchModels = isEditing && meta?.hasModelFetch;
 
                         return (
                             <Card key={config.id} className={`border-l-4 ${taskInfo.color} bg-card/50`}>
@@ -473,103 +613,32 @@ export function LLMProviderSettings({
                                             <div>
                                                 <h3 className="font-semibold text-foreground">{taskInfo.label}</h3>
                                                 <p className="text-sm text-muted-foreground">
-                                                    {isEditing 
-                                                        ? "Assigning Account & Model" 
-                                                        : (isConfigured ? `${assignedProvider.name} (${config.model_name})` : "Not assigned")}
+                                                    {isConfigured ? `${assignedProvider.name} (${config.model_name})` : "Not assigned"}
                                                 </p>
                                             </div>
                                         </div>
                                         <div className="flex items-center gap-2">
-                                            {!isEditing && (
-                                                <>
-                                                    {isConfigured ? (
-                                                        <Badge variant="default" className="bg-green-500">
-                                                            <CheckCircle2 className="w-3 h-3 mr-1" /> Ready
-                                                        </Badge>
-                                                    ) : (
-                                                        <Badge variant="outline" className="border-amber-500 text-amber-500">
-                                                            <AlertCircle className="w-3 h-3 mr-1" /> Unassigned
-                                                        </Badge>
-                                                    )}
-                                                </>
+                                            {isConfigured ? (
+                                                <Badge variant="default" className="bg-green-500">
+                                                    <CheckCircle2 className="w-3 h-3 mr-1" /> Ready
+                                                </Badge>
+                                            ) : (
+                                                <Badge variant="outline" className="border-amber-500 text-amber-500">
+                                                    <AlertCircle className="w-3 h-3 mr-1" /> Unassigned
+                                                </Badge>
                                             )}
                                             <Button
                                                 variant="outline"
                                                 size="sm"
                                                 onClick={() => {
-                                                    if (isEditing) {
-                                                        setEditingConfig(null);
-                                                    } else {
-                                                        setEditingConfig({ ...config });
-                                                        // Automatically fetch models if already assigned
-                                                        if (config.provider_id) {
-                                                            handleFetchModels(config.id, config.provider_id);
-                                                        }
-                                                    }
+                                                    setCurrentTaskConfig(config);
+                                                    setTaskConfigDialogOpen(true);
                                                 }}
                                             >
-                                                {isEditing ? "Cancel" : "Edit"}
+                                                Edit
                                             </Button>
                                         </div>
                                     </div>
-
-                                    {isEditing && (
-                                        <div className="mt-4 pt-4 border-t space-y-4">
-                                            {/* Account Selection */}
-                                            <div className="space-y-2">
-                                                <Label>Provider Account</Label>
-                                                <Select
-                                                    value={editingConfig.provider_id || ""}
-                                                    onValueChange={(v) => {
-                                                        setEditingConfig({
-                                                            ...editingConfig,
-                                                            provider_id: v,
-                                                            model_name: "", // Reset model
-                                                        });
-                                                        setModelLists((prev) => ({ ...prev, [config.id]: [] }));
-                                                        handleFetchModels(config.id, v);
-                                                    }}
-                                                >
-                                                    <SelectTrigger>
-                                                        <SelectValue placeholder="Select a saved account" />
-                                                    </SelectTrigger>
-                                                    <SelectContent>
-                                                        {llmProviders.map((opt) => (
-                                                            <SelectItem key={opt.id} value={opt.id}>
-                                                                {opt.name} ({opt.provider})
-                                                            </SelectItem>
-                                                        ))}
-                                                    </SelectContent>
-                                                </Select>
-                                            </div>
-
-                                            {/* Model Selection */}
-                                            {editingConfig.provider_id && (
-                                                <div className="space-y-2">
-                                                    <Label>Model</Label>
-                                                    <ModelCombobox
-                                                        value={editingConfig.model_name || ""}
-                                                        onChange={(v) => setEditingConfig({ ...editingConfig, model_name: v })}
-                                                        models={modelLists[config.id] || []}
-                                                        loading={fetchingModels[config.id] || false}
-                                                        error={fetchErrors[config.id]}
-                                                        onFetch={() => handleFetchModels(config.id, editingConfig.provider_id)}
-                                                        canFetch={canFetchModels}
-                                                    />
-                                                </div>
-                                            )}
-
-                                            <Button onClick={() => {
-                                                const payload = {
-                                                    provider_id: editingConfig.provider_id,
-                                                    model_name: editingConfig.model_name,
-                                                };
-                                                onSaveConfig(config.id, payload);
-                                            }} disabled={!editingConfig.provider_id || !editingConfig.model_name}>
-                                                Save Assignation
-                                            </Button>
-                                        </div>
-                                    )}
                                 </CardContent>
                             </Card>
                         );
@@ -582,6 +651,20 @@ export function LLMProviderSettings({
                 onClose={() => setProviderDialogOpen(false)} 
                 onSave={onSaveProvider}
                 existingProvider={editingProvider}
+            />
+
+            <TaskConfigDialog
+                open={taskConfigDialogOpen}
+                onClose={() => setTaskConfigDialogOpen(false)}
+                config={currentTaskConfig}
+                llmProviders={llmProviders}
+                onSaveConfig={onSaveConfig}
+                memorySettings={memorySettings}
+                onUpdateMemorySettings={onUpdateMemorySettings}
+                models={currentTaskConfig ? modelLists[currentTaskConfig.id] || [] : []}
+                loadingModels={currentTaskConfig ? fetchingModels[currentTaskConfig.id] : false}
+                error={currentTaskConfig ? fetchErrors[currentTaskConfig.id] : null}
+                onFetchModels={handleFetchModels}
             />
         </div>
     );
