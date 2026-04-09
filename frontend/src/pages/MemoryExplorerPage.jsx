@@ -7,6 +7,10 @@ import api, {
   getInsightsAdmin,
   getLessonsAdmin,
   getMemoryDetail,
+  updateMemoryAdmin,
+  deleteMemoryAdmin,
+  bulkDeleteMemoriesAdmin,
+  bulkReprocessMemoriesAdmin,
   updateInteractionAdmin,
   deleteInteractionAdmin,
   createLessonAdmin,
@@ -98,9 +102,13 @@ export default function MemoryExplorerPage() {
 
   // Interaction Inspector State
   const [editingInteraction, setEditingInteraction] = useState(null);
+
+  // Memory Inspector State
+  const [editingMemory, setEditingMemory] = useState(null);
   
   // Bulk Operations State
   const [selectedInteractionIds, setSelectedInteractionIds] = useState([]);
+  const [selectedMemoryIds, setSelectedMemoryIds] = useState([]);
 
   useEffect(() => {
     loadInitialData();
@@ -342,6 +350,73 @@ export default function MemoryExplorerPage() {
     }
   };
 
+  const toggleSelectAllMemories = (checked) => {
+    if (checked) setSelectedMemoryIds(memories.map(m => m.id));
+    else setSelectedMemoryIds([]);
+  };
+
+  const toggleMemory = (id) => {
+    setSelectedMemoryIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
+  const handleBulkDeleteMemories = async () => {
+    if (!window.confirm(`Delete ${selectedMemoryIds.length} memories? This cannot be reversed.`)) return;
+    setProcessingBulk(true);
+    try {
+      const res = await bulkDeleteMemoriesAdmin({ memory_ids: selectedMemoryIds });
+      toast.success(`Deleted ${res.data.deleted} memories`);
+      setSelectedMemoryIds([]);
+      loadMemories();
+    } catch (error) {
+      toast.error("Failed to delete memories");
+    } finally {
+      setProcessingBulk(false);
+    }
+  };
+
+  const handleBulkReprocessMemories = async () => {
+    if (!window.confirm(`Drop ${selectedMemoryIds.length} memories and re-queue their interactions?`)) return;
+    setProcessingBulk(true);
+    try {
+      const res = await bulkReprocessMemoriesAdmin({ memory_ids: selectedMemoryIds });
+      toast.success(`Dropped memories and re-queued ${res.data.queued} generation jobs`);
+      setSelectedMemoryIds([]);
+      loadMemories();
+      loadInteractions();
+    } catch (error) {
+      toast.error("Failed to queue memories");
+    } finally {
+      setProcessingBulk(false);
+    }
+  };
+
+  const handleUpdateMemory = async () => {
+    if (!editingMemory) return;
+    try {
+      await updateMemoryAdmin(editingMemory.id, {
+        content_summary: editingMemory.content_summary,
+      });
+      toast.success("Memory updated successfully");
+      setEditingMemory(null);
+      loadMemories();
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || "Failed to update memory");
+    }
+  };
+
+  const handleDeleteMemory = async () => {
+    if (!editingMemory) return;
+    if (!window.confirm("Delete this memory? This action cannot be reversed.")) return;
+    try {
+      await deleteMemoryAdmin(editingMemory.id);
+      toast.success("Memory deleted successfully");
+      setEditingMemory(null);
+      loadMemories();
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || "Failed to delete memory");
+    }
+  };
+
   return (
     <div className="space-y-6" data-testid="memory-explorer-page">
       <div className="flex items-center justify-between">
@@ -521,15 +596,36 @@ export default function MemoryExplorerPage() {
                 <CardTitle>Memories (Tier 1)</CardTitle>
                 <CardDescription>Daily summaries of interactions for entities</CardDescription>
               </div>
-              <Button variant="outline" size="icon" onClick={loadMemories} disabled={loading}>
-                 <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
-              </Button>
+              <div className="flex items-center gap-2">
+                {selectedMemoryIds.length > 0 && (
+                    <div className="flex gap-2 bg-accent px-4 py-1.5 rounded-md items-center border shadow-sm animate-in fade-in zoom-in-95 duration-200">
+                        <span className="text-sm font-medium mr-2">{selectedMemoryIds.length} selected</span>
+                        <Button variant="outline" size="sm" onClick={handleBulkReprocessMemories} disabled={processingBulk}>
+                             {processingBulk ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+                             Re-Process
+                        </Button>
+                        <Button variant="destructive" size="sm" onClick={handleBulkDeleteMemories} disabled={processingBulk}>
+                             <Trash2 className="w-4 h-4 mr-2" />
+                             Delete
+                        </Button>
+                    </div>
+                )}
+                <Button variant="outline" size="icon" onClick={loadMemories} disabled={loading}>
+                   <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
                <ScrollArea className="h-[500px]">
                  <Table>
                     <TableHeader>
                       <TableRow>
+                        <TableHead className="w-[40px]">
+                            <Checkbox 
+                                checked={memories.length > 0 && selectedMemoryIds.length === memories.length} 
+                                onCheckedChange={(c) => toggleSelectAllMemories(c)} 
+                            />
+                        </TableHead>
                         <TableHead>ID</TableHead>
                         <TableHead>Date</TableHead>
                         <TableHead>Entity Type</TableHead>
@@ -541,13 +637,19 @@ export default function MemoryExplorerPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                       {memories.length === 0 ? (
-                          <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">No memories found.</TableCell></TableRow>
+                        {memories.length === 0 ? (
+                          <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">No memories found.</TableCell></TableRow>
                        ) : memories.map(m => (
                          <TooltipProvider key={m.id}>
                            <Tooltip delayDuration={300}>
                              <TooltipTrigger asChild>
-                               <TableRow className="cursor-pointer hover:bg-accent/50" onClick={() => loadMemoryDetail(m.id)}>
+                               <TableRow className="cursor-pointer hover:bg-accent/50" onClick={() => setEditingMemory(m)}>
+                                  <TableCell onClick={(e) => e.stopPropagation()}>
+                                     <Checkbox 
+                                        checked={selectedMemoryIds.includes(m.id)} 
+                                        onCheckedChange={() => toggleMemory(m.id)} 
+                                     />
+                                  </TableCell>
                                   <TableCell className="font-mono text-muted-foreground">#{m.seq_id}</TableCell>
                                   <TableCell className="whitespace-nowrap">{m.date}</TableCell>
                                   <TableCell>{m.primary_entity_type}</TableCell>
@@ -726,51 +828,89 @@ export default function MemoryExplorerPage() {
         </TabsContent>
       </Tabs>
 
-      {/* Memory Detail Dialog */}
-      <Dialog open={!!selectedMemory} onOpenChange={() => setSelectedMemory(null)}>
-        <DialogContent className="max-w-2xl">
+      {/* Memory Inspector Dialog */}
+      <Dialog open={!!editingMemory} onOpenChange={() => setEditingMemory(null)}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
           <DialogHeader>
-            <DialogTitle>Memory Details</DialogTitle>
+            <DialogTitle>Memory Inspector</DialogTitle>
+            <DialogDescription>View or edit aggregated memory properties</DialogDescription>
           </DialogHeader>
-          {selectedMemory && (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2">
-                <Badge variant="outline">Memory Object</Badge>
-                <span className="text-sm text-muted-foreground">
-                  {format(new Date(selectedMemory.created_at || new Date()), "MMMM d, yyyy h:mm a")}
-                </span>
+
+          {editingMemory && (
+            <ScrollArea className="flex-1 overflow-y-auto pr-4">
+              <div className="space-y-4 py-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Entity Type</Label>
+                    <div className="font-medium">{editingMemory.primary_entity_type}</div>
+                  </div>
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Entity ID</Label>
+                    <div className="font-mono text-sm">{editingMemory.primary_entity_id}</div>
+                  </div>
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Date Generated</Label>
+                    <div className="font-medium">{editingMemory.date}</div>
+                  </div>
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Source Interactions</Label>
+                    <div className="font-medium">{editingMemory.interaction_count} records</div>
+                  </div>
+                </div>
+                
+                <div>
+                  <Label>Content Summary</Label>
+                  <Textarea 
+                    value={editingMemory.content_summary || ""} 
+                    onChange={(e) => setEditingMemory({ ...editingMemory, content_summary: e.target.value })} 
+                    rows={8} 
+                    className="mt-1"
+                  />
+                </div>
+
+                {editingMemory.intents?.length > 0 && (
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Intents Detected</Label>
+                    <div className="flex flex-wrap gap-2 mt-1">
+                      {editingMemory.intents.map((intent, i) => (
+                        <Badge key={i} variant="secondary">{intent}</Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {editingMemory.related_entities?.length > 0 && (
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Related Entities</Label>
+                    <div className="flex flex-wrap gap-2 mt-1">
+                      {editingMemory.related_entities.map((entity, i) => (
+                        <Badge key={i} variant="outline">
+                          <User className="w-3 h-3 mr-1" />
+                          {typeof entity === "string" ? entity : entity.name || entity.entity_id}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
-              {selectedMemory.content_summary && (
-                <div>
-                  <Label className="text-xs text-muted-foreground">Summary</Label>
-                  <p className="mt-1 p-3 bg-muted rounded-lg text-sm">{selectedMemory.content_summary}</p>
-                </div>
-              )}
-              {selectedMemory.intents?.length > 0 && (
-                <div>
-                  <Label className="text-xs text-muted-foreground">Intents Detected</Label>
-                  <div className="flex flex-wrap gap-2 mt-1">
-                    {selectedMemory.intents.map((intent, i) => (
-                      <Badge key={i} variant="secondary">{intent}</Badge>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {selectedMemory.related_entities?.length > 0 && (
-                <div>
-                  <Label className="text-xs text-muted-foreground">Related Entities</Label>
-                  <div className="flex flex-wrap gap-2 mt-1">
-                    {selectedMemory.related_entities.map((entity, i) => (
-                      <Badge key={i} variant="outline">
-                        <User className="w-3 h-3 mr-1" />
-                        {entity}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
+            </ScrollArea>
           )}
+
+          <DialogFooter className="mt-4 sm:justify-between">
+            <Button 
+                variant="destructive" 
+                onClick={handleDeleteMemory}
+                disabled={!editingMemory}
+            >
+                <Trash2 className="w-4 h-4 mr-2" />
+                Delete
+            </Button>
+            <div className="flex gap-2">
+                <Button variant="outline" onClick={() => setEditingMemory(null)}>Cancel</Button>
+                <Button onClick={handleUpdateMemory} disabled={!editingMemory}>
+                    Save Changes
+                </Button>
+            </div>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

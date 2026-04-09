@@ -25,7 +25,7 @@ from memory_models import (
     LessonCreate, LessonResponse, LessonUpdate,
     EntityTypeConfig, EntityTypeConfigUpdate,
     InteractionResponse, InteractionUpdate, TimelineEntry,
-    SearchRequest, SearchResponse, SearchResult
+    SearchRequest, SearchResponse, SearchResult, MemoryUpdate
 )
 from memory_services import (
     generate_embedding, search_memories_by_vector,
@@ -841,6 +841,126 @@ async def admin_get_memory_detail(memory_id: str, admin: dict = Depends(require_
     if not row:
         raise HTTPException(status_code=404, detail="Memory not found")
     return dict(row)
+
+@router.patch("/admin/memories/{memory_id}")
+async def admin_update_memory(
+    memory_id: str,
+    payload: MemoryUpdate,
+    admin: dict = Depends(require_admin_auth)
+):
+    """Update a memory's properties (content_summary, intents, etc)."""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM memories WHERE id = %s", (memory_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Memory not found")
+
+        updates = []
+        params = []
+
+        if payload.content_summary is not None:
+            updates.append("content_summary = %s")
+            params.append(payload.content_summary)
+            
+        if payload.related_entities is not None:
+            updates.append("related_entities = %s")
+            params.append(json.dumps([e.model_dump() if hasattr(e, "model_dump") else e for e in payload.related_entities]))
+
+        if payload.intents is not None:
+            updates.append("intents = %s")
+            params.append(payload.intents)
+
+        if payload.compacted is not None:
+            updates.append("compacted = %s")
+            params.append(payload.compacted)
+
+        if not updates:
+            return {"status": "no internal updates"}
+
+        updates.append("updated_at = NOW()")
+        params.append(memory_id)
+        
+        query = f"UPDATE memories SET {', '.join(updates)} WHERE id = %s"
+        cursor.execute(query, params)
+        conn.commit()
+    
+    return {"status": "updated"}
+
+@router.delete("/admin/memories/{memory_id}", status_code=204)
+async def admin_delete_memory(memory_id: str, admin: dict = Depends(require_admin_auth)):
+    """Delete a memory from the system."""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM memories WHERE id = %s", (memory_id,))
+        conn.commit()
+
+@router.post("/admin/memories/bulk-delete")
+async def bulk_delete_memories(
+    payload: dict = Body(...),
+    admin: dict = Depends(require_admin_auth)
+):
+    """Bulk delete memories natively."""
+    memory_ids = payload.get("memory_ids", [])
+    if not memory_ids:
+        return {"deleted": 0}
+
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM memories WHERE id = ANY(%s)", (memory_ids,))
+        deleted = cursor.rowcount
+        conn.commit()
+    return {"deleted": deleted}
+
+@router.post("/admin/memories/bulk-reprocess")
+async def bulk_reprocess_memories(
+    payload: dict = Body(...),
+    admin: dict = Depends(require_admin_auth)
+):
+    """Delete memories and enqueue their interactions back into memory pipeline generation."""
+    from memory.queue import memory_bulk_queue
+    memory_ids = payload.get("memory_ids", [])
+    if not memory_ids:
+        return {"queued": 0}
+
+    queued_count = 0
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, primary_entity_type, primary_entity_id, date, interaction_ids FROM memories WHERE id = ANY(%s)", (memory_ids,))
+        memories = cursor.fetchall()
+        
+        for mem in memories:
+            i_ids = mem.get("interaction_ids", [])
+            if hasattr(i_ids, "tolist"):
+                i_ids = i_ids.tolist()
+            if isinstance(i_ids, str):
+                import ast
+                if i_ids.startswith("{"):
+                    i_ids = i_ids.replace("{","[").replace("}","]")
+                    try:
+                        i_ids = ast.literal_eval(i_ids)
+                    except Exception:
+                        i_ids = []
+            
+            if i_ids:
+                cursor.execute(
+                    "UPDATE interactions SET status = 'pending', processing_errors = '{}', embedding = NULL WHERE id = ANY(%s)", 
+                    (i_ids,)
+                )
+            
+            cursor.execute("DELETE FROM memories WHERE id = %s", (mem["id"],))
+            
+            # Requeue background job for generation
+            # Date can safely be str representation for memory tasks
+            await memory_bulk_queue.add("generate_memory", {
+                "entity_type": mem["primary_entity_type"],
+                "entity_id": mem["primary_entity_id"],
+                "interaction_date": str(mem["date"])
+            }, {"priority": 5})
+            queued_count += 1
+            
+        conn.commit()
+        
+    return {"queued": queued_count}
 
 @router.post("/admin/search", response_model=SearchResponse)
 async def admin_search_memories(

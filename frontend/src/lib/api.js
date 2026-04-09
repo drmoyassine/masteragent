@@ -165,9 +165,13 @@ export const deleteInteractionAdmin = (id) => api.delete(`/memory/interactions/$
 export const bulkDeleteInteractionsAdmin = (data) => api.post('/memory/interactions/bulk-delete', data);
 export const bulkReprocessInteractionsAdmin = (data) => api.post('/memory/interactions/bulk-reprocess', data);
 export const getMemoriesAdmin = (params) => api.get('/memory/admin/memories', { params });
+export const getMemoryDetail = (id) => api.get(`/memory/admin/memories/${id}`);
+export const updateMemoryAdmin = (id, data) => api.patch(`/memory/admin/memories/${id}`, data);
+export const deleteMemoryAdmin = (id) => api.delete(`/memory/admin/memories/${id}`);
+export const bulkDeleteMemoriesAdmin = (data) => api.post('/memory/admin/memories/bulk-delete', data);
+export const bulkReprocessMemoriesAdmin = (data) => api.post('/memory/admin/memories/bulk-reprocess', data);
 export const getInsightsAdmin = (params) => api.get('/memory/insights', { params });
 export const getDailyMemories = (date) => api.get(`/memory/admin/daily/${date}`);
-export const getMemoryDetail = (id) => api.get(`/memory/admin/memories/${id}`);
 export const getTimeline = (entityType, entityId) => api.get(`/memory/admin/timeline/${entityType}/${entityId}`);
 export const triggerMemoryGeneration = (includeToday = false) => api.post('/memory/trigger/generate-memories', null, { params: { include_today: includeToday } });
 
