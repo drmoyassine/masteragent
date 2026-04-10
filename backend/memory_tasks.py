@@ -482,7 +482,7 @@ async def _generate_memory_for_entity(entity_type: str, entity_id: str, interact
         content_summary = await call_llm(
             llm_context[:8000],
             system_prompt=system_prompt,
-            max_tokens=400,
+            max_tokens=1200,
             task_type="summarization",
         )
     except Exception as e:
