@@ -450,8 +450,9 @@ async def _generate_memory_for_entity(entity_type: str, entity_id: str, interact
     #    'ner_and_raw' → feed raw interaction content + NER output to LLM
     ner_summary = _format_ner_output(related_entities, intents, relationships)
 
+    raw_text = ""
     if mode == "ner_only":
-        llm_context = (
+        base_context = (
             f"Entity: {entity_type} / {entity_id}\n"
             f"Date: {interaction_date}\n"
             f"Interaction count: {len(interactions)}\n\n"
@@ -461,7 +462,7 @@ async def _generate_memory_for_entity(entity_type: str, entity_id: str, interact
         raw_text = "\n\n---\n\n".join(
             i["content"] for i in interactions if i.get("content")
         )
-        llm_context = (
+        base_context = (
             f"Entity: {entity_type} / {entity_id}\n"
             f"Date: {interaction_date}\n"
             f"Interaction count: {len(interactions)}\n\n"
@@ -469,18 +470,93 @@ async def _generate_memory_for_entity(entity_type: str, entity_id: str, interact
             f"--- Extracted Signals ---\n{ner_summary}"
         )
 
+    # 5.5 Fetch prior memories for context continuity (hardcoded 2+2)
+    PRIOR_CHRONO_COUNT = 2
+    PRIOR_SEMANTIC_COUNT = 2
+    prior_context = ""
+    try:
+        with get_memory_db_context() as conn:
+            cursor = conn.cursor()
+            prior_memories = {}
+
+            # Chronological: last 2 memories for this entity
+            cursor.execute("""
+                SELECT id, date, content_summary FROM memories
+                WHERE primary_entity_type = %s AND primary_entity_id = %s
+                  AND date < %s AND content_summary IS NOT NULL
+                  AND LENGTH(TRIM(content_summary)) > 20
+                ORDER BY date DESC LIMIT %s
+            """, (entity_type, entity_id, interaction_date, PRIOR_CHRONO_COUNT))
+            for row in cursor.fetchall():
+                prior_memories[row["id"]] = dict(row)
+
+            # Semantic: top 2 most similar to today's raw text
+            if PRIOR_SEMANTIC_COUNT > 0:
+                search_text = raw_text or ner_summary
+                if search_text:
+                    try:
+                        search_embedding = await generate_embedding(search_text[:2000])
+                        if search_embedding:
+                            cursor.execute("""
+                                SELECT id, date, content_summary FROM memories
+                                WHERE primary_entity_type = %s AND primary_entity_id = %s
+                                  AND date < %s AND content_summary IS NOT NULL
+                                  AND LENGTH(TRIM(content_summary)) > 20
+                                  AND embedding IS NOT NULL
+                                ORDER BY embedding <=> %s::vector LIMIT %s
+                            """, (entity_type, entity_id, interaction_date,
+                                  str(search_embedding), PRIOR_SEMANTIC_COUNT))
+                            for row in cursor.fetchall():
+                                if row["id"] not in prior_memories:
+                                    prior_memories[row["id"]] = dict(row)
+                    except Exception as e:
+                        logger.warning(f"Semantic prior memory search failed: {e}")
+
+            # Format deduplicated prior memories
+            if prior_memories:
+                sorted_priors = sorted(prior_memories.values(), key=lambda m: str(m["date"]))
+                prior_lines = [f"[{m['date']}] {m['content_summary']}" for m in sorted_priors]
+                prior_context = "\n".join(prior_lines)
+                logger.info(f"Injecting {len(prior_memories)} prior memories for {entity_type}/{entity_id}")
+    except Exception as e:
+        logger.warning(f"Prior memory fetch failed for {entity_type}/{entity_id}: {e}")
+
+    # Build final LLM context with prior memories injected
+    if prior_context:
+        llm_context = (
+            f"Entity: {entity_type} / {entity_id}\n"
+            f"Date: {interaction_date}\n"
+            f"Interaction count: {len(interactions)}\n\n"
+            f"--- Prior Context (established facts, do NOT repeat) ---\n{prior_context}\n\n"
+        )
+        if mode == "ner_only":
+            llm_context += f"--- Extracted Signals ---\n{ner_summary}"
+        else:
+            llm_context += f"--- Raw Interactions ---\n{raw_text}\n\n--- Extracted Signals ---\n{ner_summary}"
+    else:
+        llm_context = base_context
+
     # 6. LLM generates memory content_summary
     DEFAULT_MEMORY_PROMPT = (
         "You are an AI memory system. Based on the provided interaction data, write a concise "
-        "factual memory record. Focus on key facts, decisions, named entities, and action items. "
-        "Return only the summary text, 2-5 sentences."
+        "factual memory record.\n\n"
+        "PRIOR CONTEXT RULES:\n"
+        "- Previous memories for this entity are provided under 'Prior Context'.\n"
+        "- These represent ESTABLISHED facts. Do NOT repeat them.\n"
+        "- Focus EXCLUSIVELY on NEW information from today's interactions.\n"
+        "- Note any progressions, status changes, or contradictions with prior records.\n"
+        "- If today's interactions contain no new information beyond prior context, "
+        "write a brief note stating the interaction occurred with no significant new details.\n\n"
+        "OUTPUT RULES:\n"
+        "- Return only the summary text, 2-5 sentences.\n"
+        "- Focus on key facts, decisions, named entities, and action items."
     )
     system_prompt = get_system_prompt("memory_generation") or DEFAULT_MEMORY_PROMPT
     content_summary = ""
     processing_errors = {}
     try:
         content_summary = await call_llm(
-            llm_context[:8000],
+            llm_context[:10000],
             system_prompt=system_prompt,
             max_tokens=1200,
             task_type="summarization",
