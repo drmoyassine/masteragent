@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { toast } from "sonner";
-import { format } from "date-fns";
+import { format, subDays, subMonths, formatISO } from "date-fns";
 import api, {
   getInteractionsAdmin,
   getMemoriesAdmin,
@@ -18,10 +18,12 @@ import api, {
   deleteLessonAdmin,
   bulkDeleteInteractionsAdmin,
   bulkReprocessInteractionsAdmin,
+  getInteractionFilterOptionsAdmin,
   getEntityTypes,
   getLessonTypes,
   getChannelTypes
 } from "@/lib/api";
+import { MultiSelect } from "@/components/ui/multi-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -72,17 +74,33 @@ import {
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
+const stringToColor = (str) => {
+  if (!str) return 'hsl(0, 0%, 50%)';
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const h = Math.abs(hash) % 360;
+  return `hsl(${h}, 70%, 40%)`;
+};
+
 export default function MemoryExplorerPage() {
   const [activeTab, setActiveTab] = useState("interactions");
   const [loading, setLoading] = useState(false);
   const [processingBulk, setProcessingBulk] = useState(false);
 
   // Global filters
-  const [draftFilter, setDraftFilter] = useState({ entity_type: "all", entity_id: "" });
-  const [appliedFilter, setAppliedFilter] = useState({ entity_type: "all", entity_id: "" });
+  const [appliedFilter, setAppliedFilter] = useState({ 
+    entity_types: [], 
+    interaction_types: [],
+    entity_id: "",
+    time_range: "all"
+  });
+  
+  const [entityIdInput, setEntityIdInput] = useState("");
 
-  // Config meta
-  const [entityTypes, setEntityTypes] = useState([]);
+  // Config meta & Dynamic Options
+  const [filterOptions, setFilterOptions] = useState({ entity_types: [], interaction_types: [] });
   const [lessonTypes, setLessonTypes] = useState([]);
 
   // Datasets
@@ -127,20 +145,59 @@ export default function MemoryExplorerPage() {
     }
   };
 
-  const applyFilters = () => {
-    setAppliedFilter({ ...draftFilter });
-  };
+  // Debounce entityIdInput
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      const val = entityIdInput.trim();
+      if (val.length === 0 || val.length >= 3) {
+        setAppliedFilter(prev => ({ ...prev, entity_id: val }));
+      }
+    }, 500);
+    return () => clearTimeout(handler);
+  }, [entityIdInput]);
 
-  const getFetchParams = () => {
+  const getFetchParams = useCallback(() => {
     const params = {};
-    if (appliedFilter.entity_type && appliedFilter.entity_type !== "all") {
-      params.entity_type = appliedFilter.entity_type;
+    if (appliedFilter.entity_types && appliedFilter.entity_types.length > 0) {
+      params.entity_types = appliedFilter.entity_types.join(",");
+    }
+    if (appliedFilter.interaction_types && appliedFilter.interaction_types.length > 0) {
+      params.interaction_types = appliedFilter.interaction_types.join(",");
     }
     if (appliedFilter.entity_id && appliedFilter.entity_id.trim() !== "") {
       params.entity_id = appliedFilter.entity_id.trim();
     }
+    if (appliedFilter.time_range && appliedFilter.time_range !== "all") {
+        const now = new Date();
+        let sinceDate;
+        switch(appliedFilter.time_range) {
+            case 'last_24h': sinceDate = subDays(now, 1); break;
+            case 'last_3d': sinceDate = subDays(now, 3); break;
+            case 'last_7d': sinceDate = subDays(now, 7); break;
+            case 'last_30d': sinceDate = subDays(now, 30); break;
+            case 'last_60d': sinceDate = subDays(now, 60); break;
+            default: break;
+        }
+        if (sinceDate) {
+            params.since = formatISO(sinceDate);
+        }
+    }
     return params;
-  };
+  }, [appliedFilter]);
+
+  const loadFilterOptions = useCallback(async () => {
+      try {
+          const res = await getInteractionFilterOptionsAdmin(getFetchParams());
+          if (res.data) {
+              setFilterOptions({
+                  entity_types: (res.data.entity_types || []).map(e => ({ label: e, value: e })),
+                  interaction_types: (res.data.interaction_types || []).map(i => ({ label: i, value: i }))
+              });
+          }
+      } catch (error) {
+          console.error("Failed to load filter options", error);
+      }
+  }, [getFetchParams]);
 
   // Loaders
   const loadInteractions = useCallback(async () => {
@@ -154,7 +211,7 @@ export default function MemoryExplorerPage() {
     } finally {
       setLoading(false);
     }
-  }, [appliedFilter]);
+  }, [getFetchParams]);
 
   const loadMemories = useCallback(async () => {
     setLoading(true);
@@ -167,7 +224,7 @@ export default function MemoryExplorerPage() {
     } finally {
       setLoading(false);
     }
-  }, [appliedFilter]);
+  }, [getFetchParams]);
 
   const loadInsights = useCallback(async () => {
     setLoading(true);
@@ -180,7 +237,7 @@ export default function MemoryExplorerPage() {
     } finally {
       setLoading(false);
     }
-  }, [appliedFilter]);
+  }, [getFetchParams]);
 
   const loadLessons = useCallback(async () => {
     setLoading(true);
@@ -195,14 +252,15 @@ export default function MemoryExplorerPage() {
     } finally {
       setLoading(false);
     }
-  }, [appliedFilter, lessonStatusFilter]);
+  }, [getFetchParams, lessonStatusFilter]);
 
   useEffect(() => {
+    loadFilterOptions();
     if (activeTab === "interactions") loadInteractions();
     else if (activeTab === "memories") loadMemories();
     else if (activeTab === "insights") loadInsights();
     else if (activeTab === "lessons") loadLessons();
-  }, [activeTab, loadInteractions, loadMemories, loadInsights, loadLessons]);
+  }, [activeTab, loadInteractions, loadMemories, loadInsights, loadLessons, loadFilterOptions]);
 
   // Modals interaction logic
   const handleCreateLesson = async () => {
@@ -429,32 +487,50 @@ export default function MemoryExplorerPage() {
       {/* Global Filter Bar */}
       <Card className="bg-card">
         <CardContent className="p-4 flex flex-wrap gap-4 items-end">
-          <div className="space-y-1 w-64">
+          <div className="space-y-1">
             <Label>Entity Type</Label>
-            <Select value={draftFilter.entity_type} onValueChange={(v) => setDraftFilter({ ...draftFilter, entity_type: v })}>
-              <SelectTrigger>
-                <SelectValue placeholder="All" />
+            <MultiSelect
+              options={filterOptions.entity_types}
+              selected={appliedFilter.entity_types}
+              onChange={(val) => setAppliedFilter({ ...appliedFilter, entity_types: val })}
+              placeholder="All Entity Types"
+              className="w-48"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label>Interaction Type</Label>
+            <MultiSelect
+              options={filterOptions.interaction_types}
+              selected={appliedFilter.interaction_types}
+              onChange={(val) => setAppliedFilter({ ...appliedFilter, interaction_types: val })}
+              placeholder="All Interaction Types"
+              className="w-64"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label>Time Range</Label>
+            <Select value={appliedFilter.time_range} onValueChange={(v) => setAppliedFilter({ ...appliedFilter, time_range: v })}>
+              <SelectTrigger className="w-40">
+                <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All</SelectItem>
-                {entityTypes.map(e => (
-                  <SelectItem key={e.id} value={e.name}>{e.name}</SelectItem>
-                ))}
+                <SelectItem value="all">All Time</SelectItem>
+                <SelectItem value="last_24h">Last 24 Hours</SelectItem>
+                <SelectItem value="last_3d">Last 3 Days</SelectItem>
+                <SelectItem value="last_7d">Last 7 Days</SelectItem>
+                <SelectItem value="last_30d">Last 30 Days</SelectItem>
+                <SelectItem value="last_60d">Last 60 Days</SelectItem>
               </SelectContent>
             </Select>
           </div>
           <div className="space-y-1 flex-1 min-w-[200px]">
-            <Label>Entity ID (Optional)</Label>
+            <Label>Entity ID (Debounced text filter)</Label>
             <Input
-              placeholder="Filter by specific entity ID..."
-              value={draftFilter.entity_id}
-              onChange={(e) => setDraftFilter({ ...draftFilter, entity_id: e.target.value })}
-              onKeyDown={(e) => e.key === "Enter" && applyFilters()}
+              placeholder="Start typing specific entity ID (min 3 chars)..."
+              value={entityIdInput}
+              onChange={(e) => setEntityIdInput(e.target.value)}
             />
           </div>
-          <Button onClick={applyFilters} disabled={loading} className="gap-2">
-             <Search className="w-4 h-4" /> Apply Filters
-          </Button>
         </CardContent>
       </Card>
 
@@ -539,8 +615,16 @@ export default function MemoryExplorerPage() {
                             </TableCell>
                             <TableCell className="font-mono text-muted-foreground">#{i.seq_id}</TableCell>
                             <TableCell className="whitespace-nowrap">{format(new Date(i.timestamp), "MMM d, yyyy h:mm a")}</TableCell>
-                            <TableCell><Badge variant="outline">{i.interaction_type}</Badge></TableCell>
-                            <TableCell>{i.primary_entity_type}</TableCell>
+                            <TableCell>
+                               <Badge variant="outline" style={{ borderColor: stringToColor(i.interaction_type), color: stringToColor(i.interaction_type) }}>
+                                  {i.interaction_type}
+                               </Badge>
+                            </TableCell>
+                            <TableCell>
+                               <Badge variant="outline" style={{ borderColor: stringToColor(i.primary_entity_type), color: stringToColor(i.primary_entity_type) }}>
+                                  {i.primary_entity_type}
+                               </Badge>
+                            </TableCell>
                             <TableCell>{i.primary_entity_subtype || "-"}</TableCell>
                             <TableCell className="font-mono text-xs">{i.primary_entity_id}</TableCell>
                             <TableCell className="max-w-xs truncate">{i.content}</TableCell>
@@ -652,7 +736,11 @@ export default function MemoryExplorerPage() {
                                   </TableCell>
                                   <TableCell className="font-mono text-muted-foreground">#{m.seq_id}</TableCell>
                                   <TableCell className="whitespace-nowrap">{m.date}</TableCell>
-                                  <TableCell>{m.primary_entity_type}</TableCell>
+                                  <TableCell>
+                                     <Badge variant="outline" style={{ borderColor: stringToColor(m.primary_entity_type), color: stringToColor(m.primary_entity_type) }}>
+                                        {m.primary_entity_type}
+                                     </Badge>
+                                  </TableCell>
                                   <TableCell>-</TableCell>
                                   <TableCell className="font-mono text-xs">{m.primary_entity_id}</TableCell>
                                   <TableCell>{m.interaction_count}</TableCell>
@@ -730,7 +818,12 @@ export default function MemoryExplorerPage() {
                          <TableRow key={ins.id}>
                             <TableCell className="font-mono text-muted-foreground">#{ins.seq_id}</TableCell>
                             <TableCell className="whitespace-nowrap">{format(new Date(ins.created_at), "MMM d, yyyy")}</TableCell>
-                            <TableCell>{ins.primary_entity_type}: <span className="font-mono text-xs">{ins.primary_entity_id}</span></TableCell>
+                            <TableCell>
+                               <Badge variant="outline" style={{ borderColor: stringToColor(ins.primary_entity_type), color: stringToColor(ins.primary_entity_type) }}>
+                                  {ins.primary_entity_type}
+                               </Badge>
+                               <span className="font-mono text-xs ml-2">{ins.primary_entity_id}</span>
+                            </TableCell>
                             <TableCell><Badge variant="outline">{ins.insight_type}</Badge></TableCell>
                             <TableCell>
                                <div className="font-medium">{ins.name}</div>

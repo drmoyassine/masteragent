@@ -488,8 +488,10 @@ async def admin_get_timeline(
 @router.get("/interactions")
 async def list_interactions(
     entity_type: Optional[str] = Query(None),
+    entity_types: Optional[str] = Query(None),
     entity_id: Optional[str] = Query(None),
     interaction_type: Optional[str] = Query(None),
+    interaction_types: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     since: Optional[str] = Query(None),
     until: Optional[str] = Query(None),
@@ -502,13 +504,21 @@ async def list_interactions(
         cursor = conn.cursor()
         conditions = []
         params = []
+        
+        final_entity_types = []
+        if entity_type and entity_type != 'all': final_entity_types.append(entity_type)
+        if entity_types: final_entity_types.extend([x.strip() for x in entity_types.split(',') if x.strip() and x.strip() != 'all'])
+            
+        final_interaction_types = []
+        if interaction_type and interaction_type != 'all': final_interaction_types.append(interaction_type)
+        if interaction_types: final_interaction_types.extend([x.strip() for x in interaction_types.split(',') if x.strip() and x.strip() != 'all'])
 
-        if entity_type:
-            conditions.append("primary_entity_type = %s"); params.append(entity_type)
+        if final_entity_types:
+            conditions.append("primary_entity_type = ANY(%s)"); params.append(final_entity_types)
         if entity_id:
             conditions.append("primary_entity_id = %s"); params.append(entity_id)
-        if interaction_type:
-            conditions.append("interaction_type = %s"); params.append(interaction_type)
+        if final_interaction_types:
+            conditions.append("interaction_type = ANY(%s)"); params.append(final_interaction_types)
         if status:
             conditions.append("status = %s"); params.append(status)
         if since:
@@ -532,6 +542,51 @@ async def list_interactions(
         rows = cursor.fetchall()
 
     return {"interactions": [dict(r) for r in rows], "total": total}
+
+@router.get("/interactions/filter-options")
+async def get_interaction_filter_options(
+    entity_types: Optional[str] = Query(None),
+    interaction_types: Optional[str] = Query(None),
+    entity_id: Optional[str] = Query(None),
+    since: Optional[str] = Query(None),
+    until: Optional[str] = Query(None),
+    admin: dict = Depends(require_admin_auth)
+):
+    """Dynamic Filter Cross-Resolution."""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        
+        def get_valid_options(target_field: str, ignore_filter: str):
+            conditions = []
+            params = []
+            
+            if ignore_filter != "interaction_types" and interaction_types:
+                lst = [x.strip() for x in interaction_types.split(',') if x.strip() and x.strip() != 'all']
+                if lst:
+                    conditions.append("interaction_type = ANY(%s)")
+                    params.append(lst)
+                    
+            if ignore_filter != "entity_types" and entity_types:
+                lst = [x.strip() for x in entity_types.split(',') if x.strip() and x.strip() != 'all']
+                if lst:
+                    conditions.append("primary_entity_type = ANY(%s)")
+                    params.append(lst)
+            
+            if entity_id:
+                conditions.append("primary_entity_id = %s"); params.append(entity_id)
+            if since:
+                conditions.append("timestamp >= %s"); params.append(since)
+            if until:
+                conditions.append("timestamp <= %s"); params.append(until)
+                
+            where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+            cursor.execute(f"SELECT DISTINCT {target_field} FROM interactions {where} ORDER BY {target_field}", params)
+            return [r[target_field] for r in cursor.fetchall() if r[target_field]]
+
+        return {
+            "entity_types": get_valid_options("primary_entity_type", "entity_types"),
+            "interaction_types": get_valid_options("interaction_type", "interaction_types")
+        }
 
 
 @router.get("/interactions/{interaction_id}")
