@@ -100,6 +100,7 @@ export default function MemoryExplorerPage() {
   const [entityIdInput, setEntityIdInput] = useState("");
 
   // Config meta & Dynamic Options
+  const [entityTypes, setEntityTypes] = useState([]);
   const [filterOptions, setFilterOptions] = useState({ entity_types: [], interaction_types: [] });
   const [lessonTypes, setLessonTypes] = useState([]);
 
