@@ -47,14 +47,54 @@ def get_llm_config(task_type: str) -> Optional[Dict[str, Any]]:
         return config
 
 
-def get_system_prompt(prompt_type: str) -> Optional[str]:
-    """Get active system prompt text by type."""
+async def get_system_prompt(task_type: str, user_id: str = "default") -> Optional[str]:
+    """Get active system prompt text by fetching the linked Prompt Manager entry."""
+    
+    # 1. Get the assigned prompt_id from active LLM config
+    prompt_id = None
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT prompt_text FROM memory_system_prompts
-            WHERE prompt_type = %s AND is_active = TRUE
+            SELECT prompt_id FROM memory_llm_configs
+            WHERE task_type = %s AND is_active = TRUE
             ORDER BY updated_at DESC LIMIT 1
-        """, (prompt_type,))
+        """, (task_type,))
         row = cursor.fetchone()
-        return row["prompt_text"] if row else None
+        if row and row["prompt_id"]:
+            prompt_id = row["prompt_id"]
+            
+    # Fallback to local system prompts if no prompt_id linked via Prompt Manager
+    if not prompt_id:
+        with get_memory_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT prompt_text FROM memory_system_prompts
+                WHERE prompt_type = %s AND is_active = TRUE
+                ORDER BY updated_at DESC LIMIT 1
+            """, (task_type,))
+            row = cursor.fetchone()
+            return row["prompt_text"] if row else None
+            
+    # 2. Try fetching from Prompt Manager storage
+    try:
+        from storage_service import get_storage_service
+        storage = get_storage_service(user_id)
+        
+        # We need the folder_path for this prompt_id
+        folder_path = f"prompts/{prompt_id}"
+        
+        # We don't render variables here; we just want the raw template
+        # The variables will be injected by the pipeline using prompt_renderer logic
+        prompt_data = await storage.get_prompt_content(folder_path, "v1")
+        if not prompt_data:
+            return None
+            
+        rendered = []
+        for section in prompt_data.get("sections", []):
+            rendered.append(section.get("content", ""))
+            
+        return "\n\n".join(rendered)
+        
+    except Exception as e:
+        logger.error(f"Error fetching prompt {prompt_id} for task {task_type}: {e}")
+        return None

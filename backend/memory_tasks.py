@@ -49,6 +49,7 @@ from memory_services import (
     get_system_prompt,
     scrub_pii,
 )
+from services.prompt_renderer import inject_variables
 
 logger = logging.getLogger(__name__)
 
@@ -551,7 +552,12 @@ async def _generate_memory_for_entity(entity_type: str, entity_id: str, interact
         "- Return only the summary text, 2-5 sentences.\n"
         "- Focus on key facts, decisions, named entities, and action items."
     )
-    system_prompt = get_system_prompt("memory_generation") or DEFAULT_MEMORY_PROMPT
+    system_prompt = await get_system_prompt("memory_generation") or DEFAULT_MEMORY_PROMPT
+    system_prompt = inject_variables(system_prompt, {
+        "entity": {"type": entity_type, "id": entity_id},
+        "date": interaction_date.isoformat()
+    })
+    
     content_summary = ""
     processing_errors = {}
     try:
@@ -740,11 +746,14 @@ async def compact_entity(entity_type: str, entity_id: str):
         )
 
     context = "\n\n".join(context_parts)
-    system_prompt = get_system_prompt("insight_generation") or (
+    system_prompt = await get_system_prompt("insight_generation") or (
         "You are an AI analyst. Based on the provided memory summaries, identify a meaningful pattern, "
         "risk, opportunity, or behavioral insight. Return JSON only: "
         "{\"name\": \"...\", \"insight_type\": \"...\", \"content\": \"...\", \"summary\": \"...\"}"
     )
+    system_prompt = inject_variables(system_prompt, {
+        "entity": {"type": entity_type, "id": entity_id}
+    })
 
     llm_config = get_llm_config("insight_generation")
     if not llm_config:

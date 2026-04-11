@@ -112,6 +112,7 @@ def _create_config_tables(cursor):
             task_type           TEXT NOT NULL,
             provider_id         TEXT REFERENCES memory_llm_providers(id) ON DELETE SET NULL,
             model_name          TEXT,
+            prompt_id           TEXT,
             extra_config_json   TEXT DEFAULT '{}',
             is_active           BOOLEAN DEFAULT TRUE,
             created_at          TIMESTAMPTZ DEFAULT NOW(),
@@ -343,6 +344,7 @@ def _run_migrations(cursor):
     try:
         cursor.execute("ALTER TABLE memory_llm_configs ADD COLUMN IF NOT EXISTS provider_id TEXT REFERENCES memory_llm_providers(id) ON DELETE SET NULL")
         cursor.execute("ALTER TABLE memory_llm_configs ADD COLUMN IF NOT EXISTS extra_config_json TEXT DEFAULT '{}'")
+        cursor.execute("ALTER TABLE memory_llm_configs ADD COLUMN IF NOT EXISTS prompt_id TEXT")
         for col in ["provider", "name", "api_base_url", "api_key_encrypted", "api_key_preview"]:
             cursor.execute(f"ALTER TABLE memory_llm_configs DROP COLUMN IF EXISTS {col}")
     except Exception as e:

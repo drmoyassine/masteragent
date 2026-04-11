@@ -189,12 +189,17 @@ async def _run_chat(
     if body.skill_name:
         system_prompt_text = await _get_skill_prompt(body.skill_name)
     else:
-        system_prompt_text = get_system_prompt("entity_workspace") or (
+        system_prompt_text = await get_system_prompt("entity_workspace") or (
             "You are an intelligent assistant helping manage a relationship with a specific entity. "
             "Use the provided memory context to give personalized, accurate answers. "
             "You may suggest creating an insight or updating existing insights by including structured "
             "actions in your reply (see the action syntax below)."
         )
+
+    from services.prompt_renderer import inject_variables
+    system_prompt_text = inject_variables(system_prompt_text, {
+        "entity": {"type": entity_type, "id": entity_id}
+    })
 
     if entity_context:
         system_prompt_text = (

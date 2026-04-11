@@ -10,6 +10,7 @@ import httpx
 
 from memory.services.config_helpers import get_llm_config, get_system_prompt
 from memory.services.llm import call_llm, call_llm_vision
+from services.prompt_renderer import inject_variables
 
 logger = logging.getLogger(__name__)
 
@@ -92,8 +93,8 @@ async def summarize_text(text: str) -> str:
     """Generate a short summary of text using configured system prompt."""
     if not text:
         return ""
-    prompt_template = get_system_prompt("summarization") or "Summarize this in 1-2 sentences:\n\n{text}"
-    prompt = prompt_template.replace("{text}", text[:4000])
+    prompt_template = await get_system_prompt("summarization") or "Summarize this in 1-2 sentences:\n\n{{text}}"
+    prompt = inject_variables(prompt_template, {"text": text[:4000]})
     return await call_llm(prompt, max_tokens=200, task_type="summarization")
 
 
@@ -188,7 +189,7 @@ async def extract_entities_gliner(text: str, confidence_threshold: float = 0.5) 
 
 async def extract_entities_llm(text: str, confidence_threshold: float = 0.5) -> dict:
     """Extract entities using LLM fallback."""
-    prompt_template = get_system_prompt("entity_extraction")
+    prompt_template = await get_system_prompt("entity_extraction")
     if not prompt_template:
         return _EMPTY_EXTRACTION
     response = await call_llm(text[:4000], system_prompt=prompt_template, max_tokens=500, task_type="summarization")

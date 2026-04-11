@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect } from "react";
+import api from "@/lib/api";
 import { Brain, Layers, Eye, EyeOff, AlertCircle, CheckCircle2, FileText, ExternalLink, RefreshCw, Search, ChevronDown, Cpu, Plus, Edit2, Trash2, Scissors } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -355,22 +356,29 @@ export function TaskConfigDialog({
     error,
     onFetchModels
 }) {
-    const [formData, setFormData] = useState({ provider_id: "", model_name: "" });
+    const [formData, setFormData] = useState({ provider_id: "", model_name: "", prompt_id: "" });
     const [chunkSize, setChunkSize] = useState("");
     const [chunkOverlap, setChunkOverlap] = useState("");
+    const [availablePrompts, setAvailablePrompts] = useState([]);
 
-    useEffect(() => {
         if (open && config) {
             setFormData({
                 provider_id: config.provider_id || "",
-                model_name: config.model_name || ""
+                model_name: config.model_name || "",
+                prompt_id: config.prompt_id || ""
             });
             if (config.task_type === "embedding" && memorySettings) {
                 setChunkSize(memorySettings.chunk_size || 400);
                 setChunkOverlap(memorySettings.chunk_overlap || 80);
             }
-            if (config.provider_id) {
+            if (config.provider_id && canFetchModels) {
                 onFetchModels(config.id, config.provider_id);
+            }
+            
+            if (config.task_type !== "embedding" && config.task_type !== "vision") {
+                 api.getPrompts()
+                   .then(res => setAvailablePrompts(res.data))
+                   .catch(err => console.error("Failed to fetch prompts:", err));
             }
         }
     }, [open, config]);
@@ -383,7 +391,8 @@ export function TaskConfigDialog({
     const handleSave = async () => {
         const payload = {
             provider_id: formData.provider_id,
-            model_name: formData.model_name
+            model_name: formData.model_name,
+            prompt_id: formData.prompt_id || null
         };
         onSaveConfig(config.id, payload);
         
@@ -454,6 +463,21 @@ export function TaskConfigDialog({
                                  onChange={(e) => setFormData({ ...formData, model_name: e.target.value })}
                                  placeholder="e.g. gpt-4o"
                              />
+                         </div>
+                     )}
+                     {config.task_type !== 'embedding' && config.task_type !== 'vision' && (
+                         <div className="space-y-2 mt-4 pt-4 border-t">
+                             <Label>Linked Prompt Template</Label>
+                             <Select value={formData.prompt_id || "default"} onValueChange={(v) => setFormData(f => ({ ...f, prompt_id: v === "default" ? "" : v }))}>
+                                 <SelectTrigger><SelectValue placeholder="Select a prompt" /></SelectTrigger>
+                                 <SelectContent>
+                                     <SelectItem value="default">-- Default Prompt --</SelectItem>
+                                     {availablePrompts.map(p => (
+                                         <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                                     ))}
+                                 </SelectContent>
+                             </Select>
+                             <p className="text-xs text-muted-foreground">Override the default system prompt for this task using a template from the Prompt Manager.</p>
                          </div>
                      )}
 
