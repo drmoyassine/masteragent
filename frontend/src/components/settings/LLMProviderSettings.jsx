@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect } from "react";
 import api from "@/lib/api";
-import { Brain, Layers, Eye, EyeOff, AlertCircle, CheckCircle2, FileText, ExternalLink, RefreshCw, Search, ChevronDown, Cpu, Plus, Edit2, Trash2, Scissors } from "lucide-react";
+import { Brain, Layers, Eye, EyeOff, AlertCircle, CheckCircle2, FileText, ExternalLink, RefreshCw, Search, ChevronDown, Cpu, Plus, Edit2, Trash2, Scissors, Clock, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -37,11 +37,13 @@ import { toast } from "sonner";
 
 // ─── Task type display metadata ───────────────────────────────────────────────
 export const TASK_TYPE_LABELS = {
+    memory_generation: { label: "Memory Generation", icon: Clock, color: "bg-indigo-500" },
     summarization: { label: "Summarization", icon: Brain, color: "bg-blue-500" },
     embedding: { label: "Embeddings", icon: Layers, color: "bg-green-500" },
     vision: { label: "Vision/Doc Parsing", icon: Eye, color: "bg-purple-500" },
     entity_extraction: { label: "Entity Extraction (NER)", icon: Cpu, color: "bg-amber-500" },
     pii_scrubbing: { label: "PII Scrubbing", icon: EyeOff, color: "bg-red-500" },
+    insight_generation: { label: "Insight Generation", icon: Sparkles, color: "bg-teal-500" }
 };
 
 const PROVIDER_META = [

@@ -350,6 +350,17 @@ def _run_migrations(cursor):
     except Exception as e:
         logger.error(f"Failed to migrate llm configs: {e}")
 
+    try:
+        cursor.execute("""
+            INSERT INTO memory_llm_configs (task_type, provider_id, model_name, is_active)
+            SELECT 'memory_generation', (SELECT id FROM memory_llm_providers WHERE provider = 'openai' LIMIT 1), 'gpt-4o-mini', TRUE
+            WHERE NOT EXISTS (
+                SELECT 1 FROM memory_llm_configs WHERE task_type = 'memory_generation' AND is_active = TRUE
+            )
+        """)
+    except Exception as e:
+        logger.error(f"Failed to seed memory_generation llm config: {e}")
+
     # Settings columns
     for col, col_def in [
         ("supabase_db_url", "TEXT"),
@@ -496,6 +507,7 @@ def _seed_defaults():
             ("entity_extraction", "gliner", "urchade/gliner_multi"),
             ("pii_scrubbing", "zendata", ""),
             ("insight_generation", "openai", "gpt-4o-mini"),
+            ("memory_generation", "openai", "gpt-4o-mini"),
         ]:
             cursor.execute("""
                 INSERT INTO memory_llm_configs (task_type, provider_id, model_name, is_active)

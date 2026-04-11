@@ -255,6 +255,7 @@ function GeneralizationTab({ settings, onUpdateSettings, llmConfigs, llmProvider
     const [isTriggering, setIsTriggering] = useState(false);
     const nerConfig = llmConfigs.find((c) => c.task_type === "entity_extraction");
     const summarizationConfig = llmConfigs.find((c) => c.task_type === "summarization");
+    const memoryGenConfig = llmConfigs.find((c) => c.task_type === "memory_generation");
 
     const handleRunNow = async () => {
         setIsTriggering(true);
@@ -344,6 +345,15 @@ function GeneralizationTab({ settings, onUpdateSettings, llmConfigs, llmProvider
                     </div>
                 </CardContent>
             </Card>
+
+            {/* Memory Generation Task Assignment (Prompt/Model) */}
+            {memoryGenConfig && (
+                <TaskAssignmentCard
+                    config={memoryGenConfig}
+                    llmProviders={llmProviders}
+                    onEdit={onEditTask}
+                />
+            )}
 
             {/* NER Task Assignment */}
             {nerConfig && (
