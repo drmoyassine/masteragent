@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Brain, Sparkles, Clock, Eye, Layers, Cpu, EyeOff, AlertCircle, CheckCircle2, ChevronDown, ChevronUp, Save } from "lucide-react";
+import { Brain, Sparkles, Clock, Eye, Layers, Cpu, EyeOff, AlertCircle, FileText, CheckCircle2, ChevronDown, ChevronUp, Save, RefreshCw } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -40,7 +40,6 @@ function ModelCombobox({ value, onChange, models = [], loading, error, onFetch, 
         </div>
     );
 }
-import { RefreshCw } from "lucide-react";
 
 export function InlineTaskConfigAccordion({ 
     config, 
