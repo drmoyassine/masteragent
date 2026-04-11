@@ -555,6 +555,30 @@ def _seed_defaults():
                 )
             """, (prompt_type, name, text, prompt_type))
 
+        # Backfill inline prompts and schemas for the UI if they are null
+        # We do this so the Accordion UI fields are not empty by default for new/existing setups
+        for prompt_type, name, text in prompts:
+            if prompt_type in ["memory_generation", "summarization", "insight_generation", "entity_extraction", "pii_scrubbing"]:
+                cursor.execute("""
+                    UPDATE memory_llm_configs 
+                    SET inline_system_prompt = %s 
+                    WHERE task_type = %s AND inline_system_prompt IS NULL
+                """, (text, prompt_type))
+
+        # Add default GLiNER schema to entity_extraction config if null
+        cursor.execute("""
+            UPDATE memory_llm_configs 
+            SET inline_schema = %s 
+            WHERE task_type = 'entity_extraction' AND inline_schema IS NULL
+        """, ('{\n  "entities": ["Organization", "Person", "Location", "Product", "Event"]\n}',))
+
+        # Add insight default schema
+        cursor.execute("""
+            UPDATE memory_llm_configs 
+            SET inline_schema = %s 
+            WHERE task_type = 'insight_generation' AND inline_schema IS NULL
+        """, ('{\n  "name": "...",\n  "insight_type": "...",\n  "content": "...",\n  "summary": "..."\n}',))
+
         # Default entity type configs
         for entity_type in ["contact", "institution", "program", "supplier", "product"]:
             cursor.execute("""
