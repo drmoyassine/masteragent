@@ -361,6 +361,7 @@ export function TaskConfigDialog({
     const [chunkOverlap, setChunkOverlap] = useState("");
     const [availablePrompts, setAvailablePrompts] = useState([]);
 
+    useEffect(() => {
         if (open && config) {
             setFormData({
                 provider_id: config.provider_id || "",
