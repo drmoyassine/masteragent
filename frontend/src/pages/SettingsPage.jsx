@@ -7,7 +7,7 @@ import {
   Cpu,
   ShieldCheck,
   Database,
-  Settings2,
+  Brain,
   ChevronRight
 } from "lucide-react";
 import { toast } from "sonner";
@@ -49,7 +49,7 @@ import { StorageSettings } from "@/components/settings/StorageSettings";
 import { LLMProviderSettings } from "@/components/settings/LLMProviderSettings";
 import { AccessSettings } from "@/components/settings/AccessSettings";
 import { KnowledgeModelSettings } from "@/components/settings/KnowledgeModelSettings";
-import { GeneralMemorySettings } from "@/components/settings/GeneralMemorySettings";
+import { MemorySettings } from "@/components/settings/MemorySettings";
 
 import { useConfig } from "@/context/ConfigContext";
 
@@ -58,7 +58,7 @@ const TABS = [
   { id: "llm", label: "LLM Providers", icon: Cpu, description: "API keys for AI tasks" },
   { id: "access", label: "API Access", icon: ShieldCheck, description: "Keys & Documentation" },
   { id: "model", label: "Knowledge Model", icon: Database, description: "Entity & Lesson definitions" },
-  { id: "general", label: "Advanced", icon: Settings2, description: "System & Privacy rules" },
+  { id: "memory", label: "Memory Settings", icon: Brain, description: "Pipeline configuration" },
 ];
 
 export default function SettingsPage({ onDisconnect }) {
@@ -427,16 +427,8 @@ export default function SettingsPage({ onDisconnect }) {
           {activeTab === "llm" && (
             <LLMProviderSettings
               llmProviders={llmProviders}
-              llmConfigs={llmConfigs}
-              memorySettings={memorySettings}
-              editingConfig={editingConfig}
-              setEditingConfig={setEditingConfig}
-              showApiKey={showApiKey}
-              setShowApiKey={setShowApiKey}
-              onSaveConfig={handleSaveLLMConfig}
               onSaveProvider={handleSaveLLMProvider}
               onDeleteProvider={handleDeleteLLMProvider}
-              onUpdateMemorySettings={handleUpdateGeneralSettings}
             />
           )}
 
@@ -487,10 +479,14 @@ export default function SettingsPage({ onDisconnect }) {
             />
           )}
 
-          {activeTab === "general" && (
-            <GeneralMemorySettings
+          {activeTab === "memory" && (
+            <MemorySettings
               settings={memorySettings}
+              llmConfigs={llmConfigs}
+              llmProviders={llmProviders}
               onUpdateSettings={handleUpdateGeneralSettings}
+              onSaveConfig={handleSaveLLMConfig}
+              onUpdateMemorySettings={handleUpdateGeneralSettings}
             />
           )}
         </main>

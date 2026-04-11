@@ -35,7 +35,7 @@ import { fetchProviderModels, testLLMProvider } from "@/lib/api";
 import { toast } from "sonner";
 
 // ─── Task type display metadata ───────────────────────────────────────────────
-const TASK_TYPE_LABELS = {
+export const TASK_TYPE_LABELS = {
     summarization: { label: "Summarization", icon: Brain, color: "bg-blue-500" },
     embedding: { label: "Embeddings", icon: Layers, color: "bg-green-500" },
     vision: { label: "Vision/Doc Parsing", icon: Eye, color: "bg-purple-500" },
@@ -342,7 +342,7 @@ function ProviderDialog({ open, onClose, onSave, existingProvider }) {
 }
 
 // ─── Task Config Dialog ────────────────────────────────────────────────────────
-function TaskConfigDialog({
+export function TaskConfigDialog({
     open,
     onClose,
     config,
@@ -485,56 +485,19 @@ function TaskConfigDialog({
     );
 }
 
-// ─── Main Component ───────────────────────────────────────────────────────────
+// ─── Main Component (Credentials Only) ───────────────────────────────────────
 export function LLMProviderSettings({
     llmProviders,
-    llmConfigs,
-    memorySettings,
-    editingConfig,
-    setEditingConfig,
-    onSaveConfig,
     onSaveProvider,
     onDeleteProvider,
-    onUpdateMemorySettings
 }) {
-    const [modelLists, setModelLists] = useState({});
-    const [fetchingModels, setFetchingModels] = useState({});
-    const [fetchErrors, setFetchErrors] = useState({});
-
     // Provider Dialog State
     const [providerDialogOpen, setProviderDialogOpen] = useState(false);
     const [editingProvider, setEditingProvider] = useState(null);
-    
-    // Task Config Dialog State
-    const [taskConfigDialogOpen, setTaskConfigDialogOpen] = useState(false);
-    const [currentTaskConfig, setCurrentTaskConfig] = useState(null);
-
-    const handleFetchModels = useCallback(async (configId, providerId) => {
-        if (!providerId) return;
-        setFetchingModels((prev) => ({ ...prev, [configId]: true }));
-        setFetchErrors((prev) => ({ ...prev, [configId]: null }));
-
-        try {
-            // we use the test provider endpoint using the saved provider_id
-            const selectedProvider = llmProviders.find(p => p.id === providerId);
-            if (!selectedProvider) throw new Error("Provider not found");
-
-            const response = await fetchProviderModels({
-                provider: selectedProvider.provider,
-                provider_id: providerId
-            });
-            setModelLists((prev) => ({ ...prev, [configId]: response.data.models }));
-        } catch (err) {
-            const detail = err.response?.data?.detail || "Failed to fetch models.";
-            setFetchErrors((prev) => ({ ...prev, [configId]: detail }));
-        } finally {
-            setFetchingModels((prev) => ({ ...prev, [configId]: false }));
-        }
-    }, [llmProviders]);
 
     return (
         <div className="space-y-8 max-w-4xl">
-            {/* ─── Part 1: Provider Accounts ─── */}
+            {/* ─── Provider Accounts ─── */}
             <Card>
                 <CardHeader>
                     <div className="flex items-center justify-between">
@@ -586,85 +549,11 @@ export function LLMProviderSettings({
                 </CardContent>
             </Card>
 
-            {/* ─── Part 2: Task Assignments ─── */}
-            <Card>
-                <CardHeader>
-                    <CardTitle>Task Assignments</CardTitle>
-                    <CardDescription>
-                        Assign provider accounts and models to specific memory engine tasks.
-                    </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                    {llmConfigs.map((config) => {
-                        const taskInfo = TASK_TYPE_LABELS[config.task_type] || { label: config.task_type, icon: Brain, color: "bg-gray-500" };
-                        const TaskIcon = taskInfo.icon;
-                        // Check if it's correctly assigned
-                        const assignedProvider = llmProviders.find(p => p.id === config.provider_id);
-                        const isConfigured = !!assignedProvider && !!config.model_name;
-
-                        return (
-                            <Card key={config.id} className={`border-l-4 ${taskInfo.color} bg-card/50`}>
-                                <CardContent className="pt-4">
-                                    <div className="flex items-start justify-between">
-                                        <div className="flex items-center gap-3">
-                                            <div className={`p-2 rounded-lg ${taskInfo.color}`}>
-                                                <TaskIcon className="w-5 h-5 text-white" />
-                                            </div>
-                                            <div>
-                                                <h3 className="font-semibold text-foreground">{taskInfo.label}</h3>
-                                                <p className="text-sm text-muted-foreground">
-                                                    {isConfigured ? `${assignedProvider.name} (${config.model_name})` : "Not assigned"}
-                                                </p>
-                                            </div>
-                                        </div>
-                                        <div className="flex items-center gap-2">
-                                            {isConfigured ? (
-                                                <Badge variant="default" className="bg-green-500">
-                                                    <CheckCircle2 className="w-3 h-3 mr-1" /> Ready
-                                                </Badge>
-                                            ) : (
-                                                <Badge variant="outline" className="border-amber-500 text-amber-500">
-                                                    <AlertCircle className="w-3 h-3 mr-1" /> Unassigned
-                                                </Badge>
-                                            )}
-                                            <Button
-                                                variant="outline"
-                                                size="sm"
-                                                onClick={() => {
-                                                    setCurrentTaskConfig(config);
-                                                    setTaskConfigDialogOpen(true);
-                                                }}
-                                            >
-                                                Edit
-                                            </Button>
-                                        </div>
-                                    </div>
-                                </CardContent>
-                            </Card>
-                        );
-                    })}
-                </CardContent>
-            </Card>
-
             <ProviderDialog 
                 open={providerDialogOpen} 
                 onClose={() => setProviderDialogOpen(false)} 
                 onSave={onSaveProvider}
                 existingProvider={editingProvider}
-            />
-
-            <TaskConfigDialog
-                open={taskConfigDialogOpen}
-                onClose={() => setTaskConfigDialogOpen(false)}
-                config={currentTaskConfig}
-                llmProviders={llmProviders}
-                onSaveConfig={onSaveConfig}
-                memorySettings={memorySettings}
-                onUpdateMemorySettings={onUpdateMemorySettings}
-                models={currentTaskConfig ? modelLists[currentTaskConfig.id] || [] : []}
-                loadingModels={currentTaskConfig ? fetchingModels[currentTaskConfig.id] : false}
-                error={currentTaskConfig ? fetchErrors[currentTaskConfig.id] : null}
-                onFetchModels={handleFetchModels}
             />
         </div>
     );
