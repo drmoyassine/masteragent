@@ -1,5 +1,4 @@
 import React, { useState, useCallback, useEffect } from "react";
-import api from "@/lib/api";
 import { Brain, Layers, Eye, EyeOff, AlertCircle, CheckCircle2, FileText, ExternalLink, RefreshCw, Search, ChevronDown, Cpu, Plus, Edit2, Trash2, Scissors, Clock, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,7 +31,7 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog";
-import { fetchProviderModels, testLLMProvider } from "@/lib/api";
+import { fetchProviderModels, testLLMProvider, getPrompts } from "@/lib/api";
 import { toast } from "sonner";
 
 // ─── Task type display metadata ───────────────────────────────────────────────
@@ -379,7 +378,7 @@ export function TaskConfigDialog({
             }
             
             if (config.task_type !== "embedding" && config.task_type !== "vision") {
-                 api.getPrompts()
+                 getPrompts()
                    .then(res => setAvailablePrompts(res.data))
                    .catch(err => console.error("Failed to fetch prompts:", err));
             }
