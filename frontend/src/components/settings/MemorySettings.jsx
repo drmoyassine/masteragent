@@ -32,63 +32,14 @@ import {
     TabsTrigger,
 } from "@/components/ui/tabs";
 
-// Import shared exports from LLMProviderSettings
 import {
-    TaskConfigDialog,
     TASK_TYPE_LABELS,
 } from "@/components/settings/LLMProviderSettings";
+import { InlineTaskConfigAccordion } from "./InlineTaskConfigAccordion";
 
-
-// ─── Task Assignment Card (reusable) ─────────────────────────────────────────
-function TaskAssignmentCard({ config, llmProviders, onEdit }) {
-    const taskInfo = TASK_TYPE_LABELS[config.task_type] || {
-        label: config.task_type,
-        icon: Brain,
-        color: "bg-gray-500",
-    };
-    const TaskIcon = taskInfo.icon;
-    const assignedProvider = llmProviders.find((p) => p.id === config.provider_id);
-    const isConfigured = !!assignedProvider && !!config.model_name;
-
-    return (
-        <Card className={`border-l-4 ${taskInfo.color} bg-card/50`}>
-            <CardContent className="pt-4">
-                <div className="flex items-start justify-between">
-                    <div className="flex items-center gap-3">
-                        <div className={`p-2 rounded-lg ${taskInfo.color}`}>
-                            <TaskIcon className="w-5 h-5 text-white" />
-                        </div>
-                        <div>
-                            <h3 className="font-semibold text-foreground">{taskInfo.label}</h3>
-                            <p className="text-sm text-muted-foreground">
-                                {isConfigured
-                                    ? `${assignedProvider.name} (${config.model_name})`
-                                    : "Not assigned"}
-                            </p>
-                        </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        {isConfigured ? (
-                            <Badge variant="default" className="bg-green-500">
-                                <CheckCircle2 className="w-3 h-3 mr-1" /> Ready
-                            </Badge>
-                        ) : (
-                            <Badge variant="outline" className="border-amber-500 text-amber-500">
-                                <AlertCircle className="w-3 h-3 mr-1" /> Unassigned
-                            </Badge>
-                        )}
-                        <Button variant="outline" size="sm" onClick={() => onEdit(config)}>
-                            Edit
-                        </Button>
-                    </div>
-                </div>
-            </CardContent>
-        </Card>
-    );
-}
 
 // ─── Ingestion Tab ───────────────────────────────────────────────────────────
-function IngestionTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onEditTask }) {
+function IngestionTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, modelLists, fetchingModels, fetchErrors, onFetchModels }) {
     const piiConfig = llmConfigs.find((c) => c.task_type === "pii_scrubbing");
     const embeddingConfig = llmConfigs.find((c) => c.task_type === "embedding");
 
@@ -145,10 +96,14 @@ function IngestionTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
 
             {/* PII Scrubbing Task Assignment */}
             {piiConfig && (
-                <TaskAssignmentCard
+                <InlineTaskConfigAccordion
                     config={piiConfig}
                     llmProviders={llmProviders}
-                    onEdit={onEditTask}
+                    onSaveConfig={onSaveConfig}
+                    models={modelLists[piiConfig.id] || []}
+                    loadingModels={fetchingModels[piiConfig.id]}
+                    error={fetchErrors[piiConfig.id]}
+                    onFetchModels={onFetchModels}
                 />
             )}
 
@@ -199,10 +154,14 @@ function IngestionTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
 
             {/* Embedding Task Assignment */}
             {embeddingConfig && (
-                <TaskAssignmentCard
+                <InlineTaskConfigAccordion
                     config={embeddingConfig}
                     llmProviders={llmProviders}
-                    onEdit={onEditTask}
+                    onSaveConfig={onSaveConfig}
+                    models={modelLists[embeddingConfig.id] || []}
+                    loadingModels={fetchingModels[embeddingConfig.id]}
+                    error={fetchErrors[embeddingConfig.id]}
+                    onFetchModels={onFetchModels}
                 />
             )}
 
@@ -251,7 +210,7 @@ function IngestionTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
 }
 
 // ─── Generalization Tab ──────────────────────────────────────────────────────
-function GeneralizationTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onEditTask }) {
+function GeneralizationTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, modelLists, fetchingModels, fetchErrors, onFetchModels }) {
     const [isTriggering, setIsTriggering] = useState(false);
     const nerConfig = llmConfigs.find((c) => c.task_type === "entity_extraction");
     const summarizationConfig = llmConfigs.find((c) => c.task_type === "summarization");
@@ -348,28 +307,40 @@ function GeneralizationTab({ settings, onUpdateSettings, llmConfigs, llmProvider
 
             {/* Memory Generation Task Assignment (Prompt/Model) */}
             {memoryGenConfig && (
-                <TaskAssignmentCard
+                <InlineTaskConfigAccordion
                     config={memoryGenConfig}
                     llmProviders={llmProviders}
-                    onEdit={onEditTask}
+                    onSaveConfig={onSaveConfig}
+                    models={modelLists[memoryGenConfig.id] || []}
+                    loadingModels={fetchingModels[memoryGenConfig.id]}
+                    error={fetchErrors[memoryGenConfig.id]}
+                    onFetchModels={onFetchModels}
                 />
             )}
 
             {/* NER Task Assignment */}
             {nerConfig && (
-                <TaskAssignmentCard
+                <InlineTaskConfigAccordion
                     config={nerConfig}
                     llmProviders={llmProviders}
-                    onEdit={onEditTask}
+                    onSaveConfig={onSaveConfig}
+                    models={modelLists[nerConfig.id] || []}
+                    loadingModels={fetchingModels[nerConfig.id]}
+                    error={fetchErrors[nerConfig.id]}
+                    onFetchModels={onFetchModels}
                 />
             )}
 
             {/* Summarization Task Assignment */}
             {summarizationConfig && (
-                <TaskAssignmentCard
+                <InlineTaskConfigAccordion
                     config={summarizationConfig}
                     llmProviders={llmProviders}
-                    onEdit={onEditTask}
+                    onSaveConfig={onSaveConfig}
+                    models={modelLists[summarizationConfig.id] || []}
+                    loadingModels={fetchingModels[summarizationConfig.id]}
+                    error={fetchErrors[summarizationConfig.id]}
+                    onFetchModels={onFetchModels}
                 />
             )}
         </div>
@@ -377,7 +348,7 @@ function GeneralizationTab({ settings, onUpdateSettings, llmConfigs, llmProvider
 }
 
 // ─── Analytics Tab ───────────────────────────────────────────────────────────
-function AnalyticsTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onEditTask }) {
+function AnalyticsTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, modelLists, fetchingModels, fetchErrors, onFetchModels }) {
     const insightConfig = llmConfigs.find((c) => c.task_type === "insight_generation");
     const visionConfig = llmConfigs.find((c) => c.task_type === "vision");
 
@@ -458,19 +429,27 @@ function AnalyticsTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
 
             {/* Insight / Private Lesson Generation Task Assignment */}
             {insightConfig && (
-                <TaskAssignmentCard
+                <InlineTaskConfigAccordion
                     config={insightConfig}
                     llmProviders={llmProviders}
-                    onEdit={onEditTask}
+                    onSaveConfig={onSaveConfig}
+                    models={modelLists[insightConfig.id] || []}
+                    loadingModels={fetchingModels[insightConfig.id]}
+                    error={fetchErrors[insightConfig.id]}
+                    onFetchModels={onFetchModels}
                 />
             )}
 
             {/* Vision / Document Parsing Task Assignment */}
             {visionConfig && (
-                <TaskAssignmentCard
+                <InlineTaskConfigAccordion
                     config={visionConfig}
                     llmProviders={llmProviders}
-                    onEdit={onEditTask}
+                    onSaveConfig={onSaveConfig}
+                    models={modelLists[visionConfig.id] || []}
+                    loadingModels={fetchingModels[visionConfig.id]}
+                    error={fetchErrors[visionConfig.id]}
+                    onFetchModels={onFetchModels}
                 />
             )}
         </div>
@@ -489,15 +468,6 @@ export function MemorySettings({
     const [modelLists, setModelLists] = useState({});
     const [fetchingModels, setFetchingModels] = useState({});
     const [fetchErrors, setFetchErrors] = useState({});
-
-    // Task Config Dialog State (shared across all tabs)
-    const [taskConfigDialogOpen, setTaskConfigDialogOpen] = useState(false);
-    const [currentTaskConfig, setCurrentTaskConfig] = useState(null);
-
-    const handleEditTask = useCallback((config) => {
-        setCurrentTaskConfig(config);
-        setTaskConfigDialogOpen(true);
-    }, []);
 
     const handleFetchModels = useCallback(
         async (configId, providerId) => {
@@ -533,7 +503,11 @@ export function MemorySettings({
         onUpdateSettings: onUpdateMemorySettings,
         llmConfigs,
         llmProviders,
-        onEditTask: handleEditTask,
+        onSaveConfig,
+        modelLists,
+        fetchingModels,
+        fetchErrors,
+        onFetchModels: handleFetchModels
     };
 
     return (
@@ -567,20 +541,6 @@ export function MemorySettings({
                 </TabsContent>
             </Tabs>
 
-            {/* Shared Task Config Dialog */}
-            <TaskConfigDialog
-                open={taskConfigDialogOpen}
-                onClose={() => setTaskConfigDialogOpen(false)}
-                config={currentTaskConfig}
-                llmProviders={llmProviders}
-                onSaveConfig={onSaveConfig}
-                memorySettings={settings}
-                onUpdateMemorySettings={onUpdateMemorySettings}
-                models={currentTaskConfig ? modelLists[currentTaskConfig.id] || [] : []}
-                loadingModels={currentTaskConfig ? fetchingModels[currentTaskConfig.id] : false}
-                error={currentTaskConfig ? fetchErrors[currentTaskConfig.id] : null}
-                onFetchModels={handleFetchModels}
-            />
         </div>
     );
 }

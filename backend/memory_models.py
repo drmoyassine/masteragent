@@ -74,6 +74,9 @@ class LLMConfigResponse(BaseModel):
     task_type: str
     provider_id: Optional[str] = None
     model_name: Optional[str] = None
+    prompt_id: Optional[str] = None
+    inline_system_prompt: Optional[str] = None
+    inline_schema: Optional[str] = None
     is_active: bool = True
     extra_config: Dict[str, Any] = {}
     created_at: Timestamp
@@ -82,6 +85,9 @@ class LLMConfigResponse(BaseModel):
 class LLMConfigUpdate(BaseModel):
     provider_id: Optional[str] = None
     model_name: Optional[str] = None
+    prompt_id: Optional[str] = None
+    inline_system_prompt: Optional[str] = None
+    inline_schema: Optional[str] = None
     is_active: Optional[bool] = None
     extra_config: Optional[Dict[str, Any]] = None
 

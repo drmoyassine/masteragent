@@ -50,21 +50,26 @@ def get_llm_config(task_type: str) -> Optional[Dict[str, Any]]:
 async def get_system_prompt(task_type: str, user_id: str = "default") -> Optional[str]:
     """Get active system prompt text by fetching the linked Prompt Manager entry."""
     
-    # 1. Get the assigned prompt_id from active LLM config
+    # 2. Extract values
     prompt_id = None
+    inline_prompt = None
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT prompt_id FROM memory_llm_configs
+            SELECT prompt_id, inline_system_prompt FROM memory_llm_configs
             WHERE task_type = %s AND is_active = TRUE
             ORDER BY updated_at DESC LIMIT 1
         """, (task_type,))
         row = cursor.fetchone()
-        if row and row["prompt_id"]:
-            prompt_id = row["prompt_id"]
+        if row:
+            prompt_id = row.get("prompt_id")
+            inline_prompt = row.get("inline_system_prompt")
             
-    # Fallback to local system prompts if no prompt_id linked via Prompt Manager
+    # 3. If a PromptManager template is NOT linked, return the inline one or fallback.
     if not prompt_id:
+        if inline_prompt and inline_prompt.strip():
+            return inline_prompt
+            
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
             cursor.execute("""
@@ -75,7 +80,7 @@ async def get_system_prompt(task_type: str, user_id: str = "default") -> Optiona
             row = cursor.fetchone()
             return row["prompt_text"] if row else None
             
-    # 2. Try fetching from Prompt Manager storage
+    # 4. Try fetching from Prompt Manager storage
     try:
         from storage_service import get_storage_service
         storage = get_storage_service(user_id)
@@ -98,3 +103,17 @@ async def get_system_prompt(task_type: str, user_id: str = "default") -> Optiona
     except Exception as e:
         logger.error(f"Error fetching prompt {prompt_id} for task {task_type}: {e}")
         return None
+
+async def get_schema(task_type: str) -> Optional[str]:
+    """Retrieve the inline schema for a task type if defined."""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT inline_schema FROM memory_llm_configs
+            WHERE task_type = %s AND is_active = TRUE
+            ORDER BY updated_at DESC LIMIT 1
+        """, (task_type,))
+        row = cursor.fetchone()
+        if row and row.get("inline_schema"):
+            return row["inline_schema"]
+    return None

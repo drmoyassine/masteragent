@@ -412,7 +412,9 @@ async def list_llm_configs(user: dict = Depends(require_admin_auth)):
             config = dict(row)
             configs.append(LLMConfigResponse(
                 id=config["id"], task_type=config["task_type"], provider_id=config.get("provider_id"),
-                model_name=config.get("model_name", ""), is_active=bool(config.get("is_active", 0)),
+                model_name=config.get("model_name", ""), prompt_id=config.get("prompt_id"),
+                inline_system_prompt=config.get("inline_system_prompt"), inline_schema=config.get("inline_schema"),
+                is_active=bool(config.get("is_active", 0)),
                 extra_config=json.loads(config.get("extra_config_json", "{}")),
                 created_at=config["created_at"], updated_at=config["updated_at"]
             ))
@@ -429,7 +431,9 @@ async def get_llm_config_by_task(task_type: str, user: dict = Depends(require_ad
         config = dict(row)
         return LLMConfigResponse(
             id=config["id"], task_type=config["task_type"], provider_id=config.get("provider_id"),
-            model_name=config.get("model_name", ""), is_active=bool(config.get("is_active", 0)),
+            model_name=config.get("model_name", ""), prompt_id=config.get("prompt_id"),
+            inline_system_prompt=config.get("inline_system_prompt"), inline_schema=config.get("inline_schema"),
+            is_active=bool(config.get("is_active", 0)),
             extra_config=json.loads(config.get("extra_config_json", "{}")),
             created_at=config["created_at"], updated_at=config["updated_at"]
         )
@@ -467,6 +471,14 @@ async def update_llm_config(config_id: str, data: LLMConfigUpdate, user: dict = 
             updates.append("provider_id = %s"); params.append(data.provider_id)
         if data.model_name is not None:
             updates.append("model_name = %s"); params.append(data.model_name)
+        if data.prompt_id is not None:
+            # If changing from linked to inline or vice-versa, handle nulling empty strings
+            val = data.prompt_id if data.prompt_id.strip() else None
+            updates.append("prompt_id = %s"); params.append(val)
+        if data.inline_system_prompt is not None:
+            updates.append("inline_system_prompt = %s"); params.append(data.inline_system_prompt)
+        if data.inline_schema is not None:
+            updates.append("inline_schema = %s"); params.append(data.inline_schema)
         if data.is_active is not None:
             if data.is_active:
                 cursor.execute("UPDATE memory_llm_configs SET is_active = FALSE WHERE task_type = %s AND id != %s", (existing["task_type"], config_id))
@@ -479,7 +491,9 @@ async def update_llm_config(config_id: str, data: LLMConfigUpdate, user: dict = 
         updated = dict(cursor.fetchone())
         return LLMConfigResponse(
             id=updated["id"], task_type=updated["task_type"], provider_id=updated.get("provider_id"),
-            model_name=updated.get("model_name", ""), is_active=bool(updated.get("is_active", 0)),
+            model_name=updated.get("model_name", ""), prompt_id=updated.get("prompt_id"),
+            inline_system_prompt=updated.get("inline_system_prompt"), inline_schema=updated.get("inline_schema"),
+            is_active=bool(updated.get("is_active", 0)),
             extra_config=json.loads(updated.get("extra_config_json", "{}")),
             created_at=updated["created_at"], updated_at=updated["updated_at"]
         )
