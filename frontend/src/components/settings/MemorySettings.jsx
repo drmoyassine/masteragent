@@ -73,64 +73,7 @@ function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProvide
                 />
             )}
 
-            {/* Embedding / Vectorization */}
-            <Card>
-                <CardHeader className="pb-3">
-                    <div className="flex items-center gap-2">
-                        <Layers className="w-5 h-5 text-indigo-500" />
-                        <CardTitle className="text-lg">Interaction Embeddings</CardTitle>
-                    </div>
-                    <CardDescription className="text-xs">
-                        Configure vectorization settings for raw interaction text.
-                    </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                    <div className="flex items-center justify-between border-b pb-4">
-                        <div className="space-y-0.5">
-                            <Label>Enable Interaction Embeddings</Label>
-                            <p className="text-[10px] text-muted-foreground">
-                                Generate vector embeddings for raw interactions to allow for deep semantic search.
-                            </p>
-                        </div>
-                        <Switch
-                            checked={settings.interaction_embeddings_enabled !== false}
-                            onCheckedChange={(v) => onUpdateSettings("interaction_embeddings_enabled", v)}
-                        />
-                    </div>
-                    
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                            <Label className="text-xs font-mono">Chunk Size (tokens)</Label>
-                            <Input
-                                type="number"
-                                min={100}
-                                max={2000}
-                                value={settings.chunk_size || 400}
-                                onChange={(e) =>
-                                    onUpdateSettings("chunk_size", parseInt(e.target.value))
-                                }
-                            />
-                        </div>
-                        <div className="space-y-2">
-                            <Label className="text-xs font-mono">Chunk Overlap (tokens)</Label>
-                            <Input
-                                type="number"
-                                min={0}
-                                max={500}
-                                value={settings.chunk_overlap || 80}
-                                onChange={(e) =>
-                                    onUpdateSettings("chunk_overlap", parseInt(e.target.value))
-                                }
-                            />
-                        </div>
-                    </div>
-                    <p className="text-[10px] text-muted-foreground">
-                        Controls how interaction text is split before embedding. larger chunks = more context, smaller = finer search.
-                    </p>
-                </CardContent>
-            </Card>
-
-            {/* Embedding Task Assignment */}
+            {/* Embedding Task Assignment & Config */}
             {embeddingConfig && (
                 <InlineTaskConfigAccordion
                     config={embeddingConfig}
@@ -140,7 +83,44 @@ function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProvide
                     loadingModels={fetchingModels[embeddingConfig.id]}
                     error={fetchErrors[embeddingConfig.id]}
                     onFetchModels={onFetchModels}
-                />
+                    titleOverride="Interaction Embeddings"
+                    descriptionOverride="Configure vectorization settings for raw interaction text."
+                    isToggleable={true}
+                    toggleChecked={settings.interaction_embeddings_enabled !== false}
+                    onToggleChange={(v) => onUpdateSettings("interaction_embeddings_enabled", v)}
+                >
+                    <div className="space-y-4">
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                                <Label className="text-xs font-mono">Chunk Size (tokens)</Label>
+                                <Input
+                                    type="number"
+                                    min={100}
+                                    max={2000}
+                                    value={settings.chunk_size || 400}
+                                    onChange={(e) =>
+                                        onUpdateSettings("chunk_size", parseInt(e.target.value))
+                                    }
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label className="text-xs font-mono">Chunk Overlap (tokens)</Label>
+                                <Input
+                                    type="number"
+                                    min={0}
+                                    max={500}
+                                    value={settings.chunk_overlap || 80}
+                                    onChange={(e) =>
+                                        onUpdateSettings("chunk_overlap", parseInt(e.target.value))
+                                    }
+                                />
+                            </div>
+                        </div>
+                        <p className="text-[10px] text-muted-foreground">
+                            Controls how interaction text is split before embedding. larger chunks = more context, smaller = finer search.
+                        </p>
+                    </div>
+                </InlineTaskConfigAccordion>
             )}
 
             {/* Rate Limiting */}

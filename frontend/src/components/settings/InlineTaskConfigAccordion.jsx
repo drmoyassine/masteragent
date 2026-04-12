@@ -53,7 +53,8 @@ export function InlineTaskConfigAccordion({
     descriptionOverride,
     isToggleable,
     toggleChecked,
-    onToggleChange
+    onToggleChange,
+    children
 }) {
     const [expanded, setExpanded] = useState(false);
     const [formData, setFormData] = useState({
@@ -152,6 +153,12 @@ export function InlineTaskConfigAccordion({
             {/* Collapsible Body */}
             {expanded && (
                 <CardContent className="pt-0 pb-6 border-t mt-4 space-y-8 animate-in fade-in slide-in-from-top-4 duration-300">
+                    
+                    {children && (
+                        <div className="pt-4 pb-2 border-b">
+                            {children}
+                        </div>
+                    )}
                     
                     {/* Prompting Details Section */}
                     {hasPrompting && (
