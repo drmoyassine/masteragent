@@ -25,7 +25,8 @@ from memory_models import (
     LessonCreate, LessonResponse, LessonUpdate,
     EntityTypeConfig, EntityTypeConfigUpdate,
     InteractionResponse, InteractionUpdate, TimelineEntry,
-    SearchRequest, SearchResponse, SearchResult, MemoryUpdate
+    SearchRequest, SearchResponse, SearchResult, MemoryUpdate,
+    OutboundWebhookCreate, OutboundWebhookUpdate, OutboundWebhookResponse
 )
 from memory_services import (
     generate_embedding, search_memories_by_vector,
@@ -1062,4 +1063,77 @@ async def admin_search_memories(
     results.sort(key=lambda r: r.score, reverse=True)
     paginated = results[request.offset: request.offset + request.limit]
     return SearchResponse(results=paginated, total=len(results), query=request.query)
+
+# ============================================================
+# OUTBOUND WEBHOOKS
+# ============================================================
+
+@router.get("/outbound-webhooks")
+async def list_outbound_webhooks(admin: dict = Depends(require_admin_auth)):
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM memory_outbound_webhooks ORDER BY created_at DESC")
+        rows = cursor.fetchall()
+
+    return {"outbound_webhooks": [dict(r) for r in rows]}
+
+@router.post("/outbound-webhooks")
+async def create_outbound_webhook(body: OutboundWebhookCreate, admin: dict = Depends(require_admin_auth)):
+    webhook_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO memory_outbound_webhooks (
+                id, name, url, debounce_ms, conditions, payload_mode, include_latest_memory, is_active, created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            webhook_id, body.name, body.url, body.debounce_ms, json.dumps(body.conditions or {}), body.payload_mode,
+            body.include_latest_memory, body.is_active, now, now
+        ))
+        
+    return {"id": webhook_id, "created_at": now}
+
+@router.patch("/outbound-webhooks/{webhook_id}")
+async def update_outbound_webhook(webhook_id: str, body: OutboundWebhookUpdate, admin: dict = Depends(require_admin_auth)):
+    now = datetime.now(timezone.utc).isoformat()
+    fields = []
+    values = []
+
+    if body.name is not None:
+        fields.append("name = %s"); values.append(body.name)
+    if body.url is not None:
+        fields.append("url = %s"); values.append(body.url)
+    if body.debounce_ms is not None:
+        fields.append("debounce_ms = %s"); values.append(body.debounce_ms)
+    if body.conditions is not None:
+        fields.append("conditions = %s"); values.append(json.dumps(body.conditions))
+    if body.payload_mode is not None:
+        fields.append("payload_mode = %s"); values.append(body.payload_mode)
+    if body.include_latest_memory is not None:
+        fields.append("include_latest_memory = %s"); values.append(body.include_latest_memory)
+    if body.is_active is not None:
+        fields.append("is_active = %s"); values.append(body.is_active)
+
+    if not fields:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    fields.append("updated_at = %s"); values.append(now)
+    values.append(webhook_id)
+
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"UPDATE memory_outbound_webhooks SET {', '.join(fields)} WHERE id = %s",
+            values
+        )
+
+    return {"id": webhook_id, "updated_at": now}
+
+@router.delete("/outbound-webhooks/{webhook_id}", status_code=204)
+async def delete_outbound_webhook(webhook_id: str, admin: dict = Depends(require_admin_auth)):
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM memory_outbound_webhooks WHERE id = %s", (webhook_id,))
 

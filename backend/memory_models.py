@@ -479,3 +479,38 @@ class ContextStatusResponse(BaseModel):
     insights_count: int
     last_insight_date: Optional[str] = None
     insights_ids: List[str] = []
+
+# ============================================
+# Outbound Webhook Models
+# ============================================
+
+class OutboundWebhookCreate(BaseModel):
+    name: str
+    url: str
+    debounce_ms: Optional[int] = 60000
+    conditions: Optional[Dict[str, Any]] = {}
+    payload_mode: Optional[str] = "trigger_only" # "trigger_only" or "all_window"
+    include_latest_memory: Optional[bool] = True
+    is_active: Optional[bool] = True
+
+class OutboundWebhookUpdate(BaseModel):
+    name: Optional[str] = None
+    url: Optional[str] = None
+    debounce_ms: Optional[int] = None
+    conditions: Optional[Dict[str, Any]] = None
+    payload_mode: Optional[str] = None
+    include_latest_memory: Optional[bool] = None
+    is_active: Optional[bool] = None
+
+class OutboundWebhookResponse(BaseModel):
+    id: str
+    name: str
+    url: str
+    debounce_ms: int
+    conditions: Dict[str, Any]
+    payload_mode: str
+    include_latest_memory: bool
+    is_active: bool
+    created_at: str
+    updated_at: str
+

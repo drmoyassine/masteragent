@@ -79,6 +79,13 @@ async def _process_bulk_job(job: Job, token: str):
             if i_id:
                 await promote_to_lesson(i_id)
                 
+        elif job.name == "fire_outbound_webhook":
+            webhook_id = job.data.get("webhook_id")
+            entity_id = job.data.get("entity_id")
+            if webhook_id and entity_id:
+                from services.outbound_webhooks import execute_outbound_webhook
+                await execute_outbound_webhook(webhook_id, entity_id)
+                
         else:
             logger.warning(f"Unknown job name: {job.name}")
 

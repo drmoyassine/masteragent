@@ -306,6 +306,23 @@ def _create_memory_tier_tables(cursor):
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_webhook_sources_active ON memory_webhook_sources (is_active)")
 
+    # Outbound webhook rules
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS memory_outbound_webhooks (
+            id                          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            name                        TEXT NOT NULL,
+            url                         TEXT NOT NULL,
+            debounce_ms                 INT DEFAULT 60000,
+            conditions                  JSONB DEFAULT '{}',
+            payload_mode                TEXT DEFAULT 'trigger_only',
+            include_latest_memory       BOOLEAN DEFAULT TRUE,
+            is_active                   BOOLEAN DEFAULT TRUE,
+            created_at                  TIMESTAMPTZ DEFAULT NOW(),
+            updated_at                  TIMESTAMPTZ DEFAULT NOW()
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_outbound_webhooks_active ON memory_outbound_webhooks (is_active)")
+
 
 def _run_migrations(cursor):
     """Idempotent schema migrations for existing installations."""
@@ -412,6 +429,16 @@ def _run_migrations(cursor):
             cursor.execute(f"ALTER TABLE memory_llm_providers ADD COLUMN IF NOT EXISTS {col} {col_def}")
         except Exception as e:
             logger.error(f"Failed to add {col} to memory_llm_providers: {e}")
+
+    # Interactions columns added for reactive webhooks
+    for col, col_def in [
+        ("is_enriched", "BOOLEAN DEFAULT FALSE"),
+        ("outbound_webhooks_fired", "TEXT[] DEFAULT '{}'"),
+    ]:
+        try:
+            cursor.execute(f"ALTER TABLE interactions ADD COLUMN IF NOT EXISTS {col} {col_def}")
+        except Exception as e:
+            logger.error(f"Failed to add {col} to interactions: {e}")
 
 
 def init_memory_db():

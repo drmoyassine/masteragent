@@ -187,7 +187,7 @@ async def process_interaction(interaction_id: str):
         if embedding:
             cursor.execute("""
                 UPDATE interactions 
-                SET content = %s, attachment_refs = %s, embedding = %s, processing_errors = %s
+                SET content = %s, attachment_refs = %s, embedding = %s, processing_errors = %s, is_enriched = TRUE
                 WHERE id = %s
             """, (
                 content, json.dumps(attachment_refs, ensure_ascii=False), embedding, 
@@ -196,7 +196,7 @@ async def process_interaction(interaction_id: str):
         else:
             cursor.execute("""
                 UPDATE interactions 
-                SET content = %s, attachment_refs = %s, processing_errors = %s
+                SET content = %s, attachment_refs = %s, processing_errors = %s, is_enriched = TRUE
                 WHERE id = %s
             """, (
                 content, json.dumps(attachment_refs, ensure_ascii=False), 
@@ -215,6 +215,13 @@ async def process_interaction(interaction_id: str):
         "timestamp": str(interaction["timestamp"]),
         "metadata_field_map": json.loads(interaction.get("metadata_field_map") or "{}"),
     })
+
+    # Trigger Outbound Webhooks logic
+    try:
+        from services.outbound_webhooks import evaluate_outbound_webhooks
+        await evaluate_outbound_webhooks(interaction_id)
+    except Exception as e:
+        logger.error(f"Failed to evaluate outbound webhooks for {interaction_id}: {e}")
 
 
 
