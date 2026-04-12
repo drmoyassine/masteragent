@@ -42,7 +42,7 @@ export const TASK_TYPE_LABELS = {
     vision: { label: "Vision/Doc Parsing", icon: Eye, color: "bg-purple-500" },
     entity_extraction: { label: "Entity Extraction (NER)", icon: Cpu, color: "bg-amber-500" },
     pii_scrubbing: { label: "PII Scrubbing", icon: EyeOff, color: "bg-red-500" },
-    insight_generation: { label: "Insight Generation", icon: Sparkles, color: "bg-teal-500" }
+    insight_generation: { label: "Lesson Generation", icon: Sparkles, color: "bg-teal-500" }
 };
 
 const PROVIDER_META = [

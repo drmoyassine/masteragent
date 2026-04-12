@@ -2,7 +2,7 @@ import React, { useState, useCallback } from "react";
 import {
     Clock, Play, ShieldAlert, Zap, GraduationCap, Brain,
     Layers, Scissors, FileText, Eye, AlertCircle, CheckCircle2,
-    Edit2, Cpu, Sparkles, BarChart3
+    Edit2, Cpu, Sparkles, BarChart3, Image as ImageIcon
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
@@ -38,71 +38,59 @@ import {
 import { InlineTaskConfigAccordion } from "./InlineTaskConfigAccordion";
 import { OutboundWebhooksSettings } from "./OutboundWebhooksSettings";
 
-// ─── Ingestion Tab ───────────────────────────────────────────────────────────
-function IngestionTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, modelLists, fetchingModels, fetchErrors, onFetchModels }) {
-    const piiConfig = llmConfigs.find((c) => c.task_type === "pii_scrubbing");
+// ─── Raw Interactions Tab ───────────────────────────────────────────────────
+function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, modelLists, fetchingModels, fetchErrors, onFetchModels }) {
     const embeddingConfig = llmConfigs.find((c) => c.task_type === "embedding");
+    const visionConfig = llmConfigs.find((c) => c.task_type === "vision");
 
     return (
         <div className="space-y-6">
             <div className="mb-2">
                 <h3 className="text-lg font-semibold flex items-center gap-2">
                     <Zap className="w-5 h-5 text-amber-500" />
-                    Ingestion Pipeline
+                    Raw Interactions
                 </h3>
                 <p className="text-sm text-muted-foreground mt-1">
-                    Controls how raw interactions are received, sanitized, and vectorized.
+                    Controls how raw interactions are received, parsed, and embedded before they become structured memories.
                 </p>
             </div>
 
-            {/* PII Privacy */}
+            {/* Vision Processing */}
             <Card>
                 <CardHeader className="pb-3">
                     <div className="flex items-center gap-2">
-                        <ShieldAlert className="w-5 h-5 text-red-500" />
-                        <CardTitle className="text-lg">PII Privacy</CardTitle>
+                        <ImageIcon className="w-5 h-5 text-purple-500" />
+                        <CardTitle className="text-lg">Vision Processing</CardTitle>
                     </div>
                     <CardDescription className="text-xs">
-                        Configure PII scrubbing and data sharing
+                        Configure how images and documents are processed by vision AI models.
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                     <div className="flex items-center justify-between">
                         <div className="space-y-0.5">
-                            <Label>Enable PII Scrubbing</Label>
+                            <Label>Enable Vision Processing</Label>
                             <p className="text-[10px] text-muted-foreground">
-                                Automatically strip PII from shared data
+                                Allow processing image/document attachments from interactions
                             </p>
                         </div>
                         <Switch
-                            checked={settings.pii_scrubbing_enabled}
-                            onCheckedChange={(v) => onUpdateSettings("pii_scrubbing_enabled", v)}
-                        />
-                    </div>
-                    <div className="flex items-center justify-between">
-                        <div className="space-y-0.5">
-                            <Label>Auto-share Scrubbed</Label>
-                            <p className="text-[10px] text-muted-foreground">
-                                Automatically share PII-stripped memories
-                            </p>
-                        </div>
-                        <Switch
-                            checked={settings.auto_share_scrubbed}
-                            onCheckedChange={(v) => onUpdateSettings("auto_share_scrubbed", v)}
+                            checked={settings.vision_enabled !== false} // default true or whatever user has
+                            onCheckedChange={(v) => onUpdateSettings("vision_enabled", v)}
                         />
                     </div>
                 </CardContent>
             </Card>
 
-            {/* PII Scrubbing Task Assignment */}
-            {piiConfig && (
+            {/* Vision / Document Parsing Task Assignment */}
+            {visionConfig && (
                 <InlineTaskConfigAccordion
-                    config={piiConfig}
+                    config={visionConfig}
                     llmProviders={llmProviders}
                     onSaveConfig={onSaveConfig}
-                    models={modelLists[piiConfig.id] || []}
-                    loadingModels={fetchingModels[piiConfig.id]}
-                    error={fetchErrors[piiConfig.id]}
+                    models={modelLists[visionConfig.id] || []}
+                    loadingModels={fetchingModels[visionConfig.id]}
+                    error={fetchErrors[visionConfig.id]}
                     onFetchModels={onFetchModels}
                 />
             )}
@@ -112,13 +100,26 @@ function IngestionTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                 <CardHeader className="pb-3">
                     <div className="flex items-center gap-2">
                         <Layers className="w-5 h-5 text-indigo-500" />
-                        <CardTitle className="text-lg">Embedding & Vectorization</CardTitle>
+                        <CardTitle className="text-lg">Interaction Embeddings</CardTitle>
                     </div>
                     <CardDescription className="text-xs">
-                        Chunk size and overlap for vector embeddings
+                        Configure vectorization settings for raw interaction text.
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
+                    <div className="flex items-center justify-between border-b pb-4">
+                        <div className="space-y-0.5">
+                            <Label>Enable Interaction Embeddings</Label>
+                            <p className="text-[10px] text-muted-foreground">
+                                Generate vector embeddings for raw interactions to allow for deep semantic search.
+                            </p>
+                        </div>
+                        <Switch
+                            checked={settings.interaction_embeddings_enabled !== false}
+                            onCheckedChange={(v) => onUpdateSettings("interaction_embeddings_enabled", v)}
+                        />
+                    </div>
+                    
                     <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
                             <Label className="text-xs font-mono">Chunk Size (tokens)</Label>
@@ -146,8 +147,7 @@ function IngestionTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                         </div>
                     </div>
                     <p className="text-[10px] text-muted-foreground">
-                        Controls how interaction text is split before embedding.
-                        Larger chunks = more context per vector, smaller = finer-grained search.
+                        Controls how interaction text is split before embedding. larger chunks = more context, smaller = finer search.
                     </p>
                 </CardContent>
             </Card>
@@ -212,8 +212,8 @@ function IngestionTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
     );
 }
 
-// ─── Generalization Tab ──────────────────────────────────────────────────────
-function GeneralizationTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, modelLists, fetchingModels, fetchErrors, onFetchModels }) {
+// ─── Memory Generation Tab ──────────────────────────────────────────────────
+function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, modelLists, fetchingModels, fetchErrors, onFetchModels }) {
     const [isTriggering, setIsTriggering] = useState(false);
     const nerConfig = llmConfigs.find((c) => c.task_type === "entity_extraction");
     const summarizationConfig = llmConfigs.find((c) => c.task_type === "summarization");
@@ -236,7 +236,7 @@ function GeneralizationTab({ settings, onUpdateSettings, llmConfigs, llmProvider
             <div className="mb-2">
                 <h3 className="text-lg font-semibold flex items-center gap-2">
                     <Brain className="w-5 h-5 text-purple-500" />
-                    Generalization Pipeline
+                    Memory Generation
                 </h3>
                 <p className="text-sm text-muted-foreground mt-1">
                     Transforms raw interactions into structured daily memories via NER and LLM summarization.
@@ -249,7 +249,7 @@ function GeneralizationTab({ settings, onUpdateSettings, llmConfigs, llmProvider
                     <div>
                         <div className="flex items-center gap-2">
                             <Clock className="w-5 h-5 text-blue-500" />
-                            <CardTitle className="text-lg">Memory Generation</CardTitle>
+                            <CardTitle className="text-lg">Memory Generation Settings</CardTitle>
                         </div>
                         <CardDescription className="text-xs mt-1.5">
                             When and how daily memories are generated from interactions
@@ -308,7 +308,7 @@ function GeneralizationTab({ settings, onUpdateSettings, llmConfigs, llmProvider
                 </CardContent>
             </Card>
 
-            {/* Memory Generation Task Assignment (Prompt/Model) */}
+            {/* Memory Generation Task Assignment */}
             {memoryGenConfig && (
                 <InlineTaskConfigAccordion
                     config={memoryGenConfig}
@@ -350,22 +350,74 @@ function GeneralizationTab({ settings, onUpdateSettings, llmConfigs, llmProvider
     );
 }
 
-// ─── Analytics Tab ───────────────────────────────────────────────────────────
-function AnalyticsTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, modelLists, fetchingModels, fetchErrors, onFetchModels }) {
+// ─── Knowledge Generation Tab ─────────────────────────────────────────────────
+function KnowledgeGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, modelLists, fetchingModels, fetchErrors, onFetchModels }) {
     const insightConfig = llmConfigs.find((c) => c.task_type === "insight_generation");
-    const visionConfig = llmConfigs.find((c) => c.task_type === "vision");
+    const piiConfig = llmConfigs.find((c) => c.task_type === "pii_scrubbing");
 
     return (
         <div className="space-y-6">
             <div className="mb-2">
                 <h3 className="text-lg font-semibold flex items-center gap-2">
-                    <BarChart3 className="w-5 h-5 text-emerald-500" />
-                    Analytics Pipeline
+                    <GraduationCap className="w-5 h-5 text-indigo-500" />
+                    Knowledge Generation
                 </h3>
                 <p className="text-sm text-muted-foreground mt-1">
-                    Extracts private and public lessons from accumulated memories.
+                    Extracts high-level knowledge (Lessons) from memory records and sanitizes data.
                 </p>
             </div>
+
+            {/* PII Privacy */}
+            <Card>
+                <CardHeader className="pb-3">
+                    <div className="flex items-center gap-2">
+                        <ShieldAlert className="w-5 h-5 text-red-500" />
+                        <CardTitle className="text-lg">PII Privacy</CardTitle>
+                    </div>
+                    <CardDescription className="text-xs">
+                        Configure PII scrubbing layer for knowledge sharing.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                            <Label>Enable PII Scrubbing</Label>
+                            <p className="text-[10px] text-muted-foreground">
+                                Automatically strip PII from shared data
+                            </p>
+                        </div>
+                        <Switch
+                            checked={settings.pii_scrubbing_enabled}
+                            onCheckedChange={(v) => onUpdateSettings("pii_scrubbing_enabled", v)}
+                        />
+                    </div>
+                    <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                            <Label>Auto-share Scrubbed</Label>
+                            <p className="text-[10px] text-muted-foreground">
+                                Automatically share PII-stripped memories
+                            </p>
+                        </div>
+                        <Switch
+                            checked={settings.auto_share_scrubbed}
+                            onCheckedChange={(v) => onUpdateSettings("auto_share_scrubbed", v)}
+                        />
+                    </div>
+                </CardContent>
+            </Card>
+
+            {/* PII Scrubbing Task Assignment */}
+            {piiConfig && (
+                <InlineTaskConfigAccordion
+                    config={piiConfig}
+                    llmProviders={llmProviders}
+                    onSaveConfig={onSaveConfig}
+                    models={modelLists[piiConfig.id] || []}
+                    loadingModels={fetchingModels[piiConfig.id]}
+                    error={fetchErrors[piiConfig.id]}
+                    onFetchModels={onFetchModels}
+                />
+            )}
 
             {/* Lesson Mining */}
             <Card>
@@ -442,19 +494,29 @@ function AnalyticsTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                     onFetchModels={onFetchModels}
                 />
             )}
+        </div>
+    );
+}
 
-            {/* Vision / Document Parsing Task Assignment */}
-            {visionConfig && (
-                <InlineTaskConfigAccordion
-                    config={visionConfig}
-                    llmProviders={llmProviders}
-                    onSaveConfig={onSaveConfig}
-                    models={modelLists[visionConfig.id] || []}
-                    loadingModels={fetchingModels[visionConfig.id]}
-                    error={fetchErrors[visionConfig.id]}
-                    onFetchModels={onFetchModels}
-                />
-            )}
+// ─── Analytics Tab ───────────────────────────────────────────────────────────
+function AnalyticsTab() {
+    return (
+        <div className="space-y-6">
+            <div className="mb-2">
+                <h3 className="text-lg font-semibold flex items-center gap-2">
+                    <BarChart3 className="w-5 h-5 text-emerald-500" />
+                    Analytics Pipeline
+                </h3>
+                <p className="text-sm text-muted-foreground mt-1">
+                    System analytics and metrics (Upcoming feature).
+                </p>
+            </div>
+            <Card>
+                <CardContent className="py-12 flex flex-col items-center justify-center text-center text-muted-foreground">
+                    <BarChart3 className="w-12 h-12 mb-4 opacity-20" />
+                    <p>Dashboard visualization components are under construction.</p>
+                </CardContent>
+            </Card>
         </div>
     );
 }
@@ -515,15 +577,19 @@ export function MemorySettings({
 
     return (
         <div className="max-w-4xl">
-            <Tabs defaultValue="ingestion" className="w-full">
-                <TabsList className="grid w-full grid-cols-3 mb-8">
-                    <TabsTrigger value="ingestion" className="gap-2">
+            <Tabs defaultValue="raw_interactions" className="w-full">
+                <TabsList className="grid w-full grid-cols-4 mb-8">
+                    <TabsTrigger value="raw_interactions" className="gap-2">
                         <Zap className="w-4 h-4" />
-                        Ingestion
+                        Raw Interactions
                     </TabsTrigger>
-                    <TabsTrigger value="generalization" className="gap-2">
+                    <TabsTrigger value="memory_generation" className="gap-2">
                         <Brain className="w-4 h-4" />
-                        Generalization
+                        Memory Generation
+                    </TabsTrigger>
+                    <TabsTrigger value="knowledge_generation" className="gap-2">
+                        <GraduationCap className="w-4 h-4" />
+                        Knowledge Gen.
                     </TabsTrigger>
                     <TabsTrigger value="analytics" className="gap-2">
                         <BarChart3 className="w-4 h-4" />
@@ -531,16 +597,20 @@ export function MemorySettings({
                     </TabsTrigger>
                 </TabsList>
 
-                <TabsContent value="ingestion">
-                    <IngestionTab {...tabProps} />
+                <TabsContent value="raw_interactions">
+                    <RawInteractionsTab {...tabProps} />
                 </TabsContent>
 
-                <TabsContent value="generalization">
-                    <GeneralizationTab {...tabProps} />
+                <TabsContent value="memory_generation">
+                    <MemoryGenerationTab {...tabProps} />
+                </TabsContent>
+
+                <TabsContent value="knowledge_generation">
+                    <KnowledgeGenerationTab {...tabProps} />
                 </TabsContent>
 
                 <TabsContent value="analytics">
-                    <AnalyticsTab {...tabProps} />
+                    <AnalyticsTab />
                 </TabsContent>
             </Tabs>
 
