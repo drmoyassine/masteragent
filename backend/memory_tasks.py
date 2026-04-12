@@ -310,8 +310,8 @@ async def _background_loop():
                     await run_daily_memory_generation()
                     await run_compaction_check()
                     
-                    from memory.queue import memory_bulk_queue
-                    await memory_bulk_queue.add("generate_lesson", {}, {"priority": 3})
+                    from memory.queue import knowledge_queue
+                    await knowledge_queue.add("generate_lesson", {}, {"priority": 3})
 
         except Exception as e:
             logger.error(f"Background loop error: {e}", exc_info=True)
@@ -393,8 +393,8 @@ async def run_daily_memory_generation(include_today: bool = False):
                 continue
 
         try:
-            from memory.queue import memory_bulk_queue
-            await memory_bulk_queue.add(
+            from memory.queue import memory_queue
+            await memory_queue.add(
                 "generate_memory", 
                 {"entity_type": entity_type, "entity_id": entity_id, "interaction_date": interaction_date},
                 {"priority": 5}
@@ -704,8 +704,8 @@ async def _check_compaction_trigger(entity_type: str, entity_id: str, config: di
     if count_trigger or days_trigger:
         reason = "count" if count_trigger else "days"
         logger.info(f"Compaction trigger enqueue ({reason}) for {entity_type}/{entity_id}: {count} memories, oldest={oldest_date}")
-        from memory.queue import memory_bulk_queue
-        await memory_bulk_queue.add(
+        from memory.queue import knowledge_queue
+        await knowledge_queue.add(
             "generate_insight", 
             {"entity_type": entity_type, "entity_id": entity_id},
             {"priority": 4}

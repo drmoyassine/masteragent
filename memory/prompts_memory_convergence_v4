@@ -1,0 +1,509 @@
+# MasterAgent: Agent Knowledge Management System
+
+## Product Architecture
+
+MasterAgent is an **Agent Knowledge Management System** — the infrastructure layer that gives AI agents identity, memory, and tools. The entire system is **configuration-driven** and **AI-assisted**.
+
+```mermaid
+graph TB
+    subgraph AKMS["Agent Knowledge Management System"]
+        direction TB
+        
+        subgraph L1["1. Agent Identity (Prompts)"]
+            P1["Prompt Editor + Variables"]
+            P2["Git Versioning"]
+            P3["Render API"]
+        end
+
+        subgraph L2["2. Memory (Interactions)"]
+            M1["2.1 Define Entities"]
+            M2["2.2 Define Interactions"]
+            M3["2.3 Log Interactions"]
+            M4["2.4 Analyze & Query"]
+            M5["2.5 Share / Export"]
+        end
+
+        subgraph L3["3. Tools & MCPs"]
+            T1["MCP Hub / Toolbox"]
+        end
+
+        subgraph MA["MasterAgent AI Assistant"]
+            AI["Chat Interface"]
+            TC["Tool Calling → Platform APIs"]
+        end
+    end
+
+    MA -->|"creates/edits"| L1
+    MA -->|"configures"| L2
+    MA -->|"manages"| L3
+    
+    EXT["External Agents"] --> P3
+    EXT --> M3
+    EXT --> T1
+
+    style L1 fill:#1e3a5f,color:#fff
+    style L2 fill:#3b1f5e,color:#fff
+    style L3 fill:#1f4e3d,color:#fff
+    style MA fill:#92400e,color:#fff
+```
+
+---
+
+## Layer 1: Agent Identity Management (Prompts)
+
+**Purpose**: Define *who the agent is* — persona, instructions, rules, behavioral constraints.
+
+A versioned prompt editor with Git-backed storage. External consumers use the Render API to fetch compiled agent instructions at runtime.
+
+**Current implementation**:
+
+| Component | Location |
+|---|---|
+| Prompt CRUD + sections | `routes/prompts.py` |
+| Render API (variable injection) | `routes/render.py` |
+| GitHub / Local storage | `storage_service.py` |
+| Frontend editor | `PromptEditorPage.jsx` |
+| Variable management | `VariablesPanel.jsx`, `VariableAutocomplete.jsx` |
+
+---
+
+## Layer 2: Memory System (Interactions)
+
+**Purpose**: Define *what the agent knows* — structured knowledge extracted from real-world interactions.
+
+The Memory System has **four core data objects** that form a knowledge refinement pipeline:
+
+```
+Entities (define what you track)
+    ↓
+Interactions (raw log of events)     ← Tier 0
+    ↓ NER + PII scrub + LLM summarization
+Memories (daily snapshots)           ← Tier 1
+    ↓ Compaction (threshold-based)
+Private Lessons (entity-specific)    ← Tier 2  (currently "insights")
+    ↓ PII scrubbing + generalization
+Public Lessons (shareable knowledge) ← Tier 3  (currently "lessons")
+```
+
+---
+
+### 2.1 Entities
+
+**What**: The real-world objects the system tracks. Every interaction is filed under an entity.
+
+**Definition**: An Entity Type is a category with custom fields. Entity instances are identified by `(entity_type, entity_id)` — the system doesn't store entity records directly, it discovers them from interactions.
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | TEXT | Entity type name (e.g., "contact", "institution", "product") |
+| `icon` | TEXT | Display icon (emoji) |
+| `description` | TEXT | What this entity type represents |
+| `subtypes` | TEXT[] | Classification within the type (e.g., contact → lead, client, partner) |
+| `custom_fields` | JSONB | User-defined fields specific to this entity type |
+
+**Custom Fields** (via `metadata_field_map`) are the key extensibility mechanism. When you add a field like `company` or `deal_stage` to the "contact" entity type, it becomes:
+- An **injectable prompt variable**: `{{entity.company}}`, `{{entity.deal_stage}}`
+- A **queryable attribute** in the entity workspace
+- A **filterable dimension** in memory search
+
+**Entity Type Config** controls per-type pipeline behavior:
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `compaction_threshold` | INT | 10 | Memories before triggering lesson extraction |
+| `ner_enabled` | BOOL | TRUE | Run NER on this entity's interactions |
+| `ner_confidence_threshold` | FLOAT | 0.5 | Minimum NER confidence score |
+| `ner_schema` | JSONB | NULL | Custom entity classes for NER (NULL = defaults) |
+| `embedding_enabled` | BOOL | TRUE | Generate embeddings for memories |
+| `pii_scrub_lessons` | BOOL | TRUE | PII-scrub when promoting to public lessons |
+| `lesson_auto_promote` | BOOL | FALSE | Auto-promote private → public lessons |
+| `metadata_field_map` | JSONB | {} | Custom field definitions |
+
+**Current tables**: `memory_entity_types`, `memory_entity_subtypes`, `memory_entity_type_config`
+
+---
+
+### 2.2 Interactions (Tier 0)
+
+**What**: The raw, immutable log of every event. An interaction is a single unit of information about an entity — a message, email, call note, webhook event, or document.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | TEXT (UUID) | Unique identifier |
+| `timestamp` | TIMESTAMPTZ | When the interaction occurred |
+| `interaction_type` | TEXT | Channel type (email, whatsapp, call, webhook_event, etc.) |
+| `agent_id` | TEXT | Which agent logged this interaction |
+| `content` | TEXT | Raw text content (+ parsed attachment text) |
+| `primary_entity_type` | TEXT | Entity type (e.g., "contact") |
+| `primary_entity_subtype` | TEXT | Entity subtype (e.g., "lead") |
+| `primary_entity_id` | TEXT | Entity identifier (e.g., "john-doe") |
+| `metadata` | JSONB | Arbitrary key-value metadata |
+| `metadata_field_map` | JSONB | Maps metadata keys to entity custom fields |
+| `embedding` | VECTOR | Ephemeral embedding (cleared after memory generation) |
+| `source` | TEXT | Origin: "api", "webhook", "manual" |
+| `status` | TEXT | Processing state: "pending" → "done" |
+
+**Lifecycle**: Interactions are immutable once created. They sit in `pending` status until the daily memory generation sweep processes them into memories, then move to `done`. Ephemeral embeddings are cleared after processing to prevent DB bloat.
+
+**Current table**: `interactions`
+
+---
+
+### 2.3 Memories (Tier 1)
+
+**What**: Daily per-entity knowledge snapshots. One memory per entity per day, synthesized from all interactions on that date. The first level of knowledge refinement.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | TEXT (UUID) | Unique identifier |
+| `date` | DATE | The day this memory covers |
+| `primary_entity_type` | TEXT | Entity type |
+| `primary_entity_id` | TEXT | Entity identifier |
+| `interaction_ids` | TEXT[] | Source interaction IDs |
+| `interaction_count` | INT | Number of source interactions |
+| `content_summary` | TEXT | LLM-generated summary (2-5 sentences) |
+| `related_entities` | JSONB | NER-extracted entities mentioned |
+| `intents` | TEXT[] | Detected intents/signals |
+| `relationships` | JSONB | Entity-to-entity relationships detected |
+| `embedding` | VECTOR | Semantic embedding of the summary |
+| `compacted` | BOOL | Whether this memory has been consumed into a lesson |
+| `compaction_count` | INT | How many times included in lesson extraction |
+
+**Lifecycle**: Generated daily (scheduled or manual trigger). Prior memories are injected as context to prevent repetition. Once enough memories accumulate (threshold), they're compacted into a Private Lesson and marked `compacted = TRUE`.
+
+**Unique constraint**: `(date, primary_entity_type, primary_entity_id)` — one memory per entity per day.
+
+**Current table**: `memories`
+
+---
+
+### 2.4 Lessons
+
+Lessons are the system's **extracted knowledge**. They come in two forms:
+
+#### Private Lessons (Tier 2) — currently called "insights"
+
+**What**: Entity-specific knowledge patterns extracted from accumulated memories. Contains PII — tied to a specific entity. Formerly called "insights" in the codebase.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | TEXT (UUID) | Unique identifier |
+| `primary_entity_type` | TEXT | Entity type this lesson is about |
+| `primary_entity_id` | TEXT | Specific entity this lesson is about |
+| `source_memory_ids` | TEXT[] | Memories this lesson was extracted from |
+| `lesson_type` | TEXT | Category (behavior_pattern, risk_signal, opportunity, etc.) |
+| `name` | TEXT | Short title |
+| `content` | TEXT | Full lesson content (may contain PII) |
+| `summary` | TEXT | Brief summary |
+| `embedding` | VECTOR | Semantic embedding |
+| `status` | TEXT | "draft" → "confirmed" (review workflow) |
+| `visibility` | TEXT | "private" / "shared" / "key:{agent_id}" |
+| `created_by` | TEXT | "auto" or admin user |
+| `confirmed_by` | TEXT | Who approved the lesson |
+
+**Lifecycle**: Auto-generated when uncompacted memories reach the compaction threshold (default: 10) or the time trigger fires. Created as `draft`, requires confirmation to become `confirmed`. Only confirmed private lessons feed into public lesson generation.
+
+**Sharing**: Private lessons can be shared with specific external agents via **scoped API keys**:
+
+```
+visibility = "private"              → Owner only
+visibility = "shared"               → All agents with memory access
+visibility = "key:agent-abc-123"    → Only agent with ID agent-abc-123
+visibility = "key:agent-1,agent-2"  → Multiple specific agents
+```
+
+Shared private lessons are accessible through the query API and can be "chatted with" by authorized agents — an agent with access can query the entity workspace and get responses informed by these private lessons.
+
+**Current table**: `insights` *(to be renamed to `private_lessons` or aliased)*
+
+#### Public Lessons (Tier 3) — currently called "lessons"
+
+**What**: De-identified, PII-scrubbed, generalizable knowledge. These are the "institutional wisdom" of the system — patterns that apply beyond any single entity.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | TEXT (UUID) | Unique identifier |
+| `source_lesson_ids` | TEXT[] | Private lessons this was distilled from |
+| `lesson_type` | TEXT | Category (process, risk, sales, product, support, other) |
+| `name` | TEXT | Short title |
+| `content` | TEXT | Full lesson content (NO PII — scrubbed) |
+| `summary` | TEXT | Brief summary |
+| `embedding` | VECTOR | Semantic embedding |
+| `visibility` | TEXT | "shared" (default) / "internal" |
+| `tags` | TEXT[] | Searchable tags |
+
+**Lifecycle**: Generated when enough confirmed private lessons accumulate (threshold-based). Each private lesson's content is PII-scrubbed before being fed to the LLM for generalization. The output is a durable, reusable piece of knowledge with all entity-specific details removed.
+
+**Sharing**: Public lessons are broadly accessible — any agent with memory API access can query them. They're designed to be exported, shared across teams, or fed into other systems.
+
+**Current table**: `lessons`
+
+---
+
+### 2.5 Share / Export
+
+**Sharing model summary**:
+
+| Data | Default visibility | Can be shared via |
+|---|---|---|
+| Interactions | Agent-scoped | Agent's own interactions only |
+| Memories | Entity-scoped | Entity workspace access |
+| Private Lessons | Private | Scoped API keys (per-agent grants) |
+| Public Lessons | Shared | All agents, API, export |
+
+**Private Lesson sharing flow**:
+1. Admin creates a scoped API key for an external agent
+2. Admin sets `visibility` on specific private lessons to include that agent's ID
+3. External agent queries the API with their key → gets access to those specific lessons
+4. External agent can "chat with" the entity through the workspace endpoint, informed by shared private lessons
+
+**Export** (future):
+- Public lessons → GitHub repo as markdown knowledge base
+- Entity memory digests → periodic snapshots
+- Bulk export API for migration/backup
+
+---
+
+## Layer 3: Tools & MCPs (Future Integration)
+
+**Purpose**: Define *what the agent can do* — external tool access and action capabilities.
+
+- MCP Hub for managing connected tool servers
+- Tool registry and definitions
+- Action execution from entity workspaces
+- Partially implemented in a separate project
+
+---
+
+## Integration: Prompts ↔ Memory (Entity Variables)
+
+> [!IMPORTANT]
+> All prompts used by the Memory System must be **written in and/or imported from the Prompt Manager**. Entity fields and pipeline context are injected as variables.
+
+### The Bridge: Entity Fields as Prompt Variables
+
+When you define an entity type with custom fields, those fields become available as **prompt variables** in any prompt that processes that entity:
+
+```
+Entity Type: "contact"
+├── name: "John Doe"            →  {{entity.name}}
+├── stage: "qualified"          →  {{entity.stage}}  
+├── company: "Acme Corp"        →  {{entity.company}}
+├── source: "inbound"           →  {{entity.source}}
+└── custom_field: "premium"     →  {{entity.custom_field}}
+```
+
+In the Prompt Editor, writing a memory generation prompt looks like:
+
+```markdown
+You are an AI memory system analyzing interactions for {{entity.name}} 
+({{entity.type}} — {{entity.stage}}).
+
+This entity belongs to {{entity.company}}, sourced via {{entity.source}}.
+
+Based on {{interaction_count}} interactions on {{date}}, write a concise 
+factual memory record.
+
+{{#if prior_context}}
+PRIOR CONTEXT (established facts, do NOT repeat):
+{{prior_context}}
+{{/if}}
+
+RAW INTERACTIONS:
+{{raw_interactions}}
+
+EXTRACTED SIGNALS:
+{{ner_signals}}
+```
+
+**This means**: the user writes their memory system prompts using the same editor, same variable system, same versioning as their agent identity prompts. The difference is only in *where the variables come from* at render time.
+
+### Variable Resolution at Runtime
+
+```mermaid
+graph LR
+    subgraph "Variable Sources"
+        ENT["Entity Fields<br/>{{entity.*}}"]
+        PIPE["Pipeline Context<br/>{{date}}, {{interaction_count}}"]
+        DATA["Processed Data<br/>{{raw_interactions}}, {{ner_signals}}"]
+        USER["User-defined<br/>{{custom_var}}"]
+    end
+
+    subgraph "Prompt Manager"
+        RENDER["Render Engine"]
+        PROMPT["Versioned Prompt<br/>with {{variables}}"]
+    end
+
+    subgraph "Memory Pipeline"
+        TASK["memory_tasks.py"]
+        RESULT["Compiled prompt<br/>→ LLM call"]
+    end
+
+    ENT --> RENDER
+    PIPE --> RENDER
+    DATA --> RENDER
+    USER --> RENDER
+    PROMPT --> RENDER
+    RENDER --> RESULT
+    TASK -->|"provides context"| RENDER
+```
+
+### What This Unlocks
+
+| Capability | Description |
+|---|---|
+| **"Chat with an entity field"** | Write `{{entity.stage}}` in a prompt and the pipeline resolves it from the entity's actual data |
+| **Prompt versioning for ML** | A/B test memory generation prompts by switching Git branches |
+| **Unified editing** | One editor (Prompt Manager) for all prompts — agent identity AND memory pipeline |
+| **Entity-aware prompts** | Different prompts per entity type, with type-specific fields injected |
+| **Reuse** | A prompt crafted for the pipeline can also be rendered via API for external use |
+
+---
+
+## MasterAgent AI Assistant
+
+> [!IMPORTANT]
+> Since the user already configures their own LLM API keys, the platform should use those keys to power an **AI assistant that helps the user configure the platform itself**.
+
+### Concept
+
+A **chat bubble / sidebar** accessible from anywhere in the app. The user talks to "MasterAgent" — an AI persona that understands the platform's configuration model and can execute changes through tool calling.
+
+```
+┌──────────────────────────────────────┐
+│ 🤖 MasterAgent                    ─ │
+│                                      │
+│ You: "I'm setting up a CRM          │
+│ integration. I need to track         │
+│ contacts with fields: name,          │
+│ company, deal_stage, and source.     │
+│ Set up daily memory generation       │
+│ with strict PII filtering."          │
+│                                      │
+│ MasterAgent: "I'll set that up.      │
+│ Here's what I'm doing:               │
+│                                      │
+│ ✅ Created entity type 'contact'     │
+│    with subtypes: lead, client       │
+│ ✅ Added custom fields: company,     │
+│    deal_stage, source                │
+│ ✅ Enabled PII scrubbing             │
+│ ✅ Set generation schedule: 02:00    │
+│ ✅ Created webhook source 'CRM'      │
+│                                      │
+│ Want me to also create a memory      │
+│ generation prompt optimized for      │
+│ CRM interactions?"                   │
+│                                      │
+│ [Type a message...]            Send  │
+└──────────────────────────────────────┘
+```
+
+### How It Works
+
+1. **Uses the user's own LLM** — routes through the configured LLM provider (same infrastructure as the memory pipeline)
+2. **Tool calling / function calling** — MasterAgent has tools that map to platform APIs:
+
+```
+Available Tools:
+├── Prompts
+│   ├── create_prompt(name, description)
+│   ├── add_section(prompt_id, name, content)
+│   ├── add_variable(prompt_id, name, type, default)
+│   └── update_section(prompt_id, section, content)
+│
+├── Memory
+│   ├── create_entity_type(name, icon, description)
+│   ├── add_entity_subtype(type_id, name)
+│   ├── add_entity_field(type, field_name, field_type)
+│   ├── update_pipeline_config(tab, settings)
+│   ├── assign_llm_task(task_type, provider_id, model)
+│   └── create_webhook_source(name, system, config)
+│
+├── Settings
+│   ├── update_memory_settings(key, value)
+│   ├── add_llm_provider(name, provider, api_key)
+│   └── update_llm_provider(id, settings)
+│
+└── Tools (future)
+    ├── register_mcp_server(url, name)
+    └── list_available_tools()
+```
+
+3. **Context-aware** — MasterAgent knows the current page/tab the user is on and can offer contextual help
+4. **Reads current state** — before making changes, it reads the current configuration to avoid duplicates and suggest improvements
+
+### What The User Can Do
+
+| User says | MasterAgent does |
+|---|---|
+| *"I'm hooking up Intercom. Set up webhook with PII filtering"* | Creates webhook source, enables PII, creates entity type if needed |
+| *"Write me a memory generation prompt that's good for sales conversations"* | Creates a prompt in the Prompt Manager with optimized sections and variables |
+| *"Change NER to use GPT-4o instead of GLiNER"* | Updates the entity_extraction LLM config |
+| *"Show me what my pipeline looks like right now"* | Reads all configs and presents a summary |
+| *"I want more aggressive insight generation — check every 5 memories"* | Updates compaction_threshold to 5 |
+| *"Add a 'priority' field to contacts"* | Adds field to entity type config metadata_field_map |
+
+### Implementation Notes
+
+- The MasterAgent persona prompt itself would be a **Prompt Manager entry** (dogfooding Layer 1)
+- The tool definitions are essentially an **MCP server** that wraps the platform's own REST API (dogfooding Layer 3)
+- The chat UI could reuse patterns from the entity workspace chat (already built in `memory/workspace.py`)
+- LLM calls route through the existing `call_llm()` infrastructure with the user's configured provider
+
+---
+
+## Current Codebase Mapping
+
+```
+backend/
+├── core/                   # Shared: DB, auth, storage
+├── routes/                 # Layer 1: Prompt Manager endpoints
+├── storage_service.py      # Layer 1: GitHub/Local storage
+├── memory/                 # Layer 2: Memory routers + logic
+├── memory_tasks.py         # Layer 2: Pipeline engine
+├── memory_db.py            # Layer 2: Memory schema
+├── services/               # Shared: LLM, embeddings, search
+└── server.py               # FastAPI mount point
+
+frontend/
+├── pages/
+│   ├── PromptEditorPage    # Layer 1
+│   ├── DashboardPage       # Layer 1
+│   ├── TemplatesPage       # Layer 1
+│   ├── MemoryExplorerPage  # Layer 2
+│   ├── MemoryMonitorPage   # Layer 2
+│   └── SettingsPage        # Shared (both layers)
+└── components/settings/
+    ├── StorageSettings         # Layer 1
+    ├── LLMProviderSettings     # Shared (credentials)
+    ├── AccessSettings          # Shared (API keys)
+    ├── KnowledgeModelSettings  # Layer 2
+    └── MemorySettings (NEW)    # Layer 2 (pipeline modeler)
+```
+
+---
+
+## Phasing
+
+### Now: Pipeline Modeler UI
+- Build Memory Settings multi-tab (Ingestion / Generalization / Analytics)
+- Distribute LLM task assignments into pipeline tabs
+- Each tab has inline prompt editing (plain textarea for now)
+
+### Next: Prompt Integration
+- Memory system prompts become Prompt Manager entries
+- Entity fields register as injectable variables
+- `get_system_prompt()` resolves through the Prompt Manager render engine
+- Inline editing in Memory Settings opens the Prompt Editor
+
+### Then: MasterAgent AI Assistant
+- Chat bubble component (reuse workspace chat patterns)
+- Tool definitions wrapping platform APIs
+- MasterAgent persona prompt (managed in Prompt Manager)
+- Context-aware suggestions based on current page
+
+### Later: Tiptap + MCP Hub
+- Rich prompt editing with variable chips
+- MCP Hub integration for tool management
+- MasterAgent gains tool-calling for external MCPs

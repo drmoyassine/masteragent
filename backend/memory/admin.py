@@ -204,8 +204,8 @@ async def promote_insight_to_lesson(
         raise HTTPException(status_code=404, detail="Insight not found")
 
     # Enqueue promotion job directly to orchestrator
-    from memory.queue import memory_bulk_queue
-    await memory_bulk_queue.add("promote_to_lesson", {"insight_id": insight_id})
+    from memory.queue import knowledge_queue
+    await knowledge_queue.add("promote_to_lesson", {"insight_id": insight_id})
     return {"message": "Promotion queued", "insight_id": insight_id}
 
 
@@ -416,8 +416,8 @@ async def trigger_compact_entity(
     admin: dict = Depends(require_admin_auth)
 ):
     """Manually trigger compaction (insight generation) for an entity via queue drop."""
-    from memory.queue import memory_bulk_queue
-    await memory_bulk_queue.add("generate_insight", {"entity_type": entity_type, "entity_id": entity_id}, {"priority": 1})
+    from memory.queue import knowledge_queue
+    await knowledge_queue.add("generate_insight", {"entity_type": entity_type, "entity_id": entity_id}, {"priority": 1})
     return {"message": "Compaction triggered via queue", "entity_type": entity_type, "entity_id": entity_id}
 
 
@@ -435,8 +435,8 @@ async def trigger_memory_generation(
 @router.post("/trigger/run-lesson-check")
 async def trigger_lesson_check(admin: dict = Depends(require_admin_auth)):
     """Manually trigger the lesson accumulation check via queue drop."""
-    from memory.queue import memory_bulk_queue
-    await memory_bulk_queue.add("generate_lesson", {}, {"priority": 1})
+    from memory.queue import knowledge_queue
+    await knowledge_queue.add("generate_lesson", {}, {"priority": 1})
     return {"message": "Lesson check queued"}
 
 
@@ -973,7 +973,7 @@ async def bulk_reprocess_memories(
     admin: dict = Depends(require_admin_auth)
 ):
     """Delete memories and enqueue their interactions back into memory pipeline generation."""
-    from memory.queue import memory_bulk_queue
+    from memory.queue import memory_queue
     memory_ids = payload.get("memory_ids", [])
     if not memory_ids:
         return {"queued": 0}
@@ -1007,7 +1007,7 @@ async def bulk_reprocess_memories(
             
             # Requeue background job for generation
             # Date can safely be str representation for memory tasks
-            await memory_bulk_queue.add("generate_memory", {
+            await memory_queue.add("generate_memory", {
                 "entity_type": mem["primary_entity_type"],
                 "entity_id": mem["primary_entity_id"],
                 "interaction_date": str(mem["date"])

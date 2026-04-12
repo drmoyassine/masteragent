@@ -164,6 +164,36 @@ function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProvide
                 </CardContent>
             </Card>
 
+            {/* Queue Dynamics */}
+            <Card>
+                <CardHeader className="pb-3">
+                    <div className="flex items-center gap-2">
+                        <Cpu className="w-5 h-5 text-indigo-500" />
+                        <CardTitle className="text-lg">Queue Dynamics</CardTitle>
+                    </div>
+                    <CardDescription className="text-xs mt-1.5">
+                        Parallel BullMQ execution workers for raw interactions.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <div className="space-y-2">
+                        <Label className="text-xs font-mono">Max Concurrency</Label>
+                        <Input
+                            type="number"
+                            min="1"
+                            max="50"
+                            value={settings.interactions_queue_concurrency || 5}
+                            onChange={(e) =>
+                                onUpdateSettings(
+                                    "interactions_queue_concurrency",
+                                    parseInt(e.target.value) || 5
+                                )
+                            }
+                        />
+                    </div>
+                </CardContent>
+            </Card>
+
             {/* Outbound Webhooks */}
             <OutboundWebhooksSettings />
         </div>
@@ -304,6 +334,36 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
                     onFetchModels={onFetchModels}
                 />
             )}
+
+            {/* Queue Dynamics */}
+            <Card>
+                <CardHeader className="pb-3">
+                    <div className="flex items-center gap-2">
+                        <Cpu className="w-5 h-5 text-indigo-500" />
+                        <CardTitle className="text-lg">Queue Dynamics</CardTitle>
+                    </div>
+                    <CardDescription className="text-xs mt-1.5">
+                        Parallel BullMQ execution workers for memory generation tasks.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <div className="space-y-2">
+                        <Label className="text-xs font-mono">Max Concurrency</Label>
+                        <Input
+                            type="number"
+                            min="1"
+                            max="50"
+                            value={settings.memory_queue_concurrency || 1}
+                            onChange={(e) =>
+                                onUpdateSettings(
+                                    "memory_queue_concurrency",
+                                    parseInt(e.target.value) || 1
+                                )
+                            }
+                        />
+                    </div>
+                </CardContent>
+            </Card>
         </div>
     );
 }
@@ -452,6 +512,36 @@ function KnowledgeGenerationTab({ settings, onUpdateSettings, llmConfigs, llmPro
                     onFetchModels={onFetchModels}
                 />
             )}
+
+            {/* Queue Dynamics */}
+            <Card>
+                <CardHeader className="pb-3">
+                    <div className="flex items-center gap-2">
+                        <Cpu className="w-5 h-5 text-indigo-500" />
+                        <CardTitle className="text-lg">Queue Dynamics</CardTitle>
+                    </div>
+                    <CardDescription className="text-xs mt-1.5">
+                        Parallel BullMQ execution workers for knowledge and lesson generation.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <div className="space-y-2">
+                        <Label className="text-xs font-mono">Max Concurrency</Label>
+                        <Input
+                            type="number"
+                            min="1"
+                            max="50"
+                            value={settings.knowledge_queue_concurrency || 1}
+                            onChange={(e) =>
+                                onUpdateSettings(
+                                    "knowledge_queue_concurrency",
+                                    parseInt(e.target.value) || 1
+                                )
+                            }
+                        />
+                    </div>
+                </CardContent>
+            </Card>
         </div>
     );
 }

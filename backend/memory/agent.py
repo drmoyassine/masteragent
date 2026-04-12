@@ -79,8 +79,8 @@ async def ingest_interaction(
         # Ensure commit happens here seamlessly by context manager exiting before passing to BullMQ
 
     # Enqueue standard DLQ compliant backend task
-    from memory.queue import memory_bulk_queue
-    await memory_bulk_queue.add(
+    from memory.queue import interactions_queue
+    await interactions_queue.add(
         "ingest_interaction", 
         {"interaction_id": interaction_id}, 
         {"attempts": 3, "backoff": {"type": "exponential", "delay": 2000}}

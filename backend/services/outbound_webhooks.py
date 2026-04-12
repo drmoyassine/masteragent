@@ -69,8 +69,8 @@ async def evaluate_outbound_webhooks(interaction_id: str):
             # Enqueue delayed job
             try:
                 # Import locally to avoid circular dependencies
-                from memory.queue import memory_bulk_queue
-                await memory_bulk_queue.add(
+                from memory.queue import interactions_queue
+                await interactions_queue.add(
                     "fire_outbound_webhook",
                     {
                         "webhook_id": webhook_id, 
