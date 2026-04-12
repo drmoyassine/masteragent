@@ -55,33 +55,6 @@ function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProvide
                 </p>
             </div>
 
-            {/* Vision Processing */}
-            <Card>
-                <CardHeader className="pb-3">
-                    <div className="flex items-center gap-2">
-                        <ImageIcon className="w-5 h-5 text-purple-500" />
-                        <CardTitle className="text-lg">Vision Processing</CardTitle>
-                    </div>
-                    <CardDescription className="text-xs">
-                        Configure how images and documents are processed by vision AI models.
-                    </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                    <div className="flex items-center justify-between">
-                        <div className="space-y-0.5">
-                            <Label>Enable Vision Processing</Label>
-                            <p className="text-[10px] text-muted-foreground">
-                                Allow processing image/document attachments from interactions
-                            </p>
-                        </div>
-                        <Switch
-                            checked={settings.vision_enabled !== false} // default true or whatever user has
-                            onCheckedChange={(v) => onUpdateSettings("vision_enabled", v)}
-                        />
-                    </div>
-                </CardContent>
-            </Card>
-
             {/* Vision / Document Parsing Task Assignment */}
             {visionConfig && (
                 <InlineTaskConfigAccordion
@@ -92,6 +65,11 @@ function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProvide
                     loadingModels={fetchingModels[visionConfig.id]}
                     error={fetchErrors[visionConfig.id]}
                     onFetchModels={onFetchModels}
+                    titleOverride="Vision Processing"
+                    descriptionOverride="Configure how images and documents are processed by vision AI models."
+                    isToggleable={true}
+                    toggleChecked={settings.vision_enabled !== false}
+                    onToggleChange={(v) => onUpdateSettings("vision_enabled", v)}
                 />
             )}
 

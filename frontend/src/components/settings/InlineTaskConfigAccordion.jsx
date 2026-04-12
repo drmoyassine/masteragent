@@ -48,7 +48,12 @@ export function InlineTaskConfigAccordion({
     models,
     loadingModels,
     error,
-    onFetchModels
+    onFetchModels,
+    titleOverride,
+    descriptionOverride,
+    isToggleable,
+    toggleChecked,
+    onToggleChange
 }) {
     const [expanded, setExpanded] = useState(false);
     const [formData, setFormData] = useState({
@@ -64,7 +69,7 @@ export function InlineTaskConfigAccordion({
     const [isLinked, setIsLinked] = useState(!!config.prompt_id);
 
     useEffect(() => {
-        if (expanded && config.task_type !== "embedding" && config.task_type !== "vision" && config.task_type !== "pii_scrubbing") {
+        if (expanded && config.task_type !== "embedding" && config.task_type !== "pii_scrubbing") {
             getPrompts()
                 .then(res => setAvailablePrompts(res.data))
                 .catch(err => console.error("Failed to fetch prompts:", err));
@@ -80,7 +85,7 @@ export function InlineTaskConfigAccordion({
     const assignedProvider = llmProviders.find((p) => p.id === (formData.provider_id || config.provider_id));
     const isConfigured = !!assignedProvider && !!(formData.model_name || config.model_name);
 
-    const hasPrompting = config.task_type !== "embedding" && config.task_type !== "vision" && config.task_type !== "pii_scrubbing";
+    const hasPrompting = config.task_type !== "embedding" && config.task_type !== "pii_scrubbing";
     
     const canFetchModels = assignedProvider ? ["openai", "anthropic", "gemini", "openrouter", "ollama"].includes(assignedProvider.provider) : false;
 
@@ -108,15 +113,27 @@ export function InlineTaskConfigAccordion({
                         <TaskIcon className="w-5 h-5 text-white" />
                     </div>
                     <div>
-                        <h3 className="font-semibold text-foreground">{taskInfo.label}</h3>
-                        <p className="text-sm text-muted-foreground">
-                            {isConfigured
-                                ? `${assignedProvider.name} (${config.model_name || formData.model_name})`
-                                : "Not assigned"}
-                        </p>
+                        <h3 className="font-semibold text-foreground">{titleOverride || taskInfo.label}</h3>
+                        {descriptionOverride ? (
+                            <p className="text-sm text-muted-foreground">{descriptionOverride}</p>
+                        ) : (
+                            <p className="text-sm text-muted-foreground">
+                                {isConfigured
+                                    ? `${assignedProvider.name} (${config.model_name || formData.model_name})`
+                                    : "Not assigned"}
+                            </p>
+                        )}
                     </div>
                 </div>
                 <div className="flex items-center gap-4">
+                    {isToggleable && (
+                        <div onClick={(e) => e.stopPropagation()} className="flex items-center">
+                            <Switch 
+                                checked={toggleChecked} 
+                                onCheckedChange={onToggleChange} 
+                            />
+                        </div>
+                    )}
                     {isConfigured ? (
                         <Badge variant="default" className="bg-green-500">
                             <CheckCircle2 className="w-3 h-3 mr-1" /> Ready
