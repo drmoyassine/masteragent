@@ -36,7 +36,7 @@ import {
     TASK_TYPE_LABELS,
 } from "@/components/settings/LLMProviderSettings";
 import { InlineTaskConfigAccordion } from "./InlineTaskConfigAccordion";
-
+import { OutboundWebhooksSettings } from "./OutboundWebhooksSettings";
 
 // ─── Ingestion Tab ───────────────────────────────────────────────────────────
 function IngestionTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, modelLists, fetchingModels, fetchErrors, onFetchModels }) {
@@ -205,6 +205,9 @@ function IngestionTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                     </div>
                 </CardContent>
             </Card>
+
+            {/* Outbound Webhooks */}
+            <OutboundWebhooksSettings />
         </div>
     );
 }

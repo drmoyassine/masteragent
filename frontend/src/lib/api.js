@@ -182,6 +182,12 @@ export const createLessonAdmin = (data) => api.post('/memory/lessons', data);
 export const updateLessonAdmin = (id, data) => api.put(`/memory/lessons/${id}`, data);
 export const deleteLessonAdmin = (id) => api.delete(`/memory/lessons/${id}`);
 
+// Outbound Webhooks - Admin UI
+export const getOutboundWebhooks = () => api.get('/memory/outbound-webhooks');
+export const createOutboundWebhook = (data) => api.post('/memory/outbound-webhooks', data);
+export const updateOutboundWebhook = (id, data) => api.patch(`/memory/outbound-webhooks/${id}`, data);
+export const deleteOutboundWebhook = (id) => api.delete(`/memory/outbound-webhooks/${id}`);
+
 // ============================================
 // Variables System APIs
 // ============================================
