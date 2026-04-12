@@ -187,7 +187,7 @@ async def process_interaction(interaction_id: str):
         if embedding:
             cursor.execute("""
                 UPDATE interactions 
-                SET content = %s, attachment_refs = %s, embedding = %s, processing_errors = %s, is_enriched = TRUE
+                SET content = %s, attachment_refs = %s, embedding = %s, processing_errors = %s
                 WHERE id = %s
             """, (
                 content, json.dumps(attachment_refs, ensure_ascii=False), embedding, 
@@ -196,7 +196,7 @@ async def process_interaction(interaction_id: str):
         else:
             cursor.execute("""
                 UPDATE interactions 
-                SET content = %s, attachment_refs = %s, processing_errors = %s, is_enriched = TRUE
+                SET content = %s, attachment_refs = %s, processing_errors = %s
                 WHERE id = %s
             """, (
                 content, json.dumps(attachment_refs, ensure_ascii=False), 
@@ -215,13 +215,6 @@ async def process_interaction(interaction_id: str):
         "timestamp": str(interaction["timestamp"]),
         "metadata_field_map": json.loads(interaction.get("metadata_field_map") or "{}"),
     })
-
-    # Trigger Outbound Webhooks logic
-    try:
-        from services.outbound_webhooks import evaluate_outbound_webhooks
-        await evaluate_outbound_webhooks(interaction_id)
-    except Exception as e:
-        logger.error(f"Failed to evaluate outbound webhooks for {interaction_id}: {e}")
 
 
 
@@ -310,8 +303,8 @@ async def _background_loop():
                     await run_daily_memory_generation()
                     await run_compaction_check()
                     
-                    from memory.queue import knowledge_queue
-                    await knowledge_queue.add("generate_lesson", {}, {"priority": 3})
+                    from memory.queue import memory_bulk_queue
+                    await memory_bulk_queue.add("generate_lesson", {}, {"priority": 3})
 
         except Exception as e:
             logger.error(f"Background loop error: {e}", exc_info=True)
@@ -393,15 +386,11 @@ async def run_daily_memory_generation(include_today: bool = False):
                 continue
 
         try:
-            settings = get_memory_settings()
-            retries = int(settings.get("memory_queue_retries", 3))
-            delay = int(settings.get("memory_queue_retry_delay", 2000))
-            
-            from memory.queue import memory_queue
-            await memory_queue.add(
+            from memory.queue import memory_bulk_queue
+            await memory_bulk_queue.add(
                 "generate_memory", 
                 {"entity_type": entity_type, "entity_id": entity_id, "interaction_date": interaction_date},
-                {"priority": 5, "attempts": retries, "backoff": {"type": "exponential", "delay": delay}}
+                {"priority": 5}
             )
         except Exception as e:
             logger.error(f"Memory enqueue failed for {entity_type}/{entity_id} on {interaction_date}: {e}")
@@ -708,8 +697,8 @@ async def _check_compaction_trigger(entity_type: str, entity_id: str, config: di
     if count_trigger or days_trigger:
         reason = "count" if count_trigger else "days"
         logger.info(f"Compaction trigger enqueue ({reason}) for {entity_type}/{entity_id}: {count} memories, oldest={oldest_date}")
-        from memory.queue import knowledge_queue
-        await knowledge_queue.add(
+        from memory.queue import memory_bulk_queue
+        await memory_bulk_queue.add(
             "generate_insight", 
             {"entity_type": entity_type, "entity_id": entity_id},
             {"priority": 4}

@@ -40,7 +40,6 @@ import { OutboundWebhooksSettings } from "./OutboundWebhooksSettings";
 
 // ─── Raw Interactions Tab ───────────────────────────────────────────────────
 function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, modelLists, fetchingModels, fetchErrors, onFetchModels }) {
-    const embeddingConfig = llmConfigs.find((c) => c.task_type === "embedding");
     const visionConfig = llmConfigs.find((c) => c.task_type === "vision");
 
     return (
@@ -73,123 +72,76 @@ function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProvide
                 />
             )}
 
-            {/* Embedding Task Assignment & Config */}
-            {embeddingConfig && (
-                <InlineTaskConfigAccordion
-                    config={embeddingConfig}
-                    llmProviders={llmProviders}
-                    onSaveConfig={onSaveConfig}
-                    models={modelLists[embeddingConfig.id] || []}
-                    loadingModels={fetchingModels[embeddingConfig.id]}
-                    error={fetchErrors[embeddingConfig.id]}
-                    onFetchModels={onFetchModels}
-                    titleOverride="Interaction Embeddings"
-                    descriptionOverride="Configure vectorization settings for raw interaction text."
-                    isToggleable={true}
-                    toggleChecked={settings.interaction_embeddings_enabled !== false}
-                    onToggleChange={(v) => onUpdateSettings("interaction_embeddings_enabled", v)}
-                >
-                    <div className="space-y-4">
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                                <Label className="text-xs font-mono">Chunk Size (tokens)</Label>
-                                <Input
-                                    type="number"
-                                    min={100}
-                                    max={2000}
-                                    value={settings.chunk_size || 400}
-                                    onChange={(e) =>
-                                        onUpdateSettings("chunk_size", parseInt(e.target.value))
-                                    }
-                                />
-                            </div>
-                            <div className="space-y-2">
-                                <Label className="text-xs font-mono">Chunk Overlap (tokens)</Label>
-                                <Input
-                                    type="number"
-                                    min={0}
-                                    max={500}
-                                    value={settings.chunk_overlap || 80}
-                                    onChange={(e) =>
-                                        onUpdateSettings("chunk_overlap", parseInt(e.target.value))
-                                    }
-                                />
-                            </div>
-                        </div>
-                        <p className="text-[10px] text-muted-foreground">
-                            Controls how interaction text is split before embedding. larger chunks = more context, smaller = finer search.
-                        </p>
-                    </div>
-                </InlineTaskConfigAccordion>
-            )}
 
-            {/* Rate Limiting */}
+
+            {/* Ingestion Throughput */}
             <Card>
                 <CardHeader className="pb-3">
                     <div className="flex items-center gap-2">
                         <Zap className="w-5 h-5 text-amber-500" />
-                        <CardTitle className="text-lg">Rate Limiting</CardTitle>
+                        <CardTitle className="text-lg">Ingestion Throughput</CardTitle>
                     </div>
                     <CardDescription className="text-xs">
-                        Control API usage by agents
+                        Configure inbound rate limits and parallel processing queues.
                     </CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-4">
-                    <div className="flex items-center justify-between">
-                        <div className="space-y-0.5">
-                            <Label>Enable Rate Limiting</Label>
-                            <p className="text-[10px] text-muted-foreground">
-                                Limit requests per agent
-                            </p>
+                <CardContent className="space-y-6">
+                    <div className="space-y-4">
+                        <h4 className="text-sm font-semibold flex items-center gap-1.5 border-b pb-1">
+                            <Zap className="w-4 h-4 text-amber-500" />
+                            API Rate Limiting
+                        </h4>
+                        <div className="flex items-center justify-between">
+                            <div className="space-y-0.5">
+                                <Label>Enable Rate Limiting</Label>
+                                <p className="text-[10px] text-muted-foreground">
+                                    Limit inbound API requests per agent.
+                                </p>
+                            </div>
+                            <Switch
+                                checked={settings.rate_limit_enabled}
+                                onCheckedChange={(v) => onUpdateSettings("rate_limit_enabled", v)}
+                            />
                         </div>
-                        <Switch
-                            checked={settings.rate_limit_enabled}
-                            onCheckedChange={(v) => onUpdateSettings("rate_limit_enabled", v)}
-                        />
+                        <div className="space-y-2">
+                            <Label className="text-xs font-mono">Requests per Minute (RPM)</Label>
+                            <Input
+                                type="number"
+                                value={settings.rate_limit_per_minute || 60}
+                                onChange={(e) =>
+                                    onUpdateSettings(
+                                        "rate_limit_per_minute",
+                                        parseInt(e.target.value)
+                                    )
+                                }
+                                disabled={!settings.rate_limit_enabled}
+                            />
+                        </div>
                     </div>
-                    <div className="space-y-2">
-                        <Label className="text-xs font-mono">Requests per Minute</Label>
-                        <Input
-                            type="number"
-                            value={settings.rate_limit_per_minute || 60}
-                            onChange={(e) =>
-                                onUpdateSettings(
-                                    "rate_limit_per_minute",
-                                    parseInt(e.target.value)
-                                )
-                            }
-                            disabled={!settings.rate_limit_enabled}
-                        />
-                    </div>
-                </CardContent>
-            </Card>
 
-            {/* Queue Dynamics */}
-            <Card>
-                <CardHeader className="pb-3">
-                    <div className="flex items-center gap-2">
-                        <Cpu className="w-5 h-5 text-indigo-500" />
-                        <CardTitle className="text-lg">Queue Dynamics</CardTitle>
-                    </div>
-                    <CardDescription className="text-xs mt-1.5">
-                        Parallel BullMQ execution workers for raw interactions.
-                    </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                    <div className="space-y-2">
-                        <Label className="text-xs font-mono">Max Concurrency</Label>
-                        <Input
-                            type="number"
-                            min="1"
-                            max="50"
-                            value={settings.interactions_queue_concurrency || 5}
-                            onChange={(e) =>
-                                onUpdateSettings(
-                                    "interactions_queue_concurrency",
-                                    parseInt(e.target.value) || 5
-                                )
-                            }
-                        />
+                    <div className="space-y-4 pt-2">
+                        <h4 className="text-sm font-semibold flex items-center gap-1.5 border-b pb-1">
+                            <Cpu className="w-4 h-4 text-indigo-500" />
+                            Queue Dynamics
+                        </h4>
+                        <div className="space-y-2">
+                            <Label className="text-xs font-mono">Max Background Concurrency</Label>
+                            <p className="text-[10px] text-muted-foreground mb-2 whitespace-nowrap overflow-hidden text-ellipsis w-full">
+                                Parallel BullMQ execution workers. Adjust if hitting LLM limits.
+                            </p>
+                            <Input
+                                type="number"
+                                min="1"
+                                max="50"
+                                value={settings.interactions_queue_concurrency || 5}
+                                onChange={(e) =>
+                                    onUpdateSettings(
+                                        "interactions_queue_concurrency",
+                                        parseInt(e.target.value) || 5
+                                    )
+                                }
+                            />
+                        </div>
                     </div>
                 </CardContent>
             </Card>
@@ -204,8 +156,8 @@ function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProvide
 function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, modelLists, fetchingModels, fetchErrors, onFetchModels }) {
     const [isTriggering, setIsTriggering] = useState(false);
     const nerConfig = llmConfigs.find((c) => c.task_type === "entity_extraction");
-    const summarizationConfig = llmConfigs.find((c) => c.task_type === "summarization");
     const memoryGenConfig = llmConfigs.find((c) => c.task_type === "memory_generation");
+    const embeddingConfig = llmConfigs.find((c) => c.task_type === "embedding");
 
     const handleRunNow = async () => {
         setIsTriggering(true);
@@ -306,6 +258,7 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
                     loadingModels={fetchingModels[memoryGenConfig.id]}
                     error={fetchErrors[memoryGenConfig.id]}
                     onFetchModels={onFetchModels}
+                    titleOverride="Configure Memory Generation Prompt:"
                 />
             )}
 
@@ -319,48 +272,127 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
                     loadingModels={fetchingModels[nerConfig.id]}
                     error={fetchErrors[nerConfig.id]}
                     onFetchModels={onFetchModels}
+                    titleOverride="Configure Entity Extraction"
                 />
             )}
 
-            {/* Summarization Task Assignment */}
-            {summarizationConfig && (
+            {/* Embedding Task Assignment & Config */}
+            {embeddingConfig && (
                 <InlineTaskConfigAccordion
-                    config={summarizationConfig}
+                    config={embeddingConfig}
                     llmProviders={llmProviders}
                     onSaveConfig={onSaveConfig}
-                    models={modelLists[summarizationConfig.id] || []}
-                    loadingModels={fetchingModels[summarizationConfig.id]}
-                    error={fetchErrors[summarizationConfig.id]}
+                    models={modelLists[embeddingConfig.id] || []}
+                    loadingModels={fetchingModels[embeddingConfig.id]}
+                    error={fetchErrors[embeddingConfig.id]}
                     onFetchModels={onFetchModels}
-                />
+                    titleOverride="Interaction Embeddings"
+                    descriptionOverride="Configure vectorization settings for raw interaction text."
+                    isToggleable={true}
+                    toggleChecked={settings.interaction_embeddings_enabled !== false}
+                    onToggleChange={(v) => onUpdateSettings("interaction_embeddings_enabled", v)}
+                >
+                    <div className="space-y-4">
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                                <Label className="text-xs font-mono">Chunk Size (tokens)</Label>
+                                <Input
+                                    type="number"
+                                    min={100}
+                                    max={2000}
+                                    value={settings.chunk_size || 400}
+                                    onChange={(e) =>
+                                        onUpdateSettings("chunk_size", parseInt(e.target.value))
+                                    }
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label className="text-xs font-mono">Chunk Overlap (tokens)</Label>
+                                <Input
+                                    type="number"
+                                    min={0}
+                                    max={500}
+                                    value={settings.chunk_overlap || 80}
+                                    onChange={(e) =>
+                                        onUpdateSettings("chunk_overlap", parseInt(e.target.value))
+                                    }
+                                />
+                            </div>
+                        </div>
+                        <p className="text-[10px] text-muted-foreground">
+                            Controls how interaction text is split before embedding. larger chunks = more context, smaller = finer search.
+                        </p>
+                    </div>
+                </InlineTaskConfigAccordion>
             )}
 
-            {/* Queue Dynamics */}
+            {/* Processing Throughput */}
             <Card>
                 <CardHeader className="pb-3">
                     <div className="flex items-center gap-2">
                         <Cpu className="w-5 h-5 text-indigo-500" />
-                        <CardTitle className="text-lg">Queue Dynamics</CardTitle>
+                        <CardTitle className="text-lg">Processing Throughput</CardTitle>
                     </div>
                     <CardDescription className="text-xs mt-1.5">
-                        Parallel BullMQ execution workers for memory generation tasks.
+                        Parallel BullMQ workers and retry mechanics for memory generation.
                     </CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-4">
-                    <div className="space-y-2">
-                        <Label className="text-xs font-mono">Max Concurrency</Label>
-                        <Input
-                            type="number"
-                            min="1"
-                            max="50"
-                            value={settings.memory_queue_concurrency || 1}
-                            onChange={(e) =>
-                                onUpdateSettings(
-                                    "memory_queue_concurrency",
-                                    parseInt(e.target.value) || 1
-                                )
-                            }
-                        />
+                <CardContent className="space-y-6">
+                    <div className="space-y-4">
+                        <h4 className="text-sm font-semibold flex items-center gap-1.5 border-b pb-1">
+                            <Cpu className="w-4 h-4 text-indigo-500" />
+                            Queue Dynamics
+                        </h4>
+                        <div className="space-y-2">
+                            <Label className="text-xs font-mono">Max Concurrency</Label>
+                            <Input
+                                type="number"
+                                min="1"
+                                max="50"
+                                value={settings.memory_queue_concurrency || 1}
+                                onChange={(e) =>
+                                    onUpdateSettings(
+                                        "memory_queue_concurrency",
+                                        parseInt(e.target.value) || 1
+                                    )
+                                }
+                            />
+                        </div>
+                    </div>
+                    <div className="space-y-4 pt-2">
+                        <h4 className="text-sm font-semibold flex items-center gap-1.5 border-b pb-1">
+                            <Play className="w-4 h-4 text-blue-500" />
+                            Job Retry Policy
+                        </h4>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                                <Label className="text-xs font-mono">Max Retries</Label>
+                                <Input
+                                    type="number"
+                                    min="0"
+                                    max="10"
+                                    value={settings.memory_queue_retries !== undefined ? settings.memory_queue_retries : 3}
+                                    onChange={(e) =>
+                                        onUpdateSettings("memory_queue_retries", parseInt(e.target.value))
+                                    }
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label className="text-xs font-mono">Retry Delay (ms)</Label>
+                                <Input
+                                    type="number"
+                                    min="0"
+                                    step="500"
+                                    value={settings.memory_queue_retry_delay !== undefined ? settings.memory_queue_retry_delay : 2000}
+                                    onChange={(e) =>
+                                        onUpdateSettings("memory_queue_retry_delay", parseInt(e.target.value))
+                                    }
+                                />
+                            </div>
+                        </div>
+                        <p className="text-[10px] text-muted-foreground">
+                            BullMQ will exponentially back off using the base delay specified above on failure.
+                        </p>
                     </div>
                 </CardContent>
             </Card>
@@ -372,6 +404,7 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
 function KnowledgeGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, modelLists, fetchingModels, fetchErrors, onFetchModels }) {
     const insightConfig = llmConfigs.find((c) => c.task_type === "insight_generation");
     const piiConfig = llmConfigs.find((c) => c.task_type === "pii_scrubbing");
+    const summarizationConfig = llmConfigs.find((c) => c.task_type === "summarization");
 
     return (
         <div className="space-y-6">
@@ -509,6 +542,19 @@ function KnowledgeGenerationTab({ settings, onUpdateSettings, llmConfigs, llmPro
                     models={modelLists[insightConfig.id] || []}
                     loadingModels={fetchingModels[insightConfig.id]}
                     error={fetchErrors[insightConfig.id]}
+                    onFetchModels={onFetchModels}
+                />
+            )}
+
+            {/* Summarization Task Assignment */}
+            {summarizationConfig && (
+                <InlineTaskConfigAccordion
+                    config={summarizationConfig}
+                    llmProviders={llmProviders}
+                    onSaveConfig={onSaveConfig}
+                    models={modelLists[summarizationConfig.id] || []}
+                    loadingModels={fetchingModels[summarizationConfig.id]}
+                    error={fetchErrors[summarizationConfig.id]}
                     onFetchModels={onFetchModels}
                 />
             )}

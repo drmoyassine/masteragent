@@ -30,7 +30,8 @@ from memory_models import (
 )
 from memory_services import (
     generate_embedding, search_memories_by_vector,
-    search_insights_by_vector, search_lessons_by_vector
+    search_insights_by_vector, search_lessons_by_vector,
+    get_memory_settings
 )
 from memory.auth import require_admin_auth
 
@@ -855,6 +856,8 @@ async def admin_get_daily_memories(
 async def list_admin_memories(
     entity_type: Optional[str] = Query(None),
     entity_id: Optional[str] = Query(None),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
     limit: int = Query(50, le=200),
     offset: int = Query(0),
     admin: dict = Depends(require_admin_auth)
@@ -869,6 +872,10 @@ async def list_admin_memories(
             conditions.append("primary_entity_type = %s"); params.append(entity_type)
         if entity_id:
             conditions.append("primary_entity_id = %s"); params.append(entity_id)
+        if start_date: 
+            conditions.append("date >= %s"); params.append(start_date)
+        if end_date: 
+            conditions.append("date <= %s"); params.append(end_date)
 
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
         cursor.execute(f"SELECT COUNT(*) as total FROM memories {where}", list(params))
@@ -983,6 +990,10 @@ async def bulk_reprocess_memories(
         cursor = conn.cursor()
         cursor.execute("SELECT id, primary_entity_type, primary_entity_id, date, interaction_ids FROM memories WHERE id = ANY(%s)", (memory_ids,))
         memories = cursor.fetchall()
+
+        settings = get_memory_settings()
+        retries = int(settings.get("memory_queue_retries", 3))
+        delay = int(settings.get("memory_queue_retry_delay", 2000))
         
         for mem in memories:
             i_ids = mem.get("interaction_ids", [])
@@ -1011,7 +1022,7 @@ async def bulk_reprocess_memories(
                 "entity_type": mem["primary_entity_type"],
                 "entity_id": mem["primary_entity_id"],
                 "interaction_date": str(mem["date"])
-            }, {"priority": 5})
+            }, {"priority": 5, "attempts": retries, "backoff": {"type": "exponential", "delay": delay}})
             queued_count += 1
             
         conn.commit()
