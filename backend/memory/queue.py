@@ -1,4 +1,4 @@
-import os
+﻿import os
 import json
 import asyncio
 import logging
@@ -29,6 +29,7 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379")
 interactions_queue = Queue("interactions_ops", opts={"connection": REDIS_URL})
 memory_queue = Queue("memory_ops", opts={"connection": REDIS_URL})
 knowledge_queue = Queue("knowledge_ops", opts={"connection": REDIS_URL})
+memory_bulk_queue = interactions_queue
 
 interactions_worker = None
 memory_worker = None
