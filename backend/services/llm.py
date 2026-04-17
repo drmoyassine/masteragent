@@ -31,18 +31,32 @@ async def call_llm(
     api_key = config.get("api_key_encrypted", "")
     api_base = config.get("api_base_url", "https://api.openai.com/v1").rstrip("/")
     model = config.get("model_name", "gpt-4o-mini")
+    provider = config.get("provider", "")
 
     messages = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
 
+    # Gemini and some models require max_completion_tokens instead of max_tokens
+    use_max_completion_tokens = provider in ("gemini", "google", "openrouter") or model.startswith("gemini-")
+
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
+            request_body = {
+                "model": model,
+                "messages": messages,
+                "temperature": 0.3,
+            }
+            if use_max_completion_tokens:
+                request_body["max_completion_tokens"] = max_tokens
+            else:
+                request_body["max_tokens"] = max_tokens
+
             response = await client.post(
                 f"{api_base}/chat/completions",
                 headers=_build_llm_headers(api_key),
-                json={"model": model, "messages": messages, "max_tokens": max_tokens, "temperature": 0.3},
+                json=request_body,
             )
             if response.status_code == 200:
                 return response.json()["choices"][0]["message"]["content"]
@@ -64,18 +78,28 @@ async def call_llm_vision(prompt: str, image_base64: str, mime_type: str = "imag
     api_key = config.get("api_key_encrypted", "")
     api_base = config.get("api_base_url", "https://api.openai.com/v1").rstrip("/")
     model = config.get("model_name", "gpt-4o")
+    provider = config.get("provider", "")
 
     messages = [{"role": "user", "content": [
         {"type": "text", "text": prompt},
         {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{image_base64}"}},
     ]}]
 
+    # Gemini and some models require max_completion_tokens instead of max_tokens
+    use_max_completion_tokens = provider in ("gemini", "google", "openrouter") or (model and model.startswith("gemini-"))
+
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
+            request_body = {"model": model, "messages": messages, "temperature": 0.1}
+            if use_max_completion_tokens:
+                request_body["max_completion_tokens"] = 4000
+            else:
+                request_body["max_tokens"] = 4000
+
             response = await client.post(
                 f"{api_base}/chat/completions",
                 headers=_build_llm_headers(api_key),
-                json={"model": model, "messages": messages, "max_tokens": 4000, "temperature": 0.1},
+                json=request_body,
             )
             if response.status_code == 200:
                 return response.json()["choices"][0]["message"]["content"]
