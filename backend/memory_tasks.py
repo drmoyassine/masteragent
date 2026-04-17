@@ -566,7 +566,7 @@ async def _generate_memory_for_entity(entity_type: str, entity_id: str, interact
     system_prompt = await get_system_prompt("memory_generation") or DEFAULT_MEMORY_PROMPT
     system_prompt = inject_variables(system_prompt, {
         "entity": {"type": entity_type, "id": entity_id},
-        "date": interaction_date.isoformat()
+        "date": interaction_date  # Already a string in ISO format from the queue
     })
     
     content_summary = ""
