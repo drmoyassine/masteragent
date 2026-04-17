@@ -95,8 +95,8 @@ async def summarize_text(text: str) -> str:
     """Generate a short summary of text using configured system prompt."""
     if not text:
         return ""
-    prompt_template = get_system_prompt("summarization") or "Summarize this in 1-2 sentences:\n\n{text}"
-    prompt = prompt_template.replace("{text}", text[:4000])
+    prompt_template = await get_system_prompt("summarization") or "Summarize this in 1-2 sentences:\n\n{{text}}"
+    prompt = prompt_template.replace("{{text}}", text[:4000])
     return await call_llm(prompt, max_tokens=200, task_type="summarization")
 
 
@@ -255,7 +255,7 @@ async def extract_entities_gliner(text: str, confidence_threshold: float = 0.5, 
 
 async def extract_entities_llm(text: str, confidence_threshold: float = 0.5, ner_schema: dict = None) -> dict:
     """Extract entities using LLM fallback."""
-    prompt_template = get_system_prompt("entity_extraction")
+    prompt_template = await get_system_prompt("entity_extraction")
     if not prompt_template:
         return _EMPTY_EXTRACTION
     if ner_schema and ner_schema.get("labels"):
