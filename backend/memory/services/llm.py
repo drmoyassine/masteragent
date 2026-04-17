@@ -38,16 +38,10 @@ async def call_llm(
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
 
-    # Gemini and some models require max_completion_tokens instead of max_tokens
-    use_max_completion_tokens = provider in ("gemini", "google", "openrouter") or (model and model.startswith("gemini-"))
-
+    # Use max_completion_tokens as it's supported by all major providers now
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
-            request_body = {"model": model, "messages": messages, "temperature": 0.3}
-            if use_max_completion_tokens:
-                request_body["max_completion_tokens"] = max_tokens
-            else:
-                request_body["max_tokens"] = max_tokens
+            request_body = {"model": model, "messages": messages, "temperature": 0.3, "max_completion_tokens": max_tokens}
 
             response = await client.post(
                 f"{api_base}/chat/completions",
@@ -79,16 +73,10 @@ async def call_llm_vision(prompt: str, image_base64: str, mime_type: str = "imag
         {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{image_base64}"}},
     ]}]
 
-    # Gemini and some models require max_completion_tokens instead of max_tokens
-    use_max_completion_tokens = provider in ("gemini", "google", "openrouter") or (model and model.startswith("gemini-"))
-
+    # Use max_completion_tokens as it's supported by all major providers now
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
-            request_body = {"model": model, "messages": messages, "temperature": 0.1}
-            if use_max_completion_tokens:
-                request_body["max_completion_tokens"] = 4000
-            else:
-                request_body["max_tokens"] = 4000
+            request_body = {"model": model, "messages": messages, "temperature": 0.1, "max_completion_tokens": 4000}
 
             response = await client.post(
                 f"{api_base}/chat/completions",
