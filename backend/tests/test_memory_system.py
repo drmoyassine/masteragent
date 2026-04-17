@@ -82,7 +82,7 @@ class TestLLMConfigs:
         
         # Check first config has required fields
         config = data[0]
-        required_fields = ["id", "task_type", "provider", "name", "is_active", "created_at", "updated_at"]
+        required_fields = ["id", "task_type", "provider_id", "is_active", "created_at", "updated_at"]
         for field in required_fields:
             assert field in config, f"Missing field: {field}"
         
@@ -103,19 +103,16 @@ class TestLLMConfigs:
         
         # Update the config
         update_data = {
-            "name": "Updated Summarizer Test",
             "model_name": "gpt-4o-mini-test"
         }
         response = authenticated_client.put(f"{BASE_URL}/api/memory/config/llm-configs/{config_id}", json=update_data)
         assert response.status_code == 200
         
         updated = response.json()
-        assert updated["name"] == "Updated Summarizer Test"
         assert updated["model_name"] == "gpt-4o-mini-test"
         
-        # Restore original name
+        # Restore original model
         restore_data = {
-            "name": "OpenAI Summarizer (Configure)",
             "model_name": "gpt-4o-mini"
         }
         authenticated_client.put(f"{BASE_URL}/api/memory/config/llm-configs/{config_id}", json=restore_data)
