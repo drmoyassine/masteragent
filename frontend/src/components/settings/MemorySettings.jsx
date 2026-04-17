@@ -623,6 +623,8 @@ export function MemorySettings({
     onUpdateSettings,
     onSaveConfig,
     onUpdateMemorySettings,
+    activeTab = "raw_interactions",
+    onTabChange,
 }) {
     const [modelLists, setModelLists] = useState({});
     const [fetchingModels, setFetchingModels] = useState({});
@@ -671,7 +673,7 @@ export function MemorySettings({
 
     return (
         <div className="max-w-4xl">
-            <Tabs defaultValue="raw_interactions" className="w-full">
+            <Tabs value={activeTab} onValueChange={onTabChange} className="w-full">
                 <TabsList className="grid w-full grid-cols-4 mb-8">
                     <TabsTrigger value="raw_interactions" className="gap-2">
                         <Zap className="w-4 h-4" />

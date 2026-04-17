@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Github,
   Key,
@@ -64,7 +64,12 @@ const TABS = [
 export default function SettingsPage({ onDisconnect }) {
   const navigate = useNavigate();
   const { storageMode, checkConfiguration } = useConfig();
-  const [activeTab, setActiveTab] = useState("storage");
+  const [searchParams, setSearchParams] = useSearchParams();
+  
+  // Deep linking: initialize tab from URL, validate against available tabs
+  const validTabs = ["storage", "llm", "access", "model", "memory"];
+  const urlTab = searchParams.get("tab");
+  const [activeTab, setActiveTab] = useState(validTabs.includes(urlTab) ? urlTab : "storage");
   const [loading, setLoading] = useState(true);
 
   // --- Shared State ---
@@ -384,7 +389,10 @@ export default function SettingsPage({ onDisconnect }) {
             return (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
+                onClick={() => {
+                  setActiveTab(tab.id);
+                  setSearchParams({ tab: tab.id }, { replace: true });
+                }}
                 className={`w-full flex items-start gap-3 p-3 rounded-lg transition-all text-left group ${isActive
                     ? "bg-primary/10 border-l-2 border-primary"
                     : "hover:bg-secondary/50 border-l-2 border-transparent"
@@ -487,6 +495,8 @@ export default function SettingsPage({ onDisconnect }) {
               onUpdateSettings={handleUpdateGeneralSettings}
               onSaveConfig={handleSaveLLMConfig}
               onUpdateMemorySettings={handleUpdateGeneralSettings}
+              activeTab={searchParams.get("memoryTab") || "raw_interactions"}
+              onTabChange={(tab) => setSearchParams({ tab: "memory", memoryTab: tab }, { replace: true })}
             />
           )}
         </main>

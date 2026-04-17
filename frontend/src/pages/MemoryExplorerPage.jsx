@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { format, subDays, subMonths, formatISO } from "date-fns";
 import api, {
@@ -85,7 +86,12 @@ const stringToColor = (str) => {
 };
 
 export default function MemoryExplorerPage() {
-  const [activeTab, setActiveTab] = useState("interactions");
+  const [searchParams, setSearchParams] = useSearchParams();
+  
+  // Deep linking: initialize tab from URL, validate against available tabs
+  const validTabs = ["interactions", "memories", "insights", "lessons"];
+  const urlTab = searchParams.get("tab");
+  const [activeTab, setActiveTab] = useState(validTabs.includes(urlTab) ? urlTab : "interactions");
   const [loading, setLoading] = useState(false);
   const [processingBulk, setProcessingBulk] = useState(false);
 
@@ -535,7 +541,10 @@ export default function MemoryExplorerPage() {
         </CardContent>
       </Card>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+      <Tabs value={activeTab} onValueChange={(tab) => {
+        setActiveTab(tab);
+        setSearchParams({ tab }, { replace: true });
+      }} className="space-y-4">
         <TabsList className="grid w-full grid-cols-4 lg:w-auto lg:inline-grid">
           <TabsTrigger value="interactions" className="gap-2" data-testid="tab-interactions">
             <User className="w-4 h-4" /> Interactions
