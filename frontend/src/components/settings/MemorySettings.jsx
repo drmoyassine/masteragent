@@ -38,7 +38,7 @@ import {
 import { InlineTaskConfigAccordion } from "./InlineTaskConfigAccordion";
 import { OutboundWebhooksSettings } from "./OutboundWebhooksSettings";
 
-// ─── Raw Interactions Tab ───────────────────────────────────────────────────
+// ─── Interactions Tab ───────────────────────────────────────────────────
 function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, modelLists, fetchingModels, fetchErrors, onFetchModels }) {
     const visionConfig = llmConfigs.find((c) => c.task_type === "vision");
 
@@ -47,10 +47,10 @@ function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProvide
             <div className="mb-2">
                 <h3 className="text-lg font-semibold flex items-center gap-2">
                     <Zap className="w-5 h-5 text-amber-500" />
-                    Raw Interactions
+                    Interactions
                 </h3>
                 <p className="text-sm text-muted-foreground mt-1">
-                    Controls how raw interactions are received, parsed, and embedded before they become structured memories.
+                    Controls how Interactions are received, parsed, and embedded before they become structured memories.
                 </p>
             </div>
 
@@ -152,7 +152,7 @@ function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProvide
     );
 }
 
-// ─── Memory Generation Tab ──────────────────────────────────────────────────
+// ─── Memories Tab ──────────────────────────────────────────────────
 function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, modelLists, fetchingModels, fetchErrors, onFetchModels }) {
     const [isTriggering, setIsTriggering] = useState(false);
     const nerConfig = llmConfigs.find((c) => c.task_type === "entity_extraction");
@@ -176,20 +176,20 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
             <div className="mb-2">
                 <h3 className="text-lg font-semibold flex items-center gap-2">
                     <Brain className="w-5 h-5 text-purple-500" />
-                    Memory Generation
+                    Memories
                 </h3>
                 <p className="text-sm text-muted-foreground mt-1">
-                    Transforms raw interactions into structured daily memories via NER and LLM summarization.
+                    Transforms Interactions into structured daily memories via NER and LLM summarization.
                 </p>
             </div>
 
-            {/* Memory Generation Schedule */}
+            {/* Memories Schedule */}
             <Card>
                 <CardHeader className="pb-3 flex flex-row items-start justify-between">
                     <div>
                         <div className="flex items-center gap-2">
                             <Clock className="w-5 h-5 text-blue-500" />
-                            <CardTitle className="text-lg">Memory Generation Settings</CardTitle>
+                            <CardTitle className="text-lg">Memories Settings</CardTitle>
                         </div>
                         <CardDescription className="text-xs mt-1.5">
                             When and how daily memories are generated from interactions
@@ -221,7 +221,7 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
                         </p>
                     </div>
                     <div className="space-y-2">
-                        <Label className="text-xs font-mono">Memory Generation Mode</Label>
+                        <Label className="text-xs font-mono">Memories Mode</Label>
                         <Select
                             value={settings.memory_generation_mode || "ner_and_raw"}
                             onValueChange={(v) =>
@@ -233,7 +233,7 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
                             </SelectTrigger>
                             <SelectContent>
                                 <SelectItem value="ner_and_raw">
-                                    NER + Raw interactions → LLM
+                                    NER + Interactions → LLM
                                 </SelectItem>
                                 <SelectItem value="ner_only">
                                     NER output only → LLM
@@ -248,7 +248,7 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
                 </CardContent>
             </Card>
 
-            {/* Memory Generation Task Assignment */}
+            {/* Memories Task Assignment */}
             {memoryGenConfig && (
                 <InlineTaskConfigAccordion
                     config={memoryGenConfig}
@@ -258,7 +258,7 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
                     loadingModels={fetchingModels[memoryGenConfig.id]}
                     error={fetchErrors[memoryGenConfig.id]}
                     onFetchModels={onFetchModels}
-                    titleOverride="Configure Memory Generation Prompt:"
+                    titleOverride="Configure Memories Prompt:"
                 />
             )}
 
@@ -334,7 +334,7 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
                         <CardTitle className="text-lg">Processing Throughput</CardTitle>
                     </div>
                     <CardDescription className="text-xs mt-1.5">
-                        Parallel BullMQ workers and retry mechanics for memory generation.
+                        Parallel BullMQ workers and retry mechanics for Memories.
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
@@ -400,9 +400,9 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
     );
 }
 
-// ─── Knowledge Generation Tab ─────────────────────────────────────────────────
+// ─── Knowledgeration Tab ─────────────────────────────────────────────────
 function KnowledgeGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, modelLists, fetchingModels, fetchErrors, onFetchModels }) {
-    const insightConfig = llmConfigs.find((c) => c.task_type === "insight_generation");
+    const privateKnowledgeConfig = llmConfigs.find((c) => c.task_type === "insight_generation");
     const piiConfig = llmConfigs.find((c) => c.task_type === "pii_scrubbing");
     const summarizationConfig = llmConfigs.find((c) => c.task_type === "summarization");
 
@@ -411,10 +411,10 @@ function KnowledgeGenerationTab({ settings, onUpdateSettings, llmConfigs, llmPro
             <div className="mb-2">
                 <h3 className="text-lg font-semibold flex items-center gap-2">
                     <GraduationCap className="w-5 h-5 text-indigo-500" />
-                    Knowledge Generation
+                    Knowledgeration
                 </h3>
                 <p className="text-sm text-muted-foreground mt-1">
-                    Extracts high-level knowledge (Lessons) from memory records and sanitizes data.
+                    Extracts high-level knowledge (Public Knowledge) from memory records and sanitizes data.
                 </p>
             </div>
 
@@ -470,91 +470,91 @@ function KnowledgeGenerationTab({ settings, onUpdateSettings, llmConfigs, llmPro
                 />
             )}
 
-            {/* Lesson Mining */}
+            {/* Public Knowledge Mining */}
             <Card>
                 <CardHeader className="pb-3">
                     <div className="flex items-center gap-2">
                         <GraduationCap className="w-5 h-5 text-green-500" />
-                        <CardTitle className="text-lg">Lesson Mining</CardTitle>
+                        <CardTitle className="text-lg">Public Knowledge Mining</CardTitle>
                     </div>
                     <CardDescription className="text-xs">
-                        Automatic lesson generation from accumulated confirmed private lessons
+                        Automatic publicKnowledgeration from accumulated confirmed private publicKnowledge
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                     <div className="flex items-center justify-between">
                         <div className="space-y-0.5">
-                            <Label>Auto-extract Lessons</Label>
+                            <Label>Auto-extract Public Knowledge</Label>
                             <p className="text-[10px] text-muted-foreground">
-                                Automatically mine lessons from interactions
+                                Automatically mine publicKnowledge from interactions
                             </p>
                         </div>
                         <Switch
-                            checked={settings.auto_lesson_enabled}
-                            onCheckedChange={(v) => onUpdateSettings("auto_lesson_enabled", v)}
+                            checked={settings.auto_public_knowledge_enabled}
+                            onCheckedChange={(v) => onUpdateSettings("auto_public_knowledge_enabled", v)}
                         />
                     </div>
                     <div className="space-y-2">
                         <Label className="text-xs font-mono">
-                            Lesson Threshold (N private lessons)
+                            Public Knowledge Threshold (N private publicKnowledge)
                         </Label>
                         <Input
                             type="number"
                             min={2}
-                            value={settings.lesson_threshold || 5}
+                            value={settings.public_knowledge_threshold || 5}
                             onChange={(e) =>
-                                onUpdateSettings("lesson_threshold", parseInt(e.target.value))
+                                onUpdateSettings("public_knowledge_threshold", parseInt(e.target.value))
                             }
-                            disabled={!settings.auto_lesson_enabled}
+                            disabled={!settings.auto_public_knowledge_enabled}
                         />
                         <p className="text-[10px] text-muted-foreground">
-                            Generate a public lesson after this many confirmed private lessons accumulate.
+                            Generate a public publicKnowledge after this many confirmed private publicKnowledge accumulate.
                         </p>
                     </div>
                     <div className="space-y-2">
                         <Label className="text-xs font-mono">
-                            Lesson Trigger (days, optional)
+                            Public Knowledge Trigger (days, optional)
                         </Label>
                         <Input
                             type="number"
                             min={1}
                             placeholder="Leave blank to use count only"
-                            value={settings.lesson_trigger_days || ""}
+                            value={settings.public_knowledge_trigger_days || ""}
                             onChange={(e) => {
                                 const v = e.target.value;
-                                onUpdateSettings("lesson_trigger_days", v ? parseInt(v) : null);
+                                onUpdateSettings("public_knowledge_trigger_days", v ? parseInt(v) : null);
                             }}
-                            disabled={!settings.auto_lesson_enabled}
+                            disabled={!settings.auto_public_knowledge_enabled}
                         />
                         <p className="text-[10px] text-muted-foreground">
-                            Also trigger if oldest unused private lesson is this many days old (min 2).
+                            Also trigger if oldest unused private publicKnowledge is this many days old (min 2).
                         </p>
                     </div>
                 </CardContent>
             </Card>
 
-            {/* Insight / Private Lesson Generation Task Assignment */}
-            {insightConfig && (
+            {/* Private Knowledge / Private Public Knowledgeration Task Assignment */}
+            {privateKnowledgeConfig && (
                 <InlineTaskConfigAccordion
-                    config={insightConfig}
+                    config={privateKnowledgeConfig}
                     llmProviders={llmProviders}
                     onSaveConfig={onSaveConfig}
-                    models={modelLists[insightConfig.id] || []}
-                    loadingModels={fetchingModels[insightConfig.id]}
-                    error={fetchErrors[insightConfig.id]}
+                    models={modelLists[privateKnowledgeConfig.id] || []}
+                    loadingModels={fetchingModels[privateKnowledgeConfig.id]}
+                    error={fetchErrors[privateKnowledgeConfig.id]}
                     onFetchModels={onFetchModels}
                 />
             )}
 
-            {/* Summarization Task Assignment */}
-            {summarizationConfig && (
+            {/* Public Knowledge Generation Task Assignment */}
+            {publicKnowledgeConfig && (
                 <InlineTaskConfigAccordion
-                    config={summarizationConfig}
+                    config={publicKnowledgeConfig}
                     llmProviders={llmProviders}
                     onSaveConfig={onSaveConfig}
-                    models={modelLists[summarizationConfig.id] || []}
-                    loadingModels={fetchingModels[summarizationConfig.id]}
-                    error={fetchErrors[summarizationConfig.id]}
+                    models={modelLists[publicKnowledgeConfig.id] || []}
+                    loadingModels={fetchingModels[publicKnowledgeConfig.id]}
+                    error={fetchErrors[publicKnowledgeConfig.id]}
                     onFetchModels={onFetchModels}
                 />
             )}
@@ -567,7 +567,7 @@ function KnowledgeGenerationTab({ settings, onUpdateSettings, llmConfigs, llmPro
                         <CardTitle className="text-lg">Queue Dynamics</CardTitle>
                     </div>
                     <CardDescription className="text-xs mt-1.5">
-                        Parallel BullMQ execution workers for knowledge and lesson generation.
+                        Parallel BullMQ execution workers for knowledge and publicKnowledgeration.
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -677,15 +677,15 @@ export function MemorySettings({
                 <TabsList className="grid w-full grid-cols-4 mb-8">
                     <TabsTrigger value="raw_interactions" className="gap-2">
                         <Zap className="w-4 h-4" />
-                        Raw Interactions
+                        Interactions
                     </TabsTrigger>
                     <TabsTrigger value="memory_generation" className="gap-2">
                         <Brain className="w-4 h-4" />
-                        Memory Generation
+                        Memories
                     </TabsTrigger>
                     <TabsTrigger value="knowledge_generation" className="gap-2">
                         <GraduationCap className="w-4 h-4" />
-                        Knowledge Gen.
+                        Knowledge
                     </TabsTrigger>
                     <TabsTrigger value="analytics" className="gap-2">
                         <BarChart3 className="w-4 h-4" />
@@ -713,3 +713,4 @@ export function MemorySettings({
         </div>
     );
 }
+

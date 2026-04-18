@@ -37,12 +37,12 @@ import { toast } from "sonner";
 // ─── Task type display metadata ───────────────────────────────────────────────
 export const TASK_TYPE_LABELS = {
     memory_generation: { label: "Memory Generation", icon: Clock, color: "bg-indigo-500" },
-    summarization: { label: "Summarization", icon: Brain, color: "bg-blue-500" },
     embedding: { label: "Embeddings", icon: Layers, color: "bg-green-500" },
     vision: { label: "Vision/Doc Parsing", icon: Eye, color: "bg-purple-500" },
     entity_extraction: { label: "Entity Extraction (NER)", icon: Cpu, color: "bg-amber-500" },
     pii_scrubbing: { label: "PII Scrubbing", icon: EyeOff, color: "bg-red-500" },
-    insight_generation: { label: "Lesson Generation", icon: Sparkles, color: "bg-teal-500" }
+    private_knowledge_generation: { label: "Private Knowledge Generation", icon: Sparkles, color: "bg-teal-500" },
+    public_knowledge_generation: { label: "Public Knowledge Generation", icon: GraduationCap, color: "bg-green-500" }
 };
 
 const PROVIDER_META = [
@@ -584,3 +584,5 @@ export function LLMProviderSettings({
         </div>
     );
 }
+
+

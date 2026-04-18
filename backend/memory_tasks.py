@@ -17,18 +17,18 @@ Tasks:
        * Check compaction (count + days triggers)
 
   3. compact_entity()
-     - Insight generation: N memories → LLM → Insight
+     - PrivateKnowledge generation: N memories → LLM → PrivateKnowledge
 
   4. run_lesson_check()
-     - Lesson accumulation: N confirmed insights → PII scrub + LLM → Lesson
+     - PublicKnowledge accumulation: N confirmed private_knowledge → PII scrub + LLM → PublicKnowledge
 
   5. promote_to_lesson()
-     - Keep for manual 1:1 admin promotion of a single insight
+     - Keep for manual 1:1 admin promotion of a single PrivateKnowledge
 
   6. check_rate_limit()
      - Per-agent rate limiting (in-memory, single-instance)
 
-Embedding scope: ONLY memories, insights, and lessons are embedded.
+Embedding scope: ONLY memories, private_knowledge, and public_knowledge are embedded.
 Interactions are never embedded.
 """
 import asyncio
@@ -680,7 +680,7 @@ async def _check_compaction_trigger(entity_type: str, entity_id: str, config: di
     Fires if:
       - Uncompacted memory count >= compaction_threshold (count trigger), OR
       - insight_trigger_days is set AND oldest uncompacted memory is >= that many days old
-        (minimum 2 memories to avoid generating insights from a single data point)
+        (minimum 2 memories to avoid generating private_knowledge from a single data point)
     """
     threshold = config.get("compaction_threshold", 10)
     trigger_days = config.get("insight_trigger_days")
@@ -716,12 +716,12 @@ async def _check_compaction_trigger(entity_type: str, entity_id: str, config: di
         )
 
 
-# ── Compaction: Insight Generation ───────────────────────────────────────────
+# ── Compaction: PrivateKnowledge Generation ───────────────────────────────────────────
 
 async def compact_entity(entity_type: str, entity_id: str):
     """
-    Generate an Insight from the N most recent uncompacted memories.
-    Embedding is generated for the insight (not for interactions).
+    Generate an PrivateKnowledge from the N most recent uncompacted memories.
+    Embedding is generated for the PrivateKnowledge (not for interactions).
     """
     config = _get_entity_type_config(entity_type)
     threshold = config.get("compaction_threshold", 10)
@@ -759,8 +759,8 @@ async def compact_entity(entity_type: str, entity_id: str):
     context = "\n\n".join(context_parts)
     system_prompt = await get_system_prompt("insight_generation") or (
         "You are an AI analyst. Based on the provided memory summaries, identify a meaningful pattern, "
-        "risk, opportunity, or behavioral insight. Return JSON only: "
-        "{\"name\": \"...\", \"insight_type\": \"...\", \"content\": \"...\", \"summary\": \"...\"}"
+        "risk, opportunity, or behavioral PrivateKnowledge. Return JSON only: "
+        "{\"name\": \"...\", \"knowledge_type\": \"...\", \"content\": \"...\", \"summary\": \"...\"}"
     )
     system_prompt = inject_variables(system_prompt, {
         "entity": {"type": entity_type, "id": entity_id}
@@ -781,23 +781,23 @@ async def compact_entity(entity_type: str, entity_id: str):
         )
         result = json.loads(result_text)
     except Exception as e:
-        logger.error(f"Insight LLM call failed: {e}")
+        logger.error(f"PrivateKnowledge LLM call failed: {e}")
         return
 
-    name = result.get("name", "Unnamed Insight")
-    insight_type = result.get("insight_type", "other")
+    name = result.get("name", "Unnamed PrivateKnowledge")
+    knowledge_type = result.get("knowledge_type", "other")
     content = result.get("content", "")
     summary = result.get("summary", "")
 
     if not content:
         return
 
-    # Generate embedding for the insight
+    # Generate embedding for the PrivateKnowledge
     embedding = None
     try:
         embedding = await generate_embedding(f"{name}. {summary or content}")
     except Exception as e:
-        logger.warning(f"Insight embedding failed: {e}")
+        logger.warning(f"PrivateKnowledge embedding failed: {e}")
 
     auto_approve = config.get("insight_auto_approve", False)
     status = "confirmed" if auto_approve else "draft"
@@ -808,26 +808,26 @@ async def compact_entity(entity_type: str, entity_id: str):
         cursor = conn.cursor()
         if embedding:
             cursor.execute("""
-                INSERT INTO insights (
+                INSERT INTO private_knowledge (
                     id, primary_entity_type, primary_entity_id, source_memory_ids,
-                    insight_type, name, content, summary, embedding,
+                    knowledge_type, name, content, summary, embedding,
                     status, created_by, confirmed_at, created_at, updated_at
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 insight_id, entity_type, entity_id, memory_ids,
-                insight_type, name, content, summary, embedding,
+                knowledge_type, name, content, summary, embedding,
                 status, "auto", now if auto_approve else None, now, now,
             ))
         else:
             cursor.execute("""
-                INSERT INTO insights (
+                INSERT INTO private_knowledge (
                     id, primary_entity_type, primary_entity_id, source_memory_ids,
-                    insight_type, name, content, summary,
+                    knowledge_type, name, content, summary,
                     status, created_by, confirmed_at, created_at, updated_at
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 insight_id, entity_type, entity_id, memory_ids,
-                insight_type, name, content, summary,
+                knowledge_type, name, content, summary,
                 status, "auto", now if auto_approve else None, now, now,
             ))
 
@@ -837,31 +837,31 @@ async def compact_entity(entity_type: str, entity_id: str):
             WHERE id = ANY(%s)
         """, (memory_ids,))
 
-    logger.info(f"Created insight {insight_id} ({status}) for {entity_type}/{entity_id} from {len(memory_ids)} memories")
+    logger.info(f"Created PrivateKnowledge {insight_id} ({status}) for {entity_type}/{entity_id} from {len(memory_ids)} memories")
 
 
-# ── Lesson Check: Accumulation-Based ─────────────────────────────────────────
+# ── PublicKnowledge Check: Accumulation-Based ─────────────────────────────────────────
 
 async def run_lesson_check():
     """
-    Check if enough confirmed insights have accumulated to generate a lesson.
-    Triggers on count (lesson_threshold) OR days since oldest unused insight (lesson_trigger_days).
-    Mirrors the memory → insight compaction pattern.
+    Check if enough confirmed private_knowledge have accumulated to generate a PublicKnowledge.
+    Triggers on count (lesson_threshold) OR days since oldest unused PrivateKnowledge (lesson_trigger_days).
+    Mirrors the memory → PrivateKnowledge compaction pattern.
     """
     settings = get_memory_settings()
     threshold = settings.get("lesson_threshold", 5)
     trigger_days = settings.get("lesson_trigger_days")
 
-    # Find confirmed insights not yet used in any lesson
+    # Find confirmed private_knowledge not yet used in any PublicKnowledge
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT i.id, i.name, i.content, i.summary, i.insight_type, i.created_at
-            FROM insights i
+            SELECT i.id, i.name, i.content, i.summary, i.knowledge_type, i.created_at
+            FROM private_knowledge i
             WHERE i.status = 'confirmed'
               AND NOT EXISTS (
-                  SELECT 1 FROM lessons l
-                  WHERE i.id = ANY(l.source_insight_ids)
+                  SELECT 1 FROM public_knowledge l
+                  WHERE i.id = ANY(l.source_private_knowledge_ids)
               )
             ORDER BY i.created_at ASC
         """)
@@ -886,42 +886,42 @@ async def run_lesson_check():
         return
 
     reason = "count" if count_trigger else "days"
-    logger.info(f"Lesson trigger ({reason}): {count} unused confirmed insights")
+    logger.info(f"PublicKnowledge trigger ({reason}): {count} unused confirmed private_knowledge")
     batch = unused_insights[:threshold] if count_trigger else unused_insights
     await generate_lesson_from_insights(batch)
 
 
-async def generate_lesson_from_insights(insights: list):
+async def generate_lesson_from_insights(private_knowledge: list):
     """
-    Generate a Lesson from a batch of confirmed insights.
-    Steps: PII scrub each insight → build LLM context → generalize → embed → write.
+    Generate a PublicKnowledge from a batch of confirmed private_knowledge.
+    Steps: PII scrub each PrivateKnowledge → build LLM context → generalize → embed → write.
     """
-    if not insights:
+    if not private_knowledge:
         return
 
-    # PII scrub all insight content before using as LLM context
+    # PII scrub all PrivateKnowledge content before using as LLM context
     scrubbed_parts = []
-    for ins in insights:
+    for ins in private_knowledge:
         content = ins.get("content", "")
         summary = ins.get("summary", "")
         try:
             content = await scrub_pii(content)
             summary = await scrub_pii(summary) if summary else ""
         except Exception as e:
-            logger.warning(f"PII scrub failed for insight {ins['id']}: {e}")
+            logger.warning(f"PII scrub failed for PrivateKnowledge {ins['id']}: {e}")
         scrubbed_parts.append(
-            f"[{ins.get('insight_type', 'other')}] {ins.get('name', '')}\n{content}"
+            f"[{ins.get('knowledge_type', 'other')}] {ins.get('name', '')}\n{content}"
         )
 
     context = "\n\n---\n\n".join(scrubbed_parts)
-    insight_ids = [ins["id"] for ins in insights]
+    insight_ids = [ins["id"] for ins in private_knowledge]
 
     system_prompt = (
-        "You are an AI knowledge curator. The following are de-identified insights from multiple interactions. "
-        "Synthesize them into a single generalizable lesson — a durable, reusable piece of knowledge "
+        "You are an AI knowledge curator. The following are de-identified private_knowledge from multiple interactions. "
+        "Synthesize them into a single generalizable PublicKnowledge — a durable, reusable piece of knowledge "
         "applicable beyond any specific entity. Remove all specific names. "
-        "Return JSON: {\"name\": \"...\", \"lesson_type\": \"...\", \"content\": \"...\", \"summary\": \"...\", \"tags\": [...]}\n"
-        "lesson_type must be one of: process, risk, sales, product, support, other"
+        "Return JSON: {\"name\": \"...\", \"knowledge_type\": \"...\", \"content\": \"...\", \"summary\": \"...\", \"tags\": [...]}\n"
+        "knowledge_type must be one of: process, risk, sales, product, support, other"
     )
 
     try:
@@ -933,11 +933,11 @@ async def generate_lesson_from_insights(insights: list):
         )
         result = json.loads(result_text)
     except Exception as e:
-        logger.error(f"Lesson generation LLM call failed: {e}")
+        logger.error(f"PublicKnowledge generation LLM call failed: {e}")
         return
 
-    name = result.get("name", "Unnamed Lesson")
-    lesson_type = result.get("lesson_type", "other")
+    name = result.get("name", "Unnamed PublicKnowledge")
+    knowledge_type = result.get("knowledge_type", "other")
     content = result.get("content", "")
     summary = result.get("summary", "")
     tags = result.get("tags", [])
@@ -945,12 +945,12 @@ async def generate_lesson_from_insights(insights: list):
     if not content:
         return
 
-    # Embed the lesson
+    # Embed the PublicKnowledge
     embedding = None
     try:
         embedding = await generate_embedding(f"{name}. {summary or content}")
     except Exception as e:
-        logger.warning(f"Lesson embedding failed: {e}")
+        logger.warning(f"PublicKnowledge embedding failed: {e}")
 
     lesson_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
@@ -959,63 +959,63 @@ async def generate_lesson_from_insights(insights: list):
         cursor = conn.cursor()
         if embedding:
             cursor.execute("""
-                INSERT INTO lessons (
-                    id, source_insight_ids, lesson_type, name, content, summary,
+                INSERT INTO public_knowledge (
+                    id, source_private_knowledge_ids, knowledge_type, name, content, summary,
                     embedding, visibility, tags, created_at, updated_at
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
-                lesson_id, insight_ids, lesson_type, name, content, summary,
+                lesson_id, insight_ids, knowledge_type, name, content, summary,
                 embedding, "shared", tags, now, now,
             ))
         else:
             cursor.execute("""
-                INSERT INTO lessons (
-                    id, source_insight_ids, lesson_type, name, content, summary,
+                INSERT INTO public_knowledge (
+                    id, source_private_knowledge_ids, knowledge_type, name, content, summary,
                     visibility, tags, created_at, updated_at
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
-                lesson_id, insight_ids, lesson_type, name, content, summary,
+                lesson_id, insight_ids, knowledge_type, name, content, summary,
                 "shared", tags, now, now,
             ))
 
-    logger.info(f"Generated lesson {lesson_id} from {len(insight_ids)} insights")
+    logger.info(f"Generated PublicKnowledge {lesson_id} from {len(insight_ids)} private_knowledge")
 
 
-# ── Lesson Promotion (Manual 1:1 admin use) ───────────────────────────────────
+# ── PublicKnowledge Promotion (Manual 1:1 admin use) ───────────────────────────────────
 
 async def promote_to_lesson(insight_id: str):
     """
-    PII scrub + generalize a single Insight and write it as a Lesson.
-    Kept for manual admin promotion — not used by the automatic lesson accumulation path.
+    PII scrub + generalize a single PrivateKnowledge and write it as a PublicKnowledge.
+    Kept for manual admin promotion — not used by the automatic PublicKnowledge accumulation path.
     """
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT id, primary_entity_type, primary_entity_id, source_memory_ids,
-                   insight_type, name, content, summary
-            FROM insights WHERE id = %s
+                   knowledge_type, name, content, summary
+            FROM private_knowledge WHERE id = %s
         """, (insight_id,))
-        insight = cursor.fetchone()
+        PrivateKnowledge = cursor.fetchone()
 
-    if not insight:
-        logger.warning(f"promote_to_lesson: insight {insight_id} not found")
+    if not PrivateKnowledge:
+        logger.warning(f"promote_to_lesson: PrivateKnowledge {insight_id} not found")
         return
 
-    content = insight["content"]
-    summary = insight["summary"] or ""
+    content = PrivateKnowledge["content"]
+    summary = PrivateKnowledge["summary"] or ""
 
     # PII scrub
     try:
         content = await scrub_pii(content)
         summary = await scrub_pii(summary) if summary else ""
     except Exception as e:
-        logger.warning(f"PII scrub failed for insight {insight_id}: {e}")
+        logger.warning(f"PII scrub failed for PrivateKnowledge {insight_id}: {e}")
 
     # Generalize entity names
     generalize_prompt = (
         "You are an AI editor. Remove all specific entity names, organization names, and other "
         "identifying information from the following text, replacing with generic terms (e.g., 'the client', "
-        "'the institution'). Preserve the insight's meaning. Return only the edited text."
+        "'the institution'). Preserve the PrivateKnowledge's meaning. Return only the edited text."
     )
     try:
         content = await call_llm(
@@ -1025,14 +1025,14 @@ async def promote_to_lesson(insight_id: str):
             task_type="lesson_generation"
         )
     except Exception as e:
-        logger.warning(f"Lesson generalization failed: {e}")
+        logger.warning(f"PublicKnowledge generalization failed: {e}")
 
-    # Embed lesson
+    # Embed PublicKnowledge
     embedding = None
     try:
-        embedding = await generate_embedding(f"{insight['name']}. {summary or content}")
+        embedding = await generate_embedding(f"{PrivateKnowledge['name']}. {summary or content}")
     except Exception as e:
-        logger.warning(f"Lesson embedding failed: {e}")
+        logger.warning(f"PublicKnowledge embedding failed: {e}")
 
     lesson_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
@@ -1041,28 +1041,28 @@ async def promote_to_lesson(insight_id: str):
         cursor = conn.cursor()
         if embedding:
             cursor.execute("""
-                INSERT INTO lessons (
-                    id, source_insight_ids, lesson_type, name, content, summary,
+                INSERT INTO public_knowledge (
+                    id, source_private_knowledge_ids, knowledge_type, name, content, summary,
                     embedding, visibility, tags, created_at, updated_at
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
-                lesson_id, [insight_id], insight["insight_type"],
-                insight["name"], content, summary, embedding,
+                lesson_id, [insight_id], PrivateKnowledge["knowledge_type"],
+                PrivateKnowledge["name"], content, summary, embedding,
                 "shared", [], now, now,
             ))
         else:
             cursor.execute("""
-                INSERT INTO lessons (
-                    id, source_insight_ids, lesson_type, name, content, summary,
+                INSERT INTO public_knowledge (
+                    id, source_private_knowledge_ids, knowledge_type, name, content, summary,
                     visibility, tags, created_at, updated_at
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
-                lesson_id, [insight_id], insight["insight_type"],
-                insight["name"], content, summary,
+                lesson_id, [insight_id], PrivateKnowledge["knowledge_type"],
+                PrivateKnowledge["name"], content, summary,
                 "shared", [], now, now,
             ))
 
-    logger.info(f"Promoted insight {insight_id} to lesson {lesson_id}")
+    logger.info(f"Promoted PrivateKnowledge {insight_id} to PublicKnowledge {lesson_id}")
 
 
 # ── Helper Functions ─────────────────────────────────────────────────────────
@@ -1153,3 +1153,5 @@ def _build_ner_text_payload(interactions: list) -> str:
             parts.append(content)
 
     return "\n\n".join(parts)
+
+

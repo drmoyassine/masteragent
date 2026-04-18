@@ -1,4 +1,4 @@
-﻿import os
+import os
 import json
 import asyncio
 import logging
@@ -181,3 +181,5 @@ async def stop_bullmq_workers():
     if tasks:
         await asyncio.gather(*tasks)
     logger.info("BullMQ Workers stopped.")
+
+

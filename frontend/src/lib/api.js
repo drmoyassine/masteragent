@@ -111,10 +111,10 @@ export const getEntitySubtypes = (typeId) => api.get(`/memory/config/entity-type
 export const createEntitySubtype = (data) => api.post('/memory/config/entity-subtypes', data);
 export const deleteEntitySubtype = (id) => api.delete(`/memory/config/entity-subtypes/${id}`);
 
-// Lesson Types
-export const getLessonTypes = () => api.get('/memory/config/lesson-types');
-export const createLessonType = (data) => api.post('/memory/config/lesson-types', data);
-export const deleteLessonType = (id) => api.delete(`/memory/config/lesson-types/${id}`);
+// Public Knowledge Types
+export const getLessonTypes = () => api.get('/memory/config/public_knowledge_types');
+export const createLessonType = (data) => api.post('/memory/config/public_knowledge_types', data);
+export const deleteLessonType = (id) => api.delete(`/memory/config/public_knowledge_types/${id}`);
 
 // Channel Types
 export const getChannelTypes = () => api.get('/memory/config/channel-types');
@@ -170,17 +170,17 @@ export const updateMemoryAdmin = (id, data) => api.patch(`/memory/admin/memories
 export const deleteMemoryAdmin = (id) => api.delete(`/memory/admin/memories/${id}`);
 export const bulkDeleteMemoriesAdmin = (data) => api.post('/memory/admin/memories/bulk-delete', data);
 export const bulkReprocessMemoriesAdmin = (data) => api.post('/memory/admin/memories/bulk-reprocess', data);
-export const getInsightsAdmin = (params) => api.get('/memory/insights', { params });
+export const getInsightsAdmin = (params) => api.get('/memory/private_knowledge', { params });
 export const getInteractionFilterOptionsAdmin = (params) => api.get('/memory/interactions/filter-options', { params });
 export const getDailyMemories = (date) => api.get(`/memory/admin/daily/${date}`);
 export const getTimeline = (entityType, entityId) => api.get(`/memory/admin/timeline/${entityType}/${entityId}`);
 export const triggerMemoryGeneration = (includeToday = false) => api.post('/memory/trigger/generate-memories', null, { params: { include_today: includeToday } });
 
-// Lessons - Admin UI
-export const getLessonsAdmin = (params) => api.get('/memory/lessons', { params });
-export const createLessonAdmin = (data) => api.post('/memory/lessons', data);
-export const updateLessonAdmin = (id, data) => api.put(`/memory/lessons/${id}`, data);
-export const deleteLessonAdmin = (id) => api.delete(`/memory/lessons/${id}`);
+// Public Knowledge - Admin UI
+export const getLessonsAdmin = (params) => api.get('/memory/public_knowledge', { params });
+export const createLessonAdmin = (data) => api.post('/memory/public_knowledge', data);
+export const updateLessonAdmin = (id, data) => api.put(`/memory/public_knowledge/\$\{id\}`, data);
+export const deleteLessonAdmin = (id) => api.delete(`/memory/public_knowledge/\$\{id\}`);
 
 // Outbound Webhooks - Admin UI
 export const getOutboundWebhooks = () => api.get('/memory/outbound-webhooks');

@@ -7,13 +7,13 @@ Uses:
   - gen_random_uuid() for UUIDs (requires pgcrypto)
 
 Tables:
-  Config:     memory_entity_types, memory_entity_subtypes, memory_lesson_types,
+  Config:     memory_entity_types, memory_entity_subtypes, memory_knowledge_types,
               memory_channel_types, memory_agents, memory_system_prompts,
               memory_llm_configs, memory_settings, memory_entity_type_config
   Tier 0:     interactions
   Tier 1:     memories
-  Tier 2:     insights
-  Tier 3:     lessons
+  Tier 2:     private_knowledge
+  Tier 3:     public_knowledge
   Audit:      memory_audit_log
 """
 import json
@@ -51,7 +51,7 @@ def _create_config_tables(cursor):
         )
     """)
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS memory_lesson_types (
+        CREATE TABLE IF NOT EXISTS memory_knowledge_types (
             id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
             name        TEXT NOT NULL UNIQUE,
             color       TEXT DEFAULT '#6B7280',
@@ -131,8 +131,8 @@ def _create_config_tables(cursor):
             chunk_size                  INT DEFAULT 400,
             chunk_overlap               INT DEFAULT 80,
             pii_scrubbing_enabled       BOOLEAN DEFAULT FALSE,
-            auto_lesson_enabled         BOOLEAN DEFAULT TRUE,
-            auto_lesson_threshold       INT DEFAULT 5,
+            auto_public_knowledge_enabled         BOOLEAN DEFAULT TRUE,
+            auto_public_knowledge_threshold       INT DEFAULT 5,
             rate_limit_enabled          BOOLEAN DEFAULT TRUE,
             rate_limit_per_minute       INT DEFAULT 60,
             supabase_url                TEXT,
@@ -140,8 +140,8 @@ def _create_config_tables(cursor):
             supabase_connected          BOOLEAN DEFAULT FALSE,
             memory_generation_time      TEXT DEFAULT '02:00',
             memory_generation_mode      TEXT DEFAULT 'ner_and_raw',
-            lesson_threshold            INT DEFAULT 5,
-            lesson_trigger_days         INT DEFAULT NULL,
+            public_knowledge_threshold            INT DEFAULT 5,
+            public_knowledge_trigger_days         INT DEFAULT NULL,
             updated_at                  TIMESTAMPTZ DEFAULT NOW()
         )
     """)
@@ -149,14 +149,14 @@ def _create_config_tables(cursor):
         CREATE TABLE IF NOT EXISTS memory_entity_type_config (
             entity_type                 TEXT PRIMARY KEY,
             compaction_threshold        INT DEFAULT 10,
-            insight_auto_approve        BOOLEAN DEFAULT FALSE,
-            lesson_auto_promote         BOOLEAN DEFAULT FALSE,
+            private_knowledge_auto_approve        BOOLEAN DEFAULT FALSE,
+            public_knowledge_auto_promote         BOOLEAN DEFAULT FALSE,
             ner_enabled                 BOOLEAN DEFAULT TRUE,
             ner_confidence_threshold    FLOAT DEFAULT 0.5,
             ner_schema                  JSONB DEFAULT NULL,
-            insight_trigger_days        INT DEFAULT NULL,
+            private_knowledge_trigger_days        INT DEFAULT NULL,
             embedding_enabled           BOOLEAN DEFAULT TRUE,
-            pii_scrub_lessons           BOOLEAN DEFAULT TRUE,
+            pii_scrub_public_knowledge           BOOLEAN DEFAULT TRUE,
             metadata_field_map          JSONB DEFAULT '{}',
             updated_at                  TIMESTAMPTZ DEFAULT NOW()
         )
@@ -200,7 +200,7 @@ def _create_interaction_tables(cursor):
 
 
 def _create_memory_tier_tables(cursor):
-    """Tiers 1-3 + audit + webhooks: memories, insights, lessons, audit_log, webhook_sources."""
+    """Tiers 1-3 + audit + webhooks: memories, private_knowledge, public_knowledge, audit_log, webhook_sources."""
     # Tier 1 — daily memory logs
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS memories (
@@ -229,15 +229,15 @@ def _create_memory_tier_tables(cursor):
     # vector indexing omitted to support flexible embedding sizes:
     # cursor.execute("CREATE INDEX IF NOT EXISTS idx_memories_embedding ON memories USING hnsw (embedding vector_cosine_ops)")
 
-    # Tier 2 — LLM-compacted insights
+    # Tier 2 — LLM-compacted private_knowledge
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS insights (
+        CREATE TABLE IF NOT EXISTS private_knowledge (
             id                  TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
             seq_id              BIGSERIAL,
             primary_entity_type TEXT NOT NULL,
             primary_entity_id   TEXT NOT NULL,
             source_memory_ids   TEXT[] NOT NULL DEFAULT '{}',
-            insight_type        TEXT,
+            knowledge_type        TEXT,
             name                TEXT NOT NULL,
             content             TEXT NOT NULL,
             summary             TEXT,
@@ -250,17 +250,17 @@ def _create_memory_tier_tables(cursor):
             updated_at          TIMESTAMPTZ DEFAULT NOW()
         )
     """)
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_insights_entity ON insights (primary_entity_type, primary_entity_id)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_insights_status ON insights (status)")
-    # cursor.execute("CREATE INDEX IF NOT EXISTS idx_insights_embedding ON insights USING hnsw (embedding vector_cosine_ops)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_insights_entity ON private_knowledge (primary_entity_type, primary_entity_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_insights_status ON private_knowledge (status)")
+    # cursor.execute("CREATE INDEX IF NOT EXISTS idx_insights_embedding ON private_knowledge USING hnsw (embedding vector_cosine_ops)")
 
-    # Tier 3 — PII-scrubbed shareable lessons
+    # Tier 3 — PII-scrubbed shareable public_knowledge
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS lessons (
+        CREATE TABLE IF NOT EXISTS public_knowledge (
             id                  TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
             seq_id              BIGSERIAL,
-            source_insight_ids  TEXT[] NOT NULL DEFAULT '{}',
-            lesson_type         TEXT,
+            source_private_knowledge_ids  TEXT[] NOT NULL DEFAULT '{}',
+            knowledge_type         TEXT,
             name                TEXT NOT NULL,
             content             TEXT NOT NULL,
             summary             TEXT,
@@ -271,8 +271,8 @@ def _create_memory_tier_tables(cursor):
             updated_at          TIMESTAMPTZ DEFAULT NOW()
         )
     """)
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_lessons_type ON lessons (lesson_type)")
-    # cursor.execute("CREATE INDEX IF NOT EXISTS idx_lessons_embedding ON lessons USING hnsw (embedding vector_cosine_ops)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_lessons_type ON public_knowledge (knowledge_type)")
+    # cursor.execute("CREATE INDEX IF NOT EXISTS idx_lessons_embedding ON public_knowledge USING hnsw (embedding vector_cosine_ops)")
 
     # Audit log
     cursor.execute("""
@@ -326,13 +326,59 @@ def _create_memory_tier_tables(cursor):
 
 def _run_migrations(cursor):
     """Idempotent schema migrations for existing installations."""
+    
+    # ─── Taxonomy Migration ───
+    try:
+        # Check if old tables exist to avoid crashing
+        cursor.execute("SELECT to_regclass('public.insights')")
+        if cursor.fetchone()[0] is not None:
+            cursor.execute("ALTER TABLE insights RENAME TO private_knowledge")
+            cursor.execute("ALTER INDEX IF EXISTS idx_insights_entity RENAME TO idx_private_knowledge_entity")
+            cursor.execute("ALTER INDEX IF EXISTS idx_insights_status RENAME TO idx_private_knowledge_status")
+        
+        cursor.execute("SELECT to_regclass('public.lessons')")
+        if cursor.fetchone()[0] is not None:
+            cursor.execute("ALTER TABLE lessons RENAME TO public_knowledge")
+            cursor.execute("ALTER INDEX IF EXISTS idx_lessons_type RENAME TO idx_knowledge_type")
+        
+        cursor.execute("SELECT to_regclass('public.memory_lesson_types')")
+        if cursor.fetchone()[0] is not None:
+            cursor.execute("ALTER TABLE memory_lesson_types RENAME TO memory_knowledge_types")
+            
+        # Rename columns if they exist
+        cursor.execute("""
+            DO $$
+            BEGIN
+                IF EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='private_knowledge' AND column_name='insight_type') THEN
+                    ALTER TABLE private_knowledge RENAME COLUMN insight_type TO knowledge_type;
+                END IF;
+                IF EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='public_knowledge' AND column_name='lesson_type') THEN
+                    ALTER TABLE public_knowledge RENAME COLUMN lesson_type TO knowledge_type;
+                END IF;
+                IF EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='public_knowledge' AND column_name='source_insight_ids') THEN
+                    ALTER TABLE public_knowledge RENAME COLUMN source_insight_ids TO source_private_knowledge_ids;
+                END IF;
+            END
+            $$;
+        """)
+        
+        # Rename keys in JSONB settings
+        cursor.execute("""
+            UPDATE memory_llm_configs SET task_type = 'private_knowledge_generation' WHERE task_type = 'insight_generation';
+            UPDATE memory_llm_configs SET task_type = 'public_knowledge_generation' WHERE task_type = 'lesson_generation';
+            UPDATE memory_system_prompts SET prompt_type = 'private_knowledge_generation' WHERE prompt_type = 'insight_generation';
+            UPDATE memory_system_prompts SET prompt_type = 'public_knowledge_generation' WHERE prompt_type = 'lesson_generation';
+        """)
+    except Exception as e:
+        logger.warning(f"Taxonomy migration skipped/failed: {e}")
+        
     # Add description column to all config-type lookup tables
     for tbl in ["memory_entity_types", "memory_entity_subtypes",
-                "memory_lesson_types", "memory_channel_types"]:
+                "memory_knowledge_types", "memory_channel_types"]:
         cursor.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS description TEXT")
 
     # Add seq_id to all core memory tier tables
-    for tbl in ["interactions", "memories", "insights", "lessons"]:
+    for tbl in ["interactions", "memories", "private_knowledge", "public_knowledge"]:
         try:
             cursor.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS seq_id BIGSERIAL")
         except Exception as e:
@@ -387,15 +433,15 @@ def _run_migrations(cursor):
         ("supabase_db_url", "TEXT"),
         ("memory_generation_time", "TEXT DEFAULT '02:00'"),
         ("memory_generation_mode", "TEXT DEFAULT 'ner_and_raw'"),
-        ("lesson_threshold", "INT DEFAULT 5"),
-        ("lesson_trigger_days", "INT DEFAULT NULL"),
+        ("public_knowledge_threshold", "INT DEFAULT 5"),
+        ("public_knowledge_trigger_days", "INT DEFAULT NULL"),
     ]:
         cursor.execute(f"ALTER TABLE memory_settings ADD COLUMN IF NOT EXISTS {col} {col_def}")
 
     # Entity type config columns
     for col, col_def in [
         ("ner_schema", "JSONB DEFAULT NULL"),
-        ("insight_trigger_days", "INT DEFAULT NULL"),
+        ("private_knowledge_trigger_days", "INT DEFAULT NULL"),
     ]:
         cursor.execute(f"ALTER TABLE memory_entity_type_config ADD COLUMN IF NOT EXISTS {col} {col_def}")
 
@@ -499,7 +545,7 @@ def _seed_defaults():
             ("product", "#8B5CF6"), ("support", "#F59E0B"), ("other", "#6B7280")
         ]:
             cursor.execute(
-                "INSERT INTO memory_lesson_types (name, color) VALUES (%s, %s) ON CONFLICT (name) DO NOTHING",
+                "INSERT INTO memory_knowledge_types (name, color) VALUES (%s, %s) ON CONFLICT (name) DO NOTHING",
                 (name, color)
             )
 
@@ -537,7 +583,7 @@ def _seed_defaults():
             ("vision", "openai", "gpt-4o"),
             ("entity_extraction", "gliner", "urchade/gliner_multi"),
             ("pii_scrubbing", "zendata", ""),
-            ("insight_generation", "openai", "gpt-4o-mini"),
+            ("private_knowledge_generation", "openai", "gpt-4o-mini"),
             ("memory_generation", "openai", "gpt-4o-mini"),
         ]:
             cursor.execute("""
@@ -557,20 +603,20 @@ def _seed_defaults():
             ("summarization", "Default Summarizer",
              "You are a concise summarizer. Summarize the following interaction in 2-3 sentences, "
              "focusing on key facts, decisions, and action items. Be factual and brief."),
-            ("insight_generation", "Default Insight Generator",
+            ("private_knowledge_generation", "Default Insight Generator",
              "You are an AI analyst reviewing interaction history for a specific entity. "
              "Based on the provided memory summaries, identify a meaningful pattern, risk, opportunity, "
-             "or behavioral insight. Return JSON: {\"name\": \"...\", \"insight_type\": \"...\", "
+             "or behavioral insight. Return JSON: {\"name\": \"...\", \"knowledge_type\": \"...\", "
              "\"content\": \"...\", \"summary\": \"...\"}. "
-             "insight_type must be one of: behavior_pattern, risk_signal, opportunity, relationship_shift, preference, milestone."),
+             "knowledge_type must be one of: behavior_pattern, risk_signal, opportunity, relationship_shift, preference, milestone."),
             ("entity_extraction", "Default Entity Extractor",
              "Extract named entities from the following text. Return a JSON array of objects: "
              "[{\"entity_id\": \"unique-id\", \"entity_type\": \"contact|institution|program|supplier|product\", "
              "\"name\": \"...\", \"role\": \"...\"}]. Only include clearly identifiable entities."),
             ("entity_workspace", "Default Entity Workspace Assistant",
              "You are an intelligent assistant helping manage a relationship with a specific entity. "
-             "You have access to the entity's interaction history as memory summaries, extracted insights, "
-             "and general lessons. Use this context to give personalized, factual answers. "
+             "You have access to the entity's interaction history as memory summaries, extracted private_knowledge, "
+             "and general public_knowledge. Use this context to give personalized, factual answers. "
              "If you identify a new pattern or important observation, you may create an insight using the action syntax."),
         ]
         for prompt_type, name, text in prompts:
@@ -585,7 +631,7 @@ def _seed_defaults():
         # Backfill inline prompts and schemas for the UI if they are null
         # We do this so the Accordion UI fields are not empty by default for new/existing setups
         for prompt_type, name, text in prompts:
-            if prompt_type in ["memory_generation", "summarization", "insight_generation", "entity_extraction", "pii_scrubbing"]:
+            if prompt_type in ["memory_generation", "summarization", "private_knowledge_generation", "entity_extraction", "pii_scrubbing"]:
                 cursor.execute("""
                     UPDATE memory_llm_configs 
                     SET inline_system_prompt = %s 
@@ -603,8 +649,8 @@ def _seed_defaults():
         cursor.execute("""
             UPDATE memory_llm_configs 
             SET inline_schema = %s 
-            WHERE task_type = 'insight_generation' AND inline_schema IS NULL
-        """, ('{\n  "name": "...",\n  "insight_type": "...",\n  "content": "...",\n  "summary": "..."\n}',))
+            WHERE task_type = 'private_knowledge_generation' AND inline_schema IS NULL
+        """, ('{\n  "name": "...",\n  "knowledge_type": "...",\n  "content": "...",\n  "summary": "..."\n}',))
 
         # Default entity type configs
         for entity_type in ["contact", "institution", "program", "supplier", "product"]:
@@ -615,3 +661,5 @@ def _seed_defaults():
             """, (entity_type,))
 
         logger.info("Memory system defaults seeded")
+
+

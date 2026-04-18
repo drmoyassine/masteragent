@@ -51,7 +51,7 @@ async def search_insights_by_vector(
     status: str = "confirmed",
     limit: int = 10,
 ) -> List[Dict[str, Any]]:
-    """Semantic search over the insights table."""
+    """Semantic search over the private_knowledge table."""
     if not query_vector:
         return []
     try:
@@ -67,39 +67,41 @@ async def search_insights_by_vector(
             where = " AND ".join(conditions)
             cursor.execute(f"""
                 SELECT id, primary_entity_type, primary_entity_id,
-                       insight_type, name, summary, status, created_at,
+                       knowledge_type, name, summary, status, created_at,
                        1 - (embedding <=> %s::vector) AS score
-                FROM insights WHERE {where}
+                FROM private_knowledge WHERE {where}
                 ORDER BY embedding <=> %s::vector LIMIT %s
             """, params + [query_vector, query_vector, limit])
             return [dict(r) for r in cursor.fetchall()]
     except Exception as e:
-        logger.error(f"pgvector insight search error: {e}")
+        logger.error(f"pgvector PrivateKnowledge search error: {e}")
         return []
 
 
 async def search_lessons_by_vector(
     query_vector: List[float],
-    lesson_type: str = None,
+    knowledge_type: str = None,
     limit: int = 10,
 ) -> List[Dict[str, Any]]:
-    """Semantic search over the lessons table."""
+    """Semantic search over the public_knowledge table."""
     if not query_vector:
         return []
     try:
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
             conditions, params = ["embedding IS NOT NULL", "visibility = 'shared'"], []
-            if lesson_type:
-                conditions.append("lesson_type = %s"); params.append(lesson_type)
+            if knowledge_type:
+                conditions.append("knowledge_type = %s"); params.append(knowledge_type)
             where = " AND ".join(conditions)
             cursor.execute(f"""
-                SELECT id, lesson_type, name, summary, visibility, tags, created_at,
+                SELECT id, knowledge_type, name, summary, visibility, tags, created_at,
                        1 - (embedding <=> %s::vector) AS score
-                FROM lessons WHERE {where}
+                FROM public_knowledge WHERE {where}
                 ORDER BY embedding <=> %s::vector LIMIT %s
             """, params + [query_vector, query_vector, limit])
             return [dict(r) for r in cursor.fetchall()]
     except Exception as e:
-        logger.error(f"pgvector lesson search error: {e}")
+        logger.error(f"pgvector PublicKnowledge search error: {e}")
         return []
+
+

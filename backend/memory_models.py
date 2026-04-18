@@ -20,7 +20,7 @@ class LLMTaskType(str, Enum):
     VISION = "vision"
     ENTITY_EXTRACTION = "entity_extraction"
     PII_SCRUBBING = "pii_scrubbing"
-    INSIGHT_GENERATION = "insight_generation"
+    PrivateKnowledge_GENERATION = "PrivateKnowledge_generation"
 
 class LLMProviderType(str, Enum):
     OPENAI = "openai"
@@ -194,11 +194,11 @@ class MemorySettingsUpdate(BaseModel):
     # Memory generation schedule
     memory_generation_time: Optional[str] = "02:00"       # HH:MM UTC
     memory_generation_mode: Optional[str] = "ner_and_raw" # 'ner_only' | 'ner_and_raw'
-    # Lesson settings
+    # PublicKnowledge settings
     auto_lesson_enabled: Optional[bool] = True
     auto_lesson_threshold: Optional[int] = 5
-    lesson_threshold: Optional[int] = 5             # N confirmed insights → lesson
-    lesson_trigger_days: Optional[int] = None        # X days since oldest unused insight
+    lesson_threshold: Optional[int] = 5             # N confirmed PrivateKnowledges → PublicKnowledge
+    lesson_trigger_days: Optional[int] = None        # X days since oldest unused PrivateKnowledge
     lesson_approval_required: Optional[bool] = True
     # PII settings
     pii_scrubbing_enabled: Optional[bool] = True
@@ -316,26 +316,26 @@ class MemoryResponse(BaseModel):
     created_at: str
 
 # ============================================
-# Tier 2: Insight Models
+# Tier 2: PrivateKnowledge Models
 # ============================================
 
-class InsightCreate(BaseModel):
+class PrivateKnowledgeCreate(BaseModel):
     primary_entity_type: str
     primary_entity_id: str
-    insight_type: Optional[str] = None  # behavior_pattern, risk_signal, opportunity,
+    PrivateKnowledge_type: Optional[str] = None  # behavior_pattern, risk_signal, opportunity,
                                         # relationship_shift, preference, milestone
     name: str
     content: str                         # Markdown
     summary: Optional[str] = None
     source_memory_ids: Optional[List[str]] = []
 
-class InsightResponse(BaseModel):
+class PrivateKnowledgeResponse(BaseModel):
     id: str
     seq_id: Optional[int] = None
     primary_entity_type: str
     primary_entity_id: str
     source_memory_ids: List[str]
-    insight_type: Optional[str]
+    PrivateKnowledge_type: Optional[str]
     name: str
     content: str
     summary: Optional[str]
@@ -346,31 +346,31 @@ class InsightResponse(BaseModel):
     created_at: str
     updated_at: str
 
-class InsightUpdate(BaseModel):
+class PrivateKnowledgeUpdate(BaseModel):
     name: Optional[str] = None
     content: Optional[str] = None
     summary: Optional[str] = None
-    insight_type: Optional[str] = None
+    PrivateKnowledge_type: Optional[str] = None
     status: Optional[str] = None
 
 # ============================================
-# Tier 3: Lesson Models
+# Tier 3: PublicKnowledge Models
 # ============================================
 
 class LessonCreate(BaseModel):
-    lesson_type: Optional[str] = None
+    knowledge_type: Optional[str] = None
     name: str
     content: str                         # PII-stripped Markdown
     summary: Optional[str] = None
-    source_insight_ids: Optional[List[str]] = []
+    source_PrivateKnowledge_ids: Optional[List[str]] = []
     visibility: str = "shared"           # shared | team | private
     tags: Optional[List[str]] = []
 
 class LessonResponse(BaseModel):
     id: str
     seq_id: Optional[int] = None
-    source_insight_ids: List[str]
-    lesson_type: Optional[str]
+    source_PrivateKnowledge_ids: List[str]
+    knowledge_type: Optional[str]
     name: str
     content: str
     summary: Optional[str]
@@ -383,7 +383,7 @@ class LessonUpdate(BaseModel):
     name: Optional[str] = None
     content: Optional[str] = None
     summary: Optional[str] = None
-    lesson_type: Optional[str] = None
+    knowledge_type: Optional[str] = None
     visibility: Optional[str] = None
     tags: Optional[List[str]] = None
 
@@ -394,24 +394,24 @@ class LessonUpdate(BaseModel):
 class EntityTypeConfig(BaseModel):
     entity_type: str
     compaction_threshold: int = 10
-    insight_auto_approve: bool = False
+    PrivateKnowledge_auto_approve: bool = False
     lesson_auto_promote: bool = False
     ner_enabled: bool = True
     ner_confidence_threshold: float = 0.5
     ner_schema: Optional[Dict[str, Any]] = None
-    insight_trigger_days: Optional[int] = None
+    PrivateKnowledge_trigger_days: Optional[int] = None
     embedding_enabled: bool = True
     pii_scrub_lessons: bool = True
     metadata_field_map: Dict[str, str] = {}
 
 class EntityTypeConfigUpdate(BaseModel):
     compaction_threshold: Optional[int] = None
-    insight_auto_approve: Optional[bool] = None
+    PrivateKnowledge_auto_approve: Optional[bool] = None
     lesson_auto_promote: Optional[bool] = None
     ner_enabled: Optional[bool] = None
     ner_confidence_threshold: Optional[float] = None
     ner_schema: Optional[Dict[str, Any]] = None
-    insight_trigger_days: Optional[int] = None
+    PrivateKnowledge_trigger_days: Optional[int] = None
     embedding_enabled: Optional[bool] = None
     pii_scrub_lessons: Optional[bool] = None
     metadata_field_map: Optional[Dict[str, str]] = None
@@ -422,7 +422,7 @@ class EntityTypeConfigUpdate(BaseModel):
 
 class SearchRequest(BaseModel):
     query: str
-    layers: List[str] = Field(default_factory=lambda: ["interactions", "memories", "insights", "lessons"])
+    layers: List[str] = Field(default_factory=lambda: ["interactions", "memories", "PrivateKnowledges", "lessons"])
     entity_type: Optional[str] = None
     entity_subtype: Optional[str] = None
     entity_id: Optional[str] = None
@@ -433,7 +433,7 @@ class SearchRequest(BaseModel):
 
 class SearchResult(BaseModel):
     id: str
-    layer: str                      # memory | insight | lesson
+    layer: str                      # memory | PrivateKnowledge | PublicKnowledge
     score: float
     name: Optional[str]
     snippet: str
@@ -476,9 +476,9 @@ class ContextStatusResponse(BaseModel):
     memories_count: int
     last_memory_date: Optional[str] = None
     memories_ids: List[str] = []
-    insights_count: int
-    last_insight_date: Optional[str] = None
-    insights_ids: List[str] = []
+    PrivateKnowledges_count: int
+    last_PrivateKnowledge_date: Optional[str] = None
+    PrivateKnowledges_ids: List[str] = []
 
 # ============================================
 # Outbound Webhook Models
@@ -513,4 +513,6 @@ class OutboundWebhookResponse(BaseModel):
     is_active: bool
     created_at: str
     updated_at: str
+
+
 

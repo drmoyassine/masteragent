@@ -2,8 +2,8 @@
 memory/admin.py — Admin endpoints for the Memory System
 
 Provides:
-  - Insight CRUD (Tier 2): list, get, create, update status, delete
-  - Lesson CRUD (Tier 3): list, get, create, update, delete, promote from insight
+  - PrivateKnowledge CRUD (Tier 2): list, get, create, update status, delete
+  - PublicKnowledge CRUD (Tier 3): list, get, create, update, delete, promote from PrivateKnowledge
   - Entity Type Config: get, update per-entity-type compaction/NER settings
   - Manual triggers: compact entity, run memory generation
   - Interactions: list, get individual interaction
@@ -40,20 +40,20 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================
-# INSIGHTS (Tier 2)
+# private_knowledge (Tier 2)
 # ============================================================
 
-@router.get("/insights")
+@router.get("/private_knowledge")
 async def list_insights(
     entity_type: Optional[str] = Query(None),
     entity_id: Optional[str] = Query(None),
     status: Optional[str] = Query(None),      # draft | confirmed | archived
-    insight_type: Optional[str] = Query(None),
+    knowledge_type: Optional[str] = Query(None),
     limit: int = Query(30, le=100),
     offset: int = Query(0),
     admin: dict = Depends(require_admin_auth)
 ):
-    """List insights with optional filters."""
+    """List private_knowledge with optional filters."""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         conditions = []
@@ -68,80 +68,80 @@ async def list_insights(
         if status:
             conditions.append("status = %s")
             params.append(status)
-        if insight_type:
-            conditions.append("insight_type = %s")
-            params.append(insight_type)
+        if knowledge_type:
+            conditions.append("knowledge_type = %s")
+            params.append(knowledge_type)
 
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
         params_count = list(params)
-        cursor.execute(f"SELECT COUNT(*) as total FROM insights {where}", params_count)
+        cursor.execute(f"SELECT COUNT(*) as total FROM private_knowledge {where}", params_count)
         total = cursor.fetchone()["total"]
 
         params += [limit, offset]
         cursor.execute(f"""
             SELECT id, seq_id, primary_entity_type, primary_entity_id, source_memory_ids,
-                   insight_type, name, content, summary, status,
+                   knowledge_type, name, content, summary, status,
                    created_by, confirmed_by, confirmed_at, created_at, updated_at
-            FROM insights {where}
+            FROM private_knowledge {where}
             ORDER BY created_at DESC
             LIMIT %s OFFSET %s
         """, params)
         rows = cursor.fetchall()
 
-    return {"insights": [dict(r) for r in rows], "total": total}
+    return {"private_knowledge": [dict(r) for r in rows], "total": total}
 
 
-@router.get("/insights/{insight_id}")
+@router.get("/private_knowledge/{insight_id}")
 async def get_insight(insight_id: str, admin: dict = Depends(require_admin_auth)):
-    """Get a single insight by ID."""
+    """Get a single PrivateKnowledge by ID."""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM insights WHERE id = %s", (insight_id,))
+        cursor.execute("SELECT * FROM private_knowledge WHERE id = %s", (insight_id,))
         row = cursor.fetchone()
 
     if not row:
-        raise HTTPException(status_code=404, detail="Insight not found")
+        raise HTTPException(status_code=404, detail="PrivateKnowledge not found")
     return dict(row)
 
 
-@router.post("/insights")
+@router.post("/private_knowledge")
 async def create_insight(body: InsightCreate, admin: dict = Depends(require_admin_auth)):
-    """Manually create an insight (draft)."""
+    """Manually create an PrivateKnowledge (draft)."""
     insight_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO insights (
+            INSERT INTO private_knowledge (
                 id, primary_entity_type, primary_entity_id, source_memory_ids,
-                insight_type, name, content, summary,
+                knowledge_type, name, content, summary,
                 status, created_by, created_at, updated_at
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             insight_id, body.primary_entity_type, body.primary_entity_id,
             body.source_memory_ids or [],
-            body.insight_type, body.name, body.content, body.summary,
+            body.knowledge_type, body.name, body.content, body.summary,
             "draft", "admin", now, now
         ))
 
     return {"id": insight_id, "status": "draft", "created_at": now}
 
 
-@router.patch("/insights/{insight_id}")
+@router.patch("/private_knowledge/{insight_id}")
 async def update_insight(
     insight_id: str,
     body: InsightUpdate,
     admin: dict = Depends(require_admin_auth)
 ):
-    """Update an insight's fields or status (confirm/archive)."""
+    """Update an PrivateKnowledge's fields or status (confirm/archive)."""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT id, status FROM insights WHERE id = %s", (insight_id,))
+        cursor.execute("SELECT id, status FROM private_knowledge WHERE id = %s", (insight_id,))
         existing = cursor.fetchone()
 
     if not existing:
-        raise HTTPException(status_code=404, detail="Insight not found")
+        raise HTTPException(status_code=404, detail="PrivateKnowledge not found")
 
     now = datetime.now(timezone.utc).isoformat()
     fields = []
@@ -153,8 +153,8 @@ async def update_insight(
         fields.append("content = %s"); values.append(body.content)
     if body.summary is not None:
         fields.append("summary = %s"); values.append(body.summary)
-    if body.insight_type is not None:
-        fields.append("insight_type = %s"); values.append(body.insight_type)
+    if body.knowledge_type is not None:
+        fields.append("knowledge_type = %s"); values.append(body.knowledge_type)
     if body.status is not None:
         fields.append("status = %s"); values.append(body.status)
         if body.status == "confirmed":
@@ -170,39 +170,39 @@ async def update_insight(
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            f"UPDATE insights SET {', '.join(fields)} WHERE id = %s",
+            f"UPDATE private_knowledge SET {', '.join(fields)} WHERE id = %s",
             values
         )
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM insights WHERE id = %s", (insight_id,))
+        cursor.execute("SELECT * FROM private_knowledge WHERE id = %s", (insight_id,))
         updated = cursor.fetchone()
 
     return dict(updated) if updated else {"id": insight_id, "updated_at": now}
 
 
-@router.delete("/insights/{insight_id}", status_code=204)
+@router.delete("/private_knowledge/{insight_id}", status_code=204)
 async def delete_insight(insight_id: str, admin: dict = Depends(require_admin_auth)):
-    """Delete an insight."""
+    """Delete an PrivateKnowledge."""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM insights WHERE id = %s", (insight_id,))
+        cursor.execute("DELETE FROM private_knowledge WHERE id = %s", (insight_id,))
 
 
-@router.post("/insights/{insight_id}/promote")
+@router.post("/private_knowledge/{insight_id}/promote")
 async def promote_insight_to_lesson(
     insight_id: str,
     admin: dict = Depends(require_admin_auth)
 ):
-    """Manually promote a confirmed insight to a lesson (async background job)."""
+    """Manually promote a confirmed PrivateKnowledge to a PublicKnowledge (async background job)."""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT status FROM insights WHERE id = %s", (insight_id,))
+        cursor.execute("SELECT status FROM private_knowledge WHERE id = %s", (insight_id,))
         row = cursor.fetchone()
 
     if not row:
-        raise HTTPException(status_code=404, detail="Insight not found")
+        raise HTTPException(status_code=404, detail="PrivateKnowledge not found")
 
     # Enqueue promotion job directly to orchestrator
     from memory.queue import knowledge_queue
@@ -211,87 +211,87 @@ async def promote_insight_to_lesson(
 
 
 # ============================================================
-# LESSONS (Tier 3)
+# public_knowledge (Tier 3)
 # ============================================================
 
-@router.get("/lessons")
+@router.get("/public_knowledge")
 async def list_lessons(
-    lesson_type: Optional[str] = Query(None),
+    knowledge_type: Optional[str] = Query(None),
     visibility: Optional[str] = Query(None),
     limit: int = Query(30, le=100),
     offset: int = Query(0),
     admin: dict = Depends(require_admin_auth)
 ):
-    """List lessons with optional filters."""
+    """List public_knowledge with optional filters."""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         conditions = []
         params = []
 
-        if lesson_type:
-            conditions.append("lesson_type = %s"); params.append(lesson_type)
+        if knowledge_type:
+            conditions.append("knowledge_type = %s"); params.append(knowledge_type)
         if visibility:
             conditions.append("visibility = %s"); params.append(visibility)
 
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
         params_count = list(params)
-        cursor.execute(f"SELECT COUNT(*) as total FROM lessons {where}", params_count)
+        cursor.execute(f"SELECT COUNT(*) as total FROM public_knowledge {where}", params_count)
         total = cursor.fetchone()["total"]
 
         params += [limit, offset]
         cursor.execute(f"""
-            SELECT id, seq_id, source_insight_ids, lesson_type, name, content,
+            SELECT id, seq_id, source_private_knowledge_ids, knowledge_type, name, content,
                    summary, visibility, tags, created_at, updated_at
-            FROM lessons {where}
+            FROM public_knowledge {where}
             ORDER BY created_at DESC
             LIMIT %s OFFSET %s
         """, params)
         rows = cursor.fetchall()
 
-    return {"lessons": [dict(r) for r in rows], "total": total}
+    return {"public_knowledge": [dict(r) for r in rows], "total": total}
 
 
-@router.get("/lessons/{lesson_id}")
+@router.get("/public_knowledge/{lesson_id}")
 async def get_lesson(lesson_id: str, admin: dict = Depends(require_admin_auth)):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM lessons WHERE id = %s", (lesson_id,))
+        cursor.execute("SELECT * FROM public_knowledge WHERE id = %s", (lesson_id,))
         row = cursor.fetchone()
 
     if not row:
-        raise HTTPException(status_code=404, detail="Lesson not found")
+        raise HTTPException(status_code=404, detail="PublicKnowledge not found")
     return dict(row)
 
 
-@router.post("/lessons")
+@router.post("/public_knowledge")
 async def create_lesson(body: LessonCreate, admin: dict = Depends(require_admin_auth)):
-    """Manually create a lesson."""
+    """Manually create a PublicKnowledge."""
     lesson_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO lessons (
-                id, source_insight_ids, lesson_type, name, content, summary,
+            INSERT INTO public_knowledge (
+                id, source_private_knowledge_ids, knowledge_type, name, content, summary,
                 visibility, tags, created_at, updated_at
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
-            lesson_id, body.source_insight_ids or [],
-            body.lesson_type, body.name, body.content, body.summary,
+            lesson_id, body.source_private_knowledge_ids or [],
+            body.knowledge_type, body.name, body.content, body.summary,
             body.visibility, body.tags or [], now, now
         ))
 
     return {"id": lesson_id, "created_at": now}
 
 
-@router.patch("/lessons/{lesson_id}")
+@router.patch("/public_knowledge/{lesson_id}")
 async def update_lesson(
     lesson_id: str,
     body: LessonUpdate,
     admin: dict = Depends(require_admin_auth)
 ):
-    """Update a lesson's fields."""
+    """Update a PublicKnowledge's fields."""
     now = datetime.now(timezone.utc).isoformat()
     fields = []
     values = []
@@ -302,8 +302,8 @@ async def update_lesson(
         fields.append("content = %s"); values.append(body.content)
     if body.summary is not None:
         fields.append("summary = %s"); values.append(body.summary)
-    if body.lesson_type is not None:
-        fields.append("lesson_type = %s"); values.append(body.lesson_type)
+    if body.knowledge_type is not None:
+        fields.append("knowledge_type = %s"); values.append(body.knowledge_type)
     if body.visibility is not None:
         fields.append("visibility = %s"); values.append(body.visibility)
     if body.tags is not None:
@@ -318,18 +318,18 @@ async def update_lesson(
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            f"UPDATE lessons SET {', '.join(fields)} WHERE id = %s",
+            f"UPDATE public_knowledge SET {', '.join(fields)} WHERE id = %s",
             values
         )
 
     return {"id": lesson_id, "updated_at": now}
 
 
-@router.delete("/lessons/{lesson_id}", status_code=204)
+@router.delete("/public_knowledge/{lesson_id}", status_code=204)
 async def delete_lesson(lesson_id: str, admin: dict = Depends(require_admin_auth)):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM lessons WHERE id = %s", (lesson_id,))
+        cursor.execute("DELETE FROM public_knowledge WHERE id = %s", (lesson_id,))
 
 
 # ============================================================
@@ -416,7 +416,7 @@ async def trigger_compact_entity(
     entity_id: str,
     admin: dict = Depends(require_admin_auth)
 ):
-    """Manually trigger compaction (insight generation) for an entity via queue drop."""
+    """Manually trigger compaction (PrivateKnowledge generation) for an entity via queue drop."""
     from memory.queue import knowledge_queue
     await knowledge_queue.add("generate_insight", {"entity_type": entity_type, "entity_id": entity_id}, {"priority": 1})
     return {"message": "Compaction triggered via queue", "entity_type": entity_type, "entity_id": entity_id}
@@ -433,12 +433,12 @@ async def trigger_memory_generation(
     return {"message": "Memory generation queueing completed", "include_today": include_today}
 
 
-@router.post("/trigger/run-lesson-check")
+@router.post("/trigger/run-PublicKnowledge-check")
 async def trigger_lesson_check(admin: dict = Depends(require_admin_auth)):
-    """Manually trigger the lesson accumulation check via queue drop."""
+    """Manually trigger the PublicKnowledge accumulation check via queue drop."""
     from memory.queue import knowledge_queue
     await knowledge_queue.add("generate_lesson", {}, {"priority": 1})
-    return {"message": "Lesson check queued"}
+    return {"message": "PublicKnowledge check queued"}
 
 
 # ============================================================
@@ -757,13 +757,13 @@ async def get_stats(admin: dict = Depends(require_admin_auth)):
         cursor.execute("SELECT COUNT(*) as total FROM memories")
         total_memories = cursor.fetchone()["total"]
 
-        cursor.execute("SELECT COUNT(*) as total FROM insights")
+        cursor.execute("SELECT COUNT(*) as total FROM private_knowledge")
         total_insights = cursor.fetchone()["total"]
 
-        cursor.execute("SELECT COUNT(*) as total FROM insights WHERE status = 'confirmed'")
+        cursor.execute("SELECT COUNT(*) as total FROM private_knowledge WHERE status = 'confirmed'")
         confirmed_insights = cursor.fetchone()["total"]
 
-        cursor.execute("SELECT COUNT(*) as total FROM lessons")
+        cursor.execute("SELECT COUNT(*) as total FROM public_knowledge")
         total_lessons = cursor.fetchone()["total"]
 
         cursor.execute("SELECT COUNT(*) as total FROM memory_agents WHERE is_active = TRUE")
@@ -793,8 +793,8 @@ async def get_stats(admin: dict = Depends(require_admin_auth)):
             "last_7d": interactions_7d,
         },
         "memories": {"total": total_memories},
-        "insights": {"total": total_insights, "confirmed": confirmed_insights},
-        "lessons": {"total": total_lessons},
+        "private_knowledge": {"total": total_insights, "confirmed": confirmed_insights},
+        "public_knowledge": {"total": total_lessons},
         "agents": {"total": total_agents, "active": active_agents},
     }
 
@@ -1052,21 +1052,21 @@ async def admin_search_memories(
                 created_at=str(hit.get("created_at", ""))
             ))
 
-    if layers in ("insights", "all"):
+    if layers in ("private_knowledge", "all"):
         ins_hits = await search_insights_by_vector(query_embedding, request.entity_id, request.entity_type, request.limit)
         for hit in ins_hits:
             results.append(SearchResult(
-                id=hit["id"], layer="insight", score=float(hit.get("score", 0)),
+                id=hit["id"], layer="PrivateKnowledge", score=float(hit.get("score", 0)),
                 name=hit.get("name"), snippet=(hit.get("summary") or "")[:200],
                 entity_id=hit["primary_entity_id"], entity_type=hit["primary_entity_type"],
                 created_at=str(hit.get("created_at", ""))
             ))
 
-    if layers in ("lessons", "all"):
+    if layers in ("public_knowledge", "all"):
         les_hits = await search_lessons_by_vector(query_embedding, request.limit)
         for hit in les_hits:
             results.append(SearchResult(
-                id=hit["id"], layer="lesson", score=float(hit.get("score", 0)),
+                id=hit["id"], layer="PublicKnowledge", score=float(hit.get("score", 0)),
                 name=hit.get("name"), snippet=(hit.get("summary") or "")[:200],
                 entity_id=None, entity_type=None, created_at=str(hit.get("created_at", ""))
             ))
@@ -1147,4 +1147,6 @@ async def delete_outbound_webhook(webhook_id: str, admin: dict = Depends(require
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM memory_outbound_webhooks WHERE id = %s", (webhook_id,))
+
+
 
