@@ -14,7 +14,7 @@ Flow:
   2. Fan-out search: memories + private_knowledge + public_knowledge
   3. Build context + system prompt (Prompt Manager skill if provided)
   4. Call LLM (history included)
-  5. Parse structured actions from LLM response (create_insight, update_insight)
+  5. Parse structured actions from LLM response (create_private_knowledge, update_private_knowledge)
   6. Execute actions
   7. Log exchange as interaction_type="ai_conversation"
   8. Return {response, actions_taken, interaction_id, context_summary}
@@ -35,8 +35,8 @@ from memory_services import (
     generate_embedding,
     get_system_prompt,
     search_memories_by_vector,
-    search_insights_by_vector,
-    search_lessons_by_vector,
+    search_private_knowledge_by_vector,
+    search_public_knowledge_by_vector,
 )
 from memory.auth import require_agent_auth, require_admin_auth
 
@@ -139,7 +139,7 @@ async def _run_chat(
             logger.warning(f"Memory search failed: {e}")
 
         try:
-            private_knowledge = await search_insights_by_vector(
+            private_knowledge = await search_private_knowledge_by_vector(
                 query_embedding, entity_id=entity_id, limit=_MAX_CONTEXT_INSIGHTS
             )
         except Exception as e:
@@ -147,7 +147,7 @@ async def _run_chat(
 
         if body.include_lessons:
             try:
-                public_knowledge = await search_lessons_by_vector(
+                public_knowledge = await search_public_knowledge_by_vector(
                     query_embedding, limit=_MAX_CONTEXT_LESSONS
                 )
             except Exception as e:
@@ -209,7 +209,7 @@ async def _run_chat(
             "---\n"
             "To create or update an PrivateKnowledge, include a JSON block in your reply:\n"
             "```action\n"
-            '{"type": "create_insight", "name": "...", "knowledge_type": "...", "content": "..."}\n'
+            '{"type": "create_private_knowledge", "name": "...", "knowledge_type": "...", "content": "..."}\n'
             "```"
         )
 
@@ -316,8 +316,8 @@ async def _execute_actions(
     Parse ```action {...}``` blocks from LLM response and execute them.
 
     Supported actions:
-      - create_insight  → {type, name, knowledge_type, content, summary?}
-      - update_insight  → {type, id, content?, summary?, status?}
+      - create_private_knowledge  → {type, name, knowledge_type, content, summary?}
+      - update_private_knowledge  → {type, id, content?, summary?, status?}
     """
     actions_taken = []
     blocks = re.findall(r"```action\s*(\{.*?\})\s*```", response_text, re.DOTALL)
@@ -327,7 +327,7 @@ async def _execute_actions(
             action = json.loads(block)
             action_type = action.get("type")
 
-            if action_type == "create_insight":
+            if action_type == "create_private_knowledge":
                 insight_id = str(uuid.uuid4())
                 now = datetime.now(timezone.utc).isoformat()
                 with get_memory_db_context() as conn:
@@ -349,10 +349,10 @@ async def _execute_actions(
                         now, now,
                     ))
                 actions_taken.append(ActionResult(
-                    action="create_insight", result="created", id=insight_id
+                    action="create_private_knowledge", result="created", id=insight_id
                 ))
 
-            elif action_type == "update_insight":
+            elif action_type == "update_private_knowledge":
                 insight_id = action.get("id")
                 if not insight_id:
                     continue
@@ -370,7 +370,7 @@ async def _execute_actions(
                             values
                         )
                     actions_taken.append(ActionResult(
-                        action="update_insight", result="updated", id=insight_id
+                        action="update_private_knowledge", result="updated", id=insight_id
                     ))
 
         except Exception as e:

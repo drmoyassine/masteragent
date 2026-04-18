@@ -121,7 +121,7 @@ async def list_lesson_types(user: dict = Depends(require_admin_auth)):
     return _list_config_table("memory_lesson_types")
 
 @router.post("/config/lesson-types", response_model=LessonTypeResponse)
-async def create_lesson_type(data: LessonTypeCreate, user: dict = Depends(require_admin_auth)):
+async def create_public_knowledge_type(data: LessonTypeCreate, user: dict = Depends(require_admin_auth)):
     now = utcnow()
     type_id = str(uuid.uuid4())
     with get_memory_db_context() as conn:
@@ -138,7 +138,7 @@ async def create_lesson_type(data: LessonTypeCreate, user: dict = Depends(requir
         return dict(cursor.fetchone())
 
 @router.delete("/config/lesson-types/{type_id}")
-async def delete_lesson_type(type_id: str, user: dict = Depends(require_admin_auth)):
+async def delete_public_knowledge_type(type_id: str, user: dict = Depends(require_admin_auth)):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM memory_lesson_types WHERE id = %s", (type_id,))

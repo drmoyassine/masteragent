@@ -44,7 +44,7 @@ async def search_memories_by_vector(
         return []
 
 
-async def search_insights_by_vector(
+async def search_private_knowledge_by_vector(
     query_vector: List[float],
     entity_id: str = None,
     entity_type: str = None,
@@ -78,7 +78,7 @@ async def search_insights_by_vector(
         return []
 
 
-async def search_lessons_by_vector(
+async def search_public_knowledge_by_vector(
     query_vector: List[float],
     knowledge_type: str = None,
     limit: int = 10,

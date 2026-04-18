@@ -319,7 +319,7 @@ class MemoryResponse(BaseModel):
 # Tier 2: Insight Models
 # ============================================
 
-class InsightCreate(BaseModel):
+class PrivateKnowledgeCreate(BaseModel):
     primary_entity_type: str
     primary_entity_id: str
     insight_type: Optional[str] = None  # behavior_pattern, risk_signal, opportunity,
@@ -329,7 +329,7 @@ class InsightCreate(BaseModel):
     summary: Optional[str] = None
     source_memory_ids: Optional[List[str]] = []
 
-class InsightResponse(BaseModel):
+class PrivateKnowledgeResponse(BaseModel):
     id: str
     seq_id: Optional[int] = None
     primary_entity_type: str
@@ -346,7 +346,7 @@ class InsightResponse(BaseModel):
     created_at: str
     updated_at: str
 
-class InsightUpdate(BaseModel):
+class PrivateKnowledgeUpdate(BaseModel):
     name: Optional[str] = None
     content: Optional[str] = None
     summary: Optional[str] = None
@@ -357,7 +357,7 @@ class InsightUpdate(BaseModel):
 # Tier 3: Lesson Models
 # ============================================
 
-class LessonCreate(BaseModel):
+class PublicKnowledgeCreate(BaseModel):
     lesson_type: Optional[str] = None
     name: str
     content: str                         # PII-stripped Markdown
@@ -366,7 +366,7 @@ class LessonCreate(BaseModel):
     visibility: str = "shared"           # shared | team | private
     tags: Optional[List[str]] = []
 
-class LessonResponse(BaseModel):
+class PublicKnowledgeResponse(BaseModel):
     id: str
     seq_id: Optional[int] = None
     source_insight_ids: List[str]
@@ -379,7 +379,7 @@ class LessonResponse(BaseModel):
     created_at: str
     updated_at: str
 
-class LessonUpdate(BaseModel):
+class PublicKnowledgeUpdate(BaseModel):
     name: Optional[str] = None
     content: Optional[str] = None
     summary: Optional[str] = None
@@ -476,6 +476,6 @@ class ContextStatusResponse(BaseModel):
     memories_count: int
     last_memory_date: Optional[str] = None
     memories_ids: List[str] = []
-    insights_count: int
-    last_insight_date: Optional[str] = None
-    insights_ids: List[str] = []
+    private_knowledge_count: int
+    last_private_knowledge_date: Optional[str] = None
+    private_knowledge_ids: List[str] = []

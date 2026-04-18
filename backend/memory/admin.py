@@ -21,8 +21,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Body
 
 from core.storage import get_memory_db_context
 from memory_models import (
-    InsightCreate, InsightResponse, InsightUpdate,
-    LessonCreate, LessonResponse, LessonUpdate,
+    PrivateKnowledgeCreate, PrivateKnowledgeResponse, PrivateKnowledgeUpdate,
+    PublicKnowledgeCreate, PublicKnowledgeResponse, PublicKnowledgeUpdate,
     EntityTypeConfig, EntityTypeConfigUpdate,
     InteractionResponse, InteractionUpdate, TimelineEntry,
     SearchRequest, SearchResponse, SearchResult, MemoryUpdate,
@@ -30,7 +30,7 @@ from memory_models import (
 )
 from memory_services import (
     generate_embedding, search_memories_by_vector,
-    search_insights_by_vector, search_lessons_by_vector,
+    search_private_knowledge_by_vector, search_public_knowledge_by_vector,
     get_memory_settings
 )
 from memory.auth import require_admin_auth
@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 # ============================================================
 
 @router.get("/private_knowledge")
-async def list_insights(
+async def list_private_knowledge(
     entity_type: Optional[str] = Query(None),
     entity_id: Optional[str] = Query(None),
     status: Optional[str] = Query(None),      # draft | confirmed | archived
@@ -105,7 +105,7 @@ async def get_insight(insight_id: str, admin: dict = Depends(require_admin_auth)
 
 
 @router.post("/private_knowledge")
-async def create_insight(body: InsightCreate, admin: dict = Depends(require_admin_auth)):
+async def create_private_knowledge(body: PrivateKnowledgeCreate, admin: dict = Depends(require_admin_auth)):
     """Manually create an PrivateKnowledge (draft)."""
     insight_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
@@ -129,9 +129,9 @@ async def create_insight(body: InsightCreate, admin: dict = Depends(require_admi
 
 
 @router.patch("/private_knowledge/{insight_id}")
-async def update_insight(
+async def update_private_knowledge(
     insight_id: str,
-    body: InsightUpdate,
+    body: PrivateKnowledgeUpdate,
     admin: dict = Depends(require_admin_auth)
 ):
     """Update an PrivateKnowledge's fields or status (confirm/archive)."""
@@ -183,7 +183,7 @@ async def update_insight(
 
 
 @router.delete("/private_knowledge/{insight_id}", status_code=204)
-async def delete_insight(insight_id: str, admin: dict = Depends(require_admin_auth)):
+async def delete_private_knowledge(insight_id: str, admin: dict = Depends(require_admin_auth)):
     """Delete an PrivateKnowledge."""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -215,7 +215,7 @@ async def promote_insight_to_lesson(
 # ============================================================
 
 @router.get("/public_knowledge")
-async def list_lessons(
+async def list_public_knowledge(
     knowledge_type: Optional[str] = Query(None),
     visibility: Optional[str] = Query(None),
     limit: int = Query(30, le=100),
@@ -264,7 +264,7 @@ async def get_lesson(lesson_id: str, admin: dict = Depends(require_admin_auth)):
 
 
 @router.post("/public_knowledge")
-async def create_lesson(body: LessonCreate, admin: dict = Depends(require_admin_auth)):
+async def create_public_knowledge(body: PublicKnowledgeCreate, admin: dict = Depends(require_admin_auth)):
     """Manually create a PublicKnowledge."""
     lesson_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
@@ -286,9 +286,9 @@ async def create_lesson(body: LessonCreate, admin: dict = Depends(require_admin_
 
 
 @router.patch("/public_knowledge/{lesson_id}")
-async def update_lesson(
+async def update_public_knowledge(
     lesson_id: str,
-    body: LessonUpdate,
+    body: PublicKnowledgeUpdate,
     admin: dict = Depends(require_admin_auth)
 ):
     """Update a PublicKnowledge's fields."""
@@ -326,7 +326,7 @@ async def update_lesson(
 
 
 @router.delete("/public_knowledge/{lesson_id}", status_code=204)
-async def delete_lesson(lesson_id: str, admin: dict = Depends(require_admin_auth)):
+async def delete_public_knowledge(lesson_id: str, admin: dict = Depends(require_admin_auth)):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM public_knowledge WHERE id = %s", (lesson_id,))
@@ -1053,7 +1053,7 @@ async def admin_search_memories(
             ))
 
     if layers in ("private_knowledge", "all"):
-        ins_hits = await search_insights_by_vector(query_embedding, request.entity_id, request.entity_type, request.limit)
+        ins_hits = await search_private_knowledge_by_vector(query_embedding, request.entity_id, request.entity_type, request.limit)
         for hit in ins_hits:
             results.append(SearchResult(
                 id=hit["id"], layer="PrivateKnowledge", score=float(hit.get("score", 0)),
@@ -1063,7 +1063,7 @@ async def admin_search_memories(
             ))
 
     if layers in ("public_knowledge", "all"):
-        les_hits = await search_lessons_by_vector(query_embedding, request.limit)
+        les_hits = await search_public_knowledge_by_vector(query_embedding, request.limit)
         for hit in les_hits:
             results.append(SearchResult(
                 id=hit["id"], layer="PublicKnowledge", score=float(hit.get("score", 0)),

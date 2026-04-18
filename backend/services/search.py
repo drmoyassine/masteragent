@@ -178,10 +178,10 @@ async def search_memories_by_fulltext(
 
 
 # ============================================
-# TIER 2: Insights
+# TIER 2: private_knowledge
 # ============================================
 
-async def search_insights_by_vector(
+async def search_private_knowledge_by_vector(
     query_vector: List[float],
     entity_id: str = None,
     entity_type: str = None,
@@ -212,17 +212,17 @@ async def search_insights_by_vector(
             
             cursor.execute(f"""
                 SELECT id, primary_entity_type, primary_entity_id,
-                       insight_type, name, summary, status, created_at,
+                       knowledge_type, name, summary, status, created_at,
                        GREATEST(0, (1 - (embedding <=> %s::vector)) - {decay_sql}) AS score
-                FROM insights WHERE {where}
+                FROM private_knowledge WHERE {where}
                 ORDER BY score DESC LIMIT %s
             """, params + [query_vector, limit])
             return [dict(r) for r in cursor.fetchall()]
     except Exception as e:
-        logger.error(f"pgvector insight search error: {e}")
+        logger.error(f"pgvector PrivateKnowledge search error: {e}")
         return []
 
-async def search_insights_by_fulltext(
+async def search_private_knowledge_by_fulltext(
     query: str,
     entity_id: str = None,
     entity_type: str = None,
@@ -254,24 +254,24 @@ async def search_insights_by_fulltext(
             where = " AND ".join(conditions)
             cursor.execute(f"""
                 SELECT id, primary_entity_type, primary_entity_id,
-                       insight_type, name, summary, status, created_at,
+                       knowledge_type, name, summary, status, created_at,
                        ts_rank(to_tsvector('simple', coalesce(name, '') || ' ' || coalesce(summary, '') || ' ' || coalesce(content, '')), websearch_to_tsquery('simple', %s)) AS score
-                FROM insights WHERE {where}
+                FROM private_knowledge WHERE {where}
                 ORDER BY score DESC LIMIT %s
             """, params + [query, limit])
             return [dict(r) for r in cursor.fetchall()]
     except Exception as e:
-        logger.error(f"fulltext insight search error: {e}")
+        logger.error(f"fulltext PrivateKnowledge search error: {e}")
         return []
 
 
 # ============================================
-# TIER 3: Lessons
+# TIER 3: public_knowledge
 # ============================================
 
-async def search_lessons_by_vector(
+async def search_public_knowledge_by_vector(
     query_vector: List[float],
-    lesson_type: str = None,
+    knowledge_type: str = None,
     entity_type: str = None,
     entity_subtype: str = None,
     since: str = None,
@@ -283,33 +283,33 @@ async def search_lessons_by_vector(
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
             conditions, params = ["embedding IS NOT NULL", "visibility = 'shared'"], []
-            if lesson_type:
-                conditions.append("lesson_type = %s"); params.append(lesson_type)
+            if knowledge_type:
+                conditions.append("knowledge_type = %s"); params.append(knowledge_type)
             if since:
                 conditions.append("created_at >= %s"); params.append(since)
             if until:
                 conditions.append("created_at <= %s"); params.append(until)
                 
-            # Note: Lessons implicitly ignore entity_id per schema, but 
+            # Note: public_knowledge implicitly ignore entity_id per schema, but 
             # tags or metadata could eventually store entity_type natively if we wanted.
             
             where = " AND ".join(conditions)
             decay_sql = f"(EXTRACT(EPOCH FROM (NOW() - created_at))/86400) * {DECAY_RATE}"
             
             cursor.execute(f"""
-                SELECT id, lesson_type, name, summary, visibility, tags, created_at,
+                SELECT id, knowledge_type, name, summary, visibility, tags, created_at,
                        GREATEST(0, (1 - (embedding <=> %s::vector)) - {decay_sql}) AS score
-                FROM lessons WHERE {where}
+                FROM public_knowledge WHERE {where}
                 ORDER BY score DESC LIMIT %s
             """, params + [query_vector, limit])
             return [dict(r) for r in cursor.fetchall()]
     except Exception as e:
-        logger.error(f"pgvector lesson search error: {e}")
+        logger.error(f"pgvector PublicKnowledge search error: {e}")
         return []
 
-async def search_lessons_by_fulltext(
+async def search_public_knowledge_by_fulltext(
     query: str,
-    lesson_type: str = None,
+    knowledge_type: str = None,
     entity_type: str = None,
     entity_subtype: str = None,
     since: str = None,
@@ -321,8 +321,8 @@ async def search_lessons_by_fulltext(
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
             conditions, params = ["visibility = 'shared'"], []
-            if lesson_type:
-                conditions.append("lesson_type = %s"); params.append(lesson_type)
+            if knowledge_type:
+                conditions.append("knowledge_type = %s"); params.append(knowledge_type)
             if since:
                 conditions.append("created_at >= %s"); params.append(since)
             if until:
@@ -333,12 +333,13 @@ async def search_lessons_by_fulltext(
             
             where = " AND ".join(conditions)
             cursor.execute(f"""
-                SELECT id, lesson_type, name, summary, visibility, tags, created_at,
+                SELECT id, knowledge_type, name, summary, visibility, tags, created_at,
                        ts_rank(to_tsvector('simple', coalesce(name, '') || ' ' || coalesce(summary, '') || ' ' || coalesce(content, '')), websearch_to_tsquery('simple', %s)) AS score
-                FROM lessons WHERE {where}
+                FROM public_knowledge WHERE {where}
                 ORDER BY score DESC LIMIT %s
             """, params + [query, limit])
             return [dict(r) for r in cursor.fetchall()]
     except Exception as e:
-        logger.error(f"fulltext lesson search error: {e}")
+        logger.error(f"fulltext PublicKnowledge search error: {e}")
         return []
+

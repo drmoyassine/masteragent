@@ -22,7 +22,7 @@ import pytest
 # Helpers
 # ══════════════════════════════════════════════════════════════════
 
-def _create_insight(admin, base_url, entity_type="contact", entity_id=None, status="draft"):
+def _create_private_knowledge(admin, base_url, entity_type="contact", entity_id=None, status="draft"):
     """Helper: create an insight, optionally confirm it."""
     eid = entity_id or f"test-lesson-{uuid.uuid4().hex[:8]}"
     resp = admin.post(f"{base_url}/api/memory/insights", json={
@@ -44,11 +44,11 @@ def _create_insight(admin, base_url, entity_type="contact", entity_id=None, stat
     return insight_id, eid
 
 
-def _delete_insight(admin, base_url, insight_id):
+def _delete_private_knowledge(admin, base_url, insight_id):
     admin.delete(f"{base_url}/api/memory/insights/{insight_id}")
 
 
-def _delete_lesson(admin, base_url, lesson_id):
+def _delete_public_knowledge(admin, base_url, lesson_id):
     admin.delete(f"{base_url}/api/memory/lessons/{lesson_id}")
 
 
@@ -87,7 +87,7 @@ class TestRunLessonCheck:
         insight_ids = []
         try:
             for _ in range(2):
-                iid, _ = _create_insight(admin, base_url, status="confirmed")
+                iid, _ = _create_private_knowledge(admin, base_url, status="confirmed")
                 insight_ids.append(iid)
 
             # Trigger lesson check
@@ -112,14 +112,14 @@ class TestRunLessonCheck:
 
             if lesson_id:
                 print(f"✓ Lesson {lesson_id} generated from confirmed insights")
-                _delete_lesson(admin, base_url, lesson_id)
+                _delete_public_knowledge(admin, base_url, lesson_id)
             else:
                 # LLM not configured — acceptable skip
                 pytest.skip("No lesson generated within 15s — LLM likely not configured")
         finally:
             # Clean up insights + restore settings
             for iid in insight_ids:
-                _delete_insight(admin, base_url, iid)
+                _delete_private_knowledge(admin, base_url, iid)
             admin.put(f"{base_url}/api/memory/config/settings", json={
                 "lesson_threshold": orig.get("lesson_threshold", 5),
                 "lesson_trigger_days": orig.get("lesson_trigger_days"),

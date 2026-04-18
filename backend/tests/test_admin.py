@@ -51,21 +51,21 @@ def test_lesson(admin, base_url):
 
 class TestInsightsCRUD:
 
-    def test_list_insights(self, admin, base_url):
+    def test_list_private_knowledge(self, admin, base_url):
         resp = admin.get(f"{base_url}/api/memory/insights")
         assert resp.status_code == 200, resp.text
         data = resp.json()
         assert "insights" in data or isinstance(data, list)
         print("✓ List insights OK")
 
-    def test_list_insights_requires_auth(self, api_client, base_url):
+    def test_list_private_knowledge_requires_auth(self, api_client, base_url):
         api_client.headers.pop("Authorization", None)
         api_client.headers.pop("X-API-Key", None)
         resp = api_client.get(f"{base_url}/api/memory/insights")
         assert resp.status_code == 401
         print("✓ Insights list requires admin auth")
 
-    def test_create_insight(self, admin, base_url):
+    def test_create_private_knowledge(self, admin, base_url):
         resp = admin.post(f"{base_url}/api/memory/insights", json={
             "primary_entity_type": "contact",
             "primary_entity_id": "test-contact-001",
@@ -107,7 +107,7 @@ class TestInsightsCRUD:
         # 400 is acceptable if insight is already promoted / too short
         print(f"✓ Promote insight endpoint responded: {resp.status_code}")
 
-    def test_delete_insight(self, admin, base_url):
+    def test_delete_private_knowledge(self, admin, base_url):
         # Create fresh
         resp = admin.post(f"{base_url}/api/memory/insights", json={
             "primary_entity_type": "contact",
@@ -139,14 +139,14 @@ class TestInsightsCRUD:
 
 class TestLessonsCRUD:
 
-    def test_list_lessons(self, admin, base_url):
+    def test_list_public_knowledge(self, admin, base_url):
         resp = admin.get(f"{base_url}/api/memory/lessons")
         assert resp.status_code == 200, resp.text
         data = resp.json()
         assert "lessons" in data or isinstance(data, list)
         print("✓ List lessons OK")
 
-    def test_create_lesson(self, admin, base_url):
+    def test_create_public_knowledge(self, admin, base_url):
         resp = admin.post(f"{base_url}/api/memory/lessons", json={
             "name": "TEST Create Lesson",
             "lesson_type": "sales",
@@ -176,7 +176,7 @@ class TestLessonsCRUD:
         assert resp.status_code == 200, resp.text
         print(f"✓ Patch lesson OK: {lesson_id}")
 
-    def test_delete_lesson(self, admin, base_url):
+    def test_delete_public_knowledge(self, admin, base_url):
         resp = admin.post(f"{base_url}/api/memory/lessons", json={
             "name": "TEST Delete Lesson",
             "lesson_type": "other",

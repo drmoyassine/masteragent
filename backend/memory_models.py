@@ -357,7 +357,7 @@ class PrivateKnowledgeUpdate(BaseModel):
 # Tier 3: PublicKnowledge Models
 # ============================================
 
-class LessonCreate(BaseModel):
+class PublicKnowledgeCreate(BaseModel):
     knowledge_type: Optional[str] = None
     name: str
     content: str                         # PII-stripped Markdown
@@ -366,7 +366,7 @@ class LessonCreate(BaseModel):
     visibility: str = "shared"           # shared | team | private
     tags: Optional[List[str]] = []
 
-class LessonResponse(BaseModel):
+class PublicKnowledgeResponse(BaseModel):
     id: str
     seq_id: Optional[int] = None
     source_PrivateKnowledge_ids: List[str]
@@ -379,7 +379,7 @@ class LessonResponse(BaseModel):
     created_at: str
     updated_at: str
 
-class LessonUpdate(BaseModel):
+class PublicKnowledgeUpdate(BaseModel):
     name: Optional[str] = None
     content: Optional[str] = None
     summary: Optional[str] = None
