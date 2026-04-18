@@ -619,7 +619,7 @@ def _seed_defaults():
             ("public_knowledge_generation", "openai", "gpt-4o-mini", "public_knowledge", 1,
              "You are an AI knowledge curator. The following are de-identified private_knowledge from multiple interactions. Synthesize them into a single generalizable PublicKnowledge — a durable, reusable piece of knowledge applicable beyond any specific entity. Remove all specific names. Return JSON: {\"name\": \"...\", \"knowledge_type\": \"...\", \"content\": \"...\", \"summary\": \"...\", \"tags\": [...]}\nknowledge_type must be one of: process, risk, sales, product, support, other",
              ""),
-             ("summarization", "openai", "gpt-4o-mini", "interactions", -1,
+             ("summarization", "openai", "gpt-4o-mini", "private_knowledge", -1,
              "Summarize this in 1-2 sentences:\n\n{{text}}",
              ""),
         ]:
@@ -637,6 +637,16 @@ def _seed_defaults():
                 SET inline_system_prompt = %s, inline_schema = %s
                 WHERE task_type = %s AND (inline_system_prompt IS NULL OR inline_system_prompt = '')
             """, (prompt, schema, task_type))
+
+        # Hotfix: Ensure summarization is properly mapped to private_knowledge for migrating existing users
+        cursor.execute("""
+            UPDATE memory_llm_configs 
+            SET pipeline_stage = 'private_knowledge' 
+            WHERE task_type = 'summarization' AND pipeline_stage = 'interactions'
+            AND EXISTS (
+                SELECT 1 FROM information_schema.tables WHERE table_name = 'memory_llm_configs'
+            )
+        """)
 
 
         # Default system prompts
