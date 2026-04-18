@@ -221,13 +221,13 @@ export default function SettingsPage({ onDisconnect }) {
       return [...otherNodes, ...orderedNodes];
     });
 
-    const payload = newArray.map((c, index) => ({
-      config_id: c.id,
-      execution_order: index
-    }));
+    const payload = {
+      pipeline_stage: pipelineStage,
+      ordered_ids: newArray.map(c => c.id)
+    };
 
     try {
-      await reorderPipelineNodes({ updates: payload });
+      await reorderPipelineNodes(payload);
     } catch (error) {
       toast.error("Failed to save pipeline order");
       loadAllData(); // Revert on failure
