@@ -145,10 +145,10 @@ async def start_bullmq_workers():
     try:
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT settings FROM memory_settings LIMIT 1")
+            cursor.execute("SELECT * FROM memory_settings LIMIT 1")
             row = cursor.fetchone()
-            if row and row["settings"]:
-                settings = row["settings"]
+            if row:
+                settings = dict(row)
     except Exception as e:
         logger.warning(f"Failed to fetch queue settings: {e}")
         
@@ -181,5 +181,6 @@ async def stop_bullmq_workers():
     if tasks:
         await asyncio.gather(*tasks)
     logger.info("BullMQ Workers stopped.")
+
 
 
