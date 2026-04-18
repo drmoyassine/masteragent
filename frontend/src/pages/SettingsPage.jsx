@@ -522,7 +522,7 @@ export default function SettingsPage({ onDisconnect }) {
 
           {activeTab === "memory" && (
             <MemorySettings
-              settings={generalSettings}
+              settings={memorySettings}
               llmConfigs={llmConfigs}
               llmProviders={llmProviders}
               onUpdateSettings={handleUpdateGeneralSettings}
