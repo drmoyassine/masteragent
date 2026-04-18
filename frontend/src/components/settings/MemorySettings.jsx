@@ -221,31 +221,7 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
                             Time of day to process pending interactions into daily memory records.
                         </p>
                     </div>
-                    <div className="space-y-2">
-                        <Label className="text-xs font-mono">Memories Mode</Label>
-                        <Select
-                            value={settings.memory_generation_mode || "ner_and_raw"}
-                            onValueChange={(v) =>
-                                onUpdateSettings("memory_generation_mode", v)
-                            }
-                        >
-                            <SelectTrigger>
-                                <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="ner_and_raw">
-                                    NER + Interactions → LLM
-                                </SelectItem>
-                                <SelectItem value="ner_only">
-                                    NER output only → LLM
-                                </SelectItem>
-                            </SelectContent>
-                        </Select>
-                        <p className="text-[10px] text-muted-foreground">
-                            <strong>NER + Raw</strong>: richer context, better summaries. &nbsp;
-                            <strong>NER only</strong>: structured signals only, no raw text sent to LLM.
-                        </p>
-                    </div>
+
                 </CardContent>
             </Card>
 

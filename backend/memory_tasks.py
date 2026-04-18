@@ -413,7 +413,6 @@ async def _generate_memory_for_entity(entity_type: str, entity_id: str, interact
     # 1. Fetch entity type config + global settings
     config = _get_entity_type_config(entity_type)
     settings = get_memory_settings()
-    mode = settings.get("memory_generation_mode", "ner_and_raw")
 
     # 2. Fetch all pending interactions for this entity+date
     with get_memory_db_context() as conn:
@@ -457,30 +456,19 @@ async def _generate_memory_for_entity(entity_type: str, entity_id: str, interact
         except Exception as e:
             logger.warning(f"NER failed for {entity_type}/{entity_id}: {e}")
 
-    # 5. Build LLM context based on mode
-    #    'ner_only'    → feed only NER structured output to LLM
-    #    'ner_and_raw' → feed raw interaction content + NER output to LLM
+    # 5. Build LLM context
     ner_summary = _format_ner_output(related_entities, intents, relationships)
 
-    raw_text = ""
-    if mode == "ner_only":
-        base_context = (
-            f"Entity: {entity_type} / {entity_id}\n"
-            f"Date: {interaction_date}\n"
-            f"Interaction count: {len(interactions)}\n\n"
-            f"--- Extracted Signals ---\n{ner_summary}"
-        )
-    else:  # "ner_and_raw" (default)
-        raw_text = "\n\n---\n\n".join(
-            i["content"] for i in interactions if i.get("content")
-        )
-        base_context = (
-            f"Entity: {entity_type} / {entity_id}\n"
-            f"Date: {interaction_date}\n"
-            f"Interaction count: {len(interactions)}\n\n"
-            f"--- Raw Interactions ---\n{raw_text}\n\n"
-            f"--- Extracted Signals ---\n{ner_summary}"
-        )
+    raw_text = "\n\n---\n\n".join(
+        i["content"] for i in interactions if i.get("content")
+    )
+    base_context = (
+        f"Entity: {entity_type} / {entity_id}\n"
+        f"Date: {interaction_date}\n"
+        f"Interaction count: {len(interactions)}\n\n"
+        f"--- Raw Interactions ---\n{raw_text}\n\n"
+        f"--- Extracted Signals ---\n{ner_summary}"
+    )
 
     # 5.5 Fetch prior memories for context continuity (hardcoded 2+2)
     PRIOR_CHRONO_COUNT = 2
@@ -541,10 +529,7 @@ async def _generate_memory_for_entity(entity_type: str, entity_id: str, interact
             f"Interaction count: {len(interactions)}\n\n"
             f"--- Prior Context (established facts, do NOT repeat) ---\n{prior_context}\n\n"
         )
-        if mode == "ner_only":
-            llm_context += f"--- Extracted Signals ---\n{ner_summary}"
-        else:
-            llm_context += f"--- Raw Interactions ---\n{raw_text}\n\n--- Extracted Signals ---\n{ner_summary}"
+        llm_context += f"--- Raw Interactions ---\n{raw_text}\n\n--- Extracted Signals ---\n{ner_summary}"
     else:
         llm_context = base_context
 
