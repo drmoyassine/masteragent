@@ -929,7 +929,7 @@ async def generate_lesson_from_insights(insights: list):
             context[:8000],
             system_prompt=system_prompt,
             max_tokens=600,
-            task_type="summarization",
+            task_type="lesson_generation",
         )
         result = json.loads(result_text)
     except Exception as e:
@@ -1022,7 +1022,7 @@ async def promote_to_lesson(insight_id: str):
             content,
             system_prompt=generalize_prompt,
             max_tokens=600,
-            task_type="summarization"
+            task_type="lesson_generation"
         )
     except Exception as e:
         logger.warning(f"Lesson generalization failed: {e}")
