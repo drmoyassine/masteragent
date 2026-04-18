@@ -402,9 +402,9 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
 
 // ─── Knowledgeration Tab ─────────────────────────────────────────────────
 function KnowledgeGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, modelLists, fetchingModels, fetchErrors, onFetchModels }) {
-    const privateKnowledgeConfig = llmConfigs.find((c) => c.task_type === "insight_generation");
+    const privateKnowledgeConfig = llmConfigs.find((c) => c.task_type === "private_knowledge_generation");
     const piiConfig = llmConfigs.find((c) => c.task_type === "pii_scrubbing");
-    const summarizationConfig = llmConfigs.find((c) => c.task_type === "summarization");
+    const publicKnowledgeConfig = llmConfigs.find((c) => c.task_type === "public_knowledge_generation");
 
     return (
         <div className="space-y-6">
@@ -713,4 +713,5 @@ export function MemorySettings({
         </div>
     );
 }
+
 

@@ -116,11 +116,11 @@ async def delete_entity_subtype(subtype_id: str, user: dict = Depends(require_ad
 # Admin Config Endpoints - Lesson Types
 # ============================================
 
-@router.get("/config/lesson-types", response_model=List[LessonTypeResponse])
+@router.get("/config/public_knowledge_types", response_model=List[LessonTypeResponse])
 async def list_lesson_types(user: dict = Depends(require_admin_auth)):
     return _list_config_table("memory_lesson_types")
 
-@router.post("/config/lesson-types", response_model=LessonTypeResponse)
+@router.post("/config/public_knowledge_types", response_model=LessonTypeResponse)
 async def create_public_knowledge_type(data: LessonTypeCreate, user: dict = Depends(require_admin_auth)):
     now = utcnow()
     type_id = str(uuid.uuid4())
@@ -137,7 +137,7 @@ async def create_public_knowledge_type(data: LessonTypeCreate, user: dict = Depe
         cursor.execute("SELECT * FROM memory_lesson_types WHERE id = %s", (type_id,))
         return dict(cursor.fetchone())
 
-@router.delete("/config/lesson-types/{type_id}")
+@router.delete("/config/public_knowledge_types/{type_id}")
 async def delete_public_knowledge_type(type_id: str, user: dict = Depends(require_admin_auth)):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -692,3 +692,4 @@ async def disconnect_supabase_endpoint(user: dict = Depends(require_admin_auth))
     if not result.get("disconnected"):
         raise HTTPException(status_code=500, detail=result.get("error", "Disconnect failed"))
     return result
+
