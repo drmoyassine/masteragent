@@ -85,8 +85,13 @@ export function InlineTaskConfigAccordion({
     const TaskIcon = taskInfo.icon;
     const assignedProvider = llmProviders.find((p) => p.id === (formData.provider_id || config.provider_id));
     const isConfigured = !!assignedProvider && !!(formData.model_name || config.model_name);
+    
+    const isGliner = assignedProvider?.provider === "gliner";
+    const isZendata = assignedProvider?.provider === "zendata";
 
-    const hasPrompting = config.task_type !== "embedding" && config.task_type !== "pii_scrubbing";
+    // PII endpoints that are LLMs use prompting, custom endpoint services do not
+    const hasPrompting = config.task_type !== "embedding" && !isZendata;
+    const hidePromptInput = isGliner;
     
     const canFetchModels = assignedProvider ? ["openai", "anthropic", "gemini", "openrouter", "ollama"].includes(assignedProvider.provider) : false;
 
@@ -200,21 +205,23 @@ export function InlineTaskConfigAccordion({
                                 </div>
                             ) : (
                                 <div className="space-y-6 bg-black/10 p-4 rounded-lg border border-white/5">
-                                    <div className="space-y-2">
+                                        {!hidePromptInput && (
+                                            <div className="space-y-2">
+                                                <Label className="flex justify-between">
+                                                    <span>Task System Prompt</span>
+                                                    <span className="text-[10px] text-muted-foreground">Supports Mustache `&#123;&#123; variables &#125;&#125;`</span>
+                                                </Label>
+                                                <Textarea 
+                                                    value={formData.inline_system_prompt}
+                                                    onChange={(e) => setFormData(f => ({ ...f, inline_system_prompt: e.target.value }))}
+                                                    placeholder="You are an AI assistant..."
+                                                    className="min-h-[120px] font-mono text-sm leading-relaxed"
+                                                />
+                                            </div>
+                                        )}
+                                        <div className="space-y-2">
                                         <Label className="flex justify-between">
-                                            <span>Task System Prompt</span>
-                                            <span className="text-[10px] text-muted-foreground">Supports Mustache `&#123;&#123; variables &#125;&#125;`</span>
-                                        </Label>
-                                        <Textarea 
-                                            value={formData.inline_system_prompt}
-                                            onChange={(e) => setFormData(f => ({ ...f, inline_system_prompt: e.target.value }))}
-                                            placeholder="You are an AI assistant..."
-                                            className="min-h-[120px] font-mono text-sm leading-relaxed"
-                                        />
-                                    </div>
-                                    <div className="space-y-2">
-                                        <Label className="flex justify-between">
-                                            <span>JSON Output Schema (Optional)</span>
+                                            <span>{isGliner ? "GLiNER Extraction Labels (JSON Schema)" : "JSON Output Schema (Optional)"}</span>
                                             <span className="text-[10px] text-muted-foreground">Structured JSON / Schema Dict</span>
                                         </Label>
                                         <Textarea 
@@ -259,7 +266,9 @@ export function InlineTaskConfigAccordion({
 
                             {formData.provider_id ? (
                                 <div className="space-y-2">
-                                    <Label>Compute Model</Label>
+                                    <Label>
+                                        {isZendata || isGliner ? "Endpoint API Path (Optional)" : "Compute Model"}
+                                    </Label>
                                     {canFetchModels ? (
                                         <ModelCombobox 
                                             value={formData.model_name}
@@ -274,13 +283,13 @@ export function InlineTaskConfigAccordion({
                                         <Input 
                                            value={formData.model_name}
                                            onChange={(e) => setFormData(f => ({ ...f, model_name: e.target.value }))}
-                                           placeholder="e.g. gpt-4o or local model"
+                                           placeholder={isZendata || isGliner ? "e.g. /custom-path or leave blank" : "e.g. gpt-4o or local model"}
                                         />
                                     )}
                                 </div>
                             ) : (
                                 <div className="space-y-2 flex flex-col justify-center opacity-50">
-                                    <Label>Compute Model</Label>
+                                    <Label>Compute Model / Path</Label>
                                     <div className="h-10 rounded-md border border-dashed border-muted grid place-items-center text-xs text-muted-foreground">Select a provider first</div>
                                 </div>
                             )}
