@@ -95,7 +95,9 @@ async def summarize_text(text: str) -> str:
     """Generate a short summary of text using configured system prompt."""
     if not text:
         return ""
-    prompt_template = await get_system_prompt("summarization") or "Summarize this in 1-2 sentences:\n\n{{text}}"
+    prompt_template = await get_system_prompt("summarization")
+    if not prompt_template:
+        prompt_template = "Summarize this:\n\n{{text}}"
     prompt = prompt_template.replace("{{text}}", text[:4000])
     return await call_llm(prompt, max_tokens=200, task_type="summarization")
 
@@ -134,11 +136,10 @@ async def parse_document(file_content: bytes, filename: str, mime_type: str) -> 
                 png_bytes = pix.tobytes("jpeg", 85) # Use compressed JPEG internally to cut down 90% of base64 JSON weight!
                 png_b64 = base64.b64encode(png_bytes).decode("utf-8")
                 
-                prompt = (
-                    f"Extract all text content from page {page_num + 1} of this document. "
-                    "Include all readable text, table contents (as markdown tables), "
-                    "and important visual information in [brackets]. Output clean markdown without conversational filler:"
-                )
+                prompt_template = await get_system_prompt("vision")
+                if not prompt_template:
+                    prompt_template = "Extract all text from page {{page}}. Output clean markdown without conversational filler:"
+                prompt = prompt_template.replace("{{page}}", str(page_num + 1))
                 extracted = await call_llm_vision(prompt, png_b64, "image/jpeg")
                 if extracted:
                     text_parts.append(extracted)
@@ -151,11 +152,9 @@ async def parse_document(file_content: bytes, filename: str, mime_type: str) -> 
 
     if mime_type in ("image/png", "image/jpeg", "image/webp", "image/gif"):
         file_b64 = base64.b64encode(file_content).decode("utf-8")
-        prompt = (
-            "Extract all text content from this image. "
-            "Include all readable text, table contents (as markdown tables), "
-            "and important visual information in [brackets]. Output clean markdown:"
-        )
+        prompt = await get_system_prompt("vision")
+        if not prompt:
+            prompt = "Extract all text content from this image. Output clean markdown:"
         extracted = await call_llm_vision(prompt, file_b64, mime_type)
         if extracted:
             result["text"] = extracted
@@ -260,11 +259,7 @@ async def extract_entities_llm(text: str, confidence_threshold: float = 0.5, ner
         return _EMPTY_EXTRACTION
     if ner_schema and ner_schema.get("labels"):
         labels_str = ", ".join(ner_schema["labels"])
-        prompt_template = (
-            f"Extract named entities from the text. Focus only on these types: {labels_str}.\n"
-            "Return a JSON array: [{\"entity_id\": \"uuid\", \"entity_type\": \"...\", "
-            "\"name\": \"...\", \"role\": \"...\"}]"
-        )
+        prompt_template = prompt_template.replace("{{labels}}", labels_str)
     response = await call_llm(
         text[:4000], system_prompt=prompt_template, max_tokens=500, task_type="entity_extraction"
     )

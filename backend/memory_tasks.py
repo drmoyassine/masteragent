@@ -549,21 +549,10 @@ async def _generate_memory_for_entity(entity_type: str, entity_id: str, interact
         llm_context = base_context
 
     # 6. LLM generates memory content_summary
-    DEFAULT_MEMORY_PROMPT = (
-        "You are an AI memory system. Based on the provided interaction data, write a concise "
-        "factual memory record.\n\n"
-        "PRIOR CONTEXT RULES:\n"
-        "- Previous memories for this entity are provided under 'Prior Context'.\n"
-        "- These represent ESTABLISHED facts. Do NOT repeat them.\n"
-        "- Focus EXCLUSIVELY on NEW information from today's interactions.\n"
-        "- Note any progressions, status changes, or contradictions with prior records.\n"
-        "- If today's interactions contain no new information beyond prior context, "
-        "write a brief note stating the interaction occurred with no significant new details.\n\n"
-        "OUTPUT RULES:\n"
-        "- Return only the summary text, 2-5 sentences.\n"
-        "- Focus on key facts, decisions, named entities, and action items."
-    )
-    system_prompt = await get_system_prompt("memory_generation") or DEFAULT_MEMORY_PROMPT
+    system_prompt = await get_system_prompt("memory_generation")
+    if not system_prompt:
+        system_prompt = "You are an AI memory system. Extract new factual information." # absolute bare minimum safety fallback
+
     system_prompt = inject_variables(system_prompt, {
         "entity": {"type": entity_type, "id": entity_id},
         "date": interaction_date  # Already a string in ISO format from the queue
@@ -916,13 +905,9 @@ async def generate_lesson_from_insights(private_knowledge: list):
     context = "\n\n---\n\n".join(scrubbed_parts)
     insight_ids = [ins["id"] for ins in private_knowledge]
 
-    system_prompt = (
-        "You are an AI knowledge curator. The following are de-identified private_knowledge from multiple interactions. "
-        "Synthesize them into a single generalizable PublicKnowledge — a durable, reusable piece of knowledge "
-        "applicable beyond any specific entity. Remove all specific names. "
-        "Return JSON: {\"name\": \"...\", \"knowledge_type\": \"...\", \"content\": \"...\", \"summary\": \"...\", \"tags\": [...]}\n"
-        "knowledge_type must be one of: process, risk, sales, product, support, other"
-    )
+    system_prompt = await get_system_prompt("public_knowledge_generation")
+    if not system_prompt:
+        system_prompt = "You are an AI knowledge curator. Synthesize into generalizable PublicKnowledge. Return JSON: {\"name\": \"...\", \"knowledge_type\": \"...\", \"content\": \"...\", \"summary\": \"...\", \"tags\": [...]}"
 
     try:
         result_text = await call_llm(

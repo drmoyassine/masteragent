@@ -601,22 +601,43 @@ def _seed_defaults():
             """, (p_name, p_type, base_url, p_name))
         
         # Default LLM configs structured logically into pipelines
-        for task_type, provider_key, model, pipeline_stage, exec_order in [
-            ("vision", "openai", "gpt-4o", "interactions", 0),
-            ("entity_extraction", "gliner", "urchade/gliner_multi", "memories", 0),
-            ("embedding", "openai", "text-embedding-3-small", "memories", 1),
-            ("memory_generation", "openai", "gpt-4o-mini", "memories", 2),
-            ("private_knowledge_generation", "openai", "gpt-4o-mini", "private_knowledge", 0),
-            ("pii_scrubbing", "zendata", "", "public_knowledge", 0),
-            ("public_knowledge_generation", "openai", "gpt-4o-mini", "public_knowledge", 1),
+        for task_type, provider_key, model, pipeline_stage, exec_order, prompt, schema in [
+            ("vision", "openai", "gpt-4o", "interactions", 0,
+             "Extract all text content from this document. Include all readable text, table contents (as markdown tables), and important visual information in [brackets]. Output clean markdown without conversational filler.",
+             ""),
+            ("entity_extraction", "gliner", "urchade/gliner_multi", "memories", 0,
+             "Extract named entities from the text. Focus only on these types: {{labels}}.\nReturn a JSON array: [{\"entity_id\": \"uuid\", \"entity_type\": \"...\", \"name\": \"...\", \"role\": \"...\"}]",
+             ""),
+            ("embedding", "openai", "text-embedding-3-small", "memories", 1, "", ""),
+            ("memory_generation", "openai", "gpt-4o-mini", "memories", 2,
+             "You are an AI memory system. Based on the provided interaction data, write a concise factual memory record.\n\nPRIOR CONTEXT RULES:\n- Previous memories for this entity are provided under 'Prior Context'.\n- These represent ESTABLISHED facts. Do NOT repeat them.\n- Focus EXCLUSIVELY on NEW information from today's interactions.\n- Note any progressions, status changes, or contradictions with prior records.\n- If today's interactions contain no new information beyond prior context, write a brief note stating the interaction occurred with no significant new details.\n\nOUTPUT RULES:\n- Return only the summary text, 2-5 sentences.\n- Focus on key facts, decisions, named entities, and action items.",
+             ""),
+            ("private_knowledge_generation", "openai", "gpt-4o-mini", "private_knowledge", 0,
+             "You are an AI analyst reviewing interaction history for a specific entity. Based on the provided memory summaries, identify a meaningful pattern, risk, opportunity, or behavioral insight. Return JSON: {\"name\": \"...\", \"knowledge_type\": \"...\", \"content\": \"...\", \"summary\": \"...\"}. knowledge_type must be one of: behavior_pattern, risk_signal, opportunity, relationship_shift, preference, milestone.",
+             ""),
+            ("pii_scrubbing", "zendata", "", "public_knowledge", 0, "", ""),
+            ("public_knowledge_generation", "openai", "gpt-4o-mini", "public_knowledge", 1,
+             "You are an AI knowledge curator. The following are de-identified private_knowledge from multiple interactions. Synthesize them into a single generalizable PublicKnowledge — a durable, reusable piece of knowledge applicable beyond any specific entity. Remove all specific names. Return JSON: {\"name\": \"...\", \"knowledge_type\": \"...\", \"content\": \"...\", \"summary\": \"...\", \"tags\": [...]}\nknowledge_type must be one of: process, risk, sales, product, support, other",
+             ""),
+             ("summarization", "openai", "gpt-4o-mini", "interactions", -1,
+             "Summarize this in 1-2 sentences:\n\n{{text}}",
+             ""),
         ]:
             cursor.execute("""
-                INSERT INTO memory_llm_configs (task_type, provider_id, model_name, is_active, pipeline_stage, execution_order)
-                SELECT %s, (SELECT id FROM memory_llm_providers WHERE provider = %s LIMIT 1), %s, TRUE, %s, %s
+                INSERT INTO memory_llm_configs (task_type, provider_id, model_name, is_active, pipeline_stage, execution_order, inline_system_prompt, inline_schema)
+                SELECT %s, (SELECT id FROM memory_llm_providers WHERE provider = %s LIMIT 1), %s, TRUE, %s, %s, %s, %s
                 WHERE NOT EXISTS (
                     SELECT 1 FROM memory_llm_configs WHERE pipeline_stage = %s AND task_type = %s AND is_active = TRUE
                 )
-            """, (task_type, provider_key, model, pipeline_stage, exec_order, pipeline_stage, task_type))
+            """, (task_type, provider_key, model, pipeline_stage, exec_order, prompt, schema, pipeline_stage, task_type))
+
+            # Migrate existing configs that may have been created before inline_system_prompt was seeded
+            cursor.execute("""
+                UPDATE memory_llm_configs 
+                SET inline_system_prompt = %s, inline_schema = %s
+                WHERE task_type = %s AND (inline_system_prompt IS NULL OR inline_system_prompt = '')
+            """, (prompt, schema, task_type))
+
 
         # Default system prompts
         prompts = [
