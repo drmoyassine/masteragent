@@ -110,6 +110,8 @@ def _create_config_tables(cursor):
         CREATE TABLE IF NOT EXISTS memory_llm_configs (
             id                  TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
             task_type           TEXT NOT NULL,
+            pipeline_stage      TEXT,
+            execution_order     INT DEFAULT 0,
             provider_id         TEXT REFERENCES memory_llm_providers(id) ON DELETE SET NULL,
             model_name          TEXT,
             prompt_id           TEXT,
@@ -121,10 +123,8 @@ def _create_config_tables(cursor):
             updated_at          TIMESTAMPTZ DEFAULT NOW()
         )
     """)
-    cursor.execute("""
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_llm_configs_active_task
-        ON memory_llm_configs (task_type) WHERE is_active = TRUE
-    """)
+    # Legacy index removed to support multiple nodes per pipeline
+    cursor.execute("DROP INDEX IF EXISTS idx_llm_configs_active_task")
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS memory_settings (
             id                          INT PRIMARY KEY CHECK (id = 1),
@@ -428,6 +428,30 @@ def _run_migrations(cursor):
     except Exception as e:
         logger.error(f"Failed to seed memory_generation llm config: {e}")
 
+    # 🗂️ Pipeline & Drag-and-Drop Migrations
+    try:
+        cursor.execute("ALTER TABLE memory_llm_configs ADD COLUMN IF NOT EXISTS pipeline_stage TEXT")
+        cursor.execute("ALTER TABLE memory_llm_configs ADD COLUMN IF NOT EXISTS execution_order INT DEFAULT 0")
+
+        # Backfill existing nodes into the 4 logical pipelines based on their legacy task_type
+        # Interactions Pipeline
+        cursor.execute("UPDATE memory_llm_configs SET pipeline_stage = 'interactions', execution_order = 0 WHERE task_type = 'vision'")
+        
+        # Memories Pipeline
+        cursor.execute("UPDATE memory_llm_configs SET pipeline_stage = 'memories', execution_order = 0 WHERE task_type = 'entity_extraction'")
+        cursor.execute("UPDATE memory_llm_configs SET pipeline_stage = 'memories', execution_order = 1 WHERE task_type = 'embedding'")
+        cursor.execute("UPDATE memory_llm_configs SET pipeline_stage = 'memories', execution_order = 2 WHERE task_type = 'memory_generation'")
+        
+        # Private Knowledge Pipeline
+        cursor.execute("UPDATE memory_llm_configs SET pipeline_stage = 'private_knowledge', execution_order = 0 WHERE task_type = 'private_knowledge_generation'")
+        
+        # Public Knowledge Pipeline
+        cursor.execute("UPDATE memory_llm_configs SET pipeline_stage = 'public_knowledge', execution_order = 0 WHERE task_type = 'pii_scrubbing'")
+        cursor.execute("UPDATE memory_llm_configs SET pipeline_stage = 'public_knowledge', execution_order = 1 WHERE task_type = 'public_knowledge_generation'")
+
+    except Exception as e:
+        logger.warning(f"Pipeline schema migration skipped/failed: {e}")
+
     # Settings columns
     for col, col_def in [
         ("supabase_db_url", "TEXT"),
@@ -576,23 +600,23 @@ def _seed_defaults():
                 )
             """, (p_name, p_type, base_url, p_name))
         
-        # Default LLM configs
-        for task_type, provider_key, model in [
-            ("summarization", "openai", "gpt-4o-mini"),
-            ("embedding", "openai", "text-embedding-3-small"),
-            ("vision", "openai", "gpt-4o"),
-            ("entity_extraction", "gliner", "urchade/gliner_multi"),
-            ("pii_scrubbing", "zendata", ""),
-            ("private_knowledge_generation", "openai", "gpt-4o-mini"),
-            ("memory_generation", "openai", "gpt-4o-mini"),
+        # Default LLM configs structured logically into pipelines
+        for task_type, provider_key, model, pipeline_stage, exec_order in [
+            ("vision", "openai", "gpt-4o", "interactions", 0),
+            ("entity_extraction", "gliner", "urchade/gliner_multi", "memories", 0),
+            ("embedding", "openai", "text-embedding-3-small", "memories", 1),
+            ("memory_generation", "openai", "gpt-4o-mini", "memories", 2),
+            ("private_knowledge_generation", "openai", "gpt-4o-mini", "private_knowledge", 0),
+            ("pii_scrubbing", "zendata", "", "public_knowledge", 0),
+            ("public_knowledge_generation", "openai", "gpt-4o-mini", "public_knowledge", 1),
         ]:
             cursor.execute("""
-                INSERT INTO memory_llm_configs (task_type, provider_id, model_name, is_active)
-                SELECT %s, (SELECT id FROM memory_llm_providers WHERE provider = %s LIMIT 1), %s, TRUE
+                INSERT INTO memory_llm_configs (task_type, provider_id, model_name, is_active, pipeline_stage, execution_order)
+                SELECT %s, (SELECT id FROM memory_llm_providers WHERE provider = %s LIMIT 1), %s, TRUE, %s, %s
                 WHERE NOT EXISTS (
-                    SELECT 1 FROM memory_llm_configs WHERE task_type = %s AND is_active = TRUE
+                    SELECT 1 FROM memory_llm_configs WHERE pipeline_stage = %s AND task_type = %s AND is_active = TRUE
                 )
-            """, (task_type, provider_key, model, task_type))
+            """, (task_type, provider_key, model, pipeline_stage, exec_order, pipeline_stage, task_type))
 
         # Default system prompts
         prompts = [

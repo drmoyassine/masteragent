@@ -64,6 +64,8 @@ class LLMProviderUpdate(BaseModel):
 
 class LLMConfigCreate(BaseModel):
     task_type: str
+    pipeline_stage: Optional[str] = None
+    execution_order: int = 0
     provider_id: Optional[str] = None
     model_name: Optional[str] = ""
     is_active: bool = True
@@ -72,6 +74,8 @@ class LLMConfigCreate(BaseModel):
 class LLMConfigResponse(BaseModel):
     id: str
     task_type: str
+    pipeline_stage: Optional[str] = None
+    execution_order: int = 0
     provider_id: Optional[str] = None
     model_name: Optional[str] = None
     prompt_id: Optional[str] = None
@@ -83,6 +87,8 @@ class LLMConfigResponse(BaseModel):
     updated_at: Timestamp
 
 class LLMConfigUpdate(BaseModel):
+    pipeline_stage: Optional[str] = None
+    execution_order: Optional[int] = None
     provider_id: Optional[str] = None
     model_name: Optional[str] = None
     prompt_id: Optional[str] = None
@@ -90,6 +96,10 @@ class LLMConfigUpdate(BaseModel):
     inline_schema: Optional[str] = None
     is_active: Optional[bool] = None
     extra_config: Optional[Dict[str, Any]] = None
+
+class PipelineReorderRequest(BaseModel):
+    pipeline_stage: str
+    ordered_ids: List[str]
 
 class FetchModelsRequest(BaseModel):
     provider: str

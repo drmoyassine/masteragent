@@ -24,6 +24,7 @@ import {
   deleteLLMProvider,
   getLLMConfigs,
   updateLLMConfig,
+  reorderPipelineNodes,
   getApiKeys,
   createApiKey,
   deleteApiKey,
@@ -209,6 +210,27 @@ export default function SettingsPage({ onDisconnect }) {
       loadAllData();
     } catch (error) {
       toast.error("Failed to save configuration");
+    }
+  };
+
+  const handleReorderPipeline = async (pipelineStage, newArray) => {
+    // Optimistic UI update
+    setLLMConfigs((prev) => {
+      const otherNodes = prev.filter(c => c.pipeline_stage !== pipelineStage);
+      const orderedNodes = newArray.map((c, i) => ({ ...c, execution_order: i }));
+      return [...otherNodes, ...orderedNodes];
+    });
+
+    const payload = newArray.map((c, index) => ({
+      config_id: c.id,
+      execution_order: index
+    }));
+
+    try {
+      await reorderPipelineNodes({ updates: payload });
+    } catch (error) {
+      toast.error("Failed to save pipeline order");
+      loadAllData(); // Revert on failure
     }
   };
 
@@ -494,6 +516,7 @@ export default function SettingsPage({ onDisconnect }) {
               llmProviders={llmProviders}
               onUpdateSettings={handleUpdateGeneralSettings}
               onSaveConfig={handleSaveLLMConfig}
+              onReorderPipeline={handleReorderPipeline}
               onUpdateMemorySettings={handleUpdateGeneralSettings}
               activeTab={searchParams.get("memoryTab") || "raw_interactions"}
               onTabChange={(tab) => setSearchParams({ tab: "memory", memoryTab: tab }, { replace: true })}

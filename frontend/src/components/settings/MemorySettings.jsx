@@ -36,11 +36,12 @@ import {
     TASK_TYPE_LABELS,
 } from "@/components/settings/LLMProviderSettings";
 import { InlineTaskConfigAccordion } from "./InlineTaskConfigAccordion";
+import { DraggablePipeline } from "./DraggablePipeline";
 import { OutboundWebhooksSettings } from "./OutboundWebhooksSettings";
 
 // ─── Interactions Tab ───────────────────────────────────────────────────
-function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, modelLists, fetchingModels, fetchErrors, onFetchModels }) {
-    const visionConfig = llmConfigs.find((c) => c.task_type === "vision");
+function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline }) {
+    const pipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "interactions").sort((a,b) => a.execution_order - b.execution_order);
 
     return (
         <div className="space-y-6">
@@ -54,23 +55,25 @@ function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProvide
                 </p>
             </div>
 
-            {/* Vision / Document Parsing Task Assignment */}
-            {visionConfig && (
-                <InlineTaskConfigAccordion
-                    config={visionConfig}
-                    llmProviders={llmProviders}
-                    onSaveConfig={onSaveConfig}
-                    models={modelLists[visionConfig.id] || []}
-                    loadingModels={fetchingModels[visionConfig.id]}
-                    error={fetchErrors[visionConfig.id]}
-                    onFetchModels={onFetchModels}
-                    titleOverride="Vision Processing"
-                    descriptionOverride="Configure how images and documents are processed by vision AI models."
-                    isToggleable={true}
-                    toggleChecked={settings.vision_enabled !== false}
-                    onToggleChange={(v) => onUpdateSettings("vision_enabled", v)}
-                />
-            )}
+            {/* Interactions Pipeline Assignment */}
+            <Card className="border-dashed bg-muted/20">
+                <CardHeader className="pb-3 border-b">
+                    <CardTitle className="text-sm">Interactions Pipeline</CardTitle>
+                </CardHeader>
+                <CardContent className="pt-4">
+                    <DraggablePipeline 
+                        title=""
+                        pipelineConfigs={pipelineNodes}
+                        onReorder={(arr) => onReorderPipeline("interactions", arr)}
+                        llmProviders={llmProviders}
+                        onSaveConfig={onSaveConfig}
+                        modelLists={modelLists}
+                        fetchingModels={fetchingModels}
+                        fetchErrors={fetchErrors}
+                        onFetchModels={onFetchModels}
+                    />
+                </CardContent>
+            </Card>
 
 
 
@@ -153,11 +156,9 @@ function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProvide
 }
 
 // ─── Memories Tab ──────────────────────────────────────────────────
-function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, modelLists, fetchingModels, fetchErrors, onFetchModels }) {
+function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline }) {
     const [isTriggering, setIsTriggering] = useState(false);
-    const nerConfig = llmConfigs.find((c) => c.task_type === "entity_extraction");
-    const memoryGenConfig = llmConfigs.find((c) => c.task_type === "memory_generation");
-    const embeddingConfig = llmConfigs.find((c) => c.task_type === "embedding");
+    const pipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "memories").sort((a,b) => a.execution_order - b.execution_order);
 
     const handleRunNow = async () => {
         setIsTriggering(true);
@@ -248,83 +249,63 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
                 </CardContent>
             </Card>
 
-            {/* Memories Task Assignment */}
-            {memoryGenConfig && (
-                <InlineTaskConfigAccordion
-                    config={memoryGenConfig}
-                    llmProviders={llmProviders}
-                    onSaveConfig={onSaveConfig}
-                    models={modelLists[memoryGenConfig.id] || []}
-                    loadingModels={fetchingModels[memoryGenConfig.id]}
-                    error={fetchErrors[memoryGenConfig.id]}
-                    onFetchModels={onFetchModels}
-                    titleOverride="Configure Memories Prompt:"
-                />
-            )}
-
-            {/* NER Task Assignment */}
-            {nerConfig && (
-                <InlineTaskConfigAccordion
-                    config={nerConfig}
-                    llmProviders={llmProviders}
-                    onSaveConfig={onSaveConfig}
-                    models={modelLists[nerConfig.id] || []}
-                    loadingModels={fetchingModels[nerConfig.id]}
-                    error={fetchErrors[nerConfig.id]}
-                    onFetchModels={onFetchModels}
-                    titleOverride="Configure Entity Extraction"
-                />
-            )}
-
-            {/* Embedding Task Assignment & Config */}
-            {embeddingConfig && (
-                <InlineTaskConfigAccordion
-                    config={embeddingConfig}
-                    llmProviders={llmProviders}
-                    onSaveConfig={onSaveConfig}
-                    models={modelLists[embeddingConfig.id] || []}
-                    loadingModels={fetchingModels[embeddingConfig.id]}
-                    error={fetchErrors[embeddingConfig.id]}
-                    onFetchModels={onFetchModels}
-                    titleOverride="Interaction Embeddings"
-                    descriptionOverride="Configure vectorization settings for raw interaction text."
-                    isToggleable={true}
-                    toggleChecked={settings.interaction_embeddings_enabled !== false}
-                    onToggleChange={(v) => onUpdateSettings("interaction_embeddings_enabled", v)}
-                >
-                    <div className="space-y-4">
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                                <Label className="text-xs font-mono">Chunk Size (tokens)</Label>
-                                <Input
-                                    type="number"
-                                    min={100}
-                                    max={2000}
-                                    value={settings.chunk_size || 400}
-                                    onChange={(e) =>
-                                        onUpdateSettings("chunk_size", parseInt(e.target.value))
-                                    }
-                                />
-                            </div>
-                            <div className="space-y-2">
-                                <Label className="text-xs font-mono">Chunk Overlap (tokens)</Label>
-                                <Input
-                                    type="number"
-                                    min={0}
-                                    max={500}
-                                    value={settings.chunk_overlap || 80}
-                                    onChange={(e) =>
-                                        onUpdateSettings("chunk_overlap", parseInt(e.target.value))
-                                    }
-                                />
-                            </div>
-                        </div>
-                        <p className="text-[10px] text-muted-foreground">
-                            Controls how interaction text is split before embedding. larger chunks = more context, smaller = finer search.
-                        </p>
-                    </div>
-                </InlineTaskConfigAccordion>
-            )}
+            {/* Memories Pipeline Assignment */}
+            <Card className="border-dashed bg-muted/20">
+                <CardHeader className="pb-3 border-b">
+                    <CardTitle className="text-sm">Memories Pipeline</CardTitle>
+                </CardHeader>
+                <CardContent className="pt-4">
+                    <DraggablePipeline 
+                        title=""
+                        pipelineConfigs={pipelineNodes}
+                        onReorder={(arr) => onReorderPipeline("memories", arr)}
+                        llmProviders={llmProviders}
+                        onSaveConfig={onSaveConfig}
+                        modelLists={modelLists}
+                        fetchingModels={fetchingModels}
+                        fetchErrors={fetchErrors}
+                        onFetchModels={onFetchModels}
+                        renderNodeExtras={(config) => {
+                            if (config.task_type === "embedding") {
+                                return (
+                                    <div className="space-y-4">
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div className="space-y-2">
+                                                <Label className="text-xs font-mono">Chunk Size (tokens)</Label>
+                                                <Input
+                                                    type="number"
+                                                    min={100}
+                                                    max={2000}
+                                                    value={settings.chunk_size || 400}
+                                                    onChange={(e) =>
+                                                        onUpdateSettings("chunk_size", parseInt(e.target.value))
+                                                    }
+                                                />
+                                            </div>
+                                            <div className="space-y-2">
+                                                <Label className="text-xs font-mono">Chunk Overlap (tokens)</Label>
+                                                <Input
+                                                    type="number"
+                                                    min={0}
+                                                    max={500}
+                                                    value={settings.chunk_overlap || 80}
+                                                    onChange={(e) =>
+                                                        onUpdateSettings("chunk_overlap", parseInt(e.target.value))
+                                                    }
+                                                />
+                                            </div>
+                                        </div>
+                                        <p className="text-[10px] text-muted-foreground">
+                                            Controls how interaction text is split before embedding. larger chunks = more context, smaller = finer search.
+                                        </p>
+                                    </div>
+                                );
+                            }
+                            return null;
+                        }}
+                    />
+                </CardContent>
+            </Card>
 
             {/* Processing Throughput */}
             <Card>
@@ -401,10 +382,9 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
 }
 
 // ─── Knowledgeration Tab ─────────────────────────────────────────────────
-function KnowledgeGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, modelLists, fetchingModels, fetchErrors, onFetchModels }) {
-    const privateKnowledgeConfig = llmConfigs.find((c) => c.task_type === "private_knowledge_generation");
-    const piiConfig = llmConfigs.find((c) => c.task_type === "pii_scrubbing");
-    const publicKnowledgeConfig = llmConfigs.find((c) => c.task_type === "public_knowledge_generation");
+function KnowledgeGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline }) {
+    const privatePipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "private_knowledge").sort((a,b) => a.execution_order - b.execution_order);
+    const publicPipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "public_knowledge").sort((a,b) => a.execution_order - b.execution_order);
 
     return (
         <div className="space-y-6">
@@ -457,18 +437,25 @@ function KnowledgeGenerationTab({ settings, onUpdateSettings, llmConfigs, llmPro
                 </CardContent>
             </Card>
 
-            {/* PII Scrubbing Task Assignment */}
-            {piiConfig && (
-                <InlineTaskConfigAccordion
-                    config={piiConfig}
-                    llmProviders={llmProviders}
-                    onSaveConfig={onSaveConfig}
-                    models={modelLists[piiConfig.id] || []}
-                    loadingModels={fetchingModels[piiConfig.id]}
-                    error={fetchErrors[piiConfig.id]}
-                    onFetchModels={onFetchModels}
-                />
-            )}
+            {/* Private Knowledge Pipeline Assignment */}
+            <Card className="border-dashed bg-muted/20">
+                <CardHeader className="pb-3 border-b">
+                    <CardTitle className="text-sm">Private Knowledge Pipeline</CardTitle>
+                </CardHeader>
+                <CardContent className="pt-4">
+                    <DraggablePipeline 
+                        title=""
+                        pipelineConfigs={privatePipelineNodes}
+                        onReorder={(arr) => onReorderPipeline("private_knowledge", arr)}
+                        llmProviders={llmProviders}
+                        onSaveConfig={onSaveConfig}
+                        modelLists={modelLists}
+                        fetchingModels={fetchingModels}
+                        fetchErrors={fetchErrors}
+                        onFetchModels={onFetchModels}
+                    />
+                </CardContent>
+            </Card>
 
             {/* Public Knowledge Mining */}
             <Card>
@@ -533,31 +520,25 @@ function KnowledgeGenerationTab({ settings, onUpdateSettings, llmConfigs, llmPro
                 </CardContent>
             </Card>
 
-            {/* Private Knowledge / Private Public Knowledgeration Task Assignment */}
-            {privateKnowledgeConfig && (
-                <InlineTaskConfigAccordion
-                    config={privateKnowledgeConfig}
-                    llmProviders={llmProviders}
-                    onSaveConfig={onSaveConfig}
-                    models={modelLists[privateKnowledgeConfig.id] || []}
-                    loadingModels={fetchingModels[privateKnowledgeConfig.id]}
-                    error={fetchErrors[privateKnowledgeConfig.id]}
-                    onFetchModels={onFetchModels}
-                />
-            )}
-
-            {/* Public Knowledge Generation Task Assignment */}
-            {publicKnowledgeConfig && (
-                <InlineTaskConfigAccordion
-                    config={publicKnowledgeConfig}
-                    llmProviders={llmProviders}
-                    onSaveConfig={onSaveConfig}
-                    models={modelLists[publicKnowledgeConfig.id] || []}
-                    loadingModels={fetchingModels[publicKnowledgeConfig.id]}
-                    error={fetchErrors[publicKnowledgeConfig.id]}
-                    onFetchModels={onFetchModels}
-                />
-            )}
+            {/* Public Knowledge Pipeline Assignment */}
+            <Card className="border-dashed bg-muted/20">
+                <CardHeader className="pb-3 border-b">
+                    <CardTitle className="text-sm">Public Knowledge Pipeline</CardTitle>
+                </CardHeader>
+                <CardContent className="pt-4">
+                    <DraggablePipeline 
+                        title=""
+                        pipelineConfigs={publicPipelineNodes}
+                        onReorder={(arr) => onReorderPipeline("public_knowledge", arr)}
+                        llmProviders={llmProviders}
+                        onSaveConfig={onSaveConfig}
+                        modelLists={modelLists}
+                        fetchingModels={fetchingModels}
+                        fetchErrors={fetchErrors}
+                        onFetchModels={onFetchModels}
+                    />
+                </CardContent>
+            </Card>
 
             {/* Queue Dynamics */}
             <Card>
@@ -625,6 +606,7 @@ export function MemorySettings({
     onUpdateMemorySettings,
     activeTab = "raw_interactions",
     onTabChange,
+    onReorderPipeline
 }) {
     const [modelLists, setModelLists] = useState({});
     const [fetchingModels, setFetchingModels] = useState({});
@@ -668,7 +650,8 @@ export function MemorySettings({
         modelLists,
         fetchingModels,
         fetchErrors,
-        onFetchModels: handleFetchModels
+        onFetchModels: handleFetchModels,
+        onReorderPipeline
     };
 
     return (

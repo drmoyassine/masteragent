@@ -35,6 +35,37 @@ def get_llm_config(task_type: str) -> Optional[Dict[str, Any]]:
             return None
 
         config = dict(row)
+        config = dict(row)
+        extra = config.get("extra_config_json") or "{}"
+        if isinstance(extra, str):
+            try:
+                config["extra_config"] = json.loads(extra)
+            except Exception:
+                config["extra_config"] = {}
+        else:
+            config["extra_config"] = extra
+
+        return config
+
+
+def get_llm_config_by_id(config_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Get active LLM configuration by its exact ID.
+    Used for pipeline node orchestration.
+    """
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT c.*, p.provider, p.api_base_url, p.api_key_encrypted 
+            FROM memory_llm_configs c
+            LEFT JOIN memory_llm_providers p ON c.provider_id = p.id
+            WHERE c.id = %s AND c.is_active = TRUE
+        """, (config_id,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+
+        config = dict(row)
         extra = config.get("extra_config_json") or "{}"
         if isinstance(extra, str):
             try:
@@ -117,3 +148,4 @@ async def get_schema(task_type: str) -> Optional[str]:
         if row and row.get("inline_schema"):
             return row["inline_schema"]
     return None
+

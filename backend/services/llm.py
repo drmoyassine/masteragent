@@ -21,11 +21,17 @@ async def call_llm(
     system_prompt: str = None,
     max_tokens: int = 1000,
     task_type: str = "summarization",
+    config_id: Optional[str] = None
 ) -> str:
     """Call OpenAI-compatible LLM using admin-configured settings."""
-    config = get_llm_config(task_type)
+    if config_id:
+        from services.config_helpers import get_llm_config_by_id
+        config = get_llm_config_by_id(config_id)
+    else:
+        config = get_llm_config(task_type)
+        
     if not config:
-        logger.warning(f"LLM config for {task_type} not configured")
+        logger.warning(f"LLM config not configured for {task_type}/{config_id}")
         return ""
 
     api_key = config.get("api_key_encrypted", "")

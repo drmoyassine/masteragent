@@ -406,12 +406,14 @@ async def test_llm_provider(data: FetchModelsRequest, user: dict = Depends(requi
 async def list_llm_configs(user: dict = Depends(require_admin_auth)):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM memory_llm_configs ORDER BY task_type, created_at DESC")
+        cursor.execute("SELECT * FROM memory_llm_configs ORDER BY pipeline_stage, execution_order ASC, created_at DESC")
         configs = []
         for row in cursor.fetchall():
             config = dict(row)
             configs.append(LLMConfigResponse(
-                id=config["id"], task_type=config["task_type"], provider_id=config.get("provider_id"),
+                id=config["id"], task_type=config["task_type"],
+                pipeline_stage=config.get("pipeline_stage"), execution_order=config.get("execution_order", 0),
+                provider_id=config.get("provider_id"),
                 model_name=config.get("model_name", ""), prompt_id=config.get("prompt_id"),
                 inline_system_prompt=config.get("inline_system_prompt"), inline_schema=config.get("inline_schema"),
                 is_active=bool(config.get("is_active", 0)),
@@ -430,7 +432,9 @@ async def get_llm_config_by_task(task_type: str, user: dict = Depends(require_ad
             raise HTTPException(status_code=404, detail=f"No active LLM config for {task_type}")
         config = dict(row)
         return LLMConfigResponse(
-            id=config["id"], task_type=config["task_type"], provider_id=config.get("provider_id"),
+            id=config["id"], task_type=config["task_type"],
+            pipeline_stage=config.get("pipeline_stage"), execution_order=config.get("execution_order", 0),
+            provider_id=config.get("provider_id"),
             model_name=config.get("model_name", ""), prompt_id=config.get("prompt_id"),
             inline_system_prompt=config.get("inline_system_prompt"), inline_schema=config.get("inline_schema"),
             is_active=bool(config.get("is_active", 0)),
@@ -444,14 +448,14 @@ async def create_llm_config(data: LLMConfigCreate, user: dict = Depends(require_
     config_id = str(uuid.uuid4())
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        if data.is_active:
-            cursor.execute("UPDATE memory_llm_configs SET is_active = FALSE WHERE task_type = %s", (data.task_type,))
+        # Deprecated: uniqueness on active task_type removed
         cursor.execute(
-            "INSERT INTO memory_llm_configs (id, task_type, provider_id, model_name, is_active, extra_config_json, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-            (config_id, data.task_type, data.provider_id, data.model_name or "", bool(data.is_active), json.dumps(data.extra_config or {}), now, now)
+            "INSERT INTO memory_llm_configs (id, task_type, pipeline_stage, execution_order, provider_id, model_name, is_active, extra_config_json, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (config_id, data.task_type, data.pipeline_stage, data.execution_order, data.provider_id, data.model_name or "", bool(data.is_active), json.dumps(data.extra_config or {}), now, now)
         )
         return LLMConfigResponse(
-            id=config_id, task_type=data.task_type, provider_id=data.provider_id, model_name=data.model_name or "",
+            id=config_id, task_type=data.task_type, pipeline_stage=data.pipeline_stage, execution_order=data.execution_order,
+            provider_id=data.provider_id, model_name=data.model_name or "",
             is_active=data.is_active, extra_config=data.extra_config or {},
             created_at=now, updated_at=now
         )
@@ -467,6 +471,10 @@ async def update_llm_config(config_id: str, data: LLMConfigUpdate, user: dict = 
             raise HTTPException(status_code=404, detail="LLM config not found")
         existing = dict(existing)
         updates, params = ["updated_at = %s"], [now]
+        if data.pipeline_stage is not None:
+            updates.append("pipeline_stage = %s"); params.append(data.pipeline_stage)
+        if data.execution_order is not None:
+            updates.append("execution_order = %s"); params.append(data.execution_order)
         if data.provider_id is not None:
             updates.append("provider_id = %s"); params.append(data.provider_id)
         if data.model_name is not None:
@@ -480,8 +488,7 @@ async def update_llm_config(config_id: str, data: LLMConfigUpdate, user: dict = 
         if data.inline_schema is not None:
             updates.append("inline_schema = %s"); params.append(data.inline_schema)
         if data.is_active is not None:
-            if data.is_active:
-                cursor.execute("UPDATE memory_llm_configs SET is_active = FALSE WHERE task_type = %s AND id != %s", (existing["task_type"], config_id))
+            # Deprecated: uniqueness on active task_type removed
             updates.append("is_active = %s"); params.append(bool(data.is_active))
         if data.extra_config is not None:
             updates.append("extra_config_json = %s"); params.append(json.dumps(data.extra_config))
@@ -490,13 +497,28 @@ async def update_llm_config(config_id: str, data: LLMConfigUpdate, user: dict = 
         cursor.execute("SELECT * FROM memory_llm_configs WHERE id = %s", (config_id,))
         updated = dict(cursor.fetchone())
         return LLMConfigResponse(
-            id=updated["id"], task_type=updated["task_type"], provider_id=updated.get("provider_id"),
+            id=updated["id"], task_type=updated["task_type"],
+            pipeline_stage=updated.get("pipeline_stage"), execution_order=updated.get("execution_order", 0),
+            provider_id=updated.get("provider_id"),
             model_name=updated.get("model_name", ""), prompt_id=updated.get("prompt_id"),
             inline_system_prompt=updated.get("inline_system_prompt"), inline_schema=updated.get("inline_schema"),
             is_active=bool(updated.get("is_active", 0)),
             extra_config=json.loads(updated.get("extra_config_json", "{}")),
             created_at=updated["created_at"], updated_at=updated["updated_at"]
         )
+
+from memory_models import PipelineReorderRequest
+
+@router.patch("/config/llm-configs/reorder")
+async def reorder_pipeline_nodes(data: PipelineReorderRequest, user: dict = Depends(require_admin_auth)):
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        for idx, config_id in enumerate(data.ordered_ids):
+            cursor.execute(
+                "UPDATE memory_llm_configs SET execution_order = %s, pipeline_stage = %s WHERE id = %s",
+                (idx, data.pipeline_stage, config_id)
+            )
+    return {"message": "Reordered successfully"}
 
 @router.post("/config/llm-configs/fetch-models", response_model=FetchModelsResponse)
 async def fetch_provider_models(data: FetchModelsRequest, user: dict = Depends(require_admin_auth)):
