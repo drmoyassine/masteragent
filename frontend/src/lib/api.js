@@ -144,7 +144,7 @@ export const testLLMProvider = (data) => api.post('/memory/config/llm-providers/
 export const getLLMConfigs = () => api.get('/memory/config/llm-configs');
 export const getLLMConfigByTask = (taskType) => api.get(`/memory/config/llm-configs/${taskType}`);
 export const createLLMConfig = (data) => api.post('/memory/config/llm-configs', data);
-export const reorderPipelineNodes = (data) => api.patch(/memory/config/llm-configs/reorder, data);
+export const reorderPipelineNodes = (data) => api.patch(`/memory/config/llm-configs/reorder`, data);
 export const updateLLMConfig = (id, data) => api.put(`/memory/config/llm-configs/${id}`, data);
 export const deleteLLMConfig = (id) => api.delete(`/memory/config/llm-configs/${id}`);
 export const fetchProviderModels = (data) => api.post('/memory/config/llm-configs/fetch-models', data);
@@ -214,4 +214,5 @@ export const getAvailableVariables = (promptId, version = 'v1') =>
     api.get(`/prompts/${promptId}/available-variables`, { params: { version } });
 
 export default api;
+
 
