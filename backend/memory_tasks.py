@@ -617,7 +617,7 @@ async def _generate_memory_for_entity(entity_type: str, entity_id: str, interact
 
     logger.info(
         f"Generated memory {memory_id} for {entity_type}/{entity_id} on {interaction_date} "
-        f"({len(interaction_ids)} interactions, mode={mode})"
+        f"({len(interaction_ids)} interactions)"
     )
 
     # 11. Check compaction threshold
