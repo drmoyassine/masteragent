@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Brain, Sparkles, Clock, Eye, Layers, Cpu, EyeOff, AlertCircle, FileText, CheckCircle2, ChevronDown, ChevronUp, Save, RefreshCw } from "lucide-react";
+import { Brain, Sparkles, Clock, Eye, Layers, Cpu, EyeOff, AlertCircle, FileText, CheckCircle2, ChevronDown, ChevronUp, Save, RefreshCw, Trash2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -54,6 +54,7 @@ export function InlineTaskConfigAccordion({
     isToggleable,
     toggleChecked,
     onToggleChange,
+    onDeleteConfig,
     children
 }) {
     const [expanded, setExpanded] = useState(false);
@@ -84,10 +85,10 @@ export function InlineTaskConfigAccordion({
     };
     const TaskIcon = taskInfo.icon;
     const assignedProvider = llmProviders.find((p) => p.id === (formData.provider_id || config.provider_id));
-    const isConfigured = !!assignedProvider && !!(formData.model_name || config.model_name);
-    
     const isGliner = assignedProvider?.provider === "gliner";
     const isZendata = assignedProvider?.provider === "zendata";
+
+    const isConfigured = !!assignedProvider && (isGliner || isZendata || !!(formData.model_name || "").trim());
 
     // PII endpoints that are LLMs use prompting, custom endpoint services do not
     const hasPrompting = config.task_type !== "embedding" && !isZendata;
@@ -149,7 +150,20 @@ export function InlineTaskConfigAccordion({
                             <AlertCircle className="w-3 h-3 mr-1" /> Config Required
                         </Badge>
                     )}
-                    <Button variant="ghost" size="sm" className="p-0 h-auto">
+                    {onDeleteConfig && (
+                        <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            className="p-0 h-auto text-muted-foreground hover:text-red-500 transition-colors ml-2"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onDeleteConfig(config.id);
+                            }}
+                        >
+                            <Trash2 className="w-4 h-4" />
+                        </Button>
+                    )}
+                    <Button variant="ghost" size="sm" className="p-0 h-auto ml-2">
                         {expanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5 text-muted-foreground" />}
                     </Button>
                 </div>

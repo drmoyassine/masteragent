@@ -213,6 +213,17 @@ export default function SettingsPage({ onDisconnect }) {
     }
   };
 
+  const handleDeleteLLMConfig = async (configId) => {
+    if (!window.confirm("Are you sure you want to delete this pipeline step?")) return;
+    try {
+      await deleteLLMConfig(configId);
+      toast.success("Pipeline step deleted");
+      loadAllData();
+    } catch (error) {
+      toast.error("Failed to delete pipeline step");
+    }
+  };
+
   const handleReorderPipeline = async (pipelineStage, newArray) => {
     // Optimistic UI update
     setLLMConfigs((prev) => {
@@ -511,11 +522,12 @@ export default function SettingsPage({ onDisconnect }) {
 
           {activeTab === "memory" && (
             <MemorySettings
-              settings={memorySettings}
+              settings={generalSettings}
               llmConfigs={llmConfigs}
               llmProviders={llmProviders}
               onUpdateSettings={handleUpdateGeneralSettings}
               onSaveConfig={handleSaveLLMConfig}
+              onDeleteConfig={handleDeleteLLMConfig}
               onReorderPipeline={handleReorderPipeline}
               onUpdateMemorySettings={handleUpdateGeneralSettings}
               activeTab={searchParams.get("memoryTab") || "raw_interactions"}

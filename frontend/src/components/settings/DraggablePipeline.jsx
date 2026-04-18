@@ -77,6 +77,7 @@ export function DraggablePipeline({
   fetchingModels,
   fetchErrors,
   onFetchModels,
+  onDeleteConfig,
   renderNodeExtras
 }) {
   const sensors = useSensors(
@@ -135,6 +136,7 @@ export function DraggablePipeline({
               isToggleable={true}
               toggleChecked={config.is_active}
               onToggleChange={(val) => onSaveConfig(config.id, { is_active: val })}
+              onDeleteConfig={onDeleteConfig}
               renderNodeExtras={renderNodeExtras}
             />
           ))}
