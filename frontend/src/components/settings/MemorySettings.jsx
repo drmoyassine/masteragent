@@ -40,7 +40,7 @@ import { DraggablePipeline } from "./DraggablePipeline";
 import { OutboundWebhooksSettings } from "./OutboundWebhooksSettings";
 
 // ─── Interactions Tab ───────────────────────────────────────────────────
-function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, onDeleteConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline }) {
+function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, onDeleteConfig, onAddConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline }) {
     const pipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "interactions").sort((a,b) => a.execution_order - b.execution_order);
 
     return (
@@ -63,10 +63,12 @@ function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProvide
                 <CardContent className="pt-4">
                     <DraggablePipeline 
                         title=""
+                        pipelineStage="interactions"
                         pipelineConfigs={pipelineNodes}
                         onReorder={(arr) => onReorderPipeline("interactions", arr)}
                         llmProviders={llmProviders}
                         onSaveConfig={onSaveConfig} onDeleteConfig={onDeleteConfig}
+                        onAddConfig={onAddConfig}
                         modelLists={modelLists}
                         fetchingModels={fetchingModels}
                         fetchErrors={fetchErrors}
@@ -156,7 +158,7 @@ function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProvide
 }
 
 // ─── Memories Tab ──────────────────────────────────────────────────
-function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, onDeleteConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline }) {
+function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, onDeleteConfig, onAddConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline }) {
     const [isTriggering, setIsTriggering] = useState(false);
     const pipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "memories").sort((a,b) => a.execution_order - b.execution_order);
 
@@ -233,10 +235,12 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
                 <CardContent className="pt-4">
                     <DraggablePipeline 
                         title=""
+                        pipelineStage="memories"
                         pipelineConfigs={pipelineNodes}
                         onReorder={(arr) => onReorderPipeline("memories", arr)}
                         llmProviders={llmProviders}
                         onSaveConfig={onSaveConfig} onDeleteConfig={onDeleteConfig}
+                        onAddConfig={onAddConfig}
                         modelLists={modelLists}
                         fetchingModels={fetchingModels}
                         fetchErrors={fetchErrors}
@@ -358,7 +362,7 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
 }
 
 // ─── Knowledgeration Tab ─────────────────────────────────────────────────
-function KnowledgeGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, onDeleteConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline }) {
+function KnowledgeGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, onDeleteConfig, onAddConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline }) {
     const privatePipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "private_knowledge").sort((a,b) => a.execution_order - b.execution_order);
     const publicPipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "public_knowledge").sort((a,b) => a.execution_order - b.execution_order);
 
@@ -421,10 +425,12 @@ function KnowledgeGenerationTab({ settings, onUpdateSettings, llmConfigs, llmPro
                 <CardContent className="pt-4">
                     <DraggablePipeline 
                         title=""
+                        pipelineStage="private_knowledge"
                         pipelineConfigs={privatePipelineNodes}
                         onReorder={(arr) => onReorderPipeline("private_knowledge", arr)}
                         llmProviders={llmProviders}
                         onSaveConfig={onSaveConfig} onDeleteConfig={onDeleteConfig}
+                        onAddConfig={onAddConfig}
                         modelLists={modelLists}
                         fetchingModels={fetchingModels}
                         fetchErrors={fetchErrors}
@@ -504,10 +510,12 @@ function KnowledgeGenerationTab({ settings, onUpdateSettings, llmConfigs, llmPro
                 <CardContent className="pt-4">
                     <DraggablePipeline 
                         title=""
+                        pipelineStage="public_knowledge"
                         pipelineConfigs={publicPipelineNodes}
                         onReorder={(arr) => onReorderPipeline("public_knowledge", arr)}
                         llmProviders={llmProviders}
                         onSaveConfig={onSaveConfig} onDeleteConfig={onDeleteConfig}
+                        onAddConfig={onAddConfig}
                         modelLists={modelLists}
                         fetchingModels={fetchingModels}
                         fetchErrors={fetchErrors}
@@ -578,7 +586,7 @@ export function MemorySettings({
     llmConfigs,
     llmProviders,
     onUpdateSettings,
-    onSaveConfig, onDeleteConfig,
+    onSaveConfig, onDeleteConfig, onAddConfig,
     onUpdateMemorySettings,
     activeTab = "raw_interactions",
     onTabChange,
@@ -622,7 +630,7 @@ export function MemorySettings({
         onUpdateSettings: onUpdateMemorySettings,
         llmConfigs,
         llmProviders,
-        onSaveConfig, onDeleteConfig,
+        onSaveConfig, onDeleteConfig, onAddConfig,
         modelLists,
         fetchingModels,
         fetchErrors,

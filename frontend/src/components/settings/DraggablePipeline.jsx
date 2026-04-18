@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   DndContext,
   closestCenter,
@@ -15,9 +15,19 @@ import {
   useSortable
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVertical } from "lucide-react";
+import { GripVertical, Plus } from "lucide-react";
 import { InlineTaskConfigAccordion } from "./InlineTaskConfigAccordion";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { TASK_TYPE_LABELS } from "@/components/settings/LLMProviderSettings";
 
 function SortablePipelineNode({ config, ...props }) {
   const {
@@ -69,10 +79,12 @@ function SortablePipelineNode({ config, ...props }) {
 
 export function DraggablePipeline({ 
   pipelineConfigs, 
+  pipelineStage,
   onReorder, 
   title, 
   llmProviders,
   onSaveConfig,
+  onAddConfig,
   modelLists,
   fetchingModels,
   fetchErrors,
@@ -80,6 +92,9 @@ export function DraggablePipeline({
   onDeleteConfig,
   renderNodeExtras
 }) {
+  const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [selectedTaskType, setSelectedTaskType] = useState("");
+
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, {
@@ -97,6 +112,31 @@ export function DraggablePipeline({
     }
   };
 
+  const handleAddStep = async () => {
+    if (!selectedTaskType || !onAddConfig) return;
+    const nextOrder = pipelineConfigs ? pipelineConfigs.length : 0;
+    await onAddConfig({
+      task_type: selectedTaskType,
+      pipeline_stage: pipelineStage,
+      execution_order: nextOrder,
+      is_active: false,
+    });
+    setSelectedTaskType("");
+    setAddDialogOpen(false);
+  };
+
+  const addButton = (
+    <Button 
+      variant="outline" 
+      size="sm" 
+      className="w-full mt-2 border-dashed gap-1.5"
+      onClick={() => setAddDialogOpen(true)}
+    >
+      <Plus className="w-3.5 h-3.5" />
+      Add Pipeline Step
+    </Button>
+  );
+
   if (!pipelineConfigs || pipelineConfigs.length === 0) {
       return (
         <div className="space-y-2 relative">
@@ -104,9 +144,14 @@ export function DraggablePipeline({
             <div className="flex justify-center p-6 border border-dashed rounded-md text-sm text-muted-foreground">
                 No active nodes in this pipeline.
             </div>
-            <Button variant="outline" size="sm" className="w-full mt-2 border-dashed">
-                + Add Pipeline Step
-            </Button>
+            {addButton}
+            <AddStepDialog
+              open={addDialogOpen}
+              onOpenChange={setAddDialogOpen}
+              selectedTaskType={selectedTaskType}
+              onSelectTaskType={setSelectedTaskType}
+              onAdd={handleAddStep}
+            />
         </div>
       );
   }
@@ -142,9 +187,53 @@ export function DraggablePipeline({
           ))}
         </SortableContext>
       </DndContext>
-      <Button variant="outline" size="sm" className="w-full mt-2 border-dashed">
-        + Add Pipeline Step
-      </Button>
+      {addButton}
+      <AddStepDialog
+        open={addDialogOpen}
+        onOpenChange={setAddDialogOpen}
+        selectedTaskType={selectedTaskType}
+        onSelectTaskType={setSelectedTaskType}
+        onAdd={handleAddStep}
+      />
     </div>
+  );
+}
+
+function AddStepDialog({ open, onOpenChange, selectedTaskType, onSelectTaskType, onAdd }) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Add Pipeline Step</DialogTitle>
+          <DialogDescription>
+            Select a node type to add to this pipeline. It will be created in a disabled state so you can configure it first.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="py-4">
+          <Select value={selectedTaskType} onValueChange={onSelectTaskType}>
+            <SelectTrigger>
+              <SelectValue placeholder="Select task type..." />
+            </SelectTrigger>
+            <SelectContent>
+              {Object.entries(TASK_TYPE_LABELS).map(([key, meta]) => {
+                const Icon = meta.icon;
+                return (
+                  <SelectItem key={key} value={key}>
+                    <div className="flex items-center gap-2">
+                      <Icon className="w-4 h-4" />
+                      {meta.label}
+                    </div>
+                  </SelectItem>
+                );
+              })}
+            </SelectContent>
+          </Select>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={onAdd} disabled={!selectedTaskType}>Add Step</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -25,6 +25,7 @@ import {
   getLLMConfigs,
   updateLLMConfig,
   deleteLLMConfig,
+  createLLMConfig,
   reorderPipelineNodes,
   getApiKeys,
   createApiKey,
@@ -222,6 +223,16 @@ export default function SettingsPage({ onDisconnect }) {
       loadAllData();
     } catch (error) {
       toast.error("Failed to delete pipeline step");
+    }
+  };
+
+  const handleCreateLLMConfig = async (data) => {
+    try {
+      await createLLMConfig(data);
+      toast.success("Pipeline step added");
+      loadAllData();
+    } catch (error) {
+      toast.error("Failed to add pipeline step");
     }
   };
 
@@ -529,6 +540,7 @@ export default function SettingsPage({ onDisconnect }) {
               onUpdateSettings={handleUpdateGeneralSettings}
               onSaveConfig={handleSaveLLMConfig}
               onDeleteConfig={handleDeleteLLMConfig}
+              onAddConfig={handleCreateLLMConfig}
               onReorderPipeline={handleReorderPipeline}
               onUpdateMemorySettings={handleUpdateGeneralSettings}
               activeTab={searchParams.get("memoryTab") || "raw_interactions"}

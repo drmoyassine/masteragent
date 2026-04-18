@@ -49,6 +49,7 @@ from memory_services import (
     get_system_prompt,
     scrub_pii,
 )
+from services.config_helpers import get_pipeline_configs, get_system_prompt_by_config_id, get_schema_by_config_id
 from services.prompt_renderer import inject_variables
 
 logger = logging.getLogger(__name__)
@@ -408,13 +409,12 @@ async def run_daily_memory_generation(include_today: bool = False):
 
 
 async def _generate_memory_for_entity(entity_type: str, entity_id: str, interaction_date: str):
-    """Generate a single daily memory record for one entity on one date."""
+    """Generate a single daily memory record for one entity on one date.
+    Uses the sequential pipeline executor to process nodes in DB-defined order."""
 
-    # 1. Fetch entity type config + global settings
+    # 1. Fetch entity type config + interactions
     config = _get_entity_type_config(entity_type)
-    settings = get_memory_settings()
 
-    # 2. Fetch all pending interactions for this entity+date
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -432,147 +432,50 @@ async def _generate_memory_for_entity(entity_type: str, entity_id: str, interact
         return
 
     interaction_ids = [i["id"] for i in interactions]
-
-    # 3. Build NER text payload
+    raw_text = "\n\n---\n\n".join(i["content"] for i in interactions if i.get("content"))
     ner_payload = _build_ner_text_payload(interactions)
 
-    # 4. NER extraction (schema-constrained if configured)
-    related_entities = []
-    intents = []
-    relationships = []
+    # 2. Build prior memory context (chrono 2 + semantic 2)
+    prior_context = await _fetch_prior_context(entity_type, entity_id, interaction_date, raw_text)
 
-    if config.get("ner_enabled", True):
+    # 3. Initialize the pipeline context object
+    ctx = {
+        "raw_text": raw_text,
+        "derived_text": raw_text,
+        "ner_text": ner_payload,
+        "ner_results": {"entities": [], "intents": [], "relationships": []},
+        "embedding": None,
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "interaction_date": interaction_date,
+        "interactions": interactions,
+        "prior_context": prior_context,
+        "processing_errors": {},
+        "config": config,
+    }
+
+    # 4. Execute the memories pipeline — nodes in DB-defined order
+    pipeline_nodes = get_pipeline_configs("memories")
+    if not pipeline_nodes:
+        logger.warning(f"No active pipeline nodes for 'memories' stage — skipping {entity_type}/{entity_id}")
+        return
+
+    for node in pipeline_nodes:
         try:
-            threshold = config.get("ner_confidence_threshold", 0.5)
-            ner_schema = config.get("ner_schema")  # None = use defaults
-            ner_results = await extract_entities(
-                ner_payload,
-                confidence_threshold=threshold,
-                ner_schema=ner_schema,
-            )
-            related_entities = ner_results.get("entities", [])
-            intents = ner_results.get("intents", [])
-            relationships = ner_results.get("relationships", [])
+            await _execute_pipeline_node(node, ctx)
         except Exception as e:
-            logger.warning(f"NER failed for {entity_type}/{entity_id}: {e}")
+            node_id = node.get("id", "unknown")
+            ctx["processing_errors"][node_id] = str(e)
+            logger.error(f"Pipeline node {node.get('task_type')}/{node_id} failed: {e}", exc_info=True)
 
-    # 5. Build LLM context
-    ner_summary = _format_ner_output(related_entities, intents, relationships)
+    # 5. Write memory record from pipeline results
+    content_summary = ctx["derived_text"] if ctx["derived_text"] != raw_text else ""
+    embedding = ctx["embedding"]
+    related_entities = ctx["ner_results"]["entities"]
+    intents = ctx["ner_results"]["intents"]
+    relationships = ctx["ner_results"]["relationships"]
+    processing_errors = ctx["processing_errors"]
 
-    raw_text = "\n\n---\n\n".join(
-        i["content"] for i in interactions if i.get("content")
-    )
-    base_context = (
-        f"Entity: {entity_type} / {entity_id}\n"
-        f"Date: {interaction_date}\n"
-        f"Interaction count: {len(interactions)}\n\n"
-        f"--- Raw Interactions ---\n{raw_text}\n\n"
-        f"--- Extracted Signals ---\n{ner_summary}"
-    )
-
-    # 5.5 Fetch prior memories for context continuity (hardcoded 2+2)
-    PRIOR_CHRONO_COUNT = 2
-    PRIOR_SEMANTIC_COUNT = 2
-    prior_context = ""
-    try:
-        with get_memory_db_context() as conn:
-            cursor = conn.cursor()
-            prior_memories = {}
-
-            # Chronological: last 2 memories for this entity
-            cursor.execute("""
-                SELECT id, date, content_summary FROM memories
-                WHERE primary_entity_type = %s AND primary_entity_id = %s
-                  AND date < %s AND content_summary IS NOT NULL
-                  AND LENGTH(TRIM(content_summary)) > 20
-                ORDER BY date DESC LIMIT %s
-            """, (entity_type, entity_id, interaction_date, PRIOR_CHRONO_COUNT))
-            for row in cursor.fetchall():
-                prior_memories[row["id"]] = dict(row)
-
-            # Semantic: top 2 most similar to today's raw text
-            if PRIOR_SEMANTIC_COUNT > 0:
-                search_text = raw_text or ner_summary
-                if search_text:
-                    try:
-                        search_embedding = await generate_embedding(search_text[:2000])
-                        if search_embedding:
-                            cursor.execute("""
-                                SELECT id, date, content_summary FROM memories
-                                WHERE primary_entity_type = %s AND primary_entity_id = %s
-                                  AND date < %s AND content_summary IS NOT NULL
-                                  AND LENGTH(TRIM(content_summary)) > 20
-                                  AND embedding IS NOT NULL
-                                ORDER BY embedding <=> %s::vector LIMIT %s
-                            """, (entity_type, entity_id, interaction_date,
-                                  str(search_embedding), PRIOR_SEMANTIC_COUNT))
-                            for row in cursor.fetchall():
-                                if row["id"] not in prior_memories:
-                                    prior_memories[row["id"]] = dict(row)
-                    except Exception as e:
-                        logger.warning(f"Semantic prior memory search failed: {e}")
-
-            # Format deduplicated prior memories
-            if prior_memories:
-                sorted_priors = sorted(prior_memories.values(), key=lambda m: str(m["date"]))
-                prior_lines = [f"[{m['date']}] {m['content_summary']}" for m in sorted_priors]
-                prior_context = "\n".join(prior_lines)
-                logger.info(f"Injecting {len(prior_memories)} prior memories for {entity_type}/{entity_id}")
-    except Exception as e:
-        logger.warning(f"Prior memory fetch failed for {entity_type}/{entity_id}: {e}")
-
-    # Build final LLM context with prior memories injected
-    if prior_context:
-        llm_context = (
-            f"Entity: {entity_type} / {entity_id}\n"
-            f"Date: {interaction_date}\n"
-            f"Interaction count: {len(interactions)}\n\n"
-            f"--- Prior Context (established facts, do NOT repeat) ---\n{prior_context}\n\n"
-        )
-        llm_context += f"--- Raw Interactions ---\n{raw_text}\n\n--- Extracted Signals ---\n{ner_summary}"
-    else:
-        llm_context = base_context
-
-    # 6. LLM generates memory content_summary
-    system_prompt = await get_system_prompt("memory_generation")
-    if not system_prompt:
-        system_prompt = "You are an AI memory system. Extract new factual information." # absolute bare minimum safety fallback
-
-    system_prompt = inject_variables(system_prompt, {
-        "entity": {"type": entity_type, "id": entity_id},
-        "date": interaction_date  # Already a string in ISO format from the queue
-    })
-    
-    content_summary = ""
-    processing_errors = {}
-    try:
-        content_summary = await call_llm(
-            llm_context[:10000],
-            system_prompt=system_prompt,
-            max_tokens=1200,
-            task_type="memory_generation",
-        )
-    except Exception as e:
-        processing_errors["memory_generation"] = str(e)
-        logger.warning(f"Memory LLM call failed for {entity_type}/{entity_id}: {e}")
-
-    # 7. Embedding (memories only — no interaction embedding)
-    embedding = None
-    if config.get("embedding_enabled", True) and content_summary:
-        try:
-            embed_text = content_summary
-            if related_entities or intents:
-                entity_names = ", ".join(
-                    e.get("name", "") for e in related_entities if isinstance(e, dict)
-                )
-                signals = ", ".join(intents)
-                embed_text = f"{content_summary}\nEntities: {entity_names}\nSignals: {signals}"
-            embedding = await generate_embedding(embed_text)
-        except Exception as e:
-            processing_errors["embeddings"] = str(e)
-            logger.warning(f"Embedding failed for {entity_type}/{entity_id}: {e}")
-
-    # 8. Write memory (INSERT only — skip if exists, checked above)
     memory_id = str(uuid.uuid4())
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -605,23 +508,194 @@ async def _generate_memory_for_entity(entity_type: str, entity_id: str, interact
                 json.dumps(relationships), json.dumps(processing_errors)
             ))
 
-        # 9. Mark interactions as done and clear ephemeral embeddings to prevent DB bloat
+        # Mark interactions as done and clear ephemeral embeddings
         cursor.execute("""
             UPDATE interactions SET status = 'done', embedding = NULL
             WHERE id = ANY(%s)
         """, (interaction_ids,))
 
-    # 10. Flush from Redis
+    # Flush from Redis
     for iid in interaction_ids:
         flush_interaction_cache(iid)
 
     logger.info(
         f"Generated memory {memory_id} for {entity_type}/{entity_id} on {interaction_date} "
-        f"({len(interaction_ids)} interactions)"
+        f"({len(interaction_ids)} interactions, {len(pipeline_nodes)} pipeline nodes)"
     )
 
-    # 11. Check compaction threshold
+    # Check compaction threshold
     await _check_compaction_trigger(entity_type, entity_id, config)
+
+
+# ── Sequential Pipeline Node Executor ─────────────────────────────────────────
+
+async def _execute_pipeline_node(node: dict, ctx: dict):
+    """Execute a single pipeline node against the mutable context."""
+    task_type = node["task_type"]
+    node_id = node["id"]
+    provider = node.get("provider", "")
+
+    if task_type == "entity_extraction":
+        threshold = ctx["config"].get("ner_confidence_threshold", 0.5)
+        # Read schema from this specific node
+        schema_raw = get_schema_by_config_id(node_id)
+        ner_schema = None
+        if schema_raw:
+            try:
+                ner_schema = json.loads(schema_raw)
+            except Exception:
+                pass
+        ner_results = await extract_entities(
+            ctx["ner_text"][:4000],
+            confidence_threshold=threshold,
+            ner_schema=ner_schema,
+        )
+        ctx["ner_results"]["entities"].extend(ner_results.get("entities", []))
+        ctx["ner_results"]["intents"].extend(ner_results.get("intents", []))
+        ctx["ner_results"]["relationships"].extend(ner_results.get("relationships", []))
+        logger.info(f"NER node {node_id}: extracted {len(ner_results.get('entities', []))} entities")
+
+    elif task_type == "embedding":
+        embed_text = ctx["derived_text"]
+        entities = ctx["ner_results"]["entities"]
+        intents = ctx["ner_results"]["intents"]
+        if entities or intents:
+            entity_names = ", ".join(e.get("name", "") for e in entities if isinstance(e, dict))
+            signals = ", ".join(intents)
+            embed_text = f"{embed_text}\nEntities: {entity_names}\nSignals: {signals}"
+        ctx["embedding"] = await generate_embedding(embed_text)
+        logger.info(f"Embedding node {node_id}: generated vector")
+
+    elif task_type == "memory_generation":
+        ner_summary = _format_ner_output(
+            ctx["ner_results"]["entities"],
+            ctx["ner_results"]["intents"],
+            ctx["ner_results"]["relationships"]
+        )
+        if ctx["prior_context"]:
+            llm_context = (
+                f"Entity: {ctx['entity_type']} / {ctx['entity_id']}\n"
+                f"Date: {ctx['interaction_date']}\n"
+                f"Interaction count: {len(ctx['interactions'])}\n\n"
+                f"--- Prior Context (established facts, do NOT repeat) ---\n{ctx['prior_context']}\n\n"
+                f"--- Raw Interactions ---\n{ctx['raw_text']}\n\n"
+                f"--- Extracted Signals ---\n{ner_summary}"
+            )
+        else:
+            llm_context = (
+                f"Entity: {ctx['entity_type']} / {ctx['entity_id']}\n"
+                f"Date: {ctx['interaction_date']}\n"
+                f"Interaction count: {len(ctx['interactions'])}\n\n"
+                f"--- Raw Interactions ---\n{ctx['raw_text']}\n\n"
+                f"--- Extracted Signals ---\n{ner_summary}"
+            )
+        system_prompt = get_system_prompt_by_config_id(node_id)
+        if not system_prompt:
+            system_prompt = "You are an AI memory system. Extract new factual information."
+        system_prompt = inject_variables(system_prompt, {
+            "entity": {"type": ctx["entity_type"], "id": ctx["entity_id"]},
+            "date": ctx["interaction_date"]
+        })
+        ctx["derived_text"] = await call_llm(
+            llm_context[:10000],
+            system_prompt=system_prompt,
+            max_tokens=1200,
+            config_id=node_id,
+        )
+        logger.info(f"Memory generation node {node_id}: produced summary")
+
+    elif task_type == "summarization":
+        system_prompt = get_system_prompt_by_config_id(node_id) or "Summarize this in 1-2 sentences:\n\n{{text}}"
+        prompt = system_prompt.replace("{{text}}", ctx["derived_text"][:4000])
+        ctx["derived_text"] = await call_llm(
+            prompt, max_tokens=200, config_id=node_id,
+        )
+        logger.info(f"Summarization node {node_id}: summarized text")
+
+    elif task_type == "pii_scrubbing":
+        if provider == "zendata":
+            ctx["derived_text"] = await scrub_pii(ctx["derived_text"])
+        else:
+            system_prompt = get_system_prompt_by_config_id(node_id) or "Remove all PII from the following text. Return only the scrubbed text."
+            ctx["derived_text"] = await call_llm(
+                ctx["derived_text"][:8000],
+                system_prompt=system_prompt,
+                max_tokens=2000,
+                config_id=node_id,
+            )
+        logger.info(f"PII scrubbing node {node_id}: scrubbed text")
+
+    elif task_type in ("private_knowledge_generation", "public_knowledge_generation"):
+        system_prompt = get_system_prompt_by_config_id(node_id)
+        if not system_prompt:
+            system_prompt = "You are an AI analyst. Identify a meaningful pattern or insight. Return JSON."
+        system_prompt = inject_variables(system_prompt, {
+            "entity": {"type": ctx.get("entity_type", ""), "id": ctx.get("entity_id", "")}
+        })
+        ctx["derived_text"] = await call_llm(
+            ctx["derived_text"][:8000],
+            system_prompt=system_prompt,
+            max_tokens=800,
+            config_id=node_id,
+        )
+        logger.info(f"{task_type} node {node_id}: generated knowledge")
+
+    elif task_type == "vision":
+        # Vision only runs during process_interaction, not in daily pipeline
+        logger.debug(f"Vision node {node_id} skipped (only runs during interaction ingestion)")
+
+    else:
+        logger.warning(f"Unknown pipeline task_type '{task_type}' for node {node_id} — skipped")
+
+
+# ── Prior Memory Context Fetcher ──────────────────────────────────────────────
+
+async def _fetch_prior_context(entity_type: str, entity_id: str, interaction_date: str, raw_text: str) -> str:
+    """Fetch prior memories (2 chronological + 2 semantic) for context continuity."""
+    PRIOR_CHRONO_COUNT = 2
+    PRIOR_SEMANTIC_COUNT = 2
+    try:
+        with get_memory_db_context() as conn:
+            cursor = conn.cursor()
+            prior_memories = {}
+
+            cursor.execute("""
+                SELECT id, date, content_summary FROM memories
+                WHERE primary_entity_type = %s AND primary_entity_id = %s
+                  AND date < %s AND content_summary IS NOT NULL
+                  AND LENGTH(TRIM(content_summary)) > 20
+                ORDER BY date DESC LIMIT %s
+            """, (entity_type, entity_id, interaction_date, PRIOR_CHRONO_COUNT))
+            for row in cursor.fetchall():
+                prior_memories[row["id"]] = dict(row)
+
+            if PRIOR_SEMANTIC_COUNT > 0 and raw_text:
+                try:
+                    search_embedding = await generate_embedding(raw_text[:2000])
+                    if search_embedding:
+                        cursor.execute("""
+                            SELECT id, date, content_summary FROM memories
+                            WHERE primary_entity_type = %s AND primary_entity_id = %s
+                              AND date < %s AND content_summary IS NOT NULL
+                              AND LENGTH(TRIM(content_summary)) > 20
+                              AND embedding IS NOT NULL
+                            ORDER BY embedding <=> %s::vector LIMIT %s
+                        """, (entity_type, entity_id, interaction_date,
+                              str(search_embedding), PRIOR_SEMANTIC_COUNT))
+                        for row in cursor.fetchall():
+                            if row["id"] not in prior_memories:
+                                prior_memories[row["id"]] = dict(row)
+                except Exception as e:
+                    logger.warning(f"Semantic prior memory search failed: {e}")
+
+            if prior_memories:
+                sorted_priors = sorted(prior_memories.values(), key=lambda m: str(m["date"]))
+                prior_lines = [f"[{m['date']}] {m['content_summary']}" for m in sorted_priors]
+                logger.info(f"Injecting {len(prior_memories)} prior memories for {entity_type}/{entity_id}")
+                return "\n".join(prior_lines)
+    except Exception as e:
+        logger.warning(f"Prior memory fetch failed for {entity_type}/{entity_id}: {e}")
+    return ""
 
 
 # ── Compaction Check ─────────────────────────────────────────────────────────
@@ -694,8 +768,8 @@ async def _check_compaction_trigger(entity_type: str, entity_id: str, config: di
 
 async def compact_entity(entity_type: str, entity_id: str):
     """
-    Generate an PrivateKnowledge from the N most recent uncompacted memories.
-    Embedding is generated for the PrivateKnowledge (not for interactions).
+    Generate a PrivateKnowledge from the N most recent uncompacted memories.
+    Uses private_knowledge pipeline nodes. Embedding is generated for the PrivateKnowledge.
     """
     config = _get_entity_type_config(entity_type)
     threshold = config.get("compaction_threshold", 10)
@@ -731,19 +805,35 @@ async def compact_entity(entity_type: str, entity_id: str):
         )
 
     context = "\n\n".join(context_parts)
-    system_prompt = await get_system_prompt("insight_generation") or (
-        "You are an AI analyst. Based on the provided memory summaries, identify a meaningful pattern, "
-        "risk, opportunity, or behavioral PrivateKnowledge. Return JSON only: "
-        "{\"name\": \"...\", \"knowledge_type\": \"...\", \"content\": \"...\", \"summary\": \"...\"}"
-    )
+
+    # Use pipeline-driven config lookup (fixes bug #3: was "insight_generation", should be "private_knowledge_generation")
+    pipeline_nodes = get_pipeline_configs("private_knowledge")
+    pk_gen_node = next((n for n in pipeline_nodes if n["task_type"] == "private_knowledge_generation"), None)
+
+    if pk_gen_node:
+        system_prompt = get_system_prompt_by_config_id(pk_gen_node["id"])
+        node_id = pk_gen_node["id"]
+    else:
+        # Fallback to legacy task_type lookup
+        system_prompt = await get_system_prompt("private_knowledge_generation")
+        node_id = None
+
+    if not system_prompt:
+        system_prompt = (
+            "You are an AI analyst. Based on the provided memory summaries, identify a meaningful pattern, "
+            "risk, opportunity, or behavioral PrivateKnowledge. Return JSON only: "
+            "{\"name\": \"...\", \"knowledge_type\": \"...\", \"content\": \"...\", \"summary\": \"...\"}"
+        )
     system_prompt = inject_variables(system_prompt, {
         "entity": {"type": entity_type, "id": entity_id}
     })
 
-    llm_config = get_llm_config("insight_generation")
-    if not llm_config:
-        logger.warning(f"No LLM config for insight_generation — skipping compaction for {entity_type}/{entity_id}")
-        return
+    if not pk_gen_node:
+        # Also try legacy key as absolute last resort
+        llm_config = get_llm_config("private_knowledge_generation") or get_llm_config("insight_generation")
+        if not llm_config:
+            logger.warning(f"No LLM config for private_knowledge_generation — skipping compaction for {entity_type}/{entity_id}")
+            return
 
     try:
         user_msg = f"Entity: {entity_type} / {entity_id}\n\n{context}"
@@ -751,7 +841,8 @@ async def compact_entity(entity_type: str, entity_id: str):
             user_msg,
             system_prompt=system_prompt,
             max_tokens=800,
-            task_type="insight_generation"
+            config_id=node_id,
+            task_type="private_knowledge_generation"
         )
         result = json.loads(result_text)
     except Exception as e:
@@ -890,7 +981,16 @@ async def generate_lesson_from_insights(private_knowledge: list):
     context = "\n\n---\n\n".join(scrubbed_parts)
     insight_ids = [ins["id"] for ins in private_knowledge]
 
-    system_prompt = await get_system_prompt("public_knowledge_generation")
+    # Use pipeline-driven config lookup (fixes bug #4: was "lesson_generation", should be "public_knowledge_generation")
+    pipeline_nodes = get_pipeline_configs("public_knowledge")
+    pk_gen_node = next((n for n in pipeline_nodes if n["task_type"] == "public_knowledge_generation"), None)
+    node_id = pk_gen_node["id"] if pk_gen_node else None
+
+    if pk_gen_node:
+        system_prompt = get_system_prompt_by_config_id(pk_gen_node["id"])
+    else:
+        system_prompt = await get_system_prompt("public_knowledge_generation")
+
     if not system_prompt:
         system_prompt = "You are an AI knowledge curator. Synthesize into generalizable PublicKnowledge. Return JSON: {\"name\": \"...\", \"knowledge_type\": \"...\", \"content\": \"...\", \"summary\": \"...\", \"tags\": [...]}"
 
@@ -899,7 +999,8 @@ async def generate_lesson_from_insights(private_knowledge: list):
             context[:8000],
             system_prompt=system_prompt,
             max_tokens=600,
-            task_type="lesson_generation",
+            config_id=node_id,
+            task_type="public_knowledge_generation",
         )
         result = json.loads(result_text)
     except Exception as e:
@@ -992,7 +1093,7 @@ async def promote_to_lesson(insight_id: str):
             content,
             system_prompt=generalize_prompt,
             max_tokens=600,
-            task_type="lesson_generation"
+            task_type="public_knowledge_generation"
         )
     except Exception as e:
         logger.warning(f"PublicKnowledge generalization failed: {e}")
