@@ -576,10 +576,10 @@ async def _generate_memory_for_entity(entity_type: str, entity_id: str, interact
             llm_context[:10000],
             system_prompt=system_prompt,
             max_tokens=1200,
-            task_type="summarization",
+            task_type="memory_generation",
         )
     except Exception as e:
-        processing_errors["summarization"] = str(e)
+        processing_errors["memory_generation"] = str(e)
         logger.warning(f"Memory LLM call failed for {entity_type}/{entity_id}: {e}")
 
     # 7. Embedding (memories only — no interaction embedding)
