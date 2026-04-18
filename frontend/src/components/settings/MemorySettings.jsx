@@ -40,7 +40,7 @@ import { DraggablePipeline } from "./DraggablePipeline";
 import { OutboundWebhooksSettings } from "./OutboundWebhooksSettings";
 
 // ─── Interactions Tab ───────────────────────────────────────────────────
-function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, onDeleteConfig, onDeleteConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline }) {
+function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, onDeleteConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline }) {
     const pipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "interactions").sort((a,b) => a.execution_order - b.execution_order);
 
     return (
@@ -156,7 +156,7 @@ function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProvide
 }
 
 // ─── Memories Tab ──────────────────────────────────────────────────
-function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, onDeleteConfig, onDeleteConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline }) {
+function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, onDeleteConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline }) {
     const [isTriggering, setIsTriggering] = useState(false);
     const pipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "memories").sort((a,b) => a.execution_order - b.execution_order);
 
@@ -358,7 +358,7 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
 }
 
 // ─── Knowledgeration Tab ─────────────────────────────────────────────────
-function KnowledgeGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, onDeleteConfig, onDeleteConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline }) {
+function KnowledgeGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, onDeleteConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline }) {
     const privatePipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "private_knowledge").sort((a,b) => a.execution_order - b.execution_order);
     const publicPipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "public_knowledge").sort((a,b) => a.execution_order - b.execution_order);
 
@@ -573,7 +573,7 @@ function AnalyticsTab() {
 }
 
 // ─── Main Component ──────────────────────────────────────────────────────────
-export function MemorySettings({ onDeleteConfig,
+export function MemorySettings({
     settings,
     llmConfigs,
     llmProviders,
