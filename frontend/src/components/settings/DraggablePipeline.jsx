@@ -42,11 +42,27 @@ function SortablePipelineNode({ config, ...props }) {
       >
         <GripVertical className="w-5 h-5" />
       </div>
-      <div className="flex-1">
-        <InlineTaskConfigAccordion config={config} {...props}>
-            {props.renderNodeExtras && props.renderNodeExtras(config)}
-        </InlineTaskConfigAccordion>
-      </div>
+      {config.task_type === 'vision' ? (
+        <div className="flex-1 flex border-l-2 border-dashed border-purple-500/50 pl-4 relative my-2">
+            <div className="absolute -left-[14px] top-6 bg-background text-purple-400 text-[10px] font-mono font-bold px-1 py-0.5 border border-purple-500/50 rounded">
+               IF
+            </div>
+            <div className="flex-1">
+               <div className="text-[10px] text-purple-500 mb-1.5 ml-1 font-mono uppercase tracking-wider font-semibold">
+                  ↳ Condition: Image or Document Attachment Detected
+               </div>
+               <InlineTaskConfigAccordion config={config} {...props}>
+                   {props.renderNodeExtras && props.renderNodeExtras(config)}
+               </InlineTaskConfigAccordion>
+            </div>
+        </div>
+      ) : (
+        <div className="flex-1">
+          <InlineTaskConfigAccordion config={config} {...props}>
+              {props.renderNodeExtras && props.renderNodeExtras(config)}
+          </InlineTaskConfigAccordion>
+        </div>
+      )}
     </div>
   );
 }
