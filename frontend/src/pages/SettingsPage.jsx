@@ -24,6 +24,7 @@ import {
   deleteLLMProvider,
   getLLMConfigs,
   updateLLMConfig,
+  deleteLLMConfig,
   reorderPipelineNodes,
   getApiKeys,
   createApiKey,
