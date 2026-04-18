@@ -627,7 +627,7 @@ def _seed_defaults():
                 INSERT INTO memory_llm_configs (task_type, provider_id, model_name, is_active, pipeline_stage, execution_order, inline_system_prompt, inline_schema)
                 SELECT %s, (SELECT id FROM memory_llm_providers WHERE provider = %s LIMIT 1), %s, TRUE, %s, %s, %s, %s
                 WHERE NOT EXISTS (
-                    SELECT 1 FROM memory_llm_configs WHERE pipeline_stage = %s AND task_type = %s AND is_active = TRUE
+                    SELECT 1 FROM memory_llm_configs WHERE pipeline_stage = %s AND task_type = %s
                 )
             """, (task_type, provider_key, model, pipeline_stage, exec_order, prompt, schema, pipeline_stage, task_type))
 
