@@ -227,7 +227,57 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
                 </CardContent>
             </Card>
 
-            {/* Memories Pipeline Assignment */}
+            {/* Prior Context Injection */}
+            <Card>
+                <CardHeader className="pb-3">
+                    <div className="flex items-center gap-2">
+                        <Layers className="w-5 h-5 text-purple-500" />
+                        <CardTitle className="text-lg">Prior Context Injection</CardTitle>
+                    </div>
+                    <CardDescription className="text-xs">
+                        Controls how many previous memories are injected as context when generating new memories.
+                        Higher counts provide more continuity but increase token usage.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                            <Label className="text-xs font-mono">Chronological Memories</Label>
+                            <Input
+                                type="number"
+                                min={0}
+                                max={10}
+                                value={settings.prior_context_chrono_count !== undefined ? settings.prior_context_chrono_count : 2}
+                                onChange={(e) =>
+                                    onUpdateSettings("prior_context_chrono_count", parseInt(e.target.value) || 0)
+                                }
+                            />
+                            <p className="text-[10px] text-muted-foreground">
+                                Most recent memories by date (ordered DESC).
+                            </p>
+                        </div>
+                        <div className="space-y-2">
+                            <Label className="text-xs font-mono">Semantic Memories</Label>
+                            <Input
+                                type="number"
+                                min={0}
+                                max={10}
+                                value={settings.prior_context_semantic_count !== undefined ? settings.prior_context_semantic_count : 2}
+                                onChange={(e) =>
+                                    onUpdateSettings("prior_context_semantic_count", parseInt(e.target.value) || 0)
+                                }
+                            />
+                            <p className="text-[10px] text-muted-foreground">
+                                Most similar memories via vector search (pgvector cosine).
+                            </p>
+                        </div>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground border-t pt-2">
+                        Combined unique memories are injected under "Prior Context" in the LLM prompt.
+                        Set both to 0 to disable prior context entirely. Duplicates are automatically deduplicated.
+                    </p>
+                </CardContent>
+            </Card>
             <Card className="border-dashed bg-muted/20">
                 <CardHeader className="pb-3 border-b">
                     <CardTitle className="text-sm">Memories Pipeline</CardTitle>

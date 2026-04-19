@@ -466,6 +466,8 @@ def _run_migrations(cursor):
         ("memory_generation_mode", "TEXT DEFAULT 'ner_and_raw'"),
         ("knowledge_threshold", "INT DEFAULT 5"),
         ("knowledge_trigger_days", "INT DEFAULT NULL"),
+        ("prior_context_chrono_count", "INT DEFAULT 2"),
+        ("prior_context_semantic_count", "INT DEFAULT 2"),
     ]:
         cursor.execute(f"ALTER TABLE memory_settings ADD COLUMN IF NOT EXISTS {col} {col_def}")
 

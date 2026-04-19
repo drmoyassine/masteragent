@@ -651,9 +651,11 @@ async def _execute_pipeline_node(node: dict, ctx: dict):
 # ── Prior Memory Context Fetcher ──────────────────────────────────────────────
 
 async def _fetch_prior_context(entity_type: str, entity_id: str, interaction_date: str, raw_text: str) -> str:
-    """Fetch prior memories (2 chronological + 2 semantic) for context continuity."""
-    PRIOR_CHRONO_COUNT = 2
-    PRIOR_SEMANTIC_COUNT = 2
+    """Fetch prior memories (chronological + semantic) for context continuity.
+    Counts are user-configurable via memory_settings."""
+    settings = get_memory_settings()
+    PRIOR_CHRONO_COUNT = settings.get("prior_context_chrono_count", 2)
+    PRIOR_SEMANTIC_COUNT = settings.get("prior_context_semantic_count", 2)
     try:
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
