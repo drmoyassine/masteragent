@@ -403,7 +403,6 @@ function IntelligenceTab({ settings, onUpdateSettings, llmConfigs, llmProviders,
     );
 }
 
-\n
 // ─── Knowledge Tab ──────────────────────────────────────────────────────
 function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, onDeleteConfig, onAddConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline }) {
     const publicPipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "knowledge").sort((a,b) => a.execution_order - b.execution_order);
@@ -576,7 +575,8 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
         </div>
     );
 }
-\n// ─── Analytics Tab ───────────────────────────────────────────────────────────
+
+// ─── Analytics Tab ───────────────────────────────────────────────────────────
 function AnalyticsTab() {
     return (
         <div className="space-y-6">
