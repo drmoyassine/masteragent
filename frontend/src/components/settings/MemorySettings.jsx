@@ -472,8 +472,24 @@ function IntelligenceTab({ settings, onUpdateSettings, llmConfigs, llmProviders,
                             </p>
                         </div>
                     </div>
+                    <div className="space-y-2 border-t pt-3">
+                        <Label className="text-xs font-mono">Knowledge Cross-Reference (Semantic)</Label>
+                        <Input
+                            type="number"
+                            min={0}
+                            max={10}
+                            value={settings.prior_knowledge_in_intelligence_count !== undefined ? settings.prior_knowledge_in_intelligence_count : 2}
+                            onChange={(e) =>
+                                onUpdateSettings("prior_knowledge_in_intelligence_count", parseInt(e.target.value) || 0)
+                            }
+                        />
+                        <p className="text-[10px] text-muted-foreground">
+                            Global knowledge items (PII-scrubbed) injected as organizational context.
+                            Helps the LLM generate novel intelligence that builds on — rather than restates — established patterns.
+                        </p>
+                    </div>
                     <p className="text-[10px] text-muted-foreground border-t pt-2">
-                        Injected as "Existing Intelligence" in the LLM prompt to prevent redundant insight generation.
+                        All prior context is injected as labeled sections in the LLM prompt to prevent redundant generation.
                     </p>
                 </CardContent>
             </Card>

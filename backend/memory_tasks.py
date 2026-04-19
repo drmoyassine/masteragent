@@ -859,6 +859,32 @@ async def compact_entity(entity_type: str, entity_id: str):
         except Exception as e:
             logger.warning(f"Prior intelligence fetch failed: {e}")
 
+    # Fetch prior knowledge (global, semantic) so intelligence is aware of established patterns
+    prior_knowledge_in_intel = settings.get("prior_knowledge_in_intelligence_count", 2)
+    prior_knowledge_text = ""
+
+    if prior_knowledge_in_intel > 0 and context:
+        try:
+            search_emb = await generate_embedding(context[:2000])
+            if search_emb:
+                with get_memory_db_context() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        SELECT id, name, knowledge_type, content, summary
+                        FROM knowledge
+                        WHERE embedding IS NOT NULL
+                          AND content IS NOT NULL AND LENGTH(TRIM(content)) > 10
+                        ORDER BY embedding <=> %s::vector LIMIT %s
+                    """, (str(search_emb), prior_knowledge_in_intel))
+                    prior_k = [dict(r) for r in cursor.fetchall()]
+
+                if prior_k:
+                    lines = [f"[{k.get('knowledge_type', 'other')}] {k.get('name', '')}: {k.get('summary') or k.get('content', '')[:200]}" for k in prior_k]
+                    prior_knowledge_text = "\n".join(lines)
+                    logger.info(f"Injecting {len(prior_k)} prior knowledge items into intelligence generation for {entity_type}/{entity_id}")
+        except Exception as e:
+            logger.warning(f"Prior knowledge fetch for intelligence failed: {e}")
+
     # Use pipeline-driven config lookup
     pipeline_nodes = get_pipeline_configs("intelligence")
     pk_gen_node = next((n for n in pipeline_nodes if n["task_type"] == "intelligence_generation"), None)
@@ -890,8 +916,10 @@ async def compact_entity(entity_type: str, entity_id: str):
 
     try:
         user_msg_parts = [f"Entity: {entity_type} / {entity_id}"]
+        if prior_knowledge_text:
+            user_msg_parts.append(f"--- Established Knowledge (organizational patterns already known) ---\n{prior_knowledge_text}")
         if prior_intelligence_text:
-            user_msg_parts.append(f"--- Existing Intelligence (do NOT duplicate these) ---\n{prior_intelligence_text}")
+            user_msg_parts.append(f"--- Existing Intelligence for this entity (do NOT duplicate) ---\n{prior_intelligence_text}")
         user_msg_parts.append(f"--- Memory Summaries to Analyze ---\n{context}")
         user_msg = "\n\n".join(user_msg_parts)
         result_text = await call_llm(
