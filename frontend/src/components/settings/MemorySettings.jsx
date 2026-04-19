@@ -2,7 +2,7 @@ import React, { useState, useCallback } from "react";
 import {
     Clock, Play, ShieldAlert, Zap, GraduationCap, Brain,
     Layers, Scissors, FileText, Eye, AlertCircle, CheckCircle2,
-    Edit2, Cpu, Sparkles, BarChart3, Image as ImageIcon, ChevronDown
+    Edit2, Cpu, Sparkles, BarChart3, Image as ImageIcon, ChevronDown, Settings
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
@@ -551,6 +551,30 @@ function IntelligenceTab({ settings, onUpdateSettings, llmConfigs, llmProviders,
                 { label: "Existing Intelligence for this entity (do NOT duplicate)", color: "text-purple-400", count: (settings.prior_intelligence_chrono_count || 3) + (settings.prior_intelligence_semantic_count || 2), conditional: true, description: "Chronological + semantic prior intelligence for this entity" },
                 { label: "Memory Summaries to Analyze", color: "text-amber-400", description: "Uncompacted memory records feeding this intelligence generation" },
             ]} />
+
+            {/* Intelligence Mining Info */}
+            <Card className="border-zinc-800 bg-muted/10">
+                <CardHeader className="pb-3">
+                    <div className="flex items-center gap-2">
+                        <Brain className="w-5 h-5 text-purple-400" />
+                        <CardTitle className="text-lg">Intelligence Mining Triggers</CardTitle>
+                    </div>
+                </CardHeader>
+                <CardContent>
+                    <p className="text-sm text-muted-foreground leading-relaxed">
+                        Intelligence extraction is configured <strong>per Entity Type</strong>, because different entities accumulate interactions at different rates (e.g., an API token might need 1,000 interactions before compaction, while a Contact might need only 5).
+                    </p>
+                    <div className="mt-3 p-3 bg-zinc-900 rounded-md border border-zinc-800 text-xs text-zinc-300">
+                        <p className="font-semibold text-zinc-100 mb-1">To configure thresholds and triggers:</p>
+                        <ul className="list-disc pl-4 space-y-1">
+                            <li>Go to the <strong>Data Model</strong> tab</li>
+                            <li>Find your Entity Type (e.g., Organization, Contact)</li>
+                            <li>Click the <Settings className="inline-block w-3 h-3 text-muted-foreground mx-1" /> <strong>Configure NER &amp; thresholds</strong> button</li>
+                            <li>Adjust the <code>Compaction threshold</code> and <code>Insight trigger (days)</code></li>
+                        </ul>
+                    </div>
+                </CardContent>
+            </Card>
 
             {/* Intelligence Pipeline Assignment */}
             <Card className="border-dashed bg-muted/20">
