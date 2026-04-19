@@ -362,12 +362,16 @@ def _run_migrations(cursor):
             $$;
         """)
         
-        # Rename keys in JSONB settings
+        # Rename keys in JSONB settings — go directly to final names
         cursor.execute("""
-            UPDATE memory_llm_configs SET task_type = 'private_knowledge_generation' WHERE task_type = 'insight_generation';
-            UPDATE memory_llm_configs SET task_type = 'public_knowledge_generation' WHERE task_type = 'lesson_generation';
-            UPDATE memory_system_prompts SET prompt_type = 'private_knowledge_generation' WHERE prompt_type = 'insight_generation';
-            UPDATE memory_system_prompts SET prompt_type = 'public_knowledge_generation' WHERE prompt_type = 'lesson_generation';
+            UPDATE memory_llm_configs SET task_type = 'intelligence_generation' WHERE task_type = 'insight_generation';
+            UPDATE memory_llm_configs SET task_type = 'knowledge_generation' WHERE task_type = 'lesson_generation';
+            UPDATE memory_llm_configs SET task_type = 'intelligence_generation' WHERE task_type = 'private_knowledge_generation';
+            UPDATE memory_llm_configs SET task_type = 'knowledge_generation' WHERE task_type = 'public_knowledge_generation';
+            UPDATE memory_system_prompts SET prompt_type = 'intelligence_generation' WHERE prompt_type = 'insight_generation';
+            UPDATE memory_system_prompts SET prompt_type = 'knowledge_generation' WHERE prompt_type = 'lesson_generation';
+            UPDATE memory_system_prompts SET prompt_type = 'intelligence_generation' WHERE prompt_type = 'private_knowledge_generation';
+            UPDATE memory_system_prompts SET prompt_type = 'knowledge_generation' WHERE prompt_type = 'public_knowledge_generation';
         """)
     except Exception as e:
         logger.warning(f"Taxonomy migration skipped/failed: {e}")
@@ -433,21 +437,24 @@ def _run_migrations(cursor):
         cursor.execute("ALTER TABLE memory_llm_configs ADD COLUMN IF NOT EXISTS pipeline_stage TEXT")
         cursor.execute("ALTER TABLE memory_llm_configs ADD COLUMN IF NOT EXISTS execution_order INT DEFAULT 0")
 
-        # Backfill existing nodes into the 4 logical pipelines based on their legacy task_type
+        # Backfill existing nodes into the 5 logical pipelines based on their legacy task_type
+        # ONLY for rows that have never been assigned a pipeline_stage (first-time migration).
+        # This prevents overwriting user-configured drag-and-drop ordering on server restarts.
+        
         # Interactions Pipeline
-        cursor.execute("UPDATE memory_llm_configs SET pipeline_stage = 'interactions', execution_order = 0 WHERE task_type = 'vision'")
+        cursor.execute("UPDATE memory_llm_configs SET pipeline_stage = 'interactions', execution_order = 0 WHERE task_type = 'vision' AND pipeline_stage IS NULL")
         
         # Memories Pipeline
-        cursor.execute("UPDATE memory_llm_configs SET pipeline_stage = 'memories', execution_order = 0 WHERE task_type = 'entity_extraction'")
-        cursor.execute("UPDATE memory_llm_configs SET pipeline_stage = 'memories', execution_order = 1 WHERE task_type = 'embedding'")
-        cursor.execute("UPDATE memory_llm_configs SET pipeline_stage = 'memories', execution_order = 2 WHERE task_type = 'memory_generation'")
+        cursor.execute("UPDATE memory_llm_configs SET pipeline_stage = 'memories', execution_order = 0 WHERE task_type = 'entity_extraction' AND pipeline_stage IS NULL")
+        cursor.execute("UPDATE memory_llm_configs SET pipeline_stage = 'memories', execution_order = 1 WHERE task_type = 'embedding' AND pipeline_stage IS NULL")
+        cursor.execute("UPDATE memory_llm_configs SET pipeline_stage = 'memories', execution_order = 2 WHERE task_type = 'memory_generation' AND pipeline_stage IS NULL")
         
-        # Private Knowledge Pipeline
-        cursor.execute("UPDATE memory_llm_configs SET pipeline_stage = 'private_knowledge', execution_order = 0 WHERE task_type = 'private_knowledge_generation'")
+        # Intelligence Pipeline
+        cursor.execute("UPDATE memory_llm_configs SET pipeline_stage = 'intelligence', execution_order = 0 WHERE task_type = 'intelligence_generation' AND pipeline_stage IS NULL")
         
-        # Public Knowledge Pipeline
-        cursor.execute("UPDATE memory_llm_configs SET pipeline_stage = 'public_knowledge', execution_order = 0 WHERE task_type = 'pii_scrubbing'")
-        cursor.execute("UPDATE memory_llm_configs SET pipeline_stage = 'public_knowledge', execution_order = 1 WHERE task_type = 'public_knowledge_generation'")
+        # Knowledge Pipeline
+        cursor.execute("UPDATE memory_llm_configs SET pipeline_stage = 'knowledge', execution_order = 0 WHERE task_type = 'pii_scrubbing' AND pipeline_stage IS NULL")
+        cursor.execute("UPDATE memory_llm_configs SET pipeline_stage = 'knowledge', execution_order = 1 WHERE task_type = 'knowledge_generation' AND pipeline_stage IS NULL")
 
     except Exception as e:
         logger.warning(f"Pipeline schema migration skipped/failed: {e}")
@@ -669,14 +676,12 @@ def _seed_defaults():
                     WHERE task_type = %s AND (inline_system_prompt IS NULL OR inline_system_prompt = '')
                 """, (prompt, schema, task_type))
 
-        # Hotfix: Ensure summarization is properly mapped to private_knowledge for migrating existing users
+        # Hotfix: Ensure summarization is properly mapped to intelligence for migrating existing users
+        # Only move it if it's still on 'interactions' (one-time migration)
         cursor.execute("""
             UPDATE memory_llm_configs 
-            SET pipeline_stage = 'private_knowledge' 
+            SET pipeline_stage = 'intelligence' 
             WHERE task_type = 'summarization' AND pipeline_stage = 'interactions'
-            AND EXISTS (
-                SELECT 1 FROM information_schema.tables WHERE table_name = 'memory_llm_configs'
-            )
         """)
 
 
@@ -689,7 +694,7 @@ def _seed_defaults():
             ("summarization", "Default Summarizer",
              "You are a concise summarizer. Summarize the following interaction in 2-3 sentences, "
              "focusing on key facts, decisions, and action items. Be factual and brief."),
-            ("private_knowledge_generation", "Default Insight Generator",
+            ("intelligence_generation", "Default Insight Generator",
              "You are an AI analyst reviewing interaction history for a specific entity. "
              "Based on the provided memory summaries, identify a meaningful pattern, risk, opportunity, "
              "or behavioral insight. Return JSON: {\"name\": \"...\", \"knowledge_type\": \"...\", "
@@ -701,8 +706,8 @@ def _seed_defaults():
              "\"name\": \"...\", \"role\": \"...\"}]. Only include clearly identifiable entities."),
             ("entity_workspace", "Default Entity Workspace Assistant",
              "You are an intelligent assistant helping manage a relationship with a specific entity. "
-             "You have access to the entity's interaction history as memory summaries, extracted private_knowledge, "
-             "and general public_knowledge. Use this context to give personalized, factual answers. "
+             "You have access to the entity's interaction history as memory summaries, extracted intelligence, "
+             "and general knowledge. Use this context to give personalized, factual answers. "
              "If you identify a new pattern or important observation, you may create an insight using the action syntax."),
         ]
         for prompt_type, name, text in prompts:
@@ -717,7 +722,7 @@ def _seed_defaults():
         # Backfill inline prompts and schemas for the UI if they are null
         # We do this so the Accordion UI fields are not empty by default for new/existing setups
         for prompt_type, name, text in prompts:
-            if prompt_type in ["memory_generation", "summarization", "private_knowledge_generation", "entity_extraction", "pii_scrubbing"]:
+            if prompt_type in ["memory_generation", "summarization", "intelligence_generation", "entity_extraction", "pii_scrubbing"]:
                 cursor.execute("""
                     UPDATE memory_llm_configs 
                     SET inline_system_prompt = %s 
@@ -735,7 +740,7 @@ def _seed_defaults():
         cursor.execute("""
             UPDATE memory_llm_configs 
             SET inline_schema = %s 
-            WHERE task_type = 'private_knowledge_generation' AND inline_schema IS NULL
+            WHERE task_type = 'intelligence_generation' AND inline_schema IS NULL
         """, ('{\n  "name": "...",\n  "knowledge_type": "...",\n  "content": "...",\n  "summary": "..."\n}',))
 
         # Default entity type configs
