@@ -808,7 +808,58 @@ async def compact_entity(entity_type: str, entity_id: str):
 
     context = "\n\n".join(context_parts)
 
-    # Use pipeline-driven config lookup (fixes bug #3: was "intelligence_generation", should be "intelligence_generation")
+    # Fetch prior intelligence for this entity to avoid duplication
+    settings = get_memory_settings()
+    prior_intel_chrono = settings.get("prior_intelligence_chrono_count", 3)
+    prior_intel_semantic = settings.get("prior_intelligence_semantic_count", 2)
+    prior_intelligence_text = ""
+
+    if prior_intel_chrono > 0 or prior_intel_semantic > 0:
+        try:
+            with get_memory_db_context() as conn:
+                cursor = conn.cursor()
+                prior_intel = {}
+
+                # Chronological prior intelligence
+                if prior_intel_chrono > 0:
+                    cursor.execute("""
+                        SELECT id, name, knowledge_type, content, summary, created_at
+                        FROM intelligence
+                        WHERE primary_entity_type = %s AND primary_entity_id = %s
+                          AND content IS NOT NULL AND LENGTH(TRIM(content)) > 10
+                        ORDER BY created_at DESC LIMIT %s
+                    """, (entity_type, entity_id, prior_intel_chrono))
+                    for row in cursor.fetchall():
+                        prior_intel[row["id"]] = dict(row)
+
+                # Semantic prior intelligence
+                if prior_intel_semantic > 0 and context:
+                    try:
+                        search_emb = await generate_embedding(context[:2000])
+                        if search_emb:
+                            cursor.execute("""
+                                SELECT id, name, knowledge_type, content, summary, created_at
+                                FROM intelligence
+                                WHERE primary_entity_type = %s AND primary_entity_id = %s
+                                  AND embedding IS NOT NULL
+                                  AND content IS NOT NULL AND LENGTH(TRIM(content)) > 10
+                                ORDER BY embedding <=> %s::vector LIMIT %s
+                            """, (entity_type, entity_id, str(search_emb), prior_intel_semantic))
+                            for row in cursor.fetchall():
+                                if row["id"] not in prior_intel:
+                                    prior_intel[row["id"]] = dict(row)
+                    except Exception as e:
+                        logger.warning(f"Semantic prior intelligence search failed: {e}")
+
+                if prior_intel:
+                    sorted_intel = sorted(prior_intel.values(), key=lambda x: str(x.get("created_at", "")))
+                    lines = [f"[{i.get('knowledge_type', 'other')}] {i.get('name', '')}: {i.get('summary') or i.get('content', '')[:200]}" for i in sorted_intel]
+                    prior_intelligence_text = "\n".join(lines)
+                    logger.info(f"Injecting {len(prior_intel)} prior intelligence for {entity_type}/{entity_id}")
+        except Exception as e:
+            logger.warning(f"Prior intelligence fetch failed: {e}")
+
+    # Use pipeline-driven config lookup
     pipeline_nodes = get_pipeline_configs("intelligence")
     pk_gen_node = next((n for n in pipeline_nodes if n["task_type"] == "intelligence_generation"), None)
 
@@ -838,7 +889,11 @@ async def compact_entity(entity_type: str, entity_id: str):
             return
 
     try:
-        user_msg = f"Entity: {entity_type} / {entity_id}\n\n{context}"
+        user_msg_parts = [f"Entity: {entity_type} / {entity_id}"]
+        if prior_intelligence_text:
+            user_msg_parts.append(f"--- Existing Intelligence (do NOT duplicate these) ---\n{prior_intelligence_text}")
+        user_msg_parts.append(f"--- Memory Summaries to Analyze ---\n{context}")
+        user_msg = "\n\n".join(user_msg_parts)
         result_text = await call_llm(
             user_msg,
             system_prompt=system_prompt,
@@ -983,7 +1038,37 @@ async def generate_knowledge_from_intelligence(intelligence: list):
     context = "\n\n---\n\n".join(scrubbed_parts)
     intelligence_ids = [ins["id"] for ins in intelligence]
 
-    # Use pipeline-driven config lookup (fixes bug #4: was "lesson_generation", should be "knowledge_generation")
+    # Fetch prior knowledge via semantic search to avoid duplication
+    settings = get_memory_settings()
+    prior_knowledge_count = settings.get("prior_knowledge_semantic_count", 3)
+    prior_knowledge_text = ""
+
+    if prior_knowledge_count > 0 and context:
+        try:
+            search_emb = await generate_embedding(context[:2000])
+            if search_emb:
+                with get_memory_db_context() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        SELECT id, name, knowledge_type, content, summary, tags
+                        FROM knowledge
+                        WHERE embedding IS NOT NULL
+                          AND content IS NOT NULL AND LENGTH(TRIM(content)) > 10
+                        ORDER BY embedding <=> %s::vector LIMIT %s
+                    """, (str(search_emb), prior_knowledge_count))
+                    prior_items = [dict(r) for r in cursor.fetchall()]
+
+                if prior_items:
+                    lines = [
+                        f"[{k.get('knowledge_type', 'other')}] {k.get('name', '')}: {k.get('summary') or k.get('content', '')[:200]}"
+                        for k in prior_items
+                    ]
+                    prior_knowledge_text = "\n".join(lines)
+                    logger.info(f"Injecting {len(prior_items)} prior knowledge items for deduplication")
+        except Exception as e:
+            logger.warning(f"Prior knowledge fetch failed: {e}")
+
+    # Use pipeline-driven config lookup
     pipeline_nodes = get_pipeline_configs("knowledge")
     pk_gen_node = next((n for n in pipeline_nodes if n["task_type"] == "knowledge_generation"), None)
     node_id = pk_gen_node["id"] if pk_gen_node else None
@@ -997,8 +1082,14 @@ async def generate_knowledge_from_intelligence(intelligence: list):
         system_prompt = "You are an AI knowledge curator. Synthesize into generalizable Knowledge. Return JSON: {\"name\": \"...\", \"knowledge_type\": \"...\", \"content\": \"...\", \"summary\": \"...\", \"tags\": [...]}"
 
     try:
+        user_msg_parts = []
+        if prior_knowledge_text:
+            user_msg_parts.append(f"--- Existing Knowledge (do NOT duplicate or repeat these) ---\n{prior_knowledge_text}")
+        user_msg_parts.append(f"--- Intelligence Items to Synthesize ---\n{context}")
+        user_msg = "\n\n".join(user_msg_parts)
+
         result_text = await call_llm(
-            context[:8000],
+            user_msg[:8000],
             system_prompt=system_prompt,
             max_tokens=600,
             config_id=node_id,

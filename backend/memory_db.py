@@ -468,6 +468,9 @@ def _run_migrations(cursor):
         ("knowledge_trigger_days", "INT DEFAULT NULL"),
         ("prior_context_chrono_count", "INT DEFAULT 2"),
         ("prior_context_semantic_count", "INT DEFAULT 2"),
+        ("prior_intelligence_chrono_count", "INT DEFAULT 3"),
+        ("prior_intelligence_semantic_count", "INT DEFAULT 2"),
+        ("prior_knowledge_semantic_count", "INT DEFAULT 3"),
     ]:
         cursor.execute(f"ALTER TABLE memory_settings ADD COLUMN IF NOT EXISTS {col} {col_def}")
 

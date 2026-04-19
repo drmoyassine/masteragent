@@ -428,6 +428,56 @@ function IntelligenceTab({ settings, onUpdateSettings, llmConfigs, llmProviders,
                 </p>
             </div>
 
+            {/* Prior Context Injection */}
+            <Card>
+                <CardHeader className="pb-3">
+                    <div className="flex items-center gap-2">
+                        <Layers className="w-5 h-5 text-purple-500" />
+                        <CardTitle className="text-lg">Prior Intelligence Context</CardTitle>
+                    </div>
+                    <CardDescription className="text-xs">
+                        Existing intelligence items injected during generation so the LLM avoids creating duplicates.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                            <Label className="text-xs font-mono">Chronological</Label>
+                            <Input
+                                type="number"
+                                min={0}
+                                max={10}
+                                value={settings.prior_intelligence_chrono_count !== undefined ? settings.prior_intelligence_chrono_count : 3}
+                                onChange={(e) =>
+                                    onUpdateSettings("prior_intelligence_chrono_count", parseInt(e.target.value) || 0)
+                                }
+                            />
+                            <p className="text-[10px] text-muted-foreground">
+                                Most recent intelligence by date for this entity.
+                            </p>
+                        </div>
+                        <div className="space-y-2">
+                            <Label className="text-xs font-mono">Semantic</Label>
+                            <Input
+                                type="number"
+                                min={0}
+                                max={10}
+                                value={settings.prior_intelligence_semantic_count !== undefined ? settings.prior_intelligence_semantic_count : 2}
+                                onChange={(e) =>
+                                    onUpdateSettings("prior_intelligence_semantic_count", parseInt(e.target.value) || 0)
+                                }
+                            />
+                            <p className="text-[10px] text-muted-foreground">
+                                Most similar intelligence via vector search for this entity.
+                            </p>
+                        </div>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground border-t pt-2">
+                        Injected as "Existing Intelligence" in the LLM prompt to prevent redundant insight generation.
+                    </p>
+                </CardContent>
+            </Card>
+
             {/* Intelligence Pipeline Assignment */}
             <Card className="border-dashed bg-muted/20">
                 <CardHeader className="pb-3 border-b">
@@ -468,6 +518,40 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                     Generates agnostic, PII-scrubbed, reusable Knowledge items.
                 </p>
             </div>
+
+            {/* Prior Knowledge Context */}
+            <Card>
+                <CardHeader className="pb-3">
+                    <div className="flex items-center gap-2">
+                        <Layers className="w-5 h-5 text-indigo-500" />
+                        <CardTitle className="text-lg">Prior Knowledge Context</CardTitle>
+                    </div>
+                    <CardDescription className="text-xs">
+                        Existing knowledge items injected via semantic search during generation to prevent duplication.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <div className="space-y-2">
+                        <Label className="text-xs font-mono">Semantic Matches</Label>
+                        <Input
+                            type="number"
+                            min={0}
+                            max={10}
+                            value={settings.prior_knowledge_semantic_count !== undefined ? settings.prior_knowledge_semantic_count : 3}
+                            onChange={(e) =>
+                                onUpdateSettings("prior_knowledge_semantic_count", parseInt(e.target.value) || 0)
+                            }
+                        />
+                        <p className="text-[10px] text-muted-foreground">
+                            Most similar existing knowledge items found via pgvector cosine search.
+                            Injected as "Existing Knowledge" so the LLM generates novel, non-redundant items.
+                        </p>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground border-t pt-2">
+                        Knowledge is global (not entity-scoped). Set to 0 to disable deduplication context entirely.
+                    </p>
+                </CardContent>
+            </Card>
 
             {/* PII Privacy */}
             <Card>
