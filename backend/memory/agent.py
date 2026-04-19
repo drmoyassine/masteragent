@@ -29,10 +29,10 @@ from memory_services import (
     search_interactions_by_fulltext,
     search_memories_by_vector,
     search_memories_by_fulltext,
-    search_private_knowledge_by_vector,
-    search_private_knowledge_by_fulltext,
-    search_public_knowledge_by_vector,
-    search_public_knowledge_by_fulltext,
+    search_intelligence_by_vector,
+    search_intelligence_by_fulltext,
+    search_knowledge_by_vector,
+    search_knowledge_by_fulltext,
 )
 from memory.auth import verify_agent_key, log_audit
 from memory_tasks import check_rate_limit
@@ -200,7 +200,7 @@ async def get_has_context(
         i_rows = cursor.fetchall()
         cursor.execute("SELECT id, date FROM memories WHERE primary_entity_type = %s AND primary_entity_id = %s ORDER BY date DESC", (entity_type, entity_id))
         m_rows = cursor.fetchall()
-        cursor.execute("SELECT id, created_at FROM private_knowledge WHERE primary_entity_type = %s AND primary_entity_id = %s ORDER BY created_at DESC", (entity_type, entity_id))
+        cursor.execute("SELECT id, created_at FROM intelligence WHERE primary_entity_type = %s AND primary_entity_id = %s ORDER BY created_at DESC", (entity_type, entity_id))
         ins_rows = cursor.fetchall()
         
     i_ids = [r["id"] for r in i_rows]; m_ids = [r["id"] for r in m_rows]; ins_ids = [r["id"] for r in ins_rows]
@@ -324,11 +324,11 @@ async def delete_memory(id: str, agent: dict = Depends(verify_agent_key)):
 
 
 # ============================================
-# TIER 2: 💡 private_knowledge
+# TIER 2: 💡 intelligence
 # ============================================
 
 @router.post("/intelligence", response_model=IntelligenceResponse, tags=["💡 Intelligence"])
-async def create_private_knowledge(body: IntelligenceCreate, agent: dict = Depends(verify_agent_key)):
+async def create_intelligence(body: IntelligenceCreate, agent: dict = Depends(verify_agent_key)):
     in_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
     embedding = await generate_embedding(f"{body.name}. {body.summary or body.content}")
@@ -343,13 +343,13 @@ async def create_private_knowledge(body: IntelligenceCreate, agent: dict = Depen
             vals = "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
             params.append(embedding)
 
-        cursor.execute(f"INSERT INTO private_knowledge ({cols}) VALUES {vals} RETURNING *", params)
+        cursor.execute(f"INSERT INTO intelligence ({cols}) VALUES {vals} RETURNING *", params)
         row = dict(cursor.fetchone())
         row["created_at"] = str(row["created_at"]); row["updated_at"] = str(row["updated_at"])
         return row
 
 @router.get("/intelligence", tags=["💡 Intelligence"])
-async def list_private_knowledge(
+async def list_intelligence(
     entity_type: str = Query(...),
     entity_id: str = Query(...),
     status: Optional[str] = Query(None),
@@ -367,13 +367,13 @@ async def list_private_knowledge(
         if end_date: conditions.append("created_at <= %s"); params.append(end_date)
 
         where = " AND ".join(conditions)
-        cursor.execute(f"SELECT COUNT(*) as total FROM private_knowledge WHERE {where}", params)
+        cursor.execute(f"SELECT COUNT(*) as total FROM intelligence WHERE {where}", params)
         total = cursor.fetchone()["total"]
 
         cursor.execute(f"""
             SELECT id, seq_id, primary_entity_type, primary_entity_id, source_memory_ids,
                    knowledge_type, name, content, summary, status, created_by, confirmed_by, confirmed_at, created_at, updated_at
-            FROM private_knowledge WHERE {where} ORDER BY created_at DESC LIMIT %s OFFSET %s
+            FROM intelligence WHERE {where} ORDER BY created_at DESC LIMIT %s OFFSET %s
         """, params + [limit, offset])
         rows = []
         for r in cursor.fetchall():
@@ -382,10 +382,10 @@ async def list_private_knowledge(
             if d.get("confirmed_at"): d["confirmed_at"] = str(d["confirmed_at"])
             rows.append(d)
 
-    return {"private_knowledge": rows, "total": total}
+    return {"intelligence": rows, "total": total}
 
 @router.patch("/intelligence/{id}", response_model=IntelligenceResponse, tags=["💡 Intelligence"])
-async def update_private_knowledge(id: str, update: IntelligenceUpdate, agent: dict = Depends(verify_agent_key)):
+async def update_intelligence(id: str, update: IntelligenceUpdate, agent: dict = Depends(verify_agent_key)):
     updates, params = [], []
     for k, v in update.model_dump(exclude_unset=True).items():
         updates.append(f"{k} = %s")
@@ -394,13 +394,13 @@ async def update_private_knowledge(id: str, update: IntelligenceUpdate, agent: d
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute(f"UPDATE private_knowledge SET {', '.join(updates)}, updated_at = NOW() WHERE id = %s RETURNING *", params + [id])
+        cursor.execute(f"UPDATE intelligence SET {', '.join(updates)}, updated_at = NOW() WHERE id = %s RETURNING *", params + [id])
         row = cursor.fetchone()
         if not row: raise HTTPException(404, "Intelligence not found")
         
         if "name" in update.model_dump(exclude_unset=True) or "summary" in update.model_dump(exclude_unset=True) or "content" in update.model_dump(exclude_unset=True):
             emb = await generate_embedding(f"{row['name']}. {row['summary'] or row['content']}")
-            if emb: cursor.execute("UPDATE private_knowledge SET embedding = %s::vector WHERE id = %s", (emb, id))
+            if emb: cursor.execute("UPDATE intelligence SET embedding = %s::vector WHERE id = %s", (emb, id))
 
         r = dict(row)
         r["created_at"] = str(r["created_at"]); r["updated_at"] = str(r["updated_at"])
@@ -408,20 +408,20 @@ async def update_private_knowledge(id: str, update: IntelligenceUpdate, agent: d
         return r
 
 @router.delete("/intelligence/{id}", tags=["💡 Intelligence"])
-async def delete_private_knowledge(id: str, agent: dict = Depends(verify_agent_key)):
+async def delete_intelligence(id: str, agent: dict = Depends(verify_agent_key)):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM private_knowledge WHERE id = %s RETURNING id", (id,))
+        cursor.execute("DELETE FROM intelligence WHERE id = %s RETURNING id", (id,))
         if not cursor.fetchone(): raise HTTPException(404, "Intelligence not found")
     return Response(status_code=204)
 
 
 # ============================================
-# TIER 3: 🎓 public_knowledge
+# TIER 3: 🎓 knowledge
 # ============================================
 
 @router.post("/knowledge", response_model=KnowledgeResponse, tags=["🎓 Knowledge"])
-async def create_public_knowledge(body: KnowledgeCreate, agent: dict = Depends(verify_agent_key)):
+async def create_knowledge(body: KnowledgeCreate, agent: dict = Depends(verify_agent_key)):
     les_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
     embedding = await generate_embedding(f"{body.name}. {body.summary or body.content}")
@@ -436,13 +436,13 @@ async def create_public_knowledge(body: KnowledgeCreate, agent: dict = Depends(v
             vals = "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
             params.append(embedding)
 
-        cursor.execute(f"INSERT INTO public_knowledge ({cols}) VALUES {vals} RETURNING *", params)
+        cursor.execute(f"INSERT INTO knowledge ({cols}) VALUES {vals} RETURNING *", params)
         row = dict(cursor.fetchone())
         row["created_at"] = str(row["created_at"]); row["updated_at"] = str(row["updated_at"])
         return row
 
 @router.get("/knowledge", tags=["🎓 Knowledge"])
-async def list_public_knowledge(
+async def list_knowledge(
     entity_type: Optional[str] = Query(None),
     entity_subtype: Optional[str] = Query(None),
     start_date: Optional[str] = Query(None),
@@ -458,16 +458,16 @@ async def list_public_knowledge(
         if knowledge_type: conditions.append("knowledge_type = %s"); params.append(knowledge_type)
         if start_date: conditions.append("created_at >= %s"); params.append(start_date)
         if end_date: conditions.append("created_at <= %s"); params.append(end_date)
-        # public_knowledge are globally abstracted away from IDs, but if tags contained entity_type we could filter it here.
+        # knowledge are globally abstracted away from IDs, but if tags contained entity_type we could filter it here.
         # For now, it simply filters via metadata or tags if we implement them, otherwise it acts fully globally.
 
         where = " AND ".join(conditions) if conditions else "1=1"
-        cursor.execute(f"SELECT COUNT(*) as total FROM public_knowledge WHERE {where}", params)
+        cursor.execute(f"SELECT COUNT(*) as total FROM knowledge WHERE {where}", params)
         total = cursor.fetchone()["total"]
 
         cursor.execute(f"""
             SELECT id, seq_id, source_intelligence_ids, knowledge_type, name, content, summary, visibility, tags, created_at, updated_at
-            FROM public_knowledge WHERE {where} ORDER BY created_at DESC LIMIT %s OFFSET %s
+            FROM knowledge WHERE {where} ORDER BY created_at DESC LIMIT %s OFFSET %s
         """, params + [limit, offset])
         rows = []
         for r in cursor.fetchall():
@@ -475,10 +475,10 @@ async def list_public_knowledge(
             d["created_at"] = str(d["created_at"]); d["updated_at"] = str(d["updated_at"])
             rows.append(d)
 
-    return {"public_knowledge": rows, "total": total}
+    return {"knowledge": rows, "total": total}
 
 @router.patch("/knowledge/{id}", response_model=KnowledgeResponse, tags=["🎓 Knowledge"])
-async def update_public_knowledge(id: str, update: KnowledgeUpdate, agent: dict = Depends(verify_agent_key)):
+async def update_knowledge(id: str, update: KnowledgeUpdate, agent: dict = Depends(verify_agent_key)):
     updates, params = [], []
     for k, v in update.model_dump(exclude_unset=True).items():
         updates.append(f"{k} = %s")
@@ -487,23 +487,23 @@ async def update_public_knowledge(id: str, update: KnowledgeUpdate, agent: dict 
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute(f"UPDATE public_knowledge SET {', '.join(updates)}, updated_at = NOW() WHERE id = %s RETURNING *", params + [id])
+        cursor.execute(f"UPDATE knowledge SET {', '.join(updates)}, updated_at = NOW() WHERE id = %s RETURNING *", params + [id])
         row = cursor.fetchone()
         if not row: raise HTTPException(404, "Knowledge not found")
         
         if "name" in update.model_dump(exclude_unset=True) or "summary" in update.model_dump(exclude_unset=True) or "content" in update.model_dump(exclude_unset=True):
             emb = await generate_embedding(f"{row['name']}. {row['summary'] or row['content']}")
-            if emb: cursor.execute("UPDATE public_knowledge SET embedding = %s::vector WHERE id = %s", (emb, id))
+            if emb: cursor.execute("UPDATE knowledge SET embedding = %s::vector WHERE id = %s", (emb, id))
 
         r = dict(row)
         r["created_at"] = str(r["created_at"]); r["updated_at"] = str(r["updated_at"])
         return r
 
 @router.delete("/knowledge/{id}", tags=["🎓 Knowledge"])
-async def delete_public_knowledge(id: str, agent: dict = Depends(verify_agent_key)):
+async def delete_knowledge(id: str, agent: dict = Depends(verify_agent_key)):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM public_knowledge WHERE id = %s RETURNING id", (id,))
+        cursor.execute("DELETE FROM knowledge WHERE id = %s RETURNING id", (id,))
         if not cursor.fetchone(): raise HTTPException(404, "Knowledge not found")
     return Response(status_code=204)
 
@@ -541,15 +541,15 @@ async def search_memory_semantic(
                 id=hit["id"], layer="memory", score=float(hit.get("score", 0)), name=None, snippet=(hit.get("content_summary") or "")[:200], entity_id=hit["primary_entity_id"], entity_type=hit["primary_entity_type"], created_at=str(hit.get("created_at", ""))
             ))
 
-    if "private_knowledge" in request.layers:
-        hits = await search_private_knowledge_by_vector(query_embedding, request.entity_id, request.entity_type, request.entity_subtype, request.start_date, request.end_date, "confirmed", request.limit)
+    if "intelligence" in request.layers:
+        hits = await search_intelligence_by_vector(query_embedding, request.entity_id, request.entity_type, request.entity_subtype, request.start_date, request.end_date, "confirmed", request.limit)
         for hit in hits:
             results.append(SearchResult(
                 id=hit["id"], layer="Intelligence", score=float(hit.get("score", 0)), name=hit.get("name"), snippet=(hit.get("summary") or "")[:200], entity_id=hit["primary_entity_id"], entity_type=hit["primary_entity_type"], created_at=str(hit.get("created_at", ""))
             ))
 
-    if "public_knowledge" in request.layers:
-        hits = await search_public_knowledge_by_vector(query_embedding, None, request.entity_type, request.entity_subtype, request.start_date, request.end_date, request.limit)
+    if "knowledge" in request.layers:
+        hits = await search_knowledge_by_vector(query_embedding, None, request.entity_type, request.entity_subtype, request.start_date, request.end_date, request.limit)
         for hit in hits:
             results.append(SearchResult(
                 id=hit["id"], layer="Knowledge", score=float(hit.get("score", 0)), name=hit.get("name"), snippet=(hit.get("summary") or "")[:200], entity_id=None, entity_type=None, created_at=str(hit.get("created_at", ""))
@@ -586,15 +586,15 @@ async def search_memory_fulltext(
                 id=hit["id"], layer="memory", score=float(hit.get("score", 0)), name=None, snippet=(hit.get("content_summary") or "")[:200], entity_id=hit["primary_entity_id"], entity_type=hit["primary_entity_type"], created_at=str(hit.get("created_at", ""))
             ))
 
-    if "private_knowledge" in request.layers:
-        hits = await search_private_knowledge_by_fulltext(request.query, request.entity_id, request.entity_type, request.entity_subtype, request.start_date, request.end_date, "confirmed", request.limit)
+    if "intelligence" in request.layers:
+        hits = await search_intelligence_by_fulltext(request.query, request.entity_id, request.entity_type, request.entity_subtype, request.start_date, request.end_date, "confirmed", request.limit)
         for hit in hits:
             results.append(SearchResult(
                 id=hit["id"], layer="Intelligence", score=float(hit.get("score", 0)), name=hit.get("name"), snippet=(hit.get("summary") or "")[:200], entity_id=hit["primary_entity_id"], entity_type=hit["primary_entity_type"], created_at=str(hit.get("created_at", ""))
             ))
 
-    if "public_knowledge" in request.layers:
-        hits = await search_public_knowledge_by_fulltext(request.query, None, request.entity_type, request.entity_subtype, request.start_date, request.end_date, request.limit)
+    if "knowledge" in request.layers:
+        hits = await search_knowledge_by_fulltext(request.query, None, request.entity_type, request.entity_subtype, request.start_date, request.end_date, request.limit)
         for hit in hits:
             results.append(SearchResult(
                 id=hit["id"], layer="Knowledge", score=float(hit.get("score", 0)), name=hit.get("name"), snippet=(hit.get("summary") or "")[:200], entity_id=None, entity_type=None, created_at=str(hit.get("created_at", ""))

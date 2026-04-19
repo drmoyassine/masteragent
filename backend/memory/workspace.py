@@ -3,7 +3,7 @@ memory/workspace.py — Entity Workspace Chat
 
 Per-entity LLM chat endpoint. Provides a conversational interface
 scoped to a specific entity, enriched with memory context (memories,
-private_knowledge, public_knowledge).
+intelligence, knowledge).
 
 Endpoints:
   POST /workspace/{entity_type}/{entity_id}/chat        — agent key auth
@@ -11,10 +11,10 @@ Endpoints:
 
 Flow:
   1. Embed user message for semantic retrieval
-  2. Fan-out search: memories + private_knowledge + public_knowledge
+  2. Fan-out search: memories + intelligence + knowledge
   3. Build context + system prompt (Prompt Manager skill if provided)
   4. Call LLM (history included)
-  5. Parse structured actions from LLM response (create_private_knowledge, update_private_knowledge)
+  5. Parse structured actions from LLM response (create_intelligence, update_intelligence)
   6. Execute actions
   7. Log exchange as interaction_type="ai_conversation"
   8. Return {response, actions_taken, interaction_id, context_summary}
@@ -35,8 +35,8 @@ from memory_services import (
     generate_embedding,
     get_system_prompt,
     search_memories_by_vector,
-    search_private_knowledge_by_vector,
-    search_public_knowledge_by_vector,
+    search_intelligence_by_vector,
+    search_knowledge_by_vector,
 )
 from memory.auth import require_agent_auth, require_admin_auth
 
@@ -61,7 +61,7 @@ class ChatRequest(BaseModel):
     message: str
     history: Optional[List[ChatMessage]] = []
     skill_name: Optional[str] = None    # Prompt Manager skill to use as system prompt
-    include_lessons: bool = True        # Include generalised public_knowledge in context
+    include_lessons: bool = True        # Include generalised knowledge in context
     stream: bool = False                # Reserved for future streaming support
 
 class ActionResult(BaseModel):
@@ -89,7 +89,7 @@ async def entity_workspace_chat(
 ):
     """
     Conversational chat scoped to a specific entity (agent key auth).
-    Retrieves relevant memories, private_knowledge, and public_knowledge for context.
+    Retrieves relevant memories, intelligence, and knowledge for context.
     """
     return await _run_chat(entity_type, entity_id, body, caller)
 
@@ -128,7 +128,7 @@ async def _run_chat(
         logger.warning(f"Workspace embedding failed: {e}")
 
     # ── 2. Retrieve entity context ────────────────────────────────────────
-    memories, private_knowledge, public_knowledge = [], [], []
+    memories, intelligence, knowledge = [], [], []
 
     if query_embedding:
         try:
@@ -139,19 +139,19 @@ async def _run_chat(
             logger.warning(f"Memory search failed: {e}")
 
         try:
-            private_knowledge = await search_private_knowledge_by_vector(
+            intelligence = await search_intelligence_by_vector(
                 query_embedding, entity_id=entity_id, limit=_MAX_CONTEXT_INSIGHTS
             )
         except Exception as e:
-            logger.warning(f"PrivateKnowledge search failed: {e}")
+            logger.warning(f"Intelligence search failed: {e}")
 
         if body.include_lessons:
             try:
-                public_knowledge = await search_public_knowledge_by_vector(
+                knowledge = await search_knowledge_by_vector(
                     query_embedding, limit=_MAX_CONTEXT_LESSONS
                 )
             except Exception as e:
-                logger.warning(f"PublicKnowledge search failed: {e}")
+                logger.warning(f"Knowledge search failed: {e}")
 
     # ── 3. Build context block ────────────────────────────────────────────
     context_sections = []
@@ -163,25 +163,25 @@ async def _run_chat(
         )
         context_sections.append(f"### Recent Memory Summaries\n{mem_bullets}")
 
-    if private_knowledge:
+    if intelligence:
         ins_bullets = "\n".join(
-            f"  • [{i.get('knowledge_type', 'PrivateKnowledge')}] {i.get('name', '')}: "
+            f"  • [{i.get('knowledge_type', 'Intelligence')}] {i.get('name', '')}: "
             f"{i.get('summary') or i.get('content', '')[:200]}"
-            for i in private_knowledge
+            for i in intelligence
         )
-        context_sections.append(f"### Known private_knowledge\n{ins_bullets}")
+        context_sections.append(f"### Known intelligence\n{ins_bullets}")
 
-    if public_knowledge:
+    if knowledge:
         les_bullets = "\n".join(
-            f"  • [{l.get('knowledge_type', 'PublicKnowledge')}] {l.get('name', '')}: "
+            f"  • [{l.get('knowledge_type', 'Knowledge')}] {l.get('name', '')}: "
             f"{l.get('summary') or l.get('content', '')[:200]}"
-            for l in public_knowledge
+            for l in knowledge
         )
-        context_sections.append(f"### Relevant General public_knowledge\n{les_bullets}")
+        context_sections.append(f"### Relevant General knowledge\n{les_bullets}")
 
     entity_context = "\n\n".join(context_sections)
     context_summary = (
-        f"{len(memories)} memories, {len(private_knowledge)} private_knowledge, {len(public_knowledge)} public_knowledge"
+        f"{len(memories)} memories, {len(intelligence)} intelligence, {len(knowledge)} knowledge"
         if entity_context else None
     )
 
@@ -192,7 +192,7 @@ async def _run_chat(
         system_prompt_text = await get_system_prompt("entity_workspace") or (
             "You are an intelligent assistant helping manage a relationship with a specific entity. "
             "Use the provided memory context to give personalized, accurate answers. "
-            "You may suggest creating an PrivateKnowledge or updating existing private_knowledge by including structured "
+            "You may suggest creating an Intelligence or updating existing intelligence by including structured "
             "actions in your reply (see the action syntax below)."
         )
 
@@ -207,9 +207,9 @@ async def _run_chat(
             f"## Entity Context: {entity_type.title()} / {entity_id}\n\n"
             f"{entity_context}\n\n"
             "---\n"
-            "To create or update an PrivateKnowledge, include a JSON block in your reply:\n"
+            "To create or update an Intelligence, include a JSON block in your reply:\n"
             "```action\n"
-            '{"type": "create_private_knowledge", "name": "...", "knowledge_type": "...", "content": "..."}\n'
+            '{"type": "create_intelligence", "name": "...", "knowledge_type": "...", "content": "..."}\n'
             "```"
         )
 
@@ -316,8 +316,8 @@ async def _execute_actions(
     Parse ```action {...}``` blocks from LLM response and execute them.
 
     Supported actions:
-      - create_private_knowledge  → {type, name, knowledge_type, content, summary?}
-      - update_private_knowledge  → {type, id, content?, summary?, status?}
+      - create_intelligence  → {type, name, knowledge_type, content, summary?}
+      - update_intelligence  → {type, id, content?, summary?, status?}
     """
     actions_taken = []
     blocks = re.findall(r"```action\s*(\{.*?\})\s*```", response_text, re.DOTALL)
@@ -327,13 +327,13 @@ async def _execute_actions(
             action = json.loads(block)
             action_type = action.get("type")
 
-            if action_type == "create_private_knowledge":
+            if action_type == "create_intelligence":
                 insight_id = str(uuid.uuid4())
                 now = datetime.now(timezone.utc).isoformat()
                 with get_memory_db_context() as conn:
                     cursor = conn.cursor()
                     cursor.execute("""
-                        INSERT INTO private_knowledge (
+                        INSERT INTO intelligence (
                             id, primary_entity_type, primary_entity_id,
                             knowledge_type, name, content, summary,
                             status, created_by, created_at, updated_at
@@ -341,7 +341,7 @@ async def _execute_actions(
                     """, (
                         insight_id, entity_type, entity_id,
                         action.get("knowledge_type", "other"),
-                        action.get("name", "Workspace PrivateKnowledge"),
+                        action.get("name", "Workspace Intelligence"),
                         action.get("content", ""),
                         action.get("summary"),
                         "draft",
@@ -349,10 +349,10 @@ async def _execute_actions(
                         now, now,
                     ))
                 actions_taken.append(ActionResult(
-                    action="create_private_knowledge", result="created", id=insight_id
+                    action="create_intelligence", result="created", id=insight_id
                 ))
 
-            elif action_type == "update_private_knowledge":
+            elif action_type == "update_intelligence":
                 insight_id = action.get("id")
                 if not insight_id:
                     continue
@@ -366,11 +366,11 @@ async def _execute_actions(
                     with get_memory_db_context() as conn:
                         cursor = conn.cursor()
                         cursor.execute(
-                            f"UPDATE private_knowledge SET {', '.join(fields)} WHERE id = %s",
+                            f"UPDATE intelligence SET {', '.join(fields)} WHERE id = %s",
                             values
                         )
                     actions_taken.append(ActionResult(
-                        action="update_private_knowledge", result="updated", id=insight_id
+                        action="update_intelligence", result="updated", id=insight_id
                     ))
 
         except Exception as e:

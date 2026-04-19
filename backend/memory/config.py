@@ -116,12 +116,12 @@ async def delete_entity_subtype(subtype_id: str, user: dict = Depends(require_ad
 # Admin Config Endpoints - Lesson Types
 # ============================================
 
-@router.get("/config/public_knowledge_types", response_model=List[LessonTypeResponse])
+@router.get("/config/knowledge_types", response_model=List[LessonTypeResponse])
 async def list_lesson_types(user: dict = Depends(require_admin_auth)):
     return _list_config_table("memory_lesson_types")
 
-@router.post("/config/public_knowledge_types", response_model=LessonTypeResponse)
-async def create_public_knowledge_type(data: LessonTypeCreate, user: dict = Depends(require_admin_auth)):
+@router.post("/config/knowledge_types", response_model=LessonTypeResponse)
+async def create_knowledge_type(data: LessonTypeCreate, user: dict = Depends(require_admin_auth)):
     now = utcnow()
     type_id = str(uuid.uuid4())
     with get_memory_db_context() as conn:
@@ -137,8 +137,8 @@ async def create_public_knowledge_type(data: LessonTypeCreate, user: dict = Depe
         cursor.execute("SELECT * FROM memory_lesson_types WHERE id = %s", (type_id,))
         return dict(cursor.fetchone())
 
-@router.delete("/config/public_knowledge_types/{type_id}")
-async def delete_public_knowledge_type(type_id: str, user: dict = Depends(require_admin_auth)):
+@router.delete("/config/knowledge_types/{type_id}")
+async def delete_knowledge_type(type_id: str, user: dict = Depends(require_admin_auth)):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM memory_lesson_types WHERE id = %s", (type_id,))

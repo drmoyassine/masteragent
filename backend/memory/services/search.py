@@ -44,14 +44,14 @@ async def search_memories_by_vector(
         return []
 
 
-async def search_private_knowledge_by_vector(
+async def search_intelligence_by_vector(
     query_vector: List[float],
     entity_id: str = None,
     entity_type: str = None,
     status: str = "confirmed",
     limit: int = 10,
 ) -> List[Dict[str, Any]]:
-    """Semantic search over the private_knowledge table."""
+    """Semantic search over the intelligence table."""
     if not query_vector:
         return []
     try:
@@ -69,21 +69,21 @@ async def search_private_knowledge_by_vector(
                 SELECT id, primary_entity_type, primary_entity_id,
                        knowledge_type, name, summary, status, created_at,
                        1 - (embedding <=> %s::vector) AS score
-                FROM private_knowledge WHERE {where}
+                FROM intelligence WHERE {where}
                 ORDER BY embedding <=> %s::vector LIMIT %s
             """, params + [query_vector, query_vector, limit])
             return [dict(r) for r in cursor.fetchall()]
     except Exception as e:
-        logger.error(f"pgvector PrivateKnowledge search error: {e}")
+        logger.error(f"pgvector Intelligence search error: {e}")
         return []
 
 
-async def search_public_knowledge_by_vector(
+async def search_knowledge_by_vector(
     query_vector: List[float],
     knowledge_type: str = None,
     limit: int = 10,
 ) -> List[Dict[str, Any]]:
-    """Semantic search over the public_knowledge table."""
+    """Semantic search over the knowledge table."""
     if not query_vector:
         return []
     try:
@@ -96,12 +96,12 @@ async def search_public_knowledge_by_vector(
             cursor.execute(f"""
                 SELECT id, knowledge_type, name, summary, visibility, tags, created_at,
                        1 - (embedding <=> %s::vector) AS score
-                FROM public_knowledge WHERE {where}
+                FROM knowledge WHERE {where}
                 ORDER BY embedding <=> %s::vector LIMIT %s
             """, params + [query_vector, query_vector, limit])
             return [dict(r) for r in cursor.fetchall()]
     except Exception as e:
-        logger.error(f"pgvector PublicKnowledge search error: {e}")
+        logger.error(f"pgvector Knowledge search error: {e}")
         return []
 
 

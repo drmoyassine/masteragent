@@ -20,10 +20,10 @@ from services.processing import (
 from services.search import (
     search_interactions_by_vector,
     search_interactions_by_fulltext,
-    search_private_knowledge_by_vector,
-    search_private_knowledge_by_fulltext,
-    search_public_knowledge_by_vector,
-    search_public_knowledge_by_fulltext,
+    search_intelligence_by_vector,
+    search_intelligence_by_fulltext,
+    search_knowledge_by_vector,
+    search_knowledge_by_fulltext,
     search_memories_by_vector,
     search_memories_by_fulltext,
 )
@@ -34,8 +34,8 @@ __all__ = [
     "generate_embedding", "generate_embeddings_batch",
     "search_interactions_by_vector", "search_interactions_by_fulltext",
     "search_memories_by_vector", "search_memories_by_fulltext",
-    "search_private_knowledge_by_vector", "search_private_knowledge_by_fulltext",
-    "search_public_knowledge_by_vector", "search_public_knowledge_by_fulltext",
+    "search_intelligence_by_vector", "search_intelligence_by_fulltext",
+    "search_knowledge_by_vector", "search_knowledge_by_fulltext",
     "chunk_text", "scrub_pii", "summarize_text", "parse_document",
     "extract_entities", "extract_entities_gliner", "extract_entities_llm",
 ]
