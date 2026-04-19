@@ -208,7 +208,7 @@ async def get_has_context(
         has_context=bool(i_ids or m_ids or ins_ids),
         interactions_count=len(i_ids), last_interaction_date=str(i_rows[0]["timestamp"]) if i_rows else None, interactions_ids=i_ids,
         memories_count=len(m_ids), last_memory_date=str(m_rows[0]["date"]) if m_rows else None, memories_ids=m_ids,
-        private_knowledge_count=len(ins_ids), last_private_knowledge_date=str(ins_rows[0]["created_at"]) if ins_rows else None, private_knowledge_ids=ins_ids
+        PrivateKnowledges_count=len(ins_ids), last_PrivateKnowledge_date=str(ins_rows[0]["created_at"]) if ins_rows else None, PrivateKnowledges_ids=ins_ids
     )
 
 
