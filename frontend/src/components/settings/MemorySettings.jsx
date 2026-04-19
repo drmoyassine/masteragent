@@ -515,7 +515,7 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
 
 
 // ─── Intelligence Tab ───────────────────────────────────────────────────
-function IntelligenceTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, onDeleteConfig, onAddConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline }) {
+function IntelligenceTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, onDeleteConfig, onAddConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline, entityTypes }) {
     const privatePipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "intelligence").sort((a,b) => a.execution_order - b.execution_order);
 
     return (
@@ -682,7 +682,7 @@ function IntelligenceTab({ settings, onUpdateSettings, llmConfigs, llmProviders,
 }
 
 // ─── Knowledge Tab ──────────────────────────────────────────────────────
-function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, onDeleteConfig, onAddConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline }) {
+function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, onDeleteConfig, onAddConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline, entityTypes }) {
     const publicPipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "knowledge").sort((a,b) => a.execution_order - b.execution_order);
 
     return (
@@ -978,7 +978,8 @@ export function MemorySettings({
         fetchingModels,
         fetchErrors,
         onFetchModels: handleFetchModels,
-        onReorderPipeline
+        onReorderPipeline,
+        entityTypes
     };
 
     return (
