@@ -2,7 +2,7 @@ import React, { useState, useCallback } from "react";
 import {
     Clock, Play, ShieldAlert, Zap, GraduationCap, Brain,
     Layers, Scissors, FileText, Eye, AlertCircle, CheckCircle2,
-    Edit2, Cpu, Sparkles, BarChart3, Image as ImageIcon
+    Edit2, Cpu, Sparkles, BarChart3, Image as ImageIcon, ChevronDown
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
@@ -38,6 +38,49 @@ import {
 import { InlineTaskConfigAccordion } from "./InlineTaskConfigAccordion";
 import { DraggablePipeline } from "./DraggablePipeline";
 import { OutboundWebhooksSettings } from "./OutboundWebhooksSettings";
+
+// ─── Prompt Structure Preview ───────────────────────────────────────────
+function PromptStructurePreview({ sections }) {
+    const [open, setOpen] = useState(false);
+    return (
+        <Card className="bg-zinc-950/60 border-zinc-800">
+            <button
+                type="button"
+                className="w-full flex items-center justify-between px-4 py-3 text-left"
+                onClick={() => setOpen(!open)}
+            >
+                <div className="flex items-center gap-2">
+                    <Eye className="w-4 h-4 text-blue-400" />
+                    <span className="text-xs font-semibold text-zinc-300">LLM Prompt Structure Preview</span>
+                </div>
+                <ChevronDown className={`w-4 h-4 text-zinc-500 transition-transform ${open ? "rotate-180" : ""}`} />
+            </button>
+            {open && (
+                <CardContent className="pt-0 pb-4 px-4">
+                    <div className="rounded-md bg-zinc-900 border border-zinc-800 p-3 font-mono text-[11px] leading-relaxed space-y-2">
+                        {sections.map((s, i) => (
+                            <div key={i} className={`${s.conditional ? 'opacity-70' : ''}`}>
+                                <span className="text-zinc-500">--- </span>
+                                <span className={`font-semibold ${s.color || 'text-zinc-300'}`}>{s.label}</span>
+                                <span className="text-zinc-500"> ---</span>
+                                {s.count !== undefined && (
+                                    <span className="ml-2 text-zinc-600">({s.count} items)</span>
+                                )}
+                                {s.conditional && (
+                                    <span className="ml-2 text-zinc-700 italic">if count &gt; 0</span>
+                                )}
+                                <div className="text-zinc-600 text-[10px] ml-4 mt-0.5">{s.description}</div>
+                            </div>
+                        ))}
+                    </div>
+                    <p className="text-[10px] text-zinc-600 mt-2">
+                        Sections are injected top-to-bottom. The LLM weights later sections more heavily (recency bias).
+                    </p>
+                </CardContent>
+            )}
+        </Card>
+    );
+}
 
 // ─── Interactions Tab ───────────────────────────────────────────────────
 function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, onDeleteConfig, onAddConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline }) {
@@ -278,6 +321,14 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
                     </p>
                 </CardContent>
             </Card>
+
+            <PromptStructurePreview sections={[
+                { label: "Entity Metadata", color: "text-zinc-400", description: "Entity type, ID, date, interaction count" },
+                { label: "Prior Context (established facts, do NOT repeat)", color: "text-purple-400", count: (settings.prior_context_chrono_count || 2) + (settings.prior_context_semantic_count || 2), conditional: true, description: "Chronological + semantic prior memories for this entity" },
+                { label: "Raw Interactions", color: "text-amber-400", description: "Today's raw interaction content to process" },
+                { label: "Extracted Signals", color: "text-emerald-400", description: "NER entities, intents, relationships from extraction step" },
+            ]} />
+
             <Card className="border-dashed bg-muted/20">
                 <CardHeader className="pb-3 border-b">
                     <CardTitle className="text-sm">Memories Pipeline</CardTitle>
@@ -494,6 +545,13 @@ function IntelligenceTab({ settings, onUpdateSettings, llmConfigs, llmProviders,
                 </CardContent>
             </Card>
 
+            <PromptStructurePreview sections={[
+                { label: "Entity Metadata", color: "text-zinc-400", description: "Entity type and ID" },
+                { label: "Established Knowledge (organizational patterns already known)", color: "text-indigo-400", count: settings.prior_knowledge_in_intelligence_count !== undefined ? settings.prior_knowledge_in_intelligence_count : 2, conditional: true, description: "Global PII-scrubbed knowledge items via semantic search" },
+                { label: "Existing Intelligence for this entity (do NOT duplicate)", color: "text-purple-400", count: (settings.prior_intelligence_chrono_count || 3) + (settings.prior_intelligence_semantic_count || 2), conditional: true, description: "Chronological + semantic prior intelligence for this entity" },
+                { label: "Memory Summaries to Analyze", color: "text-amber-400", description: "Uncompacted memory records feeding this intelligence generation" },
+            ]} />
+
             {/* Intelligence Pipeline Assignment */}
             <Card className="border-dashed bg-muted/20">
                 <CardHeader className="pb-3 border-b">
@@ -568,6 +626,11 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                     </p>
                 </CardContent>
             </Card>
+
+            <PromptStructurePreview sections={[
+                { label: "Existing Knowledge (do NOT duplicate or repeat these)", color: "text-indigo-400", count: settings.prior_knowledge_semantic_count !== undefined ? settings.prior_knowledge_semantic_count : 3, conditional: true, description: "Semantically similar existing knowledge items for deduplication" },
+                { label: "Intelligence Items to Synthesize", color: "text-purple-400", description: "PII-scrubbed intelligence items being synthesized into reusable knowledge" },
+            ]} />
 
             {/* PII Privacy */}
             <Card>
