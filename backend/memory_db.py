@@ -132,7 +132,7 @@ def _create_config_tables(cursor):
             chunk_overlap               INT DEFAULT 80,
             pii_scrubbing_enabled       BOOLEAN DEFAULT FALSE,
             auto_public_knowledge_enabled         BOOLEAN DEFAULT TRUE,
-            auto_public_knowledge_threshold       INT DEFAULT 5,
+            auto_knowledge_threshold       INT DEFAULT 5,
             rate_limit_enabled          BOOLEAN DEFAULT TRUE,
             rate_limit_per_minute       INT DEFAULT 60,
             supabase_url                TEXT,
@@ -140,8 +140,8 @@ def _create_config_tables(cursor):
             supabase_connected          BOOLEAN DEFAULT FALSE,
             memory_generation_time      TEXT DEFAULT '02:00',
             memory_generation_mode      TEXT DEFAULT 'ner_and_raw',
-            public_knowledge_threshold            INT DEFAULT 5,
-            public_knowledge_trigger_days         INT DEFAULT NULL,
+            knowledge_threshold            INT DEFAULT 5,
+            knowledge_trigger_days         INT DEFAULT NULL,
             updated_at                  TIMESTAMPTZ DEFAULT NOW()
         )
     """)
@@ -149,14 +149,14 @@ def _create_config_tables(cursor):
         CREATE TABLE IF NOT EXISTS memory_entity_type_config (
             entity_type                 TEXT PRIMARY KEY,
             compaction_threshold        INT DEFAULT 10,
-            private_knowledge_auto_approve        BOOLEAN DEFAULT FALSE,
-            public_knowledge_auto_promote         BOOLEAN DEFAULT FALSE,
+            intelligence_auto_approve        BOOLEAN DEFAULT FALSE,
+            knowledge_auto_promote         BOOLEAN DEFAULT FALSE,
             ner_enabled                 BOOLEAN DEFAULT TRUE,
             ner_confidence_threshold    FLOAT DEFAULT 0.5,
             ner_schema                  JSONB DEFAULT NULL,
-            private_knowledge_trigger_days        INT DEFAULT NULL,
+            intelligence_trigger_days        INT DEFAULT NULL,
             embedding_enabled           BOOLEAN DEFAULT TRUE,
-            pii_scrub_public_knowledge           BOOLEAN DEFAULT TRUE,
+            pii_scrub_knowledge           BOOLEAN DEFAULT TRUE,
             metadata_field_map          JSONB DEFAULT '{}',
             updated_at                  TIMESTAMPTZ DEFAULT NOW()
         )
@@ -349,14 +349,14 @@ def _run_migrations(cursor):
         cursor.execute("""
             DO $$
             BEGIN
-                IF EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='private_knowledge' AND column_name='insight_type') THEN
-                    ALTER TABLE private_knowledge RENAME COLUMN insight_type TO knowledge_type;
+                IF EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='intelligence' AND column_name='insight_type') THEN
+                    ALTER TABLE intelligence RENAME COLUMN insight_type TO knowledge_type;
                 END IF;
-                IF EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='public_knowledge' AND column_name='lesson_type') THEN
-                    ALTER TABLE public_knowledge RENAME COLUMN lesson_type TO knowledge_type;
+                IF EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='knowledge' AND column_name='lesson_type') THEN
+                    ALTER TABLE knowledge RENAME COLUMN lesson_type TO knowledge_type;
                 END IF;
-                IF EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='public_knowledge' AND column_name='source_insight_ids') THEN
-                    ALTER TABLE public_knowledge RENAME COLUMN source_insight_ids TO source_private_knowledge_ids;
+                IF EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='knowledge' AND column_name='source_insight_ids') THEN
+                    ALTER TABLE knowledge RENAME COLUMN source_insight_ids TO source_intelligence_ids;
                 END IF;
             END
             $$;
@@ -378,7 +378,7 @@ def _run_migrations(cursor):
         cursor.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS description TEXT")
 
     # Add seq_id to all core memory tier tables
-    for tbl in ["interactions", "memories", "private_knowledge", "public_knowledge"]:
+    for tbl in ["interactions", "memories", "intelligence", "knowledge"]:
         try:
             cursor.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS seq_id BIGSERIAL")
         except Exception as e:
@@ -457,15 +457,15 @@ def _run_migrations(cursor):
         ("supabase_db_url", "TEXT"),
         ("memory_generation_time", "TEXT DEFAULT '02:00'"),
         ("memory_generation_mode", "TEXT DEFAULT 'ner_and_raw'"),
-        ("public_knowledge_threshold", "INT DEFAULT 5"),
-        ("public_knowledge_trigger_days", "INT DEFAULT NULL"),
+        ("knowledge_threshold", "INT DEFAULT 5"),
+        ("knowledge_trigger_days", "INT DEFAULT NULL"),
     ]:
         cursor.execute(f"ALTER TABLE memory_settings ADD COLUMN IF NOT EXISTS {col} {col_def}")
 
     # Entity type config columns
     for col, col_def in [
         ("ner_schema", "JSONB DEFAULT NULL"),
-        ("private_knowledge_trigger_days", "INT DEFAULT NULL"),
+        ("intelligence_trigger_days", "INT DEFAULT NULL"),
     ]:
         cursor.execute(f"ALTER TABLE memory_entity_type_config ADD COLUMN IF NOT EXISTS {col} {col_def}")
 
