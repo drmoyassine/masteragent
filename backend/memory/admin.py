@@ -2,8 +2,8 @@
 memory/admin.py — Admin endpoints for the Memory System
 
 Provides:
-  - PrivateKnowledge CRUD (Tier 2): list, get, create, update status, delete
-  - PublicKnowledge CRUD (Tier 3): list, get, create, update, delete, promote from PrivateKnowledge
+  - Intelligence CRUD (Tier 2): list, get, create, update status, delete
+  - Knowledge CRUD (Tier 3): list, get, create, update, delete, promote from Intelligence
   - Entity Type Config: get, update per-entity-type compaction/NER settings
   - Manual triggers: compact entity, run memory generation
   - Interactions: list, get individual interaction
@@ -21,8 +21,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Body
 
 from core.storage import get_memory_db_context
 from memory_models import (
-    PrivateKnowledgeCreate, PrivateKnowledgeResponse, PrivateKnowledgeUpdate,
-    PublicKnowledgeCreate, PublicKnowledgeResponse, PublicKnowledgeUpdate,
+    IntelligenceCreate, IntelligenceResponse, IntelligenceUpdate,
+    KnowledgeCreate, KnowledgeResponse, KnowledgeUpdate,
     EntityTypeConfig, EntityTypeConfigUpdate,
     InteractionResponse, InteractionUpdate, TimelineEntry,
     SearchRequest, SearchResponse, SearchResult, MemoryUpdate,
@@ -30,7 +30,7 @@ from memory_models import (
 )
 from memory_services import (
     generate_embedding, search_memories_by_vector,
-    search_private_knowledge_by_vector, search_public_knowledge_by_vector,
+    search_intelligence_by_vector, search_knowledge_by_vector,
     get_memory_settings
 )
 from memory.auth import require_admin_auth
@@ -40,11 +40,11 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================
-# private_knowledge (Tier 2)
+# intelligence (Tier 2)
 # ============================================================
 
-@router.get("/private_knowledge")
-async def list_private_knowledge(
+@router.get("/intelligence")
+async def list_intelligence(
     entity_type: Optional[str] = Query(None),
     entity_id: Optional[str] = Query(None),
     status: Optional[str] = Query(None),      # draft | confirmed | archived
@@ -53,7 +53,7 @@ async def list_private_knowledge(
     offset: int = Query(0),
     admin: dict = Depends(require_admin_auth)
 ):
-    """List private_knowledge with optional filters."""
+    """List intelligence with optional filters."""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         conditions = []
@@ -74,7 +74,7 @@ async def list_private_knowledge(
 
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
         params_count = list(params)
-        cursor.execute(f"SELECT COUNT(*) as total FROM private_knowledge {where}", params_count)
+        cursor.execute(f"SELECT COUNT(*) as total FROM intelligence {where}", params_count)
         total = cursor.fetchone()["total"]
 
         params += [limit, offset]
@@ -82,38 +82,38 @@ async def list_private_knowledge(
             SELECT id, seq_id, primary_entity_type, primary_entity_id, source_memory_ids,
                    knowledge_type, name, content, summary, status,
                    created_by, confirmed_by, confirmed_at, created_at, updated_at
-            FROM private_knowledge {where}
+            FROM intelligence {where}
             ORDER BY created_at DESC
             LIMIT %s OFFSET %s
         """, params)
         rows = cursor.fetchall()
 
-    return {"private_knowledge": [dict(r) for r in rows], "total": total}
+    return {"intelligence": [dict(r) for r in rows], "total": total}
 
 
-@router.get("/private_knowledge/{insight_id}")
+@router.get("/intelligence/{insight_id}")
 async def get_insight(insight_id: str, admin: dict = Depends(require_admin_auth)):
-    """Get a single PrivateKnowledge by ID."""
+    """Get a single Intelligence by ID."""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM private_knowledge WHERE id = %s", (insight_id,))
+        cursor.execute("SELECT * FROM intelligence WHERE id = %s", (insight_id,))
         row = cursor.fetchone()
 
     if not row:
-        raise HTTPException(status_code=404, detail="PrivateKnowledge not found")
+        raise HTTPException(status_code=404, detail="Intelligence not found")
     return dict(row)
 
 
-@router.post("/private_knowledge")
-async def create_private_knowledge(body: PrivateKnowledgeCreate, admin: dict = Depends(require_admin_auth)):
-    """Manually create an PrivateKnowledge (draft)."""
+@router.post("/intelligence")
+async def create_intelligence(body: IntelligenceCreate, admin: dict = Depends(require_admin_auth)):
+    """Manually create an Intelligence (draft)."""
     insight_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO private_knowledge (
+            INSERT INTO intelligence (
                 id, primary_entity_type, primary_entity_id, source_memory_ids,
                 knowledge_type, name, content, summary,
                 status, created_by, created_at, updated_at
@@ -128,20 +128,20 @@ async def create_private_knowledge(body: PrivateKnowledgeCreate, admin: dict = D
     return {"id": insight_id, "status": "draft", "created_at": now}
 
 
-@router.patch("/private_knowledge/{insight_id}")
-async def update_private_knowledge(
+@router.patch("/intelligence/{insight_id}")
+async def update_intelligence(
     insight_id: str,
-    body: PrivateKnowledgeUpdate,
+    body: IntelligenceUpdate,
     admin: dict = Depends(require_admin_auth)
 ):
-    """Update an PrivateKnowledge's fields or status (confirm/archive)."""
+    """Update an Intelligence's fields or status (confirm/archive)."""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT id, status FROM private_knowledge WHERE id = %s", (insight_id,))
+        cursor.execute("SELECT id, status FROM intelligence WHERE id = %s", (insight_id,))
         existing = cursor.fetchone()
 
     if not existing:
-        raise HTTPException(status_code=404, detail="PrivateKnowledge not found")
+        raise HTTPException(status_code=404, detail="Intelligence not found")
 
     now = datetime.now(timezone.utc).isoformat()
     fields = []
@@ -170,39 +170,39 @@ async def update_private_knowledge(
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            f"UPDATE private_knowledge SET {', '.join(fields)} WHERE id = %s",
+            f"UPDATE intelligence SET {', '.join(fields)} WHERE id = %s",
             values
         )
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM private_knowledge WHERE id = %s", (insight_id,))
+        cursor.execute("SELECT * FROM intelligence WHERE id = %s", (insight_id,))
         updated = cursor.fetchone()
 
     return dict(updated) if updated else {"id": insight_id, "updated_at": now}
 
 
-@router.delete("/private_knowledge/{insight_id}", status_code=204)
-async def delete_private_knowledge(insight_id: str, admin: dict = Depends(require_admin_auth)):
-    """Delete an PrivateKnowledge."""
+@router.delete("/intelligence/{insight_id}", status_code=204)
+async def delete_intelligence(insight_id: str, admin: dict = Depends(require_admin_auth)):
+    """Delete an Intelligence."""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM private_knowledge WHERE id = %s", (insight_id,))
+        cursor.execute("DELETE FROM intelligence WHERE id = %s", (insight_id,))
 
 
-@router.post("/private_knowledge/{insight_id}/promote")
+@router.post("/intelligence/{insight_id}/promote")
 async def promote_insight_to_lesson(
     insight_id: str,
     admin: dict = Depends(require_admin_auth)
 ):
-    """Manually promote a confirmed PrivateKnowledge to a PublicKnowledge (async background job)."""
+    """Manually promote a confirmed Intelligence to a Knowledge (async background job)."""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT status FROM private_knowledge WHERE id = %s", (insight_id,))
+        cursor.execute("SELECT status FROM intelligence WHERE id = %s", (insight_id,))
         row = cursor.fetchone()
 
     if not row:
-        raise HTTPException(status_code=404, detail="PrivateKnowledge not found")
+        raise HTTPException(status_code=404, detail="Intelligence not found")
 
     # Enqueue promotion job directly to orchestrator
     from memory.queue import knowledge_queue
@@ -211,18 +211,18 @@ async def promote_insight_to_lesson(
 
 
 # ============================================================
-# public_knowledge (Tier 3)
+# knowledge (Tier 3)
 # ============================================================
 
-@router.get("/public_knowledge")
-async def list_public_knowledge(
+@router.get("/knowledge")
+async def list_knowledge(
     knowledge_type: Optional[str] = Query(None),
     visibility: Optional[str] = Query(None),
     limit: int = Query(30, le=100),
     offset: int = Query(0),
     admin: dict = Depends(require_admin_auth)
 ):
-    """List public_knowledge with optional filters."""
+    """List knowledge with optional filters."""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         conditions = []
@@ -235,49 +235,49 @@ async def list_public_knowledge(
 
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
         params_count = list(params)
-        cursor.execute(f"SELECT COUNT(*) as total FROM public_knowledge {where}", params_count)
+        cursor.execute(f"SELECT COUNT(*) as total FROM knowledge {where}", params_count)
         total = cursor.fetchone()["total"]
 
         params += [limit, offset]
         cursor.execute(f"""
-            SELECT id, seq_id, source_private_knowledge_ids, knowledge_type, name, content,
+            SELECT id, seq_id, source_intelligence_ids, knowledge_type, name, content,
                    summary, visibility, tags, created_at, updated_at
-            FROM public_knowledge {where}
+            FROM knowledge {where}
             ORDER BY created_at DESC
             LIMIT %s OFFSET %s
         """, params)
         rows = cursor.fetchall()
 
-    return {"public_knowledge": [dict(r) for r in rows], "total": total}
+    return {"knowledge": [dict(r) for r in rows], "total": total}
 
 
-@router.get("/public_knowledge/{lesson_id}")
+@router.get("/knowledge/{lesson_id}")
 async def get_lesson(lesson_id: str, admin: dict = Depends(require_admin_auth)):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM public_knowledge WHERE id = %s", (lesson_id,))
+        cursor.execute("SELECT * FROM knowledge WHERE id = %s", (lesson_id,))
         row = cursor.fetchone()
 
     if not row:
-        raise HTTPException(status_code=404, detail="PublicKnowledge not found")
+        raise HTTPException(status_code=404, detail="Knowledge not found")
     return dict(row)
 
 
-@router.post("/public_knowledge")
-async def create_public_knowledge(body: PublicKnowledgeCreate, admin: dict = Depends(require_admin_auth)):
-    """Manually create a PublicKnowledge."""
+@router.post("/knowledge")
+async def create_knowledge(body: KnowledgeCreate, admin: dict = Depends(require_admin_auth)):
+    """Manually create a Knowledge."""
     lesson_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO public_knowledge (
-                id, source_private_knowledge_ids, knowledge_type, name, content, summary,
+            INSERT INTO knowledge (
+                id, source_intelligence_ids, knowledge_type, name, content, summary,
                 visibility, tags, created_at, updated_at
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
-            lesson_id, body.source_private_knowledge_ids or [],
+            lesson_id, body.source_intelligence_ids or [],
             body.knowledge_type, body.name, body.content, body.summary,
             body.visibility, body.tags or [], now, now
         ))
@@ -285,13 +285,13 @@ async def create_public_knowledge(body: PublicKnowledgeCreate, admin: dict = Dep
     return {"id": lesson_id, "created_at": now}
 
 
-@router.patch("/public_knowledge/{lesson_id}")
-async def update_public_knowledge(
+@router.patch("/knowledge/{lesson_id}")
+async def update_knowledge(
     lesson_id: str,
-    body: PublicKnowledgeUpdate,
+    body: KnowledgeUpdate,
     admin: dict = Depends(require_admin_auth)
 ):
-    """Update a PublicKnowledge's fields."""
+    """Update a Knowledge's fields."""
     now = datetime.now(timezone.utc).isoformat()
     fields = []
     values = []
@@ -318,18 +318,18 @@ async def update_public_knowledge(
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            f"UPDATE public_knowledge SET {', '.join(fields)} WHERE id = %s",
+            f"UPDATE knowledge SET {', '.join(fields)} WHERE id = %s",
             values
         )
 
     return {"id": lesson_id, "updated_at": now}
 
 
-@router.delete("/public_knowledge/{lesson_id}", status_code=204)
-async def delete_public_knowledge(lesson_id: str, admin: dict = Depends(require_admin_auth)):
+@router.delete("/knowledge/{lesson_id}", status_code=204)
+async def delete_knowledge(lesson_id: str, admin: dict = Depends(require_admin_auth)):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM public_knowledge WHERE id = %s", (lesson_id,))
+        cursor.execute("DELETE FROM knowledge WHERE id = %s", (lesson_id,))
 
 
 # ============================================================
@@ -416,7 +416,7 @@ async def trigger_compact_entity(
     entity_id: str,
     admin: dict = Depends(require_admin_auth)
 ):
-    """Manually trigger compaction (PrivateKnowledge generation) for an entity via queue drop."""
+    """Manually trigger compaction (Intelligence generation) for an entity via queue drop."""
     from memory.queue import knowledge_queue
     await knowledge_queue.add("generate_insight", {"entity_type": entity_type, "entity_id": entity_id}, {"priority": 1})
     return {"message": "Compaction triggered via queue", "entity_type": entity_type, "entity_id": entity_id}
@@ -433,12 +433,12 @@ async def trigger_memory_generation(
     return {"message": "Memory generation queueing completed", "include_today": include_today}
 
 
-@router.post("/trigger/run-PublicKnowledge-check")
+@router.post("/trigger/run-Knowledge-check")
 async def trigger_lesson_check(admin: dict = Depends(require_admin_auth)):
-    """Manually trigger the PublicKnowledge accumulation check via queue drop."""
+    """Manually trigger the Knowledge accumulation check via queue drop."""
     from memory.queue import knowledge_queue
     await knowledge_queue.add("generate_lesson", {}, {"priority": 1})
-    return {"message": "PublicKnowledge check queued"}
+    return {"message": "Knowledge check queued"}
 
 
 # ============================================================
@@ -757,13 +757,13 @@ async def get_stats(admin: dict = Depends(require_admin_auth)):
         cursor.execute("SELECT COUNT(*) as total FROM memories")
         total_memories = cursor.fetchone()["total"]
 
-        cursor.execute("SELECT COUNT(*) as total FROM private_knowledge")
+        cursor.execute("SELECT COUNT(*) as total FROM intelligence")
         total_insights = cursor.fetchone()["total"]
 
-        cursor.execute("SELECT COUNT(*) as total FROM private_knowledge WHERE status = 'confirmed'")
+        cursor.execute("SELECT COUNT(*) as total FROM intelligence WHERE status = 'confirmed'")
         confirmed_insights = cursor.fetchone()["total"]
 
-        cursor.execute("SELECT COUNT(*) as total FROM public_knowledge")
+        cursor.execute("SELECT COUNT(*) as total FROM knowledge")
         total_lessons = cursor.fetchone()["total"]
 
         cursor.execute("SELECT COUNT(*) as total FROM memory_agents WHERE is_active = TRUE")
@@ -793,8 +793,8 @@ async def get_stats(admin: dict = Depends(require_admin_auth)):
             "last_7d": interactions_7d,
         },
         "memories": {"total": total_memories},
-        "private_knowledge": {"total": total_insights, "confirmed": confirmed_insights},
-        "public_knowledge": {"total": total_lessons},
+        "intelligence": {"total": total_insights, "confirmed": confirmed_insights},
+        "knowledge": {"total": total_lessons},
         "agents": {"total": total_agents, "active": active_agents},
     }
 
@@ -1052,21 +1052,21 @@ async def admin_search_memories(
                 created_at=str(hit.get("created_at", ""))
             ))
 
-    if layers in ("private_knowledge", "all"):
-        ins_hits = await search_private_knowledge_by_vector(query_embedding, request.entity_id, request.entity_type, request.limit)
+    if layers in ("intelligence", "all"):
+        ins_hits = await search_intelligence_by_vector(query_embedding, request.entity_id, request.entity_type, request.limit)
         for hit in ins_hits:
             results.append(SearchResult(
-                id=hit["id"], layer="PrivateKnowledge", score=float(hit.get("score", 0)),
+                id=hit["id"], layer="Intelligence", score=float(hit.get("score", 0)),
                 name=hit.get("name"), snippet=(hit.get("summary") or "")[:200],
                 entity_id=hit["primary_entity_id"], entity_type=hit["primary_entity_type"],
                 created_at=str(hit.get("created_at", ""))
             ))
 
-    if layers in ("public_knowledge", "all"):
-        les_hits = await search_public_knowledge_by_vector(query_embedding, request.limit)
+    if layers in ("knowledge", "all"):
+        les_hits = await search_knowledge_by_vector(query_embedding, request.limit)
         for hit in les_hits:
             results.append(SearchResult(
-                id=hit["id"], layer="PublicKnowledge", score=float(hit.get("score", 0)),
+                id=hit["id"], layer="Knowledge", score=float(hit.get("score", 0)),
                 name=hit.get("name"), snippet=(hit.get("summary") or "")[:200],
                 entity_id=None, entity_type=None, created_at=str(hit.get("created_at", ""))
             ))

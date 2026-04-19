@@ -361,20 +361,62 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
     );
 }
 
-// ─── Knowledgeration Tab ─────────────────────────────────────────────────
-function KnowledgeGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, onDeleteConfig, onAddConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline }) {
-    const privatePipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "private_knowledge").sort((a,b) => a.execution_order - b.execution_order);
-    const publicPipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "public_knowledge").sort((a,b) => a.execution_order - b.execution_order);
+
+// ─── Intelligence Tab ───────────────────────────────────────────────────
+function IntelligenceTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, onDeleteConfig, onAddConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline }) {
+    const privatePipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "intelligence").sort((a,b) => a.execution_order - b.execution_order);
+
+    return (
+        <div className="space-y-6">
+            <div className="mb-2">
+                <h3 className="text-lg font-semibold flex items-center gap-2">
+                    <Brain className="w-5 h-5 text-purple-500" />
+                    Intelligence Pipeline
+                </h3>
+                <p className="text-sm text-muted-foreground mt-1">
+                    Extracts high-level intelligence and semantic insights from memory records.
+                </p>
+            </div>
+
+            {/* Intelligence Pipeline Assignment */}
+            <Card className="border-dashed bg-muted/20">
+                <CardHeader className="pb-3 border-b">
+                    <CardTitle className="text-sm">Intelligence Pipeline</CardTitle>
+                </CardHeader>
+                <CardContent className="pt-4">
+                    <DraggablePipeline 
+                        title=""
+                        pipelineStage="intelligence"
+                        pipelineConfigs={privatePipelineNodes}
+                        onReorder={(arr) => onReorderPipeline("intelligence", arr)}
+                        llmProviders={llmProviders}
+                        onSaveConfig={onSaveConfig} onDeleteConfig={onDeleteConfig}
+                        onAddConfig={onAddConfig}
+                        modelLists={modelLists}
+                        fetchingModels={fetchingModels}
+                        fetchErrors={fetchErrors}
+                        onFetchModels={onFetchModels}
+                    />
+                </CardContent>
+            </Card>
+        </div>
+    );
+}
+
+\n
+// ─── Knowledge Tab ──────────────────────────────────────────────────────
+function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, onDeleteConfig, onAddConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline }) {
+    const publicPipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "knowledge").sort((a,b) => a.execution_order - b.execution_order);
 
     return (
         <div className="space-y-6">
             <div className="mb-2">
                 <h3 className="text-lg font-semibold flex items-center gap-2">
                     <GraduationCap className="w-5 h-5 text-indigo-500" />
-                    Knowledgeration
+                    Knowledge Generation
                 </h3>
                 <p className="text-sm text-muted-foreground mt-1">
-                    Extracts high-level knowledge (Public Knowledge) from memory records and sanitizes data.
+                    Generates agnostic, PII-scrubbed, reusable Knowledge items.
                 </p>
             </div>
 
@@ -417,102 +459,80 @@ function KnowledgeGenerationTab({ settings, onUpdateSettings, llmConfigs, llmPro
                 </CardContent>
             </Card>
 
-            {/* Private Knowledge Pipeline Assignment */}
-            <Card className="border-dashed bg-muted/20">
-                <CardHeader className="pb-3 border-b">
-                    <CardTitle className="text-sm">Private Knowledge Pipeline</CardTitle>
-                </CardHeader>
-                <CardContent className="pt-4">
-                    <DraggablePipeline 
-                        title=""
-                        pipelineStage="private_knowledge"
-                        pipelineConfigs={privatePipelineNodes}
-                        onReorder={(arr) => onReorderPipeline("private_knowledge", arr)}
-                        llmProviders={llmProviders}
-                        onSaveConfig={onSaveConfig} onDeleteConfig={onDeleteConfig}
-                        onAddConfig={onAddConfig}
-                        modelLists={modelLists}
-                        fetchingModels={fetchingModels}
-                        fetchErrors={fetchErrors}
-                        onFetchModels={onFetchModels}
-                    />
-                </CardContent>
-            </Card>
-
-            {/* Public Knowledge Mining */}
+            {/* Knowledge Mining */}
             <Card>
                 <CardHeader className="pb-3">
                     <div className="flex items-center gap-2">
                         <GraduationCap className="w-5 h-5 text-green-500" />
-                        <CardTitle className="text-lg">Public Knowledge Mining</CardTitle>
+                        <CardTitle className="text-lg">Knowledge Mining</CardTitle>
                     </div>
                     <CardDescription className="text-xs">
-                        Automatic publicKnowledgeration from accumulated confirmed private publicKnowledge
+                        Automatic knowledge generation from accumulated confirmed intelligence items
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                     <div className="flex items-center justify-between">
                         <div className="space-y-0.5">
-                            <Label>Auto-extract Public Knowledge</Label>
+                            <Label>Auto-extract Knowledge</Label>
                             <p className="text-[10px] text-muted-foreground">
-                                Automatically mine publicKnowledge from interactions
+                                Automatically mine knowledge from intelligence
                             </p>
                         </div>
                         <Switch
-                            checked={settings.auto_public_knowledge_enabled}
-                            onCheckedChange={(v) => onUpdateSettings("auto_public_knowledge_enabled", v)}
+                            checked={settings.auto_knowledge_enabled}
+                            onCheckedChange={(v) => onUpdateSettings("auto_knowledge_enabled", v)}
                         />
                     </div>
                     <div className="space-y-2">
                         <Label className="text-xs font-mono">
-                            Public Knowledge Threshold (N private publicKnowledge)
+                            Knowledge Threshold (N intelligence items)
                         </Label>
                         <Input
                             type="number"
                             min={2}
-                            value={settings.public_knowledge_threshold || 5}
+                            value={settings.knowledge_threshold || 5}
                             onChange={(e) =>
-                                onUpdateSettings("public_knowledge_threshold", parseInt(e.target.value))
+                                onUpdateSettings("knowledge_threshold", parseInt(e.target.value))
                             }
-                            disabled={!settings.auto_public_knowledge_enabled}
+                            disabled={!settings.auto_knowledge_enabled}
                         />
                         <p className="text-[10px] text-muted-foreground">
-                            Generate a public publicKnowledge after this many confirmed private publicKnowledge accumulate.
+                            Generate a knowledge item after this many confirmed intelligence items accumulate.
                         </p>
                     </div>
                     <div className="space-y-2">
                         <Label className="text-xs font-mono">
-                            Public Knowledge Trigger (days, optional)
+                            Knowledge Trigger (days, optional)
                         </Label>
                         <Input
                             type="number"
                             min={1}
                             placeholder="Leave blank to use count only"
-                            value={settings.public_knowledge_trigger_days || ""}
+                            value={settings.knowledge_trigger_days || ""}
                             onChange={(e) => {
                                 const v = e.target.value;
-                                onUpdateSettings("public_knowledge_trigger_days", v ? parseInt(v) : null);
+                                onUpdateSettings("knowledge_trigger_days", v ? parseInt(v) : null);
                             }}
-                            disabled={!settings.auto_public_knowledge_enabled}
+                            disabled={!settings.auto_knowledge_enabled}
                         />
                         <p className="text-[10px] text-muted-foreground">
-                            Also trigger if oldest unused private publicKnowledge is this many days old (min 2).
+                            Also trigger if oldest unused intelligence is this many days old (min 2).
                         </p>
                     </div>
                 </CardContent>
             </Card>
 
-            {/* Public Knowledge Pipeline Assignment */}
+            {/* Knowledge Pipeline Assignment */}
             <Card className="border-dashed bg-muted/20">
                 <CardHeader className="pb-3 border-b">
-                    <CardTitle className="text-sm">Public Knowledge Pipeline</CardTitle>
+                    <CardTitle className="text-sm">Knowledge Pipeline</CardTitle>
                 </CardHeader>
                 <CardContent className="pt-4">
                     <DraggablePipeline 
                         title=""
-                        pipelineStage="public_knowledge"
+                        pipelineStage="knowledge"
                         pipelineConfigs={publicPipelineNodes}
-                        onReorder={(arr) => onReorderPipeline("public_knowledge", arr)}
+                        onReorder={(arr) => onReorderPipeline("knowledge", arr)}
                         llmProviders={llmProviders}
                         onSaveConfig={onSaveConfig} onDeleteConfig={onDeleteConfig}
                         onAddConfig={onAddConfig}
@@ -532,7 +552,7 @@ function KnowledgeGenerationTab({ settings, onUpdateSettings, llmConfigs, llmPro
                         <CardTitle className="text-lg">Queue Dynamics</CardTitle>
                     </div>
                     <CardDescription className="text-xs mt-1.5">
-                        Parallel BullMQ execution workers for knowledge and publicKnowledgeration.
+                        Parallel BullMQ execution workers for knowledge generation.
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -556,8 +576,7 @@ function KnowledgeGenerationTab({ settings, onUpdateSettings, llmConfigs, llmPro
         </div>
     );
 }
-
-// ─── Analytics Tab ───────────────────────────────────────────────────────────
+\n// ─── Analytics Tab ───────────────────────────────────────────────────────────
 function AnalyticsTab() {
     return (
         <div className="space-y-6">
@@ -668,8 +687,12 @@ export function MemorySettings({
                     <MemoryGenerationTab {...tabProps} />
                 </TabsContent>
 
-                <TabsContent value="knowledge_generation">
-                    <KnowledgeGenerationTab {...tabProps} />
+                <TabsContent value="intelligence">
+                    <IntelligenceTab {...tabProps} />
+                </TabsContent>
+
+                <TabsContent value="knowledge">
+                    <KnowledgeTab {...tabProps} />
                 </TabsContent>
 
                 <TabsContent value="analytics">

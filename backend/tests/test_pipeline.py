@@ -22,7 +22,7 @@ import pytest
 # Helpers
 # ══════════════════════════════════════════════════════════════════
 
-def _create_private_knowledge(admin, base_url, entity_type="contact", entity_id=None, status="draft"):
+def _create_intelligence(admin, base_url, entity_type="contact", entity_id=None, status="draft"):
     """Helper: create an insight, optionally confirm it."""
     eid = entity_id or f"test-lesson-{uuid.uuid4().hex[:8]}"
     resp = admin.post(f"{base_url}/api/memory/insights", json={
@@ -35,21 +35,21 @@ def _create_private_knowledge(admin, base_url, entity_type="contact", entity_id=
         "source_memory_ids": [],
     })
     assert resp.status_code == 200, f"Insight creation failed: {resp.text}"
-    insight_id = resp.json()["id"]
+    intelligence_id = resp.json()["id"]
 
     if status == "confirmed":
-        patch = admin.patch(f"{base_url}/api/memory/insights/{insight_id}", json={"status": "confirmed"})
+        patch = admin.patch(f"{base_url}/api/memory/insights/{intelligence_id}", json={"status": "confirmed"})
         assert patch.status_code == 200, f"Insight confirm failed: {patch.text}"
 
-    return insight_id, eid
+    return intelligence_id, eid
 
 
-def _delete_private_knowledge(admin, base_url, insight_id):
-    admin.delete(f"{base_url}/api/memory/insights/{insight_id}")
+def _delete_intelligence(admin, base_url, intelligence_id):
+    admin.delete(f"{base_url}/api/memory/insights/{intelligence_id}")
 
 
-def _delete_public_knowledge(admin, base_url, lesson_id):
-    admin.delete(f"{base_url}/api/memory/lessons/{lesson_id}")
+def _delete_knowledge(admin, base_url, knowledge_id):
+    admin.delete(f"{base_url}/api/memory/lessons/{knowledge_id}")
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -84,42 +84,42 @@ class TestRunLessonCheck:
             "lesson_trigger_days": None,
         })
 
-        insight_ids = []
+        intelligence_ids = []
         try:
             for _ in range(2):
-                iid, _ = _create_private_knowledge(admin, base_url, status="confirmed")
-                insight_ids.append(iid)
+                iid, _ = _create_intelligence(admin, base_url, status="confirmed")
+                intelligence_ids.append(iid)
 
             # Trigger lesson check
             resp = admin.post(f"{base_url}/api/memory/trigger/run-lesson-check")
             assert resp.status_code == 200, resp.text
 
             # Poll for lesson (async task — allow up to 15s)
-            lesson_id = None
+            knowledge_id = None
             for _ in range(15):
                 time.sleep(1)
                 lessons_resp = admin.get(f"{base_url}/api/memory/lessons")
                 if lessons_resp.status_code == 200:
                     lessons = lessons_resp.json().get("lessons", [])
-                    # Look for a lesson whose source_insight_ids overlap with our created ones
+                    # Look for a lesson whose source_intelligence_ids overlap with our created ones
                     for les in lessons:
-                        src = les.get("source_insight_ids", [])
-                        if any(iid in src for iid in insight_ids):
-                            lesson_id = les["id"]
+                        src = les.get("source_intelligence_ids", [])
+                        if any(iid in src for iid in intelligence_ids):
+                            knowledge_id = les["id"]
                             break
-                if lesson_id:
+                if knowledge_id:
                     break
 
-            if lesson_id:
-                print(f"✓ Lesson {lesson_id} generated from confirmed insights")
-                _delete_public_knowledge(admin, base_url, lesson_id)
+            if knowledge_id:
+                print(f"✓ Lesson {knowledge_id} generated from confirmed insights")
+                _delete_knowledge(admin, base_url, knowledge_id)
             else:
                 # LLM not configured — acceptable skip
                 pytest.skip("No lesson generated within 15s — LLM likely not configured")
         finally:
             # Clean up insights + restore settings
-            for iid in insight_ids:
-                _delete_private_knowledge(admin, base_url, iid)
+            for iid in intelligence_ids:
+                _delete_intelligence(admin, base_url, iid)
             admin.put(f"{base_url}/api/memory/config/settings", json={
                 "lesson_threshold": orig.get("lesson_threshold", 5),
                 "lesson_trigger_days": orig.get("lesson_trigger_days"),

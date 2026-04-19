@@ -42,8 +42,8 @@ export const TASK_TYPE_LABELS = {
     entity_extraction: { label: "Entity Extraction (NER)", icon: Cpu, color: "bg-amber-500" },
     pii_scrubbing: { label: "PII Scrubbing", icon: EyeOff, color: "bg-red-500" },
     summarization: { label: "Summarization", icon: FileText, color: "bg-blue-500" },
-    private_knowledge_generation: { label: "Private Knowledge Generation", icon: Sparkles, color: "bg-teal-500" },
-    public_knowledge_generation: { label: "Public Knowledge Generation", icon: GraduationCap, color: "bg-green-500" },
+    intelligence_generation: { label: "Private Knowledge Generation", icon: Sparkles, color: "bg-teal-500" },
+    knowledge_generation: { label: "Public Knowledge Generation", icon: GraduationCap, color: "bg-green-500" },
 };
 
 const PROVIDER_META = [

@@ -229,9 +229,9 @@ def _create_memory_tier_tables(cursor):
     # vector indexing omitted to support flexible embedding sizes:
     # cursor.execute("CREATE INDEX IF NOT EXISTS idx_memories_embedding ON memories USING hnsw (embedding vector_cosine_ops)")
 
-    # Tier 2 — LLM-compacted private_knowledge
+    # Tier 2 — LLM-compacted intelligence
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS private_knowledge (
+        CREATE TABLE IF NOT EXISTS intelligence (
             id                  TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
             seq_id              BIGSERIAL,
             primary_entity_type TEXT NOT NULL,
@@ -250,16 +250,16 @@ def _create_memory_tier_tables(cursor):
             updated_at          TIMESTAMPTZ DEFAULT NOW()
         )
     """)
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_insights_entity ON private_knowledge (primary_entity_type, primary_entity_id)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_insights_status ON private_knowledge (status)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_intelligence_entity ON intelligence (primary_entity_type, primary_entity_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_intelligence_status ON intelligence (status)")
     # cursor.execute("CREATE INDEX IF NOT EXISTS idx_insights_embedding ON private_knowledge USING hnsw (embedding vector_cosine_ops)")
 
-    # Tier 3 — PII-scrubbed shareable public_knowledge
+    # Tier 3 — PII-scrubbed shareable knowledge
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS public_knowledge (
+        CREATE TABLE IF NOT EXISTS knowledge (
             id                  TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
             seq_id              BIGSERIAL,
-            source_private_knowledge_ids  TEXT[] NOT NULL DEFAULT '{}',
+            source_intelligence_ids  TEXT[] NOT NULL DEFAULT '{}',
             knowledge_type         TEXT,
             name                TEXT NOT NULL,
             content             TEXT NOT NULL,
@@ -271,7 +271,7 @@ def _create_memory_tier_tables(cursor):
             updated_at          TIMESTAMPTZ DEFAULT NOW()
         )
     """)
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_lessons_type ON public_knowledge (knowledge_type)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_type ON knowledge (knowledge_type)")
     # cursor.execute("CREATE INDEX IF NOT EXISTS idx_lessons_embedding ON public_knowledge USING hnsw (embedding vector_cosine_ops)")
 
     # Audit log
@@ -516,6 +516,33 @@ def init_memory_db():
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         _enable_extensions(cursor)
+        
+        # Seamless Migration: private_knowledge -> intelligence, public_knowledge -> knowledge
+        try:
+            cursor.execute("SELECT 1 FROM information_schema.tables WHERE table_name='private_knowledge'")
+            if cursor.fetchone():
+                cursor.execute("ALTER TABLE private_knowledge RENAME TO intelligence")
+                cursor.execute("ALTER INDEX IF EXISTS idx_insights_entity RENAME TO idx_intelligence_entity")
+                cursor.execute("ALTER INDEX IF EXISTS idx_private_knowledge_entity RENAME TO idx_intelligence_entity")
+                cursor.execute("ALTER INDEX IF EXISTS idx_insights_status RENAME TO idx_intelligence_status")
+                cursor.execute("ALTER INDEX IF EXISTS idx_private_knowledge_status RENAME TO idx_intelligence_status")
+        except Exception as e:
+            logger.warning(f"Failed to rename private_knowledge to intelligence: {e}")
+            
+        try:
+            cursor.execute("SELECT 1 FROM information_schema.tables WHERE table_name='public_knowledge'")
+            if cursor.fetchone():
+                cursor.execute("ALTER TABLE public_knowledge RENAME TO knowledge")
+                cursor.execute("ALTER INDEX IF EXISTS idx_lessons_type RENAME TO idx_knowledge_type")
+                cursor.execute("ALTER INDEX IF EXISTS idx_public_knowledge_type RENAME TO idx_knowledge_type")
+                
+                # Check column and rename
+                cursor.execute("SELECT 1 FROM information_schema.columns WHERE table_name='knowledge' AND column_name='source_private_knowledge_ids'")
+                if cursor.fetchone():
+                    cursor.execute("ALTER TABLE knowledge RENAME COLUMN source_private_knowledge_ids TO source_intelligence_ids")
+        except Exception as e:
+            logger.warning(f"Failed to rename public_knowledge to knowledge: {e}")
+
         _create_config_tables(cursor)
         _create_interaction_tables(cursor)
         _create_memory_tier_tables(cursor)
@@ -616,14 +643,14 @@ def _seed_defaults():
                 ("memory_generation", "openai", "gpt-4o-mini", "memories", 2,
                  "You are an AI memory system. Based on the provided interaction data, write a concise factual memory record.\n\nPRIOR CONTEXT RULES:\n- Previous memories for this entity are provided under 'Prior Context'.\n- These represent ESTABLISHED facts. Do NOT repeat them.\n- Focus EXCLUSIVELY on NEW information from today's interactions.\n- Note any progressions, status changes, or contradictions with prior records.\n- If today's interactions contain no new information beyond prior context, write a brief note stating the interaction occurred with no significant new details.\n\nOUTPUT RULES:\n- Return only the summary text, 2-5 sentences.\n- Focus on key facts, decisions, named entities, and action items.",
                  ""),
-                ("private_knowledge_generation", "openai", "gpt-4o-mini", "private_knowledge", 0,
+                ("intelligence_generation", "openai", "gpt-4o-mini", "intelligence", 0,
                  "You are an AI analyst reviewing interaction history for a specific entity. Based on the provided memory summaries, identify a meaningful pattern, risk, opportunity, or behavioral insight. Return JSON: {\"name\": \"...\", \"knowledge_type\": \"...\", \"content\": \"...\", \"summary\": \"...\"}. knowledge_type must be one of: behavior_pattern, risk_signal, opportunity, relationship_shift, preference, milestone.",
                  ""),
-                ("pii_scrubbing", "zendata", "", "public_knowledge", 0, "", ""),
-                ("public_knowledge_generation", "openai", "gpt-4o-mini", "public_knowledge", 1,
-                 "You are an AI knowledge curator. The following are de-identified private_knowledge from multiple interactions. Synthesize them into a single generalizable PublicKnowledge — a durable, reusable piece of knowledge applicable beyond any specific entity. Remove all specific names. Return JSON: {\"name\": \"...\", \"knowledge_type\": \"...\", \"content\": \"...\", \"summary\": \"...\", \"tags\": [...]}\nknowledge_type must be one of: process, risk, sales, product, support, other",
+                ("pii_scrubbing", "zendata", "", "knowledge", 0, "", ""),
+                ("knowledge_generation", "openai", "gpt-4o-mini", "knowledge", 1,
+                 "You are an AI knowledge curator. The following are de-identified intelligence from multiple interactions. Synthesize them into a single generalizable Knowledge item — a durable, reusable piece of knowledge applicable beyond any specific entity. Remove all specific names. Return JSON: {\"name\": \"...\", \"knowledge_type\": \"...\", \"content\": \"...\", \"summary\": \"...\", \"tags\": [...]}\nknowledge_type must be one of: process, risk, sales, product, support, other",
                  ""),
-                 ("summarization", "openai", "gpt-4o-mini", "private_knowledge", -1,
+                 ("summarization", "openai", "gpt-4o-mini", "intelligence", -1,
                  "Summarize this in 1-2 sentences:\n\n{{text}}",
                  ""),
             ]:

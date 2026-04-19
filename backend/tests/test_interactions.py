@@ -90,7 +90,7 @@ class TestInteractionRetrieval:
         assert resp.status_code in (200, 404), resp.text
         print("✓ Memories endpoint accessible")
 
-    def test_list_private_knowledge(self, admin, base_url):
+    def test_list_intelligence(self, admin, base_url):
         resp = admin.get(f"{base_url}/api/memory/insights")
         assert resp.status_code in (200, 404), resp.text
         print("✓ Insights endpoint accessible")

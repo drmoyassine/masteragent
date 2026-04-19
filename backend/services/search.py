@@ -178,10 +178,10 @@ async def search_memories_by_fulltext(
 
 
 # ============================================
-# TIER 2: private_knowledge
+# TIER 2: intelligence
 # ============================================
 
-async def search_private_knowledge_by_vector(
+async def search_intelligence_by_vector(
     query_vector: List[float],
     entity_id: str = None,
     entity_type: str = None,
@@ -214,15 +214,15 @@ async def search_private_knowledge_by_vector(
                 SELECT id, primary_entity_type, primary_entity_id,
                        knowledge_type, name, summary, status, created_at,
                        GREATEST(0, (1 - (embedding <=> %s::vector)) - {decay_sql}) AS score
-                FROM private_knowledge WHERE {where}
+                FROM intelligence WHERE {where}
                 ORDER BY score DESC LIMIT %s
             """, params + [query_vector, limit])
             return [dict(r) for r in cursor.fetchall()]
     except Exception as e:
-        logger.error(f"pgvector PrivateKnowledge search error: {e}")
+        logger.error(f"pgvector Intelligence search error: {e}")
         return []
 
-async def search_private_knowledge_by_fulltext(
+async def search_intelligence_by_fulltext(
     query: str,
     entity_id: str = None,
     entity_type: str = None,
@@ -256,20 +256,20 @@ async def search_private_knowledge_by_fulltext(
                 SELECT id, primary_entity_type, primary_entity_id,
                        knowledge_type, name, summary, status, created_at,
                        ts_rank(to_tsvector('simple', coalesce(name, '') || ' ' || coalesce(summary, '') || ' ' || coalesce(content, '')), websearch_to_tsquery('simple', %s)) AS score
-                FROM private_knowledge WHERE {where}
+                FROM intelligence WHERE {where}
                 ORDER BY score DESC LIMIT %s
             """, params + [query, limit])
             return [dict(r) for r in cursor.fetchall()]
     except Exception as e:
-        logger.error(f"fulltext PrivateKnowledge search error: {e}")
+        logger.error(f"fulltext Intelligence search error: {e}")
         return []
 
 
 # ============================================
-# TIER 3: public_knowledge
+# TIER 3: knowledge
 # ============================================
 
-async def search_public_knowledge_by_vector(
+async def search_knowledge_by_vector(
     query_vector: List[float],
     knowledge_type: str = None,
     entity_type: str = None,
@@ -290,7 +290,7 @@ async def search_public_knowledge_by_vector(
             if until:
                 conditions.append("created_at <= %s"); params.append(until)
                 
-            # Note: public_knowledge implicitly ignore entity_id per schema, but 
+            # Note: knowledge implicitly ignore entity_id per schema, but 
             # tags or metadata could eventually store entity_type natively if we wanted.
             
             where = " AND ".join(conditions)
@@ -299,15 +299,15 @@ async def search_public_knowledge_by_vector(
             cursor.execute(f"""
                 SELECT id, knowledge_type, name, summary, visibility, tags, created_at,
                        GREATEST(0, (1 - (embedding <=> %s::vector)) - {decay_sql}) AS score
-                FROM public_knowledge WHERE {where}
+                FROM knowledge WHERE {where}
                 ORDER BY score DESC LIMIT %s
             """, params + [query_vector, limit])
             return [dict(r) for r in cursor.fetchall()]
     except Exception as e:
-        logger.error(f"pgvector PublicKnowledge search error: {e}")
+        logger.error(f"pgvector Knowledge search error: {e}")
         return []
 
-async def search_public_knowledge_by_fulltext(
+async def search_knowledge_by_fulltext(
     query: str,
     knowledge_type: str = None,
     entity_type: str = None,
@@ -335,11 +335,11 @@ async def search_public_knowledge_by_fulltext(
             cursor.execute(f"""
                 SELECT id, knowledge_type, name, summary, visibility, tags, created_at,
                        ts_rank(to_tsvector('simple', coalesce(name, '') || ' ' || coalesce(summary, '') || ' ' || coalesce(content, '')), websearch_to_tsquery('simple', %s)) AS score
-                FROM public_knowledge WHERE {where}
+                FROM knowledge WHERE {where}
                 ORDER BY score DESC LIMIT %s
             """, params + [query, limit])
             return [dict(r) for r in cursor.fetchall()]
     except Exception as e:
-        logger.error(f"fulltext PublicKnowledge search error: {e}")
+        logger.error(f"fulltext Knowledge search error: {e}")
         return []
 

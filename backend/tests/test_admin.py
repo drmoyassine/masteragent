@@ -51,21 +51,21 @@ def test_lesson(admin, base_url):
 
 class TestInsightsCRUD:
 
-    def test_list_private_knowledge(self, admin, base_url):
+    def test_list_intelligence(self, admin, base_url):
         resp = admin.get(f"{base_url}/api/memory/insights")
         assert resp.status_code == 200, resp.text
         data = resp.json()
         assert "insights" in data or isinstance(data, list)
         print("✓ List insights OK")
 
-    def test_list_private_knowledge_requires_auth(self, api_client, base_url):
+    def test_list_intelligence_requires_auth(self, api_client, base_url):
         api_client.headers.pop("Authorization", None)
         api_client.headers.pop("X-API-Key", None)
         resp = api_client.get(f"{base_url}/api/memory/insights")
         assert resp.status_code == 401
         print("✓ Insights list requires admin auth")
 
-    def test_create_private_knowledge(self, admin, base_url):
+    def test_create_intelligence(self, admin, base_url):
         resp = admin.post(f"{base_url}/api/memory/insights", json={
             "primary_entity_type": "contact",
             "primary_entity_id": "test-contact-001",
@@ -76,38 +76,38 @@ class TestInsightsCRUD:
         assert resp.status_code in (200, 201), resp.text
         data = resp.json()
         assert "id" in data
-        insight_id = data["id"]
+        intelligence_id = data["id"]
         # Cleanup
-        admin.delete(f"{base_url}/api/memory/insights/{insight_id}")
-        print(f"✓ Create insight OK: {insight_id}")
+        admin.delete(f"{base_url}/api/memory/insights/{intelligence_id}")
+        print(f"✓ Create insight OK: {intelligence_id}")
 
     def test_get_insight(self, admin, base_url, test_insight):
-        insight_id = test_insight["id"]
-        resp = admin.get(f"{base_url}/api/memory/insights/{insight_id}")
+        intelligence_id = test_insight["id"]
+        resp = admin.get(f"{base_url}/api/memory/insights/{intelligence_id}")
         assert resp.status_code == 200, resp.text
         data = resp.json()
-        assert data["id"] == insight_id
-        print(f"✓ Get insight OK: {insight_id}")
+        assert data["id"] == intelligence_id
+        print(f"✓ Get insight OK: {intelligence_id}")
 
     def test_patch_insight(self, admin, base_url, test_insight):
-        insight_id = test_insight["id"]
-        resp = admin.patch(f"{base_url}/api/memory/insights/{insight_id}", json={
+        intelligence_id = test_insight["id"]
+        resp = admin.patch(f"{base_url}/api/memory/insights/{intelligence_id}", json={
             "summary": "Updated summary via test",
             "status": "confirmed",
         })
         assert resp.status_code == 200, resp.text
         data = resp.json()
         assert data.get("summary") == "Updated summary via test" or data.get("updated") is True
-        print(f"✓ Patch insight OK: {insight_id}")
+        print(f"✓ Patch insight OK: {intelligence_id}")
 
     def test_promote_insight_to_lesson(self, admin, base_url, test_insight):
-        insight_id = test_insight["id"]
-        resp = admin.post(f"{base_url}/api/memory/insights/{insight_id}/promote")
+        intelligence_id = test_insight["id"]
+        resp = admin.post(f"{base_url}/api/memory/insights/{intelligence_id}/promote")
         assert resp.status_code in (200, 201, 400), resp.text
         # 400 is acceptable if insight is already promoted / too short
         print(f"✓ Promote insight endpoint responded: {resp.status_code}")
 
-    def test_delete_private_knowledge(self, admin, base_url):
+    def test_delete_intelligence(self, admin, base_url):
         # Create fresh
         resp = admin.post(f"{base_url}/api/memory/insights", json={
             "primary_entity_type": "contact",
@@ -117,12 +117,12 @@ class TestInsightsCRUD:
             "content": "Will be deleted",
         })
         assert resp.status_code in (200, 201), resp.text
-        insight_id = resp.json()["id"]
+        intelligence_id = resp.json()["id"]
         # Delete
-        resp = admin.delete(f"{base_url}/api/memory/insights/{insight_id}")
+        resp = admin.delete(f"{base_url}/api/memory/insights/{intelligence_id}")
         assert resp.status_code in (200, 204), resp.text
         # Verify gone
-        resp = admin.get(f"{base_url}/api/memory/insights/{insight_id}")
+        resp = admin.get(f"{base_url}/api/memory/insights/{intelligence_id}")
         assert resp.status_code == 404
         print("✓ Delete insight OK")
 
@@ -139,14 +139,14 @@ class TestInsightsCRUD:
 
 class TestLessonsCRUD:
 
-    def test_list_public_knowledge(self, admin, base_url):
+    def test_list_knowledge(self, admin, base_url):
         resp = admin.get(f"{base_url}/api/memory/lessons")
         assert resp.status_code == 200, resp.text
         data = resp.json()
         assert "lessons" in data or isinstance(data, list)
         print("✓ List lessons OK")
 
-    def test_create_public_knowledge(self, admin, base_url):
+    def test_create_knowledge(self, admin, base_url):
         resp = admin.post(f"{base_url}/api/memory/lessons", json={
             "name": "TEST Create Lesson",
             "lesson_type": "sales",
@@ -156,37 +156,37 @@ class TestLessonsCRUD:
         assert resp.status_code in (200, 201), resp.text
         data = resp.json()
         assert "id" in data
-        lesson_id = data["id"]
-        admin.delete(f"{base_url}/api/memory/lessons/{lesson_id}")
-        print(f"✓ Create lesson OK: {lesson_id}")
+        knowledge_id = data["id"]
+        admin.delete(f"{base_url}/api/memory/lessons/{knowledge_id}")
+        print(f"✓ Create lesson OK: {knowledge_id}")
 
     def test_get_lesson(self, admin, base_url, test_lesson):
-        lesson_id = test_lesson["id"]
-        resp = admin.get(f"{base_url}/api/memory/lessons/{lesson_id}")
+        knowledge_id = test_lesson["id"]
+        resp = admin.get(f"{base_url}/api/memory/lessons/{knowledge_id}")
         assert resp.status_code == 200, resp.text
         data = resp.json()
-        assert data["id"] == lesson_id
-        print(f"✓ Get lesson OK: {lesson_id}")
+        assert data["id"] == knowledge_id
+        print(f"✓ Get lesson OK: {knowledge_id}")
 
     def test_patch_lesson(self, admin, base_url, test_lesson):
-        lesson_id = test_lesson["id"]
-        resp = admin.patch(f"{base_url}/api/memory/lessons/{lesson_id}", json={
+        knowledge_id = test_lesson["id"]
+        resp = admin.patch(f"{base_url}/api/memory/lessons/{knowledge_id}", json={
             "summary": "Updated via test",
         })
         assert resp.status_code == 200, resp.text
-        print(f"✓ Patch lesson OK: {lesson_id}")
+        print(f"✓ Patch lesson OK: {knowledge_id}")
 
-    def test_delete_public_knowledge(self, admin, base_url):
+    def test_delete_knowledge(self, admin, base_url):
         resp = admin.post(f"{base_url}/api/memory/lessons", json={
             "name": "TEST Delete Lesson",
             "lesson_type": "other",
             "content": "Will be deleted",
         })
         assert resp.status_code in (200, 201), resp.text
-        lesson_id = resp.json()["id"]
-        resp = admin.delete(f"{base_url}/api/memory/lessons/{lesson_id}")
+        knowledge_id = resp.json()["id"]
+        resp = admin.delete(f"{base_url}/api/memory/lessons/{knowledge_id}")
         assert resp.status_code in (200, 204), resp.text
-        resp = admin.get(f"{base_url}/api/memory/lessons/{lesson_id}")
+        resp = admin.get(f"{base_url}/api/memory/lessons/{knowledge_id}")
         assert resp.status_code == 404
         print("✓ Delete lesson OK")
 

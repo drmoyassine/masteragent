@@ -51,7 +51,7 @@ async def test_bullmq_worker_router():
             self.opts = {"attempts": 3}
             self.attemptsMade = 0
 
-    mock_job = MockJob("promote_to_lesson", {"insight_id": "test-insight"})
+    mock_job = MockJob("promote_to_lesson", {"intelligence_id": "test-insight"})
 
     with patch("services.config_helpers.get_llm_config", return_value={"rate_limit_rpm": 60}):
         with patch("memory_tasks.promote_to_lesson", new_callable=AsyncMock) as mock_promote:

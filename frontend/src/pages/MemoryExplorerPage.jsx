@@ -89,7 +89,7 @@ export default function MemoryExplorerPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   
   // Deep linking: initialize tab from URL, validate against available tabs
-  const validTabs = ["interactions", "memories", "privateKnowledge", "publicKnowledge"];
+  const validTabs = ["interactions", "memories", "intelligence", "knowledge"];
   const urlTab = searchParams.get("tab");
   const [activeTab, setActiveTab] = useState(validTabs.includes(urlTab) ? urlTab : "interactions");
   const [loading, setLoading] = useState(false);
@@ -113,10 +113,10 @@ export default function MemoryExplorerPage() {
   // Datasets
   const [interactions, setInteractions] = useState([]);
   const [memories, setMemories] = useState([]);
-  const [privateKnowledge, setInsights] = useState([]);
-  const [publicKnowledge, setLessons] = useState([]);
+  const [intelligence, setInsights] = useState([]);
+  const [knowledge, setLessons] = useState([]);
 
-  // Additional publicKnowledge state
+  // Additional knowledge state
   const [lessonStatusFilter, setLessonStatusFilter] = useState("all");
   const [editingLesson, setEditingLesson] = useState(null);
   const [newLesson, setNewLesson] = useState({ name: "", type: "", body: "", status: "draft" });
@@ -237,9 +237,9 @@ export default function MemoryExplorerPage() {
     setLoading(true);
     try {
       const res = await getInsightsAdmin(getFetchParams());
-      setInsights(res.data?.privateKnowledge || []);
+      setInsights(res.data?.intelligence || []);
     } catch (error) {
-      toast.error("Failed to load privateKnowledge");
+      toast.error("Failed to load intelligence");
       setInsights([]);
     } finally {
       setLoading(false);
@@ -252,9 +252,9 @@ export default function MemoryExplorerPage() {
       const params = getFetchParams();
       if (lessonStatusFilter !== "all") params.status = lessonStatusFilter;
       const res = await getLessonsAdmin(params);
-      setLessons(res.data?.publicKnowledge || []);
+      setLessons(res.data?.knowledge || []);
     } catch (error) {
-      console.error("Failed to load publicKnowledge:", error);
+      console.error("Failed to load knowledge:", error);
       setLessons([]);
     } finally {
       setLoading(false);
@@ -265,8 +265,8 @@ export default function MemoryExplorerPage() {
     loadFilterOptions();
     if (activeTab === "interactions") loadInteractions();
     else if (activeTab === "memories") loadMemories();
-    else if (activeTab === "privateKnowledge") loadInsights();
-    else if (activeTab === "publicKnowledge") loadLessons();
+    else if (activeTab === "intelligence") loadInsights();
+    else if (activeTab === "knowledge") loadLessons();
   }, [activeTab, loadInteractions, loadMemories, loadInsights, loadLessons, loadFilterOptions]);
 
   // Modals interaction logic
@@ -277,12 +277,12 @@ export default function MemoryExplorerPage() {
     }
     try {
       await createLessonAdmin(newLesson);
-      toast.success("Public Knowledge created");
+      toast.success("Knowledge created");
       setShowNewLessonDialog(false);
       setNewLesson({ name: "", type: "", body: "", status: "draft" });
       loadLessons();
     } catch (error) {
-      toast.error("Failed to create publicKnowledge");
+      toast.error("Failed to create knowledge");
     }
   };
 
@@ -295,32 +295,32 @@ export default function MemoryExplorerPage() {
         body: editingLesson.body,
         status: editingLesson.status,
       });
-      toast.success("Public Knowledge updated");
+      toast.success("Knowledge updated");
       setEditingLesson(null);
       loadLessons();
     } catch (error) {
-      toast.error("Failed to update publicKnowledge");
+      toast.error("Failed to update knowledge");
     }
   };
 
   const handleApproveLesson = async (lessonId) => {
     try {
       await updateLessonAdmin(lessonId, { status: "approved" });
-      toast.success("Public Knowledge approved");
+      toast.success("Knowledge approved");
       loadLessons();
     } catch (error) {
-      toast.error("Failed to approve publicKnowledge");
+      toast.error("Failed to approve knowledge");
     }
   };
 
   const handleDeleteLesson = async (lessonId) => {
-    if (!window.confirm("Delete this publicKnowledge?")) return;
+    if (!window.confirm("Delete this knowledge?")) return;
     try {
       await deleteLessonAdmin(lessonId);
-      toast.success("Public Knowledge deleted");
+      toast.success("Knowledge deleted");
       loadLessons();
     } catch (error) {
-      toast.error("Failed to delete publicKnowledge");
+      toast.error("Failed to delete knowledge");
     }
   };
 
@@ -552,11 +552,11 @@ export default function MemoryExplorerPage() {
           <TabsTrigger value="memories" className="gap-2" data-testid="tab-daily">
             <Calendar className="w-4 h-4" /> Memories
           </TabsTrigger>
-          <TabsTrigger value="privateKnowledge" className="gap-2" data-testid="tab-privateKnowledge">
-            <Lightbulb className="w-4 h-4" /> Private Knowledge
+          <TabsTrigger value="intelligence" className="gap-2" data-testid="tab-intelligence">
+            <Lightbulb className="w-4 h-4" /> Intelligence
           </TabsTrigger>
-          <TabsTrigger value="publicKnowledge" className="gap-2" data-testid="tab-publicKnowledge">
-            <GraduationCap className="w-4 h-4" /> Public Knowledge
+          <TabsTrigger value="knowledge" className="gap-2" data-testid="tab-knowledge">
+            <GraduationCap className="w-4 h-4" /> Knowledge
           </TabsTrigger>
         </TabsList>
 
@@ -796,12 +796,12 @@ export default function MemoryExplorerPage() {
           </Card>
         </TabsContent>
 
-        {/* Tab 3: Private Knowledge */}
-        <TabsContent value="privateKnowledge" className="space-y-4">
+        {/* Tab 3: Intelligence */}
+        <TabsContent value="intelligence" className="space-y-4">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
-                <CardTitle>Private Knowledge (Tier 2)</CardTitle>
+                <CardTitle>Intelligence (Tier 2)</CardTitle>
                 <CardDescription>Entity facts and preferences extracted from memories</CardDescription>
               </div>
               <Button variant="outline" size="icon" onClick={loadInsights} disabled={loading}>
@@ -822,9 +822,9 @@ export default function MemoryExplorerPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                       {privateKnowledge.length === 0 ? (
-                          <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">No privateKnowledge found.</TableCell></TableRow>
-                       ) : privateKnowledge.map(ins => (
+                       {intelligence.length === 0 ? (
+                          <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">No intelligence found.</TableCell></TableRow>
+                       ) : intelligence.map(ins => (
                          <TableRow key={ins.id}>
                             <TableCell className="font-mono text-muted-foreground">#{ins.seq_id}</TableCell>
                             <TableCell className="whitespace-nowrap">{format(new Date(ins.created_at), "MMM d, yyyy")}</TableCell>
@@ -849,13 +849,13 @@ export default function MemoryExplorerPage() {
           </Card>
         </TabsContent>
 
-        {/* Tab 4: Public Knowledge */}
-        <TabsContent value="publicKnowledge" className="space-y-4">
+        {/* Tab 4: Knowledge */}
+        <TabsContent value="knowledge" className="space-y-4">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
-                <CardTitle>Public Knowledge (Tier 3)</CardTitle>
-                <CardDescription>Global system-wide rules extracted from privateKnowledge</CardDescription>
+                <CardTitle>Knowledge (Tier 3)</CardTitle>
+                <CardDescription>Global system-wide rules extracted from intelligence</CardDescription>
               </div>
               <div className="flex items-center gap-2">
                 <Select value={lessonStatusFilter} onValueChange={setLessonStatusFilter}>
@@ -870,7 +870,7 @@ export default function MemoryExplorerPage() {
                 </Select>
                 <Button onClick={() => setShowNewLessonDialog(true)}>
                   <Plus className="w-4 h-4 mr-2" />
-                  New Public Knowledge
+                  New Knowledge
                 </Button>
               </div>
             </CardHeader>
@@ -888,35 +888,35 @@ export default function MemoryExplorerPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                       {publicKnowledge.length === 0 ? (
-                          <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">No publicKnowledge found.</TableCell></TableRow>
-                       ) : publicKnowledge.map(publicKnowledge => (
-                         <TableRow key={publicKnowledge.id}>
-                            <TableCell className="font-mono text-muted-foreground">#{publicKnowledge.seq_id}</TableCell>
+                       {knowledge.length === 0 ? (
+                          <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">No knowledge found.</TableCell></TableRow>
+                       ) : knowledge.map(knowledge => (
+                         <TableRow key={knowledge.id}>
+                            <TableCell className="font-mono text-muted-foreground">#{knowledge.seq_id}</TableCell>
                             <TableCell>
                                <div className="flex items-center gap-2">
-                                 <div className="w-3 h-3 rounded-full" style={{ backgroundColor: getLessonTypeColor(publicKnowledge.type) }} />
-                                 <Badge variant="outline">{publicKnowledge.type}</Badge>
+                                 <div className="w-3 h-3 rounded-full" style={{ backgroundColor: getLessonTypeColor(knowledge.type) }} />
+                                 <Badge variant="outline">{knowledge.type}</Badge>
                                </div>
                             </TableCell>
-                            <TableCell className="font-medium">{publicKnowledge.name}</TableCell>
-                            <TableCell className="max-w-[250px] truncate" title={publicKnowledge.body}>{publicKnowledge.body}</TableCell>
+                            <TableCell className="font-medium">{knowledge.name}</TableCell>
+                            <TableCell className="max-w-[250px] truncate" title={knowledge.body}>{knowledge.body}</TableCell>
                             <TableCell>
-                               <Badge variant={publicKnowledge.status === "approved" ? "default" : "secondary"}>
-                                 {publicKnowledge.status}
+                               <Badge variant={knowledge.status === "approved" ? "default" : "secondary"}>
+                                 {knowledge.status}
                                </Badge>
                             </TableCell>
                             <TableCell>
                                <div className="flex gap-1">
-                                 {publicKnowledge.status === "draft" && (
-                                   <Button variant="ghost" size="icon" onClick={() => handleApproveLesson(publicKnowledge.id)}>
+                                 {knowledge.status === "draft" && (
+                                   <Button variant="ghost" size="icon" onClick={() => handleApproveLesson(knowledge.id)}>
                                      <Check className="w-4 h-4 text-green-500" />
                                    </Button>
                                  )}
-                                 <Button variant="ghost" size="icon" onClick={() => setEditingLesson(publicKnowledge)}>
+                                 <Button variant="ghost" size="icon" onClick={() => setEditingLesson(knowledge)}>
                                    <Edit className="w-4 h-4" />
                                  </Button>
-                                 <Button variant="ghost" size="icon" onClick={() => handleDeleteLesson(publicKnowledge.id)}>
+                                 <Button variant="ghost" size="icon" onClick={() => handleDeleteLesson(knowledge.id)}>
                                    <Trash2 className="w-4 h-4 text-destructive" />
                                  </Button>
                                </div>
@@ -1017,17 +1017,17 @@ export default function MemoryExplorerPage() {
         </DialogContent>
       </Dialog>
 
-      {/* New Public Knowledge Dialog */}
+      {/* New Knowledge Dialog */}
       <Dialog open={showNewLessonDialog} onOpenChange={setShowNewLessonDialog}>
          <DialogContent>
            <DialogHeader>
-             <DialogTitle>Create New Public Knowledge</DialogTitle>
-             <DialogDescription>Add a curated publicKnowledge to your knowledge base</DialogDescription>
+             <DialogTitle>Create New Knowledge</DialogTitle>
+             <DialogDescription>Add a curated knowledge to your knowledge base</DialogDescription>
            </DialogHeader>
            <div className="space-y-4 py-4">
              <div>
                <Label>Name</Label>
-               <Input value={newLesson.name} onChange={(e) => setNewLesson({ ...newLesson, name: e.target.value })} placeholder="Public Knowledge title" />
+               <Input value={newLesson.name} onChange={(e) => setNewLesson({ ...newLesson, name: e.target.value })} placeholder="Knowledge title" />
              </div>
              <div>
                <Label>Type</Label>
@@ -1040,7 +1040,7 @@ export default function MemoryExplorerPage() {
              </div>
              <div>
                <Label>Body</Label>
-               <Textarea value={newLesson.body} onChange={(e) => setNewLesson({ ...newLesson, body: e.target.value })} placeholder="Public Knowledge content (Markdown supported)" rows={6} />
+               <Textarea value={newLesson.body} onChange={(e) => setNewLesson({ ...newLesson, body: e.target.value })} placeholder="Knowledge content (Markdown supported)" rows={6} />
              </div>
              <div>
                <Label>Status</Label>
@@ -1055,15 +1055,15 @@ export default function MemoryExplorerPage() {
            </div>
            <DialogFooter>
              <Button variant="outline" onClick={() => setShowNewLessonDialog(false)}>Cancel</Button>
-             <Button onClick={handleCreateLesson}>Create Public Knowledge</Button>
+             <Button onClick={handleCreateLesson}>Create Knowledge</Button>
            </DialogFooter>
          </DialogContent>
        </Dialog>
 
-       {/* Edit Public Knowledge Dialog */}
+       {/* Edit Knowledge Dialog */}
        <Dialog open={!!editingLesson} onOpenChange={() => setEditingLesson(null)}>
          <DialogContent>
-           <DialogHeader><DialogTitle>Edit Public Knowledge</DialogTitle></DialogHeader>
+           <DialogHeader><DialogTitle>Edit Knowledge</DialogTitle></DialogHeader>
            {editingLesson && (
              <div className="space-y-4 py-4">
                <div>
@@ -1097,7 +1097,7 @@ export default function MemoryExplorerPage() {
            )}
            <DialogFooter>
              <Button variant="outline" onClick={() => setEditingLesson(null)}>Cancel</Button>
-             <Button onClick={handleUpdateLesson}>Update Public Knowledge</Button>
+             <Button onClick={handleUpdateLesson}>Update Knowledge</Button>
            </DialogFooter>
          </DialogContent>
        </Dialog>

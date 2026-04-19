@@ -217,7 +217,7 @@ class TestLessonTypes:
         
         print(f"✓ Found {len(data)} lesson types: {names}")
     
-    def test_create_and_delete_public_knowledge_type(self, authenticated_client):
+    def test_create_and_delete_knowledge_type(self, authenticated_client):
         """Test POST and DELETE /api/memory/config/lesson-types"""
         new_type = {
             "name": "TEST_Compliance",
