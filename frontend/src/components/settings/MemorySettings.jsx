@@ -933,7 +933,8 @@ export function MemorySettings({
     onUpdateMemorySettings,
     activeTab = "raw_interactions",
     onTabChange,
-    onReorderPipeline
+    onReorderPipeline,
+    entityTypes
 }) {
     const [modelLists, setModelLists] = useState({});
     const [fetchingModels, setFetchingModels] = useState({});
