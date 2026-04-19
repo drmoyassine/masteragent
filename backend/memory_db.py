@@ -141,20 +141,20 @@ def _create_config_tables(cursor):
             memory_generation_time      TEXT DEFAULT '02:00',
             memory_generation_mode      TEXT DEFAULT 'ner_and_raw',
             knowledge_threshold            INT DEFAULT 5,
-            knowledge_trigger_days         INT DEFAULT NULL,
+            intelligence_extraction_threshold INT DEFAULT 10,
             updated_at                  TIMESTAMPTZ DEFAULT NOW()
         )
     """)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS memory_entity_type_config (
             entity_type                 TEXT PRIMARY KEY,
-            compaction_threshold        INT DEFAULT 10,
+            intelligence_extraction_threshold INT DEFAULT 10,
             intelligence_auto_approve        BOOLEAN DEFAULT FALSE,
             knowledge_auto_promote         BOOLEAN DEFAULT FALSE,
             ner_enabled                 BOOLEAN DEFAULT TRUE,
             ner_confidence_threshold    FLOAT DEFAULT 0.5,
             ner_schema                  JSONB DEFAULT NULL,
-            intelligence_trigger_days        INT DEFAULT NULL,
+            knowledge_extraction_threshold   INT DEFAULT NULL,
             embedding_enabled           BOOLEAN DEFAULT TRUE,
             pii_scrub_knowledge           BOOLEAN DEFAULT TRUE,
             metadata_field_map          JSONB DEFAULT '{}',
@@ -465,7 +465,7 @@ def _run_migrations(cursor):
         ("memory_generation_time", "TEXT DEFAULT '02:00'"),
         ("memory_generation_mode", "TEXT DEFAULT 'ner_and_raw'"),
         ("knowledge_threshold", "INT DEFAULT 5"),
-        ("knowledge_trigger_days", "INT DEFAULT NULL"),
+        ("intelligence_extraction_threshold", "INT DEFAULT 10"),
         ("prior_context_chrono_count", "INT DEFAULT 2"),
         ("prior_context_semantic_count", "INT DEFAULT 2"),
         ("prior_intelligence_chrono_count", "INT DEFAULT 3"),
@@ -478,9 +478,34 @@ def _run_migrations(cursor):
     # Entity type config columns
     for col, col_def in [
         ("ner_schema", "JSONB DEFAULT NULL"),
-        ("intelligence_trigger_days", "INT DEFAULT NULL"),
+        ("knowledge_extraction_threshold", "INT DEFAULT NULL"),
+        ("embedding_enabled", "BOOLEAN DEFAULT TRUE"),
+        ("pii_scrub_knowledge", "BOOLEAN DEFAULT TRUE"),
+        ("metadata_field_map", "JSONB DEFAULT '{}'")
     ]:
         cursor.execute(f"ALTER TABLE memory_entity_type_config ADD COLUMN IF NOT EXISTS {col} {col_def}")
+                
+    # Explicitly drop the legacy days columns
+    try:
+        cursor.execute("ALTER TABLE memory_settings DROP COLUMN IF EXISTS knowledge_trigger_days")
+        cursor.execute("ALTER TABLE memory_entity_type_config DROP COLUMN IF EXISTS insight_trigger_days")
+        cursor.execute("ALTER TABLE memory_entity_type_config DROP COLUMN IF EXISTS intelligence_trigger_days")
+    except Exception as e:
+        logger.warning(f"Drop days trigger columns skipped: {e}")
+        
+    # Rename compaction_threshold to intelligence_extraction_threshold safely
+    try:
+        cursor.execute("""
+            DO $$
+            BEGIN
+                IF EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='memory_entity_type_config' AND column_name='compaction_threshold') THEN
+                    ALTER TABLE memory_entity_type_config RENAME COLUMN compaction_threshold TO intelligence_extraction_threshold;
+                END IF;
+            END
+            $$;
+        """)
+    except Exception as e:
+        logger.warning(f"Rename compaction_threshold skipped: {e}")
 
     # Job log table (safe to CREATE IF NOT EXISTS in migration too)
     cursor.execute("""

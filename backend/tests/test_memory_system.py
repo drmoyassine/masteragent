@@ -357,7 +357,8 @@ class TestMemorySettings:
         # Verify expected fields
         expected_fields = [
             "chunk_size", "chunk_overlap",
-            "auto_lesson_enabled", "auto_lesson_threshold", "lesson_approval_required",
+            "auto_public_knowledge_enabled", "auto_knowledge_threshold",
+            "knowledge_threshold", "intelligence_extraction_threshold",
             "pii_scrubbing_enabled", "auto_share_scrubbed",
             "rate_limit_enabled", "rate_limit_per_minute",
             "default_agent_access"

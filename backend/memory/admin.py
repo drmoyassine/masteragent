@@ -366,27 +366,26 @@ async def update_entity_type_config(
     fields = []
     values = []
 
-    if body.compaction_threshold is not None:
-        fields.append("compaction_threshold = %s"); values.append(body.compaction_threshold)
-    if body.insight_auto_approve is not None:
-        fields.append("insight_auto_approve = %s"); values.append(body.insight_auto_approve)
-    if body.lesson_auto_promote is not None:
-        fields.append("lesson_auto_promote = %s"); values.append(body.lesson_auto_promote)
+    if body.Intelligence_auto_approve is not None:
+        fields.append("intelligence_auto_approve = %s"); values.append(body.Intelligence_auto_approve)
+    if body.knowledge_auto_promote is not None:
+        fields.append("knowledge_auto_promote = %s"); values.append(body.knowledge_auto_promote)
     if body.ner_enabled is not None:
         fields.append("ner_enabled = %s"); values.append(body.ner_enabled)
     if body.ner_confidence_threshold is not None:
         fields.append("ner_confidence_threshold = %s"); values.append(body.ner_confidence_threshold)
-    # ner_schema and insight_trigger_days are legitimately nullable (None = clear them).
-    # Use model_fields_set to detect explicitly-sent null vs not-provided.
+    # ner_schema and threshold overrides are legitimately nullable (None = clear them to fallback).
     if "ner_schema" in body.model_fields_set:
         fields.append("ner_schema = %s")
         values.append(json.dumps(body.ner_schema) if body.ner_schema is not None else None)
-    if "insight_trigger_days" in body.model_fields_set:
-        fields.append("insight_trigger_days = %s"); values.append(body.insight_trigger_days)
+    if "intelligence_extraction_threshold" in body.model_fields_set:
+        fields.append("intelligence_extraction_threshold = %s"); values.append(body.intelligence_extraction_threshold)
+    if "knowledge_extraction_threshold" in body.model_fields_set:
+        fields.append("knowledge_extraction_threshold = %s"); values.append(body.knowledge_extraction_threshold)
     if body.embedding_enabled is not None:
         fields.append("embedding_enabled = %s"); values.append(body.embedding_enabled)
-    if body.pii_scrub_lessons is not None:
-        fields.append("pii_scrub_lessons = %s"); values.append(body.pii_scrub_lessons)
+    if body.pii_scrub_knowledge is not None:
+        fields.append("pii_scrub_knowledge = %s"); values.append(body.pii_scrub_knowledge)
     if body.metadata_field_map is not None:
         fields.append("metadata_field_map = %s"); values.append(json.dumps(body.metadata_field_map))
 

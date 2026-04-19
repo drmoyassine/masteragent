@@ -647,11 +647,12 @@ async def get_settings_endpoint(user: dict = Depends(require_admin_auth)):
     settings = get_memory_settings()
     return MemorySettingsResponse(
         chunk_size=settings.get("chunk_size", 400), chunk_overlap=settings.get("chunk_overlap", 80),
-        auto_lesson_enabled=bool(settings.get("auto_lesson_enabled", 1)), auto_lesson_threshold=settings.get("auto_lesson_threshold", 5),
-        lesson_approval_required=bool(settings.get("lesson_approval_required", 1)), pii_scrubbing_enabled=bool(settings.get("pii_scrubbing_enabled", 1)),
-        auto_share_scrubbed=bool(settings.get("auto_share_scrubbed", 0)), openclaw_sync_enabled=bool(settings.get("openclaw_sync_enabled", 0)),
-        openclaw_sync_path=settings.get("openclaw_sync_path", ""), openclaw_sync_type=settings.get("openclaw_sync_type", "filesystem"),
-        openclaw_sync_frequency=settings.get("openclaw_sync_frequency", 5), rate_limit_enabled=bool(settings.get("rate_limit_enabled", 0)),
+        memory_generation_time=settings.get("memory_generation_time", "02:00"),
+        memory_generation_mode=settings.get("memory_generation_mode", "ner_and_raw"),
+        auto_public_knowledge_enabled=bool(settings.get("auto_public_knowledge_enabled", 1)), auto_knowledge_threshold=settings.get("auto_knowledge_threshold", 5),
+        knowledge_threshold=settings.get("knowledge_threshold", 5), intelligence_extraction_threshold=settings.get("intelligence_extraction_threshold", 10),
+        pii_scrubbing_enabled=bool(settings.get("pii_scrubbing_enabled", 1)),
+        auto_share_scrubbed=bool(settings.get("auto_share_scrubbed", 0)), rate_limit_enabled=bool(settings.get("rate_limit_enabled", 0)),
         rate_limit_per_minute=settings.get("rate_limit_per_minute", 60), default_agent_access=settings.get("default_agent_access", "private")
     )
 

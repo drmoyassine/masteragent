@@ -10,8 +10,59 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { triggerMemoryGeneration, fetchProviderModels } from "@/lib/api";
-import {
+import api, { triggerMemoryGeneration, fetchProviderModels } from "@/lib/api";
+import { useEffect } from "react";
+
+const ThresholdOverrideRow = ({ entityType, overrideKey, label, globalFallback }) => {
+    const [val, setVal] = useState("");
+    const [loading, setLoading] = useState(false);
+
+    useEffect(() => {
+        api.get(`/memory/entity-type-config/${entityType.name}`)
+            .then(res => setVal(res.data[overrideKey] ?? ""))
+            .catch(err => console.error(err));
+    }, [entityType.name, overrideKey]);
+
+    const handleSave = async () => {
+        setLoading(true);
+        try {
+            await api.patch(`/memory/entity-type-config/${entityType.name}`, {
+                [overrideKey]: val === "" ? null : parseInt(val, 10)
+            });
+            toast.success(`${entityType.name} threshold updated`);
+        } catch (err) {
+            console.error(err);
+            toast.error("Failed to update threshold");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <tr className="border-[1px] border-border text-sm bg-muted/20">
+            <td className="py-2.5 pl-4 w-48">
+                <div className="flex items-center gap-2 font-medium">
+                    <span className="text-lg leading-none">{entityType.icon}</span>
+                    <span className="capitalize">{entityType.name}</span>
+                </div>
+            </td>
+            <td className="py-2.5 pr-4 text-right">
+                <div className="flex items-center justify-end gap-2 text-xs">
+                    <Input 
+                        type="number" 
+                        min={1} 
+                        className="w-20 h-7 text-right text-xs" 
+                        placeholder={globalFallback ? String(globalFallback) : "Default"} 
+                        value={val} 
+                        onChange={e => setVal(e.target.value)}
+                        onBlur={handleSave}
+                        disabled={loading}
+                    />
+                </div>
+            </td>
+        </tr>
+    );
+};import {
     Card,
     CardContent,
     CardDescription,
@@ -554,24 +605,53 @@ function IntelligenceTab({ settings, onUpdateSettings, llmConfigs, llmProviders,
 
             {/* Intelligence Mining Info */}
             <Card className="border-zinc-800 bg-muted/10">
-                <CardHeader className="pb-3">
+                <CardHeader className="pb-3 border-b">
                     <div className="flex items-center gap-2">
                         <Brain className="w-5 h-5 text-purple-400" />
                         <CardTitle className="text-lg">Intelligence Mining Triggers</CardTitle>
                     </div>
                 </CardHeader>
-                <CardContent>
-                    <p className="text-sm text-muted-foreground leading-relaxed">
-                        Intelligence extraction is configured <strong>per Entity Type</strong>, because different entities accumulate interactions at different rates (e.g., an API token might need 1,000 interactions before compaction, while a Contact might need only 5).
-                    </p>
-                    <div className="mt-3 p-3 bg-zinc-900 rounded-md border border-zinc-800 text-xs text-zinc-300">
-                        <p className="font-semibold text-zinc-100 mb-1">To configure thresholds and triggers:</p>
-                        <ul className="list-disc pl-4 space-y-1">
-                            <li>Go to the <strong>Data Model</strong> tab</li>
-                            <li>Find your Entity Type (e.g., Organization, Contact)</li>
-                            <li>Click the <Settings className="inline-block w-3 h-3 text-muted-foreground mx-1" /> <strong>Configure NER &amp; thresholds</strong> button</li>
-                            <li>Adjust the <code>Compaction threshold</code> and <code>Insight trigger (days)</code></li>
-                        </ul>
+                <CardContent className="pt-4 space-y-6">
+                    <div className="space-y-2">
+                        <Label className="text-xs font-mono">Global Default Threshold (N memories)</Label>
+                        <Input
+                            type="number"
+                            min={2}
+                            value={settings.intelligence_extraction_threshold || 10}
+                            onChange={(e) =>
+                                onUpdateSettings("intelligence_extraction_threshold", parseInt(e.target.value))
+                            }
+                        />
+                        <p className="text-[10px] text-muted-foreground">
+                            Generate an intelligence item after this many uncompacted memories accumulate.
+                        </p>
+                    </div>
+
+                    <div className="space-y-3 pt-2">
+                        <Label className="text-xs font-mono">Entity-Specific Overrides</Label>
+                        <p className="text-[10px] text-muted-foreground">
+                            Different entities accumulate interactions at different rates (e.g., an API token might need 1,000 interactions before compaction, while a Contact might need only 5).
+                        </p>
+                        <div className="border border-border rounded-md overflow-hidden bg-background">
+                            <table className="w-full text-left">
+                                <thead className="bg-muted text-xs text-muted-foreground uppercase">
+                                    <tr>
+                                        <th className="py-2 pl-4 font-medium">Entity Type</th>
+                                        <th className="py-2 pr-4 font-medium text-right">Threshold Override</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {entityTypes?.map(et => (
+                                        <ThresholdOverrideRow 
+                                            key={et.id} 
+                                            entityType={et} 
+                                            overrideKey="intelligence_extraction_threshold"
+                                            globalFallback={settings.intelligence_extraction_threshold || 10}
+                                        />
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </CardContent>
             </Card>
@@ -736,24 +816,31 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                             Generate a knowledge item after this many confirmed intelligence items accumulate.
                         </p>
                     </div>
-                    <div className="space-y-2">
-                        <Label className="text-xs font-mono">
-                            Knowledge Trigger (days, optional)
-                        </Label>
-                        <Input
-                            type="number"
-                            min={1}
-                            placeholder="Leave blank to use count only"
-                            value={settings.knowledge_trigger_days || ""}
-                            onChange={(e) => {
-                                const v = e.target.value;
-                                onUpdateSettings("knowledge_trigger_days", v ? parseInt(v) : null);
-                            }}
-                            disabled={!settings.auto_knowledge_enabled}
-                        />
+                    <div className="space-y-3 pt-6 border-t border-border">
+                        <Label className="text-xs font-mono">Entity-Specific Overrides</Label>
                         <p className="text-[10px] text-muted-foreground">
-                            Also trigger if oldest unused intelligence is this many days old (min 2).
+                            Specify whether certain entities should extract knowledge at different rates.
                         </p>
+                        <div className="border border-border rounded-md overflow-hidden bg-background">
+                            <table className="w-full text-left">
+                                <thead className="bg-muted text-xs text-muted-foreground uppercase">
+                                    <tr>
+                                        <th className="py-2 pl-4 font-medium">Entity Type</th>
+                                        <th className="py-2 pr-4 font-medium text-right">Threshold Override</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {entityTypes?.map(et => (
+                                        <ThresholdOverrideRow 
+                                            key={et.id} 
+                                            entityType={et} 
+                                            overrideKey="knowledge_extraction_threshold"
+                                            globalFallback={settings.knowledge_threshold || 5}
+                                        />
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </CardContent>
             </Card>

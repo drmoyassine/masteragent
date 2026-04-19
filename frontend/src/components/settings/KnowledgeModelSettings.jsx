@@ -99,44 +99,13 @@ function EntityTypeConfigPanel({ entityTypeName }) {
             <CollapsibleTrigger asChild>
                 <button className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground mt-1 transition-colors">
                     <Settings className="w-3 h-3" />
-                    Configure NER &amp; thresholds
+                    Configure NER &amp; schema
                     <ChevronRight className={`w-3 h-3 transition-transform ${open ? "rotate-90" : ""}`} />
                 </button>
             </CollapsibleTrigger>
             <CollapsibleContent>
                 {config && (
                     <div className="mt-3 space-y-4 p-3 bg-muted/30 rounded-lg border border-border/50">
-                        {/* Compaction threshold */}
-                        <div className="grid grid-cols-2 gap-3">
-                            <div className="space-y-1">
-                                <Label className="text-xs font-mono">Compaction threshold</Label>
-                                <Input
-                                    type="number"
-                                    min={2}
-                                    value={config.compaction_threshold ?? 10}
-                                    onChange={e => setConfig(p => ({ ...p, compaction_threshold: parseInt(e.target.value) }))}
-                                    onBlur={() => save({ compaction_threshold: config.compaction_threshold })}
-                                    className="h-8 text-xs"
-                                />
-                                <p className="text-[10px] text-muted-foreground">N memories → insight</p>
-                            </div>
-                            <div className="space-y-1">
-                                <Label className="text-xs font-mono">Insight trigger (days)</Label>
-                                <Input
-                                    type="number"
-                                    min={1}
-                                    placeholder="Off"
-                                    value={config.insight_trigger_days ?? ""}
-                                    onChange={e => {
-                                        const v = e.target.value;
-                                        setConfig(p => ({ ...p, insight_trigger_days: v ? parseInt(v) : null }));
-                                    }}
-                                    onBlur={() => save({ insight_trigger_days: config.insight_trigger_days })}
-                                    className="h-8 text-xs"
-                                />
-                                <p className="text-[10px] text-muted-foreground">Blank = count-only</p>
-                            </div>
-                        </div>
 
                         {/* NER toggle + confidence */}
                         <div className="flex items-center justify-between">

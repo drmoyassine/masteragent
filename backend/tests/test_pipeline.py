@@ -58,8 +58,8 @@ def _delete_knowledge(admin, base_url, knowledge_id):
 
 class TestRunLessonCheck:
     """
-    Verifies that when lesson_threshold confirmed insights accumulate,
-    the manual trigger fires and produces a lesson.
+    Verifies that when knowledge_threshold confirmed insights accumulate,
+    the manual trigger fires and produces a knowledge.
     Requires: insight_generation LLM config with a real API key.
     """
 
@@ -78,10 +78,8 @@ class TestRunLessonCheck:
         # Save original settings
         orig = admin.get(f"{base_url}/api/memory/config/settings").json()
 
-        # Lower threshold so 2 insights are enough
         admin.put(f"{base_url}/api/memory/config/settings", json={
-            "lesson_threshold": 2,
-            "lesson_trigger_days": None,
+            "knowledge_threshold": 2,
         })
 
         intelligence_ids = []
@@ -121,82 +119,12 @@ class TestRunLessonCheck:
             for iid in intelligence_ids:
                 _delete_intelligence(admin, base_url, iid)
             admin.put(f"{base_url}/api/memory/config/settings", json={
-                "lesson_threshold": orig.get("lesson_threshold", 5),
-                "lesson_trigger_days": orig.get("lesson_trigger_days"),
+                "knowledge_threshold": orig.get("knowledge_threshold", 5),
             })
 
 
 # ══════════════════════════════════════════════════════════════════
-# 2. _check_compaction_trigger — days path
-# ══════════════════════════════════════════════════════════════════
-
-class TestCompactionTriggerDaysPath:
-    """
-    Verifies the insight_trigger_days path: when oldest uncompacted memory
-    is >= N days old (and count >= 2), compaction fires even if count threshold
-    hasn't been reached.
-    """
-
-    ENTITY_TYPE = "contact"
-    ENTITY_ID = f"test-days-trigger-{uuid.uuid4().hex[:8]}"
-
-    def test_days_trigger_fires_compact_endpoint(self, admin, base_url):
-        """
-        Set insight_trigger_days=0 → trigger compact → assert insight created.
-        Skipped if LLM backend unavailable.
-        """
-        # Set insight_trigger_days=0 so any memory age qualifies
-        orig_cfg = admin.get(f"{base_url}/api/memory/entity-type-config/{self.ENTITY_TYPE}")
-        if orig_cfg.status_code == 404:
-            pytest.skip(f"entity-type-config for '{self.ENTITY_TYPE}' not found")
-
-        orig_days = orig_cfg.json().get("insight_trigger_days")
-        orig_threshold = orig_cfg.json().get("compaction_threshold", 10)
-
-        admin.patch(f"{base_url}/api/memory/entity-type-config/{self.ENTITY_TYPE}", json={
-            "insight_trigger_days": 0,
-            "compaction_threshold": 999,  # prevent count-path from firing simultaneously
-        })
-
-        try:
-            resp = admin.post(
-                f"{base_url}/api/memory/trigger/compact/{self.ENTITY_TYPE}/{self.ENTITY_ID}"
-            )
-            assert resp.status_code == 200, resp.text
-            assert "triggered" in resp.json().get("message", "").lower()
-            print(f"✓ Compact trigger responded 200 for days-path entity {self.ENTITY_ID}")
-
-        finally:
-            # Restore entity type config
-            admin.patch(f"{base_url}/api/memory/entity-type-config/{self.ENTITY_TYPE}", json={
-                "insight_trigger_days": orig_days,
-                "compaction_threshold": orig_threshold,
-            })
-
-    def test_entity_type_config_patch_days(self, admin, base_url):
-        """
-        Sanity check: PATCH entity-type-config to set/clear insight_trigger_days.
-        """
-        resp = admin.patch(
-            f"{base_url}/api/memory/entity-type-config/{self.ENTITY_TYPE}",
-            json={"insight_trigger_days": 14}
-        )
-        assert resp.status_code == 200, resp.text
-
-        cfg = admin.get(f"{base_url}/api/memory/entity-type-config/{self.ENTITY_TYPE}").json()
-        assert cfg.get("insight_trigger_days") == 14, f"Got {cfg.get('insight_trigger_days')}"
-
-        # Reset to None
-        resp = admin.patch(
-            f"{base_url}/api/memory/entity-type-config/{self.ENTITY_TYPE}",
-            json={"insight_trigger_days": None}
-        )
-        assert resp.status_code == 200, resp.text
-        print("✓ insight_trigger_days PATCH round-trip works")
-
-
-# ══════════════════════════════════════════════════════════════════
-# 3. extract_entities with ner_schema
+# 2. extract_entities with ner_schema
 # ══════════════════════════════════════════════════════════════════
 
 class TestExtractEntitiesWithNerSchema:

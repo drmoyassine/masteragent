@@ -199,19 +199,19 @@ class TestEntityTypeConfig:
         resp = admin.get(f"{base_url}/api/memory/entity-type-config/contact")
         assert resp.status_code == 200, resp.text
         data = resp.json()
-        assert "compaction_threshold" in data
+        assert "intelligence_extraction_threshold" in data
         assert "ner_enabled" in data
-        print(f"✓ Entity type config for contact: threshold={data['compaction_threshold']}")
+        print(f"✓ Entity type config for contact: threshold={data['intelligence_extraction_threshold']}")
 
     def test_patch_entity_type_config(self, admin, base_url):
         resp = admin.patch(f"{base_url}/api/memory/entity-type-config/contact", json={
-            "compaction_threshold": 15,
+            "intelligence_extraction_threshold": 15,
             "ner_confidence_threshold": 0.6,
         })
         assert resp.status_code == 200, resp.text
         # Restore
         admin.patch(f"{base_url}/api/memory/entity-type-config/contact", json={
-            "compaction_threshold": 10,
+            "intelligence_extraction_threshold": 10,
             "ner_confidence_threshold": 0.5,
         })
         print("✓ Entity type config patch OK")

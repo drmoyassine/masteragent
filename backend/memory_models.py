@@ -205,11 +205,10 @@ class MemorySettingsUpdate(BaseModel):
     memory_generation_time: Optional[str] = "02:00"       # HH:MM UTC
     memory_generation_mode: Optional[str] = "ner_and_raw" # 'ner_only' | 'ner_and_raw'
     # Knowledge settings
-    auto_lesson_enabled: Optional[bool] = True
-    auto_lesson_threshold: Optional[int] = 5
-    lesson_threshold: Optional[int] = 5             # N confirmed Intelligences → Knowledge
-    lesson_trigger_days: Optional[int] = None        # X days since oldest unused Intelligence
-    lesson_approval_required: Optional[bool] = True
+    auto_public_knowledge_enabled: Optional[bool] = True
+    auto_knowledge_threshold: Optional[int] = 5
+    knowledge_threshold: Optional[int] = 5             # N confirmed Intelligences → Knowledge
+    intelligence_extraction_threshold: Optional[int] = 10
     # PII settings
     pii_scrubbing_enabled: Optional[bool] = True
     auto_share_scrubbed: Optional[bool] = False
@@ -224,11 +223,10 @@ class MemorySettingsResponse(BaseModel):
     chunk_overlap: int
     memory_generation_time: str = "02:00"
     memory_generation_mode: str = "ner_and_raw"
-    auto_lesson_enabled: bool
-    auto_lesson_threshold: int
-    lesson_threshold: int = 5
-    lesson_trigger_days: Optional[int] = None
-    lesson_approval_required: bool
+    auto_public_knowledge_enabled: bool
+    auto_knowledge_threshold: int
+    knowledge_threshold: int = 5
+    intelligence_extraction_threshold: int = 10
     pii_scrubbing_enabled: bool
     auto_share_scrubbed: bool
     rate_limit_enabled: bool
@@ -403,25 +401,25 @@ class KnowledgeUpdate(BaseModel):
 
 class EntityTypeConfig(BaseModel):
     entity_type: str
-    compaction_threshold: int = 10
+    intelligence_extraction_threshold: int = 10
+    knowledge_extraction_threshold: Optional[int] = None
     Intelligence_auto_approve: bool = False
     knowledge_auto_promote: bool = False
     ner_enabled: bool = True
     ner_confidence_threshold: float = 0.5
     ner_schema: Optional[Dict[str, Any]] = None
-    Intelligence_trigger_days: Optional[int] = None
     embedding_enabled: bool = True
     pii_scrub_knowledge: bool = True
     metadata_field_map: Dict[str, str] = {}
 
 class EntityTypeConfigUpdate(BaseModel):
-    compaction_threshold: Optional[int] = None
+    intelligence_extraction_threshold: Optional[int] = None
+    knowledge_extraction_threshold: Optional[int] = None
     Intelligence_auto_approve: Optional[bool] = None
     knowledge_auto_promote: Optional[bool] = None
     ner_enabled: Optional[bool] = None
     ner_confidence_threshold: Optional[float] = None
     ner_schema: Optional[Dict[str, Any]] = None
-    Intelligence_trigger_days: Optional[int] = None
     embedding_enabled: Optional[bool] = None
     pii_scrub_knowledge: Optional[bool] = None
     metadata_field_map: Optional[Dict[str, str]] = None

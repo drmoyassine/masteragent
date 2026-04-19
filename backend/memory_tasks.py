@@ -727,44 +727,30 @@ async def run_compaction_check():
 async def _check_compaction_trigger(entity_type: str, entity_id: str, config: dict):
     """
     Check whether compaction should trigger for this entity.
-    Fires if:
-      - Uncompacted memory count >= compaction_threshold (count trigger), OR
-      - insight_trigger_days is set AND oldest uncompacted memory is >= that many days old
-        (minimum 2 memories to avoid generating intelligence from a single data point)
+    Fires if Uncompacted memory count >= intelligence_extraction_threshold.
     """
-    threshold = config.get("compaction_threshold", 10)
-    trigger_days = config.get("insight_trigger_days")
+    
+    settings = get_memory_settings()
+    global_threshold = settings.get("intelligence_extraction_threshold", 10)
+    threshold = config.get("intelligence_extraction_threshold") or global_threshold
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT COUNT(*) as cnt, MIN(date) as oldest_date
+            SELECT COUNT(*) as cnt
             FROM memories
             WHERE primary_entity_type = %s AND primary_entity_id = %s AND compacted = FALSE
         """, (entity_type, entity_id))
-        row = cursor.fetchone()
+        count = cursor.fetchone()["cnt"]
 
-    count = row["cnt"]
-    oldest_date = row["oldest_date"]
-
-    count_trigger = count >= threshold
-    days_trigger = (
-        trigger_days is not None
-        and oldest_date is not None
-        and (date.today() - oldest_date).days >= trigger_days
-        and count >= 2
-    )
-
-    if count_trigger or days_trigger:
-        reason = "count" if count_trigger else "days"
-        logger.info(f"Compaction trigger enqueue ({reason}) for {entity_type}/{entity_id}: {count} memories, oldest={oldest_date}")
+    if count >= threshold:
+        logger.info(f"Intelligence extraction trigger enqueue for {entity_type}/{entity_id}: {count} memories")
         from memory.queue import knowledge_queue
         await knowledge_queue.add(
             "generate_insight", 
             {"entity_type": entity_type, "entity_id": entity_id},
             {"priority": 4}
         )
-
 
 # ── Compaction: Intelligence Generation ───────────────────────────────────────────
 
@@ -995,50 +981,54 @@ async def compact_entity(entity_type: str, entity_id: str):
 async def run_lesson_check():
     """
     Check if enough confirmed intelligence have accumulated to generate a Knowledge.
-    Triggers on count (lesson_threshold) OR days since oldest unused Intelligence (lesson_trigger_days).
-    Mirrors the memory → Intelligence compaction pattern.
+    Triggers based on unpromoted intelligence counts per entity type.
     """
     settings = get_memory_settings()
-    threshold = settings.get("lesson_threshold", 5)
-    trigger_days = settings.get("lesson_trigger_days")
+    global_knowledge_threshold = settings.get("knowledge_threshold", 5)
 
-    # Find confirmed intelligence not yet used in any Knowledge
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
+        
+        # 1. Group unpromoted intelligence by primary_entity_type
         cursor.execute("""
-            SELECT i.id, i.name, i.content, i.summary, i.knowledge_type, i.created_at
+            SELECT primary_entity_type, COUNT(*) as unused_count
             FROM intelligence i
             WHERE i.status = 'confirmed'
               AND NOT EXISTS (
                   SELECT 1 FROM knowledge l
                   WHERE i.id = ANY(l.source_intelligence_ids)
               )
-            ORDER BY i.created_at ASC
+            GROUP BY primary_entity_type
         """)
-        unused_insights = [dict(r) for r in cursor.fetchall()]
-
-    count = len(unused_insights)
-    if count == 0:
-        return
-
-    oldest_dt = unused_insights[0].get("created_at")
-    oldest_date = oldest_dt.date() if hasattr(oldest_dt, "date") else None
-
-    count_trigger = count >= threshold
-    days_trigger = (
-        trigger_days is not None
-        and oldest_date is not None
-        and (date.today() - oldest_date).days >= trigger_days
-        and count >= 2
-    )
-
-    if not (count_trigger or days_trigger):
-        return
-
-    reason = "count" if count_trigger else "days"
-    logger.info(f"Knowledge trigger ({reason}): {count} unused confirmed intelligence")
-    batch = unused_insights[:threshold] if count_trigger else unused_insights
-    await generate_knowledge_from_intelligence(batch)
+        entities = cursor.fetchall()
+        
+        for row in entities:
+            entity_type = row["primary_entity_type"]
+            count = row["unused_count"]
+            
+            # 2. Resolve the threshold for this specific entity type
+            config = _get_entity_type_config(entity_type)
+            threshold = config.get("knowledge_extraction_threshold") or global_knowledge_threshold
+            
+            if count >= threshold:
+                # 3. Fetch exact batch for this entity type
+                cursor.execute("""
+                    SELECT i.id, i.name, i.content, i.summary, i.knowledge_type, i.created_at
+                    FROM intelligence i
+                    WHERE i.status = 'confirmed'
+                      AND primary_entity_type = %s
+                      AND NOT EXISTS (
+                          SELECT 1 FROM knowledge l
+                          WHERE i.id = ANY(l.source_intelligence_ids)
+                      )
+                    ORDER BY i.created_at ASC
+                    LIMIT %s
+                """, (entity_type, threshold))
+                
+                batch = [dict(r) for r in cursor.fetchall()]
+                logger.info(f"Knowledge extraction trigger (count) for {entity_type}: {len(batch)} unused intelligence items")
+                # Immediately execute for this entity (run_lesson_check is inherently processed background asynchronously inside Queue worker)
+                await generate_knowledge_from_intelligence(batch)
 
 
 async def generate_knowledge_from_intelligence(intelligence: list):

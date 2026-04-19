@@ -537,6 +537,7 @@ export default function SettingsPage({ onDisconnect }) {
               settings={memorySettings}
               llmConfigs={llmConfigs}
               llmProviders={llmProviders}
+              entityTypes={entityTypes}
               onUpdateSettings={handleUpdateGeneralSettings}
               onSaveConfig={handleSaveLLMConfig}
               onDeleteConfig={handleDeleteLLMConfig}
