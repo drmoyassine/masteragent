@@ -1,10 +1,14 @@
-import React, { useState, useEffect } from "react";
-import { Database, Plus, Trash2, Tag, BookOpen, Settings, ChevronRight, Info } from "lucide-react";
+import React, { useState, useEffect, useCallback } from "react";
+import {
+    Database, Plus, Trash2, Tag, BookOpen, Settings, ChevronRight, Info,
+    Save, Loader2, Brain, Sparkles, Shield, Users, ChevronDown
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
 import {
     Card,
     CardContent,
@@ -19,51 +23,122 @@ import {
     DialogTitle,
     DialogFooter,
 } from "@/components/ui/dialog";
-import {
-    Collapsible,
-    CollapsibleContent,
-    CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import { toast } from "sonner";
-import { getEntityTypeConfig, updateEntityTypeConfig } from "@/lib/api";
+import {
+    getEntityTypeConfig,
+    updateEntityTypeConfig,
+    getEntitySubtypes,
+    createEntitySubtype,
+    deleteEntitySubtype,
+} from "@/lib/api";
+
+// ─── Default Intelligence Signals Template ─────────────────────────────────
+const CONTACT_INTELLIGENCE_SIGNALS = `## BUDGET & READINESS
+- Evidence of confirmed budget, approved spending, or pricing discussions
+- Funding stage, fiscal year timing, procurement process mentions
+
+## TIMELINE & MOMENTUM
+- Deadline commitments, go-live dates, implementation timelines
+- Urgency indicators, stalled deals, delays, or acceleration signals
+
+## STAKEHOLDERS & DECISION PROCESS
+- New decision-makers surfaced, champions identified, blockers revealed
+- Internal politics, approval chains, committee involvement
+
+## QUALIFICATION & FIT
+- Use-case alignment, technical requirements match/mismatch
+- Deal stage progression, trial/POC outcomes, competitive evaluations
+
+## OBJECTIONS & RISK
+- Pricing pushback, feature gaps, integration concerns
+- Competitor mentions, contract hesitation, legal/compliance blockers
+
+## PAIN POINTS & NEEDS
+- Explicit pain statements, workflow friction, unmet needs
+- Strategic priorities, growth plans, operational challenges`;
 
 const DEFAULT_NER_SCHEMA = {
     labels: ["person", "organization", "location", "product", "event", "date"],
 };
 
-function EntityTypeConfigPanel({ entityTypeName }) {
+// ─── Entity Detail Panel ────────────────────────────────────────────────────
+function EntityDetailPanel({ entityType, entityTypes }) {
     const [config, setConfig] = useState(null);
-    const [open, setOpen] = useState(false);
-    const [nerSchemaText, setNerSchemaText] = useState("");
-    const [nerSchemaError, setNerSchemaError] = useState("");
+    const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
 
-    const load = async () => {
+    // Sub-types
+    const [subtypes, setSubtypes] = useState([]);
+    const [newSubtype, setNewSubtype] = useState("");
+
+    // NER Schema
+    const [nerSchemaText, setNerSchemaText] = useState("");
+    const [nerSchemaError, setNerSchemaError] = useState("");
+
+    // Signals (local draft state)
+    const [intelSignals, setIntelSignals] = useState("");
+    const [knowledgeSignals, setKnowledgeSignals] = useState("");
+    const [signalsDirty, setSignalsDirty] = useState(false);
+
+    // Accordion state
+    const [openSections, setOpenSections] = useState({
+        subtypes: false,
+        ner: false,
+        intelligence: true,
+        knowledge: false,
+        thresholds: false,
+    });
+
+    const toggleSection = (key) =>
+        setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
+
+    // Find the entity type object to get its ID for subtypes
+    const entityTypeObj = entityTypes?.find((et) => et.name === entityType);
+
+    const loadConfig = useCallback(async () => {
+        setLoading(true);
         try {
-            const res = await getEntityTypeConfig(entityTypeName);
-            setConfig(res.data);
+            const res = await getEntityTypeConfig(entityType);
+            const data = res.data;
+            setConfig(data);
             setNerSchemaText(
-                res.data.ner_schema
-                    ? JSON.stringify(res.data.ner_schema, null, 2)
+                data.ner_schema
+                    ? JSON.stringify(data.ner_schema, null, 2)
                     : JSON.stringify(DEFAULT_NER_SCHEMA, null, 2)
             );
+            setIntelSignals(data.intelligence_signals_prompt || "");
+            setKnowledgeSignals(data.knowledge_signals_prompt || "");
+            setSignalsDirty(false);
         } catch {
-            // config may not exist yet — that's fine
+            // Config may not exist yet
+            setConfig({});
         }
-    };
+        setLoading(false);
+    }, [entityType]);
+
+    const loadSubtypes = useCallback(async () => {
+        if (!entityTypeObj?.id) return;
+        try {
+            const res = await getEntitySubtypes(entityTypeObj.id);
+            setSubtypes(res.data || []);
+        } catch {
+            setSubtypes([]);
+        }
+    }, [entityTypeObj?.id]);
 
     useEffect(() => {
-        if (open && !config) load();
-    }, [open]);
+        loadConfig();
+        loadSubtypes();
+    }, [loadConfig, loadSubtypes]);
 
-    const save = async (updates) => {
+    const saveField = async (updates) => {
         setSaving(true);
         try {
-            await updateEntityTypeConfig(entityTypeName, updates);
-            setConfig(prev => ({ ...prev, ...updates }));
-            toast.success(`${entityTypeName} config saved`);
+            await updateEntityTypeConfig(entityType, updates);
+            setConfig((prev) => ({ ...prev, ...updates }));
+            toast.success("Configuration saved");
         } catch {
-            toast.error("Failed to save config");
+            toast.error("Failed to save configuration");
         } finally {
             setSaving(false);
         }
@@ -73,98 +148,307 @@ function EntityTypeConfigPanel({ entityTypeName }) {
         try {
             const parsed = JSON.parse(nerSchemaText);
             setNerSchemaError("");
-            save({ ner_schema: parsed });
+            saveField({ ner_schema: parsed });
         } catch {
             setNerSchemaError("Invalid JSON");
         }
     };
 
-    if (!config && !open) {
+    const saveSignals = () => {
+        saveField({
+            intelligence_signals_prompt: intelSignals || null,
+            knowledge_signals_prompt: knowledgeSignals || null,
+        });
+        setSignalsDirty(false);
+    };
+
+    const handleAddSubtype = async () => {
+        if (!newSubtype.trim() || !entityTypeObj?.id) return;
+        try {
+            await createEntitySubtype({
+                entity_type_id: entityTypeObj.id,
+                name: newSubtype.trim(),
+            });
+            setNewSubtype("");
+            loadSubtypes();
+            toast.success("Sub-type added");
+        } catch {
+            toast.error("Failed to add sub-type");
+        }
+    };
+
+    const handleDeleteSubtype = async (id) => {
+        try {
+            await deleteEntitySubtype(id);
+            loadSubtypes();
+            toast.success("Sub-type removed");
+        } catch {
+            toast.error("Failed to remove sub-type");
+        }
+    };
+
+    if (loading) {
         return (
-            <Collapsible open={open} onOpenChange={setOpen}>
-                <CollapsibleTrigger asChild>
-                    <button className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground mt-1 transition-colors">
-                        <Settings className="w-3 h-3" />
-                        Configure NER &amp; schema
-                        <ChevronRight className={`w-3 h-3 transition-transform ${open ? "rotate-90" : ""}`} />
-                    </button>
-                </CollapsibleTrigger>
-                <CollapsibleContent />
-            </Collapsible>
+            <div className="flex items-center justify-center h-64">
+                <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+            </div>
         );
     }
 
-    return (
-        <Collapsible open={open} onOpenChange={setOpen}>
-            <CollapsibleTrigger asChild>
-                <button className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground mt-1 transition-colors">
-                    <Settings className="w-3 h-3" />
-                    Configure NER &amp; schema
-                    <ChevronRight className={`w-3 h-3 transition-transform ${open ? "rotate-90" : ""}`} />
-                </button>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-                {config && (
-                    <div className="mt-3 space-y-4 p-3 bg-muted/30 rounded-lg border border-border/50">
-
-                        {/* NER toggle + confidence */}
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <Label className="text-xs">NER enabled</Label>
-                                <p className="text-[10px] text-muted-foreground">Extract entities from interactions</p>
-                            </div>
-                            <Switch
-                                checked={config.ner_enabled ?? true}
-                                onCheckedChange={v => { setConfig(p => ({ ...p, ner_enabled: v })); save({ ner_enabled: v }); }}
-                            />
-                        </div>
-
-                        {/* NER Schema */}
-                        <div className="space-y-1">
-                            <div className="flex items-center gap-1.5">
-                                <Label className="text-xs font-mono">NER Schema (JSON)</Label>
-                                <Info className="w-3 h-3 text-muted-foreground" title='{"labels": ["person","organization",...]}' />
-                            </div>
-                            <Textarea
-                                value={nerSchemaText}
-                                onChange={e => { setNerSchemaText(e.target.value); setNerSchemaError(""); }}
-                                className="text-xs font-mono h-24 resize-none"
-                                placeholder='{"labels": ["person", "organization", ...]}'
-                            />
-                            {nerSchemaError && <p className="text-[10px] text-destructive">{nerSchemaError}</p>}
-                            <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={saveNerSchema} disabled={saving}>
-                                Save Schema
-                            </Button>
-                        </div>
-
-                        {/* Auto-approve / auto-promote */}
-                        <div className="grid grid-cols-2 gap-3">
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <Label className="text-xs">Auto-approve insights</Label>
-                                </div>
-                                <Switch
-                                    checked={config.insight_auto_approve ?? false}
-                                    onCheckedChange={v => { setConfig(p => ({ ...p, insight_auto_approve: v })); save({ insight_auto_approve: v }); }}
-                                />
-                            </div>
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <Label className="text-xs">Auto-promote lessons</Label>
-                                </div>
-                                <Switch
-                                    checked={config.lesson_auto_promote ?? false}
-                                    onCheckedChange={v => { setConfig(p => ({ ...p, lesson_auto_promote: v })); save({ lesson_auto_promote: v }); }}
-                                />
-                            </div>
-                        </div>
-                    </div>
+    // Accordion section helper
+    const Section = ({ id, icon: Icon, title, badge, children }) => (
+        <div className="border border-border/50 rounded-lg overflow-hidden">
+            <button
+                onClick={() => toggleSection(id)}
+                className="w-full flex items-center gap-2.5 px-4 py-3 text-left hover:bg-muted/30 transition-colors"
+            >
+                <Icon className="w-4 h-4 text-primary shrink-0" />
+                <span className="text-sm font-medium flex-1">{title}</span>
+                {badge && (
+                    <Badge variant="secondary" className="text-[10px] h-5">{badge}</Badge>
                 )}
-            </CollapsibleContent>
-        </Collapsible>
+                <ChevronDown
+                    className={`w-4 h-4 text-muted-foreground transition-transform ${openSections[id] ? "rotate-180" : ""
+                        }`}
+                />
+            </button>
+            {openSections[id] && (
+                <div className="px-4 pb-4 pt-1 space-y-3 border-t border-border/30 bg-muted/10">
+                    {children}
+                </div>
+            )}
+        </div>
+    );
+
+    return (
+        <div className="space-y-3">
+            {/* ─── Sub-types ──────────────────────────────────── */}
+            <Section id="subtypes" icon={Users} title="Sub-types" badge={subtypes.length || null}>
+                <div className="flex flex-wrap gap-1.5">
+                    {subtypes.map((st) => (
+                        <Badge
+                            key={st.id}
+                            variant="secondary"
+                            className="gap-1 pr-1 text-xs"
+                        >
+                            {st.name}
+                            <button
+                                onClick={() => handleDeleteSubtype(st.id)}
+                                className="ml-0.5 hover:text-destructive transition-colors"
+                            >
+                                <Trash2 className="w-3 h-3" />
+                            </button>
+                        </Badge>
+                    ))}
+                    {subtypes.length === 0 && (
+                        <p className="text-xs text-muted-foreground">No sub-types defined.</p>
+                    )}
+                </div>
+                <div className="flex gap-2">
+                    <Input
+                        value={newSubtype}
+                        onChange={(e) => setNewSubtype(e.target.value)}
+                        placeholder="Add sub-type..."
+                        className="text-xs h-8"
+                        onKeyDown={(e) => e.key === "Enter" && handleAddSubtype()}
+                    />
+                    <Button
+                        size="sm"
+                        variant="secondary"
+                        className="h-8 text-xs shrink-0"
+                        onClick={handleAddSubtype}
+                        disabled={!newSubtype.trim()}
+                    >
+                        <Plus className="w-3 h-3 mr-1" /> Add
+                    </Button>
+                </div>
+            </Section>
+
+            {/* ─── NER Config ──────────────────────────────────── */}
+            <Section id="ner" icon={Tag} title="Entity Recognition (NER)">
+                <div className="flex items-center justify-between">
+                    <div>
+                        <Label className="text-xs">NER enabled</Label>
+                        <p className="text-[10px] text-muted-foreground">
+                            Extract named entities from interactions
+                        </p>
+                    </div>
+                    <Switch
+                        checked={config?.ner_enabled ?? true}
+                        onCheckedChange={(v) => saveField({ ner_enabled: v })}
+                    />
+                </div>
+
+                <div className="space-y-1">
+                    <div className="flex items-center gap-1.5">
+                        <Label className="text-xs font-mono">NER Schema (JSON)</Label>
+                        <Info
+                            className="w-3 h-3 text-muted-foreground"
+                            title='{"labels": ["person","organization",...]}'
+                        />
+                    </div>
+                    <Textarea
+                        value={nerSchemaText}
+                        onChange={(e) => {
+                            setNerSchemaText(e.target.value);
+                            setNerSchemaError("");
+                        }}
+                        className="text-xs font-mono h-24 resize-none"
+                        placeholder='{"labels": ["person", "organization", ...]}'
+                    />
+                    {nerSchemaError && (
+                        <p className="text-[10px] text-destructive">{nerSchemaError}</p>
+                    )}
+                    <Button
+                        size="sm"
+                        variant="secondary"
+                        className="h-7 text-xs"
+                        onClick={saveNerSchema}
+                        disabled={saving}
+                    >
+                        Save Schema
+                    </Button>
+                </div>
+            </Section>
+
+            {/* ─── Intelligence Signals ──────────────────────── */}
+            <Section id="intelligence" icon={Brain} title="Intelligence Signals" badge={intelSignals ? "configured" : null}>
+                <p className="text-[10px] text-muted-foreground leading-relaxed">
+                    Define the signal categories the LLM should probe for when analyzing this entity type's memories.
+                    This text gets injected into the intelligence generation prompt as <code className="text-[10px] bg-muted px-1 rounded">{"{{ intelligence_signals }}"}</code>.
+                </p>
+                <Textarea
+                    value={intelSignals}
+                    onChange={(e) => {
+                        setIntelSignals(e.target.value);
+                        setSignalsDirty(true);
+                    }}
+                    className="text-xs font-mono h-48 resize-y"
+                    placeholder="## BUDGET & READINESS&#10;- Evidence of confirmed budget...&#10;&#10;## TIMELINE & MOMENTUM&#10;- Deadline commitments..."
+                />
+                {!intelSignals && (
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs gap-1"
+                        onClick={() => {
+                            setIntelSignals(CONTACT_INTELLIGENCE_SIGNALS);
+                            setSignalsDirty(true);
+                        }}
+                    >
+                        <Sparkles className="w-3 h-3" /> Load default contact signals
+                    </Button>
+                )}
+            </Section>
+
+            {/* ─── Knowledge Signals ──────────────────────────── */}
+            <Section id="knowledge" icon={BookOpen} title="Knowledge Signals" badge={knowledgeSignals ? "configured" : null}>
+                <p className="text-[10px] text-muted-foreground leading-relaxed">
+                    Define what types of generalizable knowledge should be extracted from this entity type's intelligence.
+                    Injected as <code className="text-[10px] bg-muted px-1 rounded">{"{{ knowledge_signals }}"}</code>.
+                </p>
+                <Textarea
+                    value={knowledgeSignals}
+                    onChange={(e) => {
+                        setKnowledgeSignals(e.target.value);
+                        setSignalsDirty(true);
+                    }}
+                    className="text-xs font-mono h-32 resize-y"
+                    placeholder="## PROCESS PATTERNS&#10;- Recurring workflows...&#10;&#10;## RISK INDICATORS&#10;- Common failure patterns..."
+                />
+            </Section>
+
+            {/* ─── Thresholds & Automation ────────────────────── */}
+            <Section id="thresholds" icon={Settings} title="Thresholds & Automation">
+                <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                        <Label className="text-xs">Intelligence extraction threshold</Label>
+                        <p className="text-[10px] text-muted-foreground">
+                            Memories needed before running intelligence extraction
+                        </p>
+                        <Input
+                            type="number"
+                            min={1}
+                            value={config?.intelligence_extraction_threshold ?? 10}
+                            onChange={(e) =>
+                                saveField({
+                                    intelligence_extraction_threshold:
+                                        parseInt(e.target.value) || 10,
+                                })
+                            }
+                            className="text-xs h-8 w-24"
+                        />
+                    </div>
+                    <div className="space-y-1">
+                        <Label className="text-xs">Knowledge extraction threshold</Label>
+                        <p className="text-[10px] text-muted-foreground">
+                            Intelligence items needed before knowledge generation
+                        </p>
+                        <Input
+                            type="number"
+                            min={1}
+                            value={config?.knowledge_extraction_threshold ?? ""}
+                            onChange={(e) =>
+                                saveField({
+                                    knowledge_extraction_threshold:
+                                        parseInt(e.target.value) || null,
+                                })
+                            }
+                            className="text-xs h-8 w-24"
+                            placeholder="global"
+                        />
+                    </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4 pt-2">
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <Label className="text-xs">Auto-approve intelligence</Label>
+                            <p className="text-[10px] text-muted-foreground">
+                                Skip draft → confirmed review
+                            </p>
+                        </div>
+                        <Switch
+                            checked={config?.intelligence_auto_approve ?? false}
+                            onCheckedChange={(v) =>
+                                saveField({ Intelligence_auto_approve: v })
+                            }
+                        />
+                    </div>
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <Label className="text-xs">Auto-promote knowledge</Label>
+                            <p className="text-[10px] text-muted-foreground">
+                                Auto-generate from confirmed intelligence
+                            </p>
+                        </div>
+                        <Switch
+                            checked={config?.knowledge_auto_promote ?? false}
+                            onCheckedChange={(v) =>
+                                saveField({ knowledge_auto_promote: v })
+                            }
+                        />
+                    </div>
+                </div>
+            </Section>
+
+            {/* ─── Save Signals FAB ───────────────────────────── */}
+            {signalsDirty && (
+                <div className="sticky bottom-4 flex justify-end pt-2">
+                    <Button onClick={saveSignals} disabled={saving} className="gap-1.5 shadow-lg">
+                        {saving ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                            <Save className="w-4 h-4" />
+                        )}
+                        Save Signal Configuration
+                    </Button>
+                </div>
+            )}
+        </div>
     );
 }
 
+// ─── Main Component ─────────────────────────────────────────────────────────
 export function KnowledgeModelSettings({
     entityTypes,
     lessonTypes,
@@ -174,80 +458,172 @@ export function KnowledgeModelSettings({
     setAddTypeDialogOpen,
     onAddType,
     onDeleteType,
-    loading
+    loading,
 }) {
-    const sections = [
-        { title: "Entity Types", icon: Tag, data: entityTypes, type: "entity", description: "Categories of things the system tracks" },
-        { title: "Knowledge Types", icon: BookOpen, data: lessonTypes, type: "lesson", description: "Categories for intelligence and knowledge classification" },
-    ];
+    const [selectedEntity, setSelectedEntity] = useState(null);
+
+    // Auto-select first entity type on load
+    useEffect(() => {
+        if (!selectedEntity && entityTypes?.length > 0) {
+            setSelectedEntity(entityTypes[0].name);
+        }
+    }, [entityTypes, selectedEntity]);
 
     return (
-        <div className="space-y-6 max-w-4xl">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {sections.map((section) => {
-                    const Icon = section.icon;
-                    return (
-                        <Card key={section.type}>
-                            <CardHeader className="pb-3">
-                                <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-2">
-                                        <Icon className="w-5 h-5 text-primary" />
-                                        <CardTitle className="text-lg">{section.title}</CardTitle>
-                                    </div>
-                                    <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        onClick={() => {
-                                            setNewType({ name: "", description: "", type: section.type });
-                                            setAddTypeDialogOpen(true);
-                                        }}
-                                    >
-                                        <Plus className="w-4 h-4" />
-                                    </Button>
-                                </div>
-                                <CardDescription className="text-xs">{section.description}</CardDescription>
-                            </CardHeader>
-                            <CardContent>
-                                <div className="space-y-2">
-                                    {section.data.length === 0 ? (
-                                        <p className="text-xs text-muted-foreground py-4 text-center border border-dashed rounded-lg">
-                                            No {section.title.toLowerCase()} defined.
+        <div className="flex gap-6 max-w-6xl h-[calc(100vh-200px)]">
+            {/* ─── Left Panel: Entity List ────────────────────── */}
+            <div className="w-56 shrink-0 flex flex-col">
+                <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
+                        Entity Types
+                    </h3>
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => {
+                            setNewType({ name: "", description: "", type: "entity" });
+                            setAddTypeDialogOpen(true);
+                        }}
+                    >
+                        <Plus className="w-4 h-4" />
+                    </Button>
+                </div>
+
+                <div className="space-y-1 flex-1 overflow-y-auto">
+                    {entityTypes.map((et) => {
+                        const isActive = selectedEntity === et.name;
+                        return (
+                            <button
+                                key={et.id}
+                                onClick={() => setSelectedEntity(et.name)}
+                                className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left transition-all group ${isActive
+                                        ? "bg-primary/10 border border-primary/30 text-primary"
+                                        : "hover:bg-muted/50 border border-transparent"
+                                    }`}
+                            >
+                                <span className="text-base">{et.icon || "📁"}</span>
+                                <div className="flex-1 min-w-0">
+                                    <p className={`text-sm truncate ${isActive ? "font-semibold" : "font-medium"}`}>
+                                        {et.name}
+                                    </p>
+                                    {et.description && (
+                                        <p className="text-[10px] text-muted-foreground truncate">
+                                            {et.description}
                                         </p>
-                                    ) : (
-                                        section.data.map((item) => (
-                                            <div key={item.id} className="rounded border bg-card/50 text-sm p-2">
-                                                <div className="flex items-center justify-between">
-                                                    <div className="min-w-0">
-                                                        <p className="font-medium truncate">{item.name || item.label}</p>
-                                                        <p className="text-[10px] text-muted-foreground truncate">{item.description}</p>
-                                                    </div>
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="icon"
-                                                        className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                                                        onClick={() => onDeleteType(section.type, item.id)}
-                                                    >
-                                                        <Trash2 className="w-3.5 h-3.5" />
-                                                    </Button>
-                                                </div>
-                                                {/* Entity types get inline config panel */}
-                                                {section.type === "entity" && (
-                                                    <EntityTypeConfigPanel entityTypeName={item.name} />
-                                                )}
-                                            </div>
-                                        ))
                                     )}
                                 </div>
-                            </CardContent>
-                        </Card>
-                    );
-                })}
+                                {isActive && (
+                                    <ChevronRight className="w-4 h-4 text-primary shrink-0" />
+                                )}
+                            </button>
+                        );
+                    })}
+
+                    {entityTypes.length === 0 && (
+                        <p className="text-xs text-muted-foreground text-center py-8">
+                            No entity types defined.
+                        </p>
+                    )}
+                </div>
+
+                {/* Knowledge Types link (secondary) */}
+                <div className="border-t border-border/50 pt-3 mt-3">
+                    <button
+                        onClick={() => {
+                            setNewType({ name: "", description: "", type: "lesson" });
+                            setAddTypeDialogOpen(true);
+                        }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-muted/30 rounded-lg transition-colors"
+                    >
+                        <BookOpen className="w-4 h-4 text-muted-foreground" />
+                        <div className="flex-1 min-w-0">
+                            <p className="text-xs font-medium">Knowledge Types</p>
+                            <p className="text-[10px] text-muted-foreground">
+                                {lessonTypes?.length || 0} types defined
+                            </p>
+                        </div>
+                        <Plus className="w-3 h-3 text-muted-foreground" />
+                    </button>
+                    {lessonTypes?.length > 0 && (
+                        <div className="flex flex-wrap gap-1 px-3 mt-1.5">
+                            {lessonTypes.map((lt) => (
+                                <Badge
+                                    key={lt.id}
+                                    variant="outline"
+                                    className="text-[10px] h-5 gap-1 pr-1"
+                                    style={{ borderColor: lt.color || "#6B7280" }}
+                                >
+                                    <span
+                                        className="w-1.5 h-1.5 rounded-full"
+                                        style={{ backgroundColor: lt.color || "#6B7280" }}
+                                    />
+                                    {lt.name}
+                                    <button
+                                        onClick={() => onDeleteType("lesson", lt.id)}
+                                        className="hover:text-destructive transition-colors"
+                                    >
+                                        <Trash2 className="w-2.5 h-2.5" />
+                                    </button>
+                                </Badge>
+                            ))}
+                        </div>
+                    )}
+                </div>
             </div>
 
+            {/* ─── Right Panel: Entity Config ─────────────────── */}
+            <div className="flex-1 overflow-y-auto pr-1">
+                {selectedEntity ? (
+                    <div>
+                        <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center gap-2">
+                                <span className="text-lg">
+                                    {entityTypes.find((et) => et.name === selectedEntity)?.icon || "📁"}
+                                </span>
+                                <div>
+                                    <h2 className="text-lg font-semibold capitalize">{selectedEntity}</h2>
+                                    <p className="text-xs text-muted-foreground">
+                                        {entityTypes.find((et) => et.name === selectedEntity)?.description || "Entity type configuration"}
+                                    </p>
+                                </div>
+                            </div>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-xs text-muted-foreground hover:text-destructive"
+                                onClick={() => {
+                                    const et = entityTypes.find((e) => e.name === selectedEntity);
+                                    if (et) onDeleteType("entity", et.id);
+                                }}
+                            >
+                                <Trash2 className="w-3.5 h-3.5 mr-1" /> Delete Entity Type
+                            </Button>
+                        </div>
+
+                        <EntityDetailPanel
+                            key={selectedEntity}
+                            entityType={selectedEntity}
+                            entityTypes={entityTypes}
+                        />
+                    </div>
+                ) : (
+                    <div className="flex items-center justify-center h-full text-muted-foreground">
+                        <div className="text-center">
+                            <Database className="w-10 h-10 mx-auto mb-3 opacity-30" />
+                            <p className="text-sm">Select an entity type to configure</p>
+                        </div>
+                    </div>
+                )}
+            </div>
+
+            {/* ─── Add Type Dialog ─────────────────────────────── */}
             <Dialog open={addTypeDialogOpen} onOpenChange={setAddTypeDialogOpen}>
                 <DialogContent>
                     <DialogHeader>
-                        <DialogTitle>Add {newType.type?.charAt(0).toUpperCase() + newType.type?.slice(1)} Type</DialogTitle>
+                        <DialogTitle>
+                            Add {newType.type === "entity" ? "Entity" : "Knowledge"} Type
+                        </DialogTitle>
                     </DialogHeader>
                     <div className="space-y-4 py-2">
                         <div className="space-y-2">
@@ -255,7 +631,7 @@ export function KnowledgeModelSettings({
                             <Input
                                 value={newType.name}
                                 onChange={(e) => setNewType({ ...newType, name: e.target.value })}
-                                placeholder="e.g. Project"
+                                placeholder={newType.type === "entity" ? "e.g. vendor" : "e.g. compliance"}
                             />
                         </div>
                         <div className="space-y-2">
@@ -268,8 +644,12 @@ export function KnowledgeModelSettings({
                         </div>
                     </div>
                     <DialogFooter>
-                        <Button variant="ghost" onClick={() => setAddTypeDialogOpen(false)}>Cancel</Button>
-                        <Button onClick={onAddType} disabled={!newType.name.trim()}>Add Type</Button>
+                        <Button variant="ghost" onClick={() => setAddTypeDialogOpen(false)}>
+                            Cancel
+                        </Button>
+                        <Button onClick={onAddType} disabled={!newType.name.trim()}>
+                            Add Type
+                        </Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>

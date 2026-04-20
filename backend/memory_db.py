@@ -496,7 +496,9 @@ def _run_migrations(cursor):
         ("knowledge_extraction_threshold", "INT DEFAULT NULL"),
         ("embedding_enabled", "BOOLEAN DEFAULT TRUE"),
         ("pii_scrub_knowledge", "BOOLEAN DEFAULT TRUE"),
-        ("metadata_field_map", "JSONB DEFAULT '{}'")
+        ("metadata_field_map", "JSONB DEFAULT '{}'"),
+        ("intelligence_signals_prompt", "TEXT DEFAULT NULL"),
+        ("knowledge_signals_prompt", "TEXT DEFAULT NULL"),
     ]:
         cursor.execute(f"ALTER TABLE memory_entity_type_config ADD COLUMN IF NOT EXISTS {col} {col_def}")
                 

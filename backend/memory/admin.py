@@ -388,6 +388,10 @@ async def update_entity_type_config(
         fields.append("pii_scrub_knowledge = %s"); values.append(body.pii_scrub_knowledge)
     if body.metadata_field_map is not None:
         fields.append("metadata_field_map = %s"); values.append(json.dumps(body.metadata_field_map))
+    if "intelligence_signals_prompt" in body.model_fields_set:
+        fields.append("intelligence_signals_prompt = %s"); values.append(body.intelligence_signals_prompt)
+    if "knowledge_signals_prompt" in body.model_fields_set:
+        fields.append("knowledge_signals_prompt = %s"); values.append(body.knowledge_signals_prompt)
 
     if not fields:
         raise HTTPException(status_code=400, detail="No fields to update")
