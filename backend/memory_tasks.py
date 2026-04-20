@@ -205,17 +205,22 @@ async def process_interaction(interaction_id: str):
             ))
             
     # Cache invalidation to reflect accurate embedding in ephemeral searches
-    flush_interaction_cache(interaction_id)
-    cache_interaction(interaction_id, {
-        "id": interaction_id,
-        "interaction_type": interaction["interaction_type"],
-        "agent_id": interaction.get("agent_id"),
-        "content": content,
-        "primary_entity_type": interaction["primary_entity_type"],
-        "primary_entity_id": interaction["primary_entity_id"],
-        "timestamp": str(interaction["timestamp"]),
-        "metadata_field_map": json.loads(interaction.get("metadata_field_map") or "{}"),
-    })
+    try:
+        mfm = interaction.get("metadata_field_map")
+        mfm_parsed = json.loads(mfm) if isinstance(mfm, str) else (mfm or {})
+        flush_interaction_cache(interaction_id)
+        cache_interaction(interaction_id, {
+            "id": interaction_id,
+            "interaction_type": interaction["interaction_type"],
+            "agent_id": interaction.get("agent_id"),
+            "content": content,
+            "primary_entity_type": interaction["primary_entity_type"],
+            "primary_entity_id": interaction["primary_entity_id"],
+            "timestamp": str(interaction["timestamp"]),
+            "metadata_field_map": mfm_parsed,
+        })
+    except Exception as e:
+        logger.warning(f"Cache update failed for interaction {interaction_id}: {e}")
 
     # Trigger Outbound Webhooks logic
     try:
@@ -358,12 +363,12 @@ async def run_daily_memory_generation(include_today: bool = False):
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        # Find entity+date combos with pending interactions
+        # Find entity+date combos with unprocessed interactions (pending or failed — content is intact either way)
         cursor.execute("""
             SELECT DISTINCT primary_entity_type, primary_entity_id,
                    DATE(timestamp) AS interaction_date
             FROM interactions
-            WHERE status = 'pending'
+            WHERE status IN ('pending', 'failed')
               AND DATE(timestamp) <= %s
             ORDER BY interaction_date
         """, (cutoff_date,))
@@ -389,7 +394,7 @@ async def run_daily_memory_generation(include_today: bool = False):
                 cursor.execute("""
                     UPDATE interactions SET status = 'done'
                     WHERE primary_entity_type = %s AND primary_entity_id = %s
-                      AND DATE(timestamp) = %s AND status = 'pending'
+                      AND DATE(timestamp) = %s AND status IN ('pending', 'failed')
                 """, (entity_type, entity_id, interaction_date))
                 continue
 
@@ -423,7 +428,7 @@ async def _generate_memory_for_entity(entity_type: str, entity_id: str, interact
             WHERE primary_entity_type = %s
               AND primary_entity_id = %s
               AND DATE(timestamp) = %s
-              AND status = 'pending'
+              AND status IN ('pending', 'failed')
             ORDER BY timestamp
         """, (entity_type, entity_id, interaction_date))
         interactions = [dict(r) for r in cursor.fetchall()]
@@ -508,10 +513,10 @@ async def _generate_memory_for_entity(entity_type: str, entity_id: str, interact
                 json.dumps(relationships), json.dumps(processing_errors)
             ))
 
-        # Mark interactions as done and clear ephemeral embeddings
+        # Mark interactions as done (covers both pending and failed) and clear ephemeral embeddings
         cursor.execute("""
             UPDATE interactions SET status = 'done', embedding = NULL
-            WHERE id = ANY(%s)
+            WHERE id = ANY(%s) AND status IN ('pending', 'failed')
         """, (interaction_ids,))
 
     # Flush from Redis
