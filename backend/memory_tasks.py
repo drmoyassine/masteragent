@@ -935,7 +935,7 @@ async def compact_entity(entity_type: str, entity_id: str):
     except Exception as e:
         logger.warning(f"Intelligence embedding failed: {e}")
 
-    auto_approve = config.get("insight_auto_approve", False)
+    auto_approve = config.get("intelligence_auto_approve", False)
     status = "confirmed" if auto_approve else "draft"
     insight_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
@@ -1267,15 +1267,15 @@ def _get_entity_type_config(entity_type: str) -> dict:
     except Exception as e:
         logger.warning(f"Could not load entity type config for {entity_type}: {e}")
     return {
-        "compaction_threshold": 10,
-        "insight_auto_approve": False,
-        "lesson_auto_promote": False,
+        "intelligence_extraction_threshold": 10,
+        "intelligence_auto_approve": False,
+        "knowledge_auto_promote": False,
         "ner_enabled": True,
         "ner_confidence_threshold": 0.5,
         "ner_schema": None,
-        "insight_trigger_days": None,
+        "knowledge_extraction_threshold": None,
         "embedding_enabled": True,
-        "pii_scrub_lessons": True,
+        "pii_scrub_knowledge": True,
         "metadata_field_map": {},
     }
 

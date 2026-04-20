@@ -1,7 +1,7 @@
 """
 memory/config.py — Memory system admin configuration endpoints
 
-Manages entity types, subtypes, lesson types, channel types, agents,
+Manages entity types, subtypes, knowledge types, channel types, agents,
 system prompts, LLM configs, and system settings.
 """
 import hashlib
@@ -25,7 +25,7 @@ from memory_models import (
     EntitySubtypeCreate, EntitySubtypeResponse,
     EntityTypeCreate, EntityTypeResponse,
     FetchModelsRequest, FetchModelsResponse,
-    LessonTypeCreate, LessonTypeResponse,
+    KnowledgeTypeCreate, KnowledgeTypeResponse,
     LLMConfigCreate, LLMConfigResponse, LLMConfigUpdate,
     MemorySettingsResponse, MemorySettingsUpdate,
     SystemPromptCreate, SystemPromptResponse,
@@ -113,35 +113,35 @@ async def delete_entity_subtype(subtype_id: str, user: dict = Depends(require_ad
 
 
 # ============================================
-# Admin Config Endpoints - Lesson Types
+# Admin Config Endpoints - Knowledge Types
 # ============================================
 
-@router.get("/config/knowledge_types", response_model=List[LessonTypeResponse])
-async def list_lesson_types(user: dict = Depends(require_admin_auth)):
-    return _list_config_table("memory_lesson_types")
+@router.get("/config/knowledge_types", response_model=List[KnowledgeTypeResponse])
+async def list_knowledge_types(user: dict = Depends(require_admin_auth)):
+    return _list_config_table("memory_knowledge_types")
 
-@router.post("/config/knowledge_types", response_model=LessonTypeResponse)
-async def create_knowledge_type(data: LessonTypeCreate, user: dict = Depends(require_admin_auth)):
+@router.post("/config/knowledge_types", response_model=KnowledgeTypeResponse)
+async def create_knowledge_type(data: KnowledgeTypeCreate, user: dict = Depends(require_admin_auth)):
     now = utcnow()
     type_id = str(uuid.uuid4())
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         try:
             cursor.execute(
-                "INSERT INTO memory_lesson_types (id, name, description, color, created_at) VALUES (%s, %s, %s, %s, %s)",
+                "INSERT INTO memory_knowledge_types (id, name, description, color, created_at) VALUES (%s, %s, %s, %s, %s)",
                 (type_id, data.name, data.description, data.color, now)
             )
         except Exception as e:
-            logger.error(f"Failed to create lesson type: {e}")
-            raise HTTPException(status_code=400, detail="Lesson type already exists")
-        cursor.execute("SELECT * FROM memory_lesson_types WHERE id = %s", (type_id,))
+            logger.error(f"Failed to create knowledge type: {e}")
+            raise HTTPException(status_code=400, detail="Knowledge type already exists")
+        cursor.execute("SELECT * FROM memory_knowledge_types WHERE id = %s", (type_id,))
         return dict(cursor.fetchone())
 
 @router.delete("/config/knowledge_types/{type_id}")
 async def delete_knowledge_type(type_id: str, user: dict = Depends(require_admin_auth)):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM memory_lesson_types WHERE id = %s", (type_id,))
+        cursor.execute("DELETE FROM memory_knowledge_types WHERE id = %s", (type_id,))
     return {"message": "Deleted"}
 
 
@@ -649,7 +649,7 @@ async def get_settings_endpoint(user: dict = Depends(require_admin_auth)):
         chunk_size=settings.get("chunk_size", 400), chunk_overlap=settings.get("chunk_overlap", 80),
         memory_generation_time=settings.get("memory_generation_time", "02:00"),
         memory_generation_mode=settings.get("memory_generation_mode", "ner_and_raw"),
-        auto_public_knowledge_enabled=bool(settings.get("auto_public_knowledge_enabled", 1)), auto_knowledge_threshold=settings.get("auto_knowledge_threshold", 5),
+        auto_knowledge_enabled=bool(settings.get("auto_knowledge_enabled", 1)), auto_knowledge_threshold=settings.get("auto_knowledge_threshold", 5),
         knowledge_threshold=settings.get("knowledge_threshold", 5), intelligence_extraction_threshold=settings.get("intelligence_extraction_threshold", 10),
         pii_scrubbing_enabled=bool(settings.get("pii_scrubbing_enabled", 1)),
         auto_share_scrubbed=bool(settings.get("auto_share_scrubbed", 0)), rate_limit_enabled=bool(settings.get("rate_limit_enabled", 0)),

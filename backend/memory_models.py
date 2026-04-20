@@ -140,12 +140,12 @@ class EntitySubtypeResponse(BaseModel):
     description: Optional[str] = None
     created_at: Timestamp
 
-class LessonTypeCreate(BaseModel):
+class KnowledgeTypeCreate(BaseModel):
     name: str
     description: Optional[str] = ""
     color: Optional[str] = "#22C55E"
 
-class LessonTypeResponse(BaseModel):
+class KnowledgeTypeResponse(BaseModel):
     id: str
     name: str
     description: Optional[str] = None
@@ -183,7 +183,7 @@ class AgentCreateResponse(AgentResponse):
     api_key: str  # Full key only on creation
 
 class SystemPromptCreate(BaseModel):
-    prompt_type: str  # summarization, lesson_extraction, entity_extraction, pii_detection
+    prompt_type: str  # summarization, knowledge_generation, intelligence_generation, entity_extraction, pii_scrubbing
     name: str
     prompt_text: str
     is_active: bool = True
@@ -205,7 +205,7 @@ class MemorySettingsUpdate(BaseModel):
     memory_generation_time: Optional[str] = "02:00"       # HH:MM UTC
     memory_generation_mode: Optional[str] = "ner_and_raw" # 'ner_only' | 'ner_and_raw'
     # Knowledge settings
-    auto_public_knowledge_enabled: Optional[bool] = True
+    auto_knowledge_enabled: Optional[bool] = True
     auto_knowledge_threshold: Optional[int] = 5
     knowledge_threshold: Optional[int] = 5             # N confirmed Intelligences → Knowledge
     intelligence_extraction_threshold: Optional[int] = 10
@@ -223,7 +223,7 @@ class MemorySettingsResponse(BaseModel):
     chunk_overlap: int
     memory_generation_time: str = "02:00"
     memory_generation_mode: str = "ner_and_raw"
-    auto_public_knowledge_enabled: bool
+    auto_knowledge_enabled: bool
     auto_knowledge_threshold: int
     knowledge_threshold: int = 5
     intelligence_extraction_threshold: int = 10

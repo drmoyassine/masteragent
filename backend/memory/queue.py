@@ -80,21 +80,21 @@ async def _process_bulk_job(job: Job, token: str):
             e_id = job.data.get("entity_id")
             if e_type and e_id:
                 await compact_entity(e_type, e_id)
-            p_conf = get_llm_config("insight_generation")
+            p_conf = get_llm_config("intelligence_generation")
             if p_conf and "rate_limit_rpm" in p_conf:
                 rpm = p_conf.get("rate_limit_rpm", 60)
-                
+
         elif job.name == "generate_lesson":
             await run_lesson_check()
-            p_conf = get_llm_config("insight_generation")
+            p_conf = get_llm_config("knowledge_generation")
             if p_conf and "rate_limit_rpm" in p_conf:
                 rpm = p_conf.get("rate_limit_rpm", 60)
-            
+
         elif job.name == "promote_to_lesson":
             i_id = job.data.get("insight_id")
             if i_id:
                 await promote_to_lesson(i_id)
-            p_conf = get_llm_config("insight_generation")
+            p_conf = get_llm_config("knowledge_generation")
             if p_conf and "rate_limit_rpm" in p_conf:
                 rpm = p_conf.get("rate_limit_rpm", 60)
                 

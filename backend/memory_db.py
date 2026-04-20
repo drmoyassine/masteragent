@@ -12,8 +12,8 @@ Tables:
               memory_llm_configs, memory_settings, memory_entity_type_config
   Tier 0:     interactions
   Tier 1:     memories
-  Tier 2:     private_knowledge
-  Tier 3:     public_knowledge
+  Tier 2:     intelligence
+  Tier 3:     knowledge
   Audit:      memory_audit_log
 """
 import json
@@ -131,8 +131,8 @@ def _create_config_tables(cursor):
             chunk_size                  INT DEFAULT 400,
             chunk_overlap               INT DEFAULT 80,
             pii_scrubbing_enabled       BOOLEAN DEFAULT FALSE,
-            auto_public_knowledge_enabled         BOOLEAN DEFAULT TRUE,
-            auto_knowledge_threshold       INT DEFAULT 5,
+            auto_knowledge_enabled      BOOLEAN DEFAULT TRUE,
+            auto_knowledge_threshold    INT DEFAULT 5,
             rate_limit_enabled          BOOLEAN DEFAULT TRUE,
             rate_limit_per_minute       INT DEFAULT 60,
             supabase_url                TEXT,
@@ -200,7 +200,7 @@ def _create_interaction_tables(cursor):
 
 
 def _create_memory_tier_tables(cursor):
-    """Tiers 1-3 + audit + webhooks: memories, private_knowledge, public_knowledge, audit_log, webhook_sources."""
+    """Tiers 1-3 + audit + webhooks: memories, intelligence, knowledge, audit_log, webhook_sources."""
     # Tier 1 — daily memory logs
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS memories (
@@ -372,6 +372,21 @@ def _run_migrations(cursor):
             UPDATE memory_system_prompts SET prompt_type = 'knowledge_generation' WHERE prompt_type = 'lesson_generation';
             UPDATE memory_system_prompts SET prompt_type = 'intelligence_generation' WHERE prompt_type = 'private_knowledge_generation';
             UPDATE memory_system_prompts SET prompt_type = 'knowledge_generation' WHERE prompt_type = 'public_knowledge_generation';
+        """)
+
+        # Rename memory_settings.auto_public_knowledge_enabled -> auto_knowledge_enabled
+        cursor.execute("""
+            DO $$
+            BEGIN
+                IF EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='memory_settings' AND column_name='auto_public_knowledge_enabled') THEN
+                    IF EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='memory_settings' AND column_name='auto_knowledge_enabled') THEN
+                        ALTER TABLE memory_settings DROP COLUMN auto_public_knowledge_enabled;
+                    ELSE
+                        ALTER TABLE memory_settings RENAME COLUMN auto_public_knowledge_enabled TO auto_knowledge_enabled;
+                    END IF;
+                END IF;
+            END
+            $$;
         """)
     except Exception as e:
         logger.warning(f"Taxonomy migration skipped/failed: {e}")
@@ -628,7 +643,7 @@ def _seed_defaults():
                     (entity_type_map["institution"], subtype)
                 )
 
-        # Lesson types
+        # Knowledge types
         for name, color in [
             ("process", "#22C55E"), ("risk", "#EF4444"), ("sales", "#3B82F6"),
             ("product", "#8B5CF6"), ("support", "#F59E0B"), ("other", "#6B7280")
@@ -767,7 +782,7 @@ def _seed_defaults():
             WHERE task_type = 'entity_extraction' AND inline_schema IS NULL
         """, ('{\n  "entities": ["Organization", "Person", "Location", "Product", "Event"]\n}',))
 
-        # Add insight default schema
+        # Add intelligence default schema
         cursor.execute("""
             UPDATE memory_llm_configs 
             SET inline_schema = %s 
