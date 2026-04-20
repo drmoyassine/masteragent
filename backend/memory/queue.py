@@ -43,7 +43,7 @@ async def _process_bulk_job(job: Job, token: str):
             _generate_memory_for_entity,
             compact_entity,
             run_lesson_check,
-            promote_to_lesson
+            promote_to_knowledge
         )
         from services.config_helpers import get_llm_config
         
@@ -93,7 +93,7 @@ async def _process_bulk_job(job: Job, token: str):
         elif job.name == "promote_to_lesson":
             i_id = job.data.get("insight_id")
             if i_id:
-                await promote_to_lesson(i_id)
+                await promote_to_knowledge(i_id)
             p_conf = get_llm_config("knowledge_generation")
             if p_conf and "rate_limit_rpm" in p_conf:
                 rpm = p_conf.get("rate_limit_rpm", 60)
