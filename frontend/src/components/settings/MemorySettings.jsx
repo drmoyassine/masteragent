@@ -337,30 +337,6 @@ function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProvide
                         </div>
                     </div>
 
-                    <div className="space-y-4 pt-2">
-                        <h4 className="text-sm font-semibold flex items-center gap-1.5 border-b pb-1">
-                            <Cpu className="w-4 h-4 text-indigo-500" />
-                            Queue Dynamics
-                        </h4>
-                        <div className="space-y-2">
-                            <Label className="text-xs font-mono">Max Background Concurrency</Label>
-                            <p className="text-[10px] text-muted-foreground mb-2 whitespace-nowrap overflow-hidden text-ellipsis w-full">
-                                Parallel BullMQ execution workers. Adjust if hitting LLM limits.
-                            </p>
-                            <Input
-                                type="number"
-                                min="1"
-                                max="50"
-                                value={settings.interactions_queue_concurrency || 5}
-                                onChange={(e) =>
-                                    onUpdateSettings(
-                                        "interactions_queue_concurrency",
-                                        parseInt(e.target.value) || 5
-                                    )
-                                }
-                            />
-                        </div>
-                    </div>
                 </CardContent>
             </Card>
 
@@ -498,21 +474,6 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
                             <Cpu className="w-4 h-4 text-indigo-500" />
                             Processing
                         </h4>
-                        <div className="space-y-2">
-                            <Label className="text-xs font-mono">Max Concurrency</Label>
-                            <Input
-                                type="number"
-                                min="1"
-                                max="50"
-                                value={settings.memory_queue_concurrency || 1}
-                                onChange={(e) =>
-                                    onUpdateSettings(
-                                        "memory_queue_concurrency",
-                                        parseInt(e.target.value) || 1
-                                    )
-                                }
-                            />
-                        </div>
                         <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-2">
                                 <Label className="text-xs font-mono">Max Retries</Label>
@@ -790,7 +751,7 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                 </p>
             </div>
 
-            {/* Unified Knowledge Configuration */}
+            {/* Knowledge Configuration — flat, no sub-section headers */}
             <Card>
                 <CardHeader className="pb-3">
                     <div className="flex items-center gap-2">
@@ -798,141 +759,54 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                         <CardTitle className="text-lg">Knowledge Configuration</CardTitle>
                     </div>
                     <CardDescription className="text-xs mt-1.5">
-                        Prior context, privacy controls, mining triggers, and processing throughput.
+                        Mining triggers and prior context for deduplication.
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
-                    {/* Â§ Prior Context */}
-                    <div className="space-y-4">
-                        <h4 className="text-sm font-semibold flex items-center gap-1.5 border-b pb-1">
-                            <Layers className="w-4 h-4 text-indigo-500" />
-                            Prior Context
-                        </h4>
-                        <p className="text-[10px] text-muted-foreground -mt-2">
-                            Existing knowledge items injected via semantic search during generation to prevent duplication.
-                        </p>
-                        <div className="space-y-2">
-                            <Label className="text-xs font-mono">Semantic Matches</Label>
-                            <Input
-                                type="number"
-                                min={0}
-                                max={10}
-                                value={settings.prior_knowledge_semantic_count !== undefined ? settings.prior_knowledge_semantic_count : 3}
-                                onChange={(e) =>
-                                    onUpdateSettings("prior_knowledge_semantic_count", parseInt(e.target.value) || 0)
-                                }
-                            />
-                            <p className="text-[10px] text-muted-foreground">
-                                Most similar existing knowledge items found via pgvector cosine search.
-                                Injected as "Existing Knowledge" so the LLM generates novel, non-redundant items.
-                            </p>
-                        </div>
-                        <p className="text-[10px] text-muted-foreground border-t pt-2">
-                            Knowledge is global (not entity-scoped). Set to 0 to disable deduplication context entirely.
+                    {/* Knowledge Threshold */}
+                    <div className="space-y-2">
+                        <Label className="text-xs font-mono">Knowledge Threshold (N intelligence items)</Label>
+                        <Input
+                            type="number"
+                            min={0}
+                            value={settings.knowledge_threshold || 5}
+                            onChange={(e) =>
+                                onUpdateSettings("knowledge_threshold", parseInt(e.target.value) || 0)
+                            }
+                        />
+                        <p className="text-[10px] text-muted-foreground">
+                            Generate a knowledge item after this many confirmed intelligence items accumulate. Set to 0 to disable auto-extraction.
                         </p>
                     </div>
 
-                    {/* Â§ PII Privacy */}
-                    <div className="space-y-4 pt-2">
-                        <h4 className="text-sm font-semibold flex items-center gap-1.5 border-b pb-1">
-                            <ShieldAlert className="w-4 h-4 text-red-500" />
-                            PII Privacy
-                        </h4>
-                        <div className="flex items-center justify-between">
-                            <div className="space-y-0.5">
-                                <Label>Enable PII Scrubbing</Label>
-                                <p className="text-[10px] text-muted-foreground">
-                                    Automatically strip PII from shared data
-                                </p>
-                            </div>
-                            <Switch
-                                checked={settings.pii_scrubbing_enabled}
-                                onCheckedChange={(v) => onUpdateSettings("pii_scrubbing_enabled", v)}
-                            />
-                        </div>
-                        <div className="flex items-center justify-between">
-                            <div className="space-y-0.5">
-                                <Label>Auto-share Scrubbed</Label>
-                                <p className="text-[10px] text-muted-foreground">
-                                    Automatically share PII-stripped memories
-                                </p>
-                            </div>
-                            <Switch
-                                checked={settings.auto_share_scrubbed}
-                                onCheckedChange={(v) => onUpdateSettings("auto_share_scrubbed", v)}
-                            />
-                        </div>
+                    {/* Entity-Specific Overrides */}
+                    <div className="space-y-3 border-t pt-4">
+                        <Label className="text-xs font-mono">Entity-Specific Overrides</Label>
+                        <p className="text-[10px] text-muted-foreground">
+                            Override the global threshold per entity type.
+                        </p>
+                        <ThresholdOverridesTable
+                            entityTypes={entityTypes}
+                            overrideKey="knowledge_extraction_threshold"
+                            globalFallback={settings.knowledge_threshold || 5}
+                        />
                     </div>
 
-                    {/* Â§ Mining */}
-                    <div className="space-y-4 pt-2">
-                        <h4 className="text-sm font-semibold flex items-center gap-1.5 border-b pb-1">
-                            <GraduationCap className="w-4 h-4 text-green-500" />
-                            Mining
-                        </h4>
-                        <div className="flex items-center justify-between">
-                            <div className="space-y-0.5">
-                                <Label>Auto-extract Knowledge</Label>
-                                <p className="text-[10px] text-muted-foreground">
-                                    Automatically mine knowledge from intelligence
-                                </p>
-                            </div>
-                            <Switch
-                                checked={settings.auto_knowledge_enabled}
-                                onCheckedChange={(v) => onUpdateSettings("auto_knowledge_enabled", v)}
-                            />
-                        </div>
-                        <div className="space-y-2">
-                            <Label className="text-xs font-mono">
-                                Knowledge Threshold (N intelligence items)
-                            </Label>
-                            <Input
-                                type="number"
-                                min={2}
-                                value={settings.knowledge_threshold || 5}
-                                onChange={(e) =>
-                                    onUpdateSettings("knowledge_threshold", parseInt(e.target.value))
-                                }
-                                disabled={!settings.auto_knowledge_enabled}
-                            />
-                            <p className="text-[10px] text-muted-foreground">
-                                Generate a knowledge item after this many confirmed intelligence items accumulate.
-                            </p>
-                        </div>
-                        <div className="space-y-3 pt-2 border-t border-border">
-                            <Label className="text-xs font-mono">Entity-Specific Overrides</Label>
-                            <p className="text-[10px] text-muted-foreground">
-                                Specify whether certain entities should extract knowledge at different rates.
-                            </p>
-                            <ThresholdOverridesTable
-                                entityTypes={entityTypes}
-                                overrideKey="knowledge_extraction_threshold"
-                                globalFallback={settings.knowledge_threshold || 5}
-                            />
-                        </div>
-                    </div>
-
-                    {/* Â§ Processing */}
-                    <div className="space-y-4 pt-2">
-                        <h4 className="text-sm font-semibold flex items-center gap-1.5 border-b pb-1">
-                            <Cpu className="w-4 h-4 text-indigo-500" />
-                            Processing
-                        </h4>
-                        <div className="space-y-2">
-                            <Label className="text-xs font-mono">Max Concurrency</Label>
-                            <Input
-                                type="number"
-                                min="1"
-                                max="50"
-                                value={settings.knowledge_queue_concurrency || 1}
-                                onChange={(e) =>
-                                    onUpdateSettings(
-                                        "knowledge_queue_concurrency",
-                                        parseInt(e.target.value) || 1
-                                    )
-                                }
-                            />
-                        </div>
+                    {/* Prior Context */}
+                    <div className="space-y-2 border-t pt-4">
+                        <Label className="text-xs font-mono">Prior Context — Semantic Matches</Label>
+                        <Input
+                            type="number"
+                            min={0}
+                            max={10}
+                            value={settings.prior_knowledge_semantic_count !== undefined ? settings.prior_knowledge_semantic_count : 3}
+                            onChange={(e) =>
+                                onUpdateSettings("prior_knowledge_semantic_count", parseInt(e.target.value) || 0)
+                            }
+                        />
+                        <p className="text-[10px] text-muted-foreground">
+                            Existing knowledge items injected via pgvector cosine search to prevent duplicates. Set to 0 to disable.
+                        </p>
                     </div>
                 </CardContent>
             </Card>
@@ -948,7 +822,7 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                     <CardTitle className="text-sm">Knowledge Pipeline</CardTitle>
                 </CardHeader>
                 <CardContent className="pt-4">
-                    <DraggablePipeline 
+                    <DraggablePipeline
                         title=""
                         pipelineStage="knowledge"
                         pipelineConfigs={publicPipelineNodes}
@@ -961,6 +835,59 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                         fetchErrors={fetchErrors}
                         onFetchModels={onFetchModels}
                     />
+                </CardContent>
+            </Card>
+
+            {/* Queue Performance — consolidated across all pipeline stages */}
+            <Card>
+                <CardHeader className="pb-3">
+                    <div className="flex items-center gap-2">
+                        <Cpu className="w-5 h-5 text-indigo-500" />
+                        <CardTitle className="text-lg">Queue Performance</CardTitle>
+                    </div>
+                    <CardDescription className="text-xs mt-1.5">
+                        BullMQ worker concurrency per pipeline. Reduce if hitting LLM rate limits.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent>
+                    <div className="grid grid-cols-3 gap-4">
+                        <div className="space-y-2">
+                            <Label className="text-xs font-mono">Interactions</Label>
+                            <Input
+                                type="number"
+                                min="1"
+                                max="50"
+                                value={settings.interactions_queue_concurrency || 5}
+                                onChange={(e) =>
+                                    onUpdateSettings("interactions_queue_concurrency", parseInt(e.target.value) || 5)
+                                }
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <Label className="text-xs font-mono">Memories</Label>
+                            <Input
+                                type="number"
+                                min="1"
+                                max="50"
+                                value={settings.memory_queue_concurrency || 1}
+                                onChange={(e) =>
+                                    onUpdateSettings("memory_queue_concurrency", parseInt(e.target.value) || 1)
+                                }
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <Label className="text-xs font-mono">Knowledge</Label>
+                            <Input
+                                type="number"
+                                min="1"
+                                max="50"
+                                value={settings.knowledge_queue_concurrency || 1}
+                                onChange={(e) =>
+                                    onUpdateSettings("knowledge_queue_concurrency", parseInt(e.target.value) || 1)
+                                }
+                            />
+                        </div>
+                    </div>
                 </CardContent>
             </Card>
         </div>

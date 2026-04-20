@@ -651,8 +651,7 @@ async def get_settings_endpoint(user: dict = Depends(require_admin_auth)):
         memory_generation_mode=settings.get("memory_generation_mode", "ner_and_raw"),
         auto_knowledge_enabled=bool(settings.get("auto_knowledge_enabled", 1)), auto_knowledge_threshold=settings.get("auto_knowledge_threshold", 5),
         knowledge_threshold=settings.get("knowledge_threshold", 5), intelligence_extraction_threshold=settings.get("intelligence_extraction_threshold", 10),
-        pii_scrubbing_enabled=bool(settings.get("pii_scrubbing_enabled", 1)),
-        auto_share_scrubbed=bool(settings.get("auto_share_scrubbed", 0)), rate_limit_enabled=bool(settings.get("rate_limit_enabled", 0)),
+        rate_limit_enabled=bool(settings.get("rate_limit_enabled", 0)),
         rate_limit_per_minute=settings.get("rate_limit_per_minute", 60), default_agent_access=settings.get("default_agent_access", "private")
     )
 

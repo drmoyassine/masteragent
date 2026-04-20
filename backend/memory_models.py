@@ -209,9 +209,6 @@ class MemorySettingsUpdate(BaseModel):
     auto_knowledge_threshold: Optional[int] = 5
     knowledge_threshold: Optional[int] = 5             # N confirmed Intelligences → Knowledge
     intelligence_extraction_threshold: Optional[int] = 10
-    # PII settings
-    pii_scrubbing_enabled: Optional[bool] = True
-    auto_share_scrubbed: Optional[bool] = False
     # Rate limits
     rate_limit_enabled: Optional[bool] = False
     rate_limit_per_minute: Optional[int] = 60
@@ -227,8 +224,6 @@ class MemorySettingsResponse(BaseModel):
     auto_knowledge_threshold: int
     knowledge_threshold: int = 5
     intelligence_extraction_threshold: int = 10
-    pii_scrubbing_enabled: bool
-    auto_share_scrubbed: bool
     rate_limit_enabled: bool
     rate_limit_per_minute: int
     default_agent_access: str

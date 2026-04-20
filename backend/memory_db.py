@@ -500,13 +500,15 @@ def _run_migrations(cursor):
     ]:
         cursor.execute(f"ALTER TABLE memory_entity_type_config ADD COLUMN IF NOT EXISTS {col} {col_def}")
                 
-    # Explicitly drop the legacy days columns
+    # Drop legacy and dead columns
     try:
         cursor.execute("ALTER TABLE memory_settings DROP COLUMN IF EXISTS knowledge_trigger_days")
         cursor.execute("ALTER TABLE memory_entity_type_config DROP COLUMN IF EXISTS insight_trigger_days")
         cursor.execute("ALTER TABLE memory_entity_type_config DROP COLUMN IF EXISTS intelligence_trigger_days")
+        cursor.execute("ALTER TABLE memory_settings DROP COLUMN IF EXISTS pii_scrubbing_enabled")
+        cursor.execute("ALTER TABLE memory_settings DROP COLUMN IF EXISTS auto_share_scrubbed")
     except Exception as e:
-        logger.warning(f"Drop days trigger columns skipped: {e}")
+        logger.warning(f"Drop legacy columns skipped: {e}")
         
     # Rename compaction_threshold to intelligence_extraction_threshold safely
     try:
