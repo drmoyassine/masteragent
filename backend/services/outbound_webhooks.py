@@ -134,38 +134,48 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
 
-        # Build dynamic query
-        query = """
-            SELECT id, interaction_type, content, metadata, timestamp, source
+        # Step 1: Check for NEW triggering interactions (matching conditions, not yet fired)
+        trigger_query = """
+            SELECT id, primary_entity_type
             FROM interactions
             WHERE primary_entity_id = %s
               AND status = 'pending'
               AND is_enriched = TRUE
               AND NOT (%s = ANY(outbound_webhooks_fired))
         """
-        params = [entity_id, webhook_id]
+        trigger_params = [entity_id, webhook_id]
 
-        if payload_mode == "trigger_only" and conditions:
-             for key, value in conditions.items():
+        if conditions:
+            for key, value in conditions.items():
                 if isinstance(value, list):
-                    query += f" AND {key} = ANY(%s)"
-                    params.append(value)
+                    trigger_query += f" AND {key} = ANY(%s)"
+                    trigger_params.append(value)
                 else:
-                    query += f" AND {key} = %s"
-                    params.append(value)
-                    
-        query += " ORDER BY timestamp ASC"
+                    trigger_query += f" AND {key} = %s"
+                    trigger_params.append(value)
 
-        cursor.execute(query, params)
-        interactions = cursor.fetchall()
-        
-        if not interactions:
+        cursor.execute(trigger_query, trigger_params)
+        trigger_rows = cursor.fetchall()
+
+        if not trigger_rows:
             logger.info("Outbound Webhook executed but no matching enriched interactions found.")
             return
 
-        interaction_ids = [str(i["id"]) for i in interactions]
+        # Resolve entity_type and collect IDs to flag as fired
+        entity_type = trigger_rows[0]["primary_entity_type"]
+        trigger_ids = [str(r["id"]) for r in trigger_rows]
+
+        # Step 2: Fetch ALL pending interactions for this entity (full conversation context)
+        cursor.execute("""
+            SELECT id, interaction_type, content, metadata, timestamp, source
+            FROM interactions
+            WHERE primary_entity_type = %s AND primary_entity_id = %s
+              AND status = 'pending'
+            ORDER BY timestamp ASC
+        """, (entity_type, entity_id))
+
         interaction_payload = []
-        for i in interactions:
+        for i in cursor.fetchall():
             interaction_payload.append({
                 "id": i["id"],
                 "interaction_type": i["interaction_type"],
@@ -175,48 +185,71 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
                 "source": i["source"]
             })
 
-        # Fetch memory if required
-        latest_memory = None
-        if wh["include_latest_memory"]:
-             cursor.execute("""
-                 SELECT id, date, content_summary, intents 
-                 FROM memories
-                 WHERE primary_entity_id = %s
-                 ORDER BY date DESC LIMIT 1
-             """, (entity_id,))
-             mem_row = cursor.fetchone()
-             if mem_row:
-                 latest_memory = {
-                     "id": mem_row["id"],
-                     "date": str(mem_row["date"]),
-                     "content_summary": mem_row["content_summary"],
-                     "intents": mem_row["intents"]
-                 }
+        # ── Entity context: the "uncondensed frontier" ──────────────────
+        intelligence_payload = []
+        uncompacted_memories = []
 
-        # Flag the items in DB immediately.
+        if wh["include_latest_memory"]:
+            # All confirmed intelligence for this entity (condensed from older memories)
+            cursor.execute("""
+                SELECT id, knowledge_type, name, content, summary, created_at
+                FROM intelligence
+                WHERE primary_entity_type = %s AND primary_entity_id = %s
+                  AND status = 'confirmed'
+                ORDER BY created_at ASC
+            """, (entity_type, entity_id))
+            for row in cursor.fetchall():
+                intelligence_payload.append({
+                    "id": row["id"],
+                    "knowledge_type": row["knowledge_type"],
+                    "name": row["name"],
+                    "content": row["content"],
+                    "summary": row["summary"],
+                    "created_at": str(row["created_at"])
+                })
+
+            # Uncompacted memories (not yet condensed into intelligence)
+            cursor.execute("""
+                SELECT id, date, content_summary, related_entities, intents
+                FROM memories
+                WHERE primary_entity_type = %s AND primary_entity_id = %s
+                  AND compacted = FALSE
+                ORDER BY date ASC
+            """, (entity_type, entity_id))
+            for row in cursor.fetchall():
+                uncompacted_memories.append({
+                    "id": row["id"],
+                    "date": str(row["date"]),
+                    "content_summary": row["content_summary"],
+                    "related_entities": row["related_entities"],
+                    "intents": row["intents"]
+                })
+
+        # Flag only the triggering interactions as fired (not the context ones)
         cursor.execute("""
             UPDATE interactions 
             SET outbound_webhooks_fired = array_append(outbound_webhooks_fired, %s)
             WHERE id = ANY(%s)
-        """, (webhook_id, interaction_ids))
+        """, (webhook_id, trigger_ids))
         conn.commit()
 
     # Fire Webhook Payload
     final_payload = {
         "webhook_id": webhook_id,
         "webhook_name": wh["name"],
+        "entity_type": entity_type,
         "entity_id": entity_id,
         "interactions": interaction_payload,
-        "latest_memory": latest_memory
+        "intelligence": intelligence_payload,
+        "uncompacted_memories": uncompacted_memories,
     }
     
     try:
-        # Fire and forget async call over httpx
         async with httpx.AsyncClient() as client:
             resp = await client.post(wh["url"], json=final_payload, timeout=10.0)
             if resp.status_code >= 400:
                 logger.warning(f"Outbound webhook returned status: {resp.status_code} ({resp.text})")
             else:
-                logger.info(f"Successfully posted {len(interactions)} interactions to {wh['url']}")
+                logger.info(f"Successfully posted {len(interaction_payload)} interactions + {len(intelligence_payload)} intelligence + {len(uncompacted_memories)} memories to {wh['url']}")
     except Exception as e:
         logger.error(f"Failed to post to outbound webhook {wh['name']}: {e}")
