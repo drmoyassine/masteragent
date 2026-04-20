@@ -78,6 +78,14 @@ export function InlineTaskConfigAccordion({
         }
     }, [expanded, config.task_type]);
 
+    // Auto-fetch models on expand when a provider is already configured
+    useEffect(() => {
+        if (!expanded || !formData.provider_id) return;
+        const provider = llmProviders.find(p => p.id === formData.provider_id);
+        const fetchable = provider && ["openai", "anthropic", "gemini", "openrouter", "ollama"].includes(provider.provider);
+        if (fetchable) onFetchModels(config.id, formData.provider_id);
+    }, [expanded]);
+
     const taskInfo = TASK_TYPE_LABELS[config.task_type] || {
         label: config.task_type,
         icon: Brain,
