@@ -1,7 +1,7 @@
 """
 memory/config.py — Memory system admin configuration endpoints
 
-Manages entity types, subtypes, knowledge types, channel types, agents,
+Manages entity types, subtypes, knowledge types, agents,
 system prompts, LLM configs, and system settings.
 """
 import hashlib
@@ -21,7 +21,6 @@ from memory.auth import require_admin_auth
 from services.config_helpers import get_memory_settings
 from memory_models import (
     AgentCreate, AgentCreateResponse, AgentResponse,
-    ChannelTypeCreate, ChannelTypeResponse,
     EntitySubtypeCreate, EntitySubtypeResponse,
     EntityTypeCreate, EntityTypeResponse,
     FetchModelsRequest, FetchModelsResponse,
@@ -145,37 +144,6 @@ async def delete_knowledge_type(type_id: str, user: dict = Depends(require_admin
     return {"message": "Deleted"}
 
 
-# ============================================
-# Admin Config Endpoints - Channel Types
-# ============================================
-
-@router.get("/config/channel-types", response_model=List[ChannelTypeResponse])
-async def list_channel_types(user: dict = Depends(require_admin_auth)):
-    return _list_config_table("memory_channel_types")
-
-@router.post("/config/channel-types", response_model=ChannelTypeResponse)
-async def create_channel_type(data: ChannelTypeCreate, user: dict = Depends(require_admin_auth)):
-    now = utcnow()
-    type_id = str(uuid.uuid4())
-    with get_memory_db_context() as conn:
-        cursor = conn.cursor()
-        try:
-            cursor.execute(
-                "INSERT INTO memory_channel_types (id, name, description, icon, created_at) VALUES (%s, %s, %s, %s, %s)",
-                (type_id, data.name, data.description, data.icon, now)
-            )
-        except Exception as e:
-            logger.error(f"Failed to create channel type: {e}")
-            raise HTTPException(status_code=400, detail="Channel type already exists")
-        cursor.execute("SELECT * FROM memory_channel_types WHERE id = %s", (type_id,))
-        return dict(cursor.fetchone())
-
-@router.delete("/config/channel-types/{type_id}")
-async def delete_channel_type(type_id: str, user: dict = Depends(require_admin_auth)):
-    with get_memory_db_context() as conn:
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM memory_channel_types WHERE id = %s", (type_id,))
-    return {"message": "Deleted"}
 
 
 # ============================================

@@ -40,9 +40,6 @@ import {
   getLessonTypes,
   createLessonType,
   deleteLessonType,
-  getChannelTypes,
-  createChannelType,
-  deleteChannelType,
   getMemorySettings,
   updateMemorySettings
 } from "@/lib/api";
@@ -84,7 +81,6 @@ export default function SettingsPage({ onDisconnect }) {
   const [memoryKeys, setMemoryKeys] = useState([]);
   const [entityTypes, setEntityTypes] = useState([]);
   const [lessonTypes, setLessonTypes] = useState([]);
-  const [channelTypes, setChannelTypes] = useState([]);
 
   // --- UI State ---
   const [updating, setUpdating] = useState(false);
@@ -125,8 +121,7 @@ export default function SettingsPage({ onDisconnect }) {
         pKeysRes,
         mKeysRes,
         entityRes,
-        lessonRes,
-        channelRes
+        lessonRes
       ] = await Promise.all([
         getSettings(),
         getMemorySettings(),
@@ -135,8 +130,7 @@ export default function SettingsPage({ onDisconnect }) {
         getApiKeys(),
         getAgents(),
         getEntityTypes(),
-        getLessonTypes(),
-        getChannelTypes()
+        getLessonTypes()
       ]);
 
       setSettings(promptSettingsRes.data);
@@ -152,7 +146,6 @@ export default function SettingsPage({ onDisconnect }) {
       setMemoryKeys(mKeysRes.data);
       setEntityTypes(entityRes.data);
       setLessonTypes(lessonRes.data);
-      setChannelTypes(channelRes.data);
     } catch (error) {
       toast.error("Failed to load settings data");
     } finally {
@@ -358,7 +351,6 @@ export default function SettingsPage({ onDisconnect }) {
     try {
       if (newType.type === "entity") await createEntityType(newType);
       else if (newType.type === "lesson") await createLessonType(newType);
-      else if (newType.type === "channel") await createChannelType(newType);
 
       toast.success(`${newType.type} type added`);
       setAddTypeDialogOpen(false);
@@ -373,7 +365,6 @@ export default function SettingsPage({ onDisconnect }) {
     try {
       if (type === "entity") await deleteEntityType(id);
       else if (type === "lesson") await deleteLessonType(id);
-      else if (type === "channel") await deleteChannelType(id);
 
       toast.success(`${type} type deleted`);
       loadAllData();
@@ -521,7 +512,6 @@ export default function SettingsPage({ onDisconnect }) {
             <KnowledgeModelSettings
               entityTypes={entityTypes}
               lessonTypes={lessonTypes}
-              channelTypes={channelTypes}
               newType={newType}
               setNewType={setNewType}
               addTypeDialogOpen={addTypeDialogOpen}

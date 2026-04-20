@@ -116,10 +116,6 @@ export const getLessonTypes = () => api.get('/memory/config/knowledge_types');
 export const createLessonType = (data) => api.post('/memory/config/knowledge_types', data);
 export const deleteLessonType = (id) => api.delete(`/memory/config/knowledge_types/${id}`);
 
-// Channel Types
-export const getChannelTypes = () => api.get('/memory/config/channel-types');
-export const createChannelType = (data) => api.post('/memory/config/channel-types', data);
-export const deleteChannelType = (id) => api.delete(`/memory/config/channel-types/${id}`);
 
 // Agents
 export const getAgents = () => api.get('/memory/config/agents');

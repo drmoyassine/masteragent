@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Database, Plus, Trash2, Tag, BookOpen, MessageSquare, Settings, ChevronRight, Info } from "lucide-react";
+import { Database, Plus, Trash2, Tag, BookOpen, Settings, ChevronRight, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -168,7 +168,6 @@ function EntityTypeConfigPanel({ entityTypeName }) {
 export function KnowledgeModelSettings({
     entityTypes,
     lessonTypes,
-    channelTypes,
     newType,
     setNewType,
     addTypeDialogOpen,
@@ -179,8 +178,7 @@ export function KnowledgeModelSettings({
 }) {
     const sections = [
         { title: "Entity Types", icon: Tag, data: entityTypes, type: "entity", description: "Categories of things the system tracks" },
-        { title: "Lesson Types", icon: BookOpen, data: lessonTypes, type: "lesson", description: "Types of lessons extracted from insights" },
-        { title: "Channel Types", icon: MessageSquare, data: channelTypes, type: "channel", description: "Sources of information (email, call, webhook...)" },
+        { title: "Knowledge Types", icon: BookOpen, data: lessonTypes, type: "lesson", description: "Categories for intelligence and knowledge classification" },
     ];
 
     return (
