@@ -93,6 +93,8 @@ export function InlineTaskConfigAccordion({
     // PII endpoints that are LLMs use prompting, custom endpoint services do not
     const hasPrompting = config.task_type !== "embedding" && !isZendata;
     const hidePromptInput = isGliner;
+    // Only entity_extraction actually reads inline_schema in the pipeline
+    const hasSchema = config.task_type === "entity_extraction" || isGliner;
     
     const canFetchModels = assignedProvider ? ["openai", "anthropic", "gemini", "openrouter", "ollama"].includes(assignedProvider.provider) : false;
 
@@ -233,7 +235,7 @@ export function InlineTaskConfigAccordion({
                                                 />
                                             </div>
                                         )}
-                                        <div className="space-y-2">
+                                        {hasSchema && (<div className="space-y-2">
                                         <Label className="flex justify-between">
                                             <span>{isGliner ? "GLiNER Extraction Labels (JSON Schema)" : "JSON Output Schema (Optional)"}</span>
                                             <span className="text-[10px] text-muted-foreground">Structured JSON / Schema Dict</span>
@@ -244,7 +246,7 @@ export function InlineTaskConfigAccordion({
                                             placeholder='{\n  "entities": ["Organization", "Person"]\n}'
                                             className="min-h-[100px] font-mono text-sm leading-relaxed text-green-400"
                                         />
-                                    </div>
+                                    </div>)}
                                 </div>
                             )}
                         </div>
