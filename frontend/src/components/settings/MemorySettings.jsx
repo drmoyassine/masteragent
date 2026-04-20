@@ -2,7 +2,8 @@ import React, { useState, useCallback } from "react";
 import {
     Clock, Play, ShieldAlert, Zap, GraduationCap, Brain,
     Layers, Scissors, FileText, Eye, AlertCircle, CheckCircle2,
-    Edit2, Cpu, Sparkles, BarChart3, Image as ImageIcon, ChevronDown, Settings
+    Edit2, Cpu, Sparkles, BarChart3, Image as ImageIcon, ChevronDown, Settings,
+    Plus, X
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
@@ -13,56 +14,174 @@ import { toast } from "sonner";
 import api, { triggerMemoryGeneration, fetchProviderModels } from "@/lib/api";
 import { useEffect } from "react";
 
-const ThresholdOverrideRow = ({ entityType, overrideKey, label, globalFallback }) => {
-    const [val, setVal] = useState("");
-    const [loading, setLoading] = useState(false);
+// ─── Threshold Overrides Table ──────────────────────────────────────────
+// Shows only entity types that have an active override.
+// Users pick from a dropdown to add new overrides and can remove them.
+function ThresholdOverridesTable({ entityTypes, overrideKey, globalFallback }) {
+    const [overrides, setOverrides] = useState({}); // { entityName: value }
+    const [loadingMap, setLoadingMap] = useState({});
+    const [initialLoading, setInitialLoading] = useState(true);
 
+    // Load existing overrides for all entity types on mount
     useEffect(() => {
-        api.get(`/memory/entity-type-config/${entityType.name}`)
-            .then(res => setVal(res.data[overrideKey] ?? ""))
-            .catch(err => console.error(err));
-    }, [entityType.name, overrideKey]);
+        if (!entityTypes?.length) { setInitialLoading(false); return; }
+        let cancelled = false;
+        (async () => {
+            const result = {};
+            await Promise.all(entityTypes.map(async (et) => {
+                try {
+                    const res = await api.get(`/memory/entity-type-config/${et.name}`);
+                    const val = res.data[overrideKey];
+                    if (val != null) result[et.name] = val;
+                } catch { /* entity config may not exist yet */ }
+            }));
+            if (!cancelled) { setOverrides(result); setInitialLoading(false); }
+        })();
+        return () => { cancelled = true; };
+    }, [entityTypes, overrideKey]);
 
-    const handleSave = async () => {
-        setLoading(true);
+    const activeNames = Object.keys(overrides);
+    const availableToAdd = (entityTypes || []).filter(et => !activeNames.includes(et.name));
+
+    const handleAdd = async (entityName) => {
+        // Set the override to the global fallback initially
+        setLoadingMap(p => ({ ...p, [entityName]: true }));
         try {
-            await api.patch(`/memory/entity-type-config/${entityType.name}`, {
-                [overrideKey]: val === "" ? null : parseInt(val, 10)
+            await api.patch(`/memory/entity-type-config/${entityName}`, {
+                [overrideKey]: globalFallback
             });
-            toast.success(`${entityType.name} threshold updated`);
-        } catch (err) {
-            console.error(err);
-            toast.error("Failed to update threshold");
+            setOverrides(p => ({ ...p, [entityName]: globalFallback }));
+            toast.success(`Override added for ${entityName}`);
+        } catch {
+            toast.error("Failed to add override");
         } finally {
-            setLoading(false);
+            setLoadingMap(p => ({ ...p, [entityName]: false }));
         }
     };
 
+    const handleChange = (entityName, val) => {
+        setOverrides(p => ({ ...p, [entityName]: val }));
+    };
+
+    const handleSave = async (entityName) => {
+        const val = overrides[entityName];
+        setLoadingMap(p => ({ ...p, [entityName]: true }));
+        try {
+            await api.patch(`/memory/entity-type-config/${entityName}`, {
+                [overrideKey]: val === "" ? null : parseInt(val, 10)
+            });
+            toast.success(`${entityName} threshold updated`);
+        } catch {
+            toast.error("Failed to update threshold");
+        } finally {
+            setLoadingMap(p => ({ ...p, [entityName]: false }));
+        }
+    };
+
+    const handleRemove = async (entityName) => {
+        setLoadingMap(p => ({ ...p, [entityName]: true }));
+        try {
+            await api.patch(`/memory/entity-type-config/${entityName}`, {
+                [overrideKey]: null
+            });
+            setOverrides(p => {
+                const next = { ...p };
+                delete next[entityName];
+                return next;
+            });
+            toast.success(`Override removed for ${entityName}`);
+        } catch {
+            toast.error("Failed to remove override");
+        } finally {
+            setLoadingMap(p => ({ ...p, [entityName]: false }));
+        }
+    };
+
+    const getEntityType = (name) => entityTypes?.find(et => et.name === name);
+
+    if (initialLoading) {
+        return <p className="text-xs text-muted-foreground py-2">Loading overrides…</p>;
+    }
+
     return (
-        <tr className="border-[1px] border-border text-sm bg-muted/20">
-            <td className="py-2.5 pl-4 w-48">
-                <div className="flex items-center gap-2 font-medium">
-                    <span className="text-lg leading-none">{entityType.icon}</span>
-                    <span className="capitalize">{entityType.name}</span>
+        <div className="space-y-3">
+            {activeNames.length > 0 && (
+                <div className="border border-border rounded-md overflow-hidden bg-background">
+                    <table className="w-full text-left">
+                        <thead className="bg-muted text-xs text-muted-foreground uppercase">
+                            <tr>
+                                <th className="py-2 pl-4 font-medium">Entity Type</th>
+                                <th className="py-2 pr-4 font-medium text-right">Threshold</th>
+                                <th className="py-2 pr-3 font-medium text-right w-10"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {activeNames.map(name => {
+                                const et = getEntityType(name);
+                                return (
+                                    <tr key={name} className="border-t border-border text-sm">
+                                        <td className="py-2.5 pl-4">
+                                            <div className="flex items-center gap-2 font-medium">
+                                                <span className="text-lg leading-none">{et?.icon || "📦"}</span>
+                                                <span className="capitalize">{name}</span>
+                                            </div>
+                                        </td>
+                                        <td className="py-2.5 pr-4 text-right">
+                                            <Input
+                                                type="number"
+                                                min={1}
+                                                className="w-20 h-7 text-right text-xs ml-auto"
+                                                value={overrides[name] ?? ""}
+                                                onChange={e => handleChange(name, e.target.value)}
+                                                onBlur={() => handleSave(name)}
+                                                disabled={loadingMap[name]}
+                                            />
+                                        </td>
+                                        <td className="py-2.5 pr-3 text-right">
+                                            <button
+                                                onClick={() => handleRemove(name)}
+                                                disabled={loadingMap[name]}
+                                                className="text-muted-foreground hover:text-red-400 transition-colors p-1 rounded"
+                                                title="Remove override"
+                                            >
+                                                <X className="w-3.5 h-3.5" />
+                                            </button>
+                                        </td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
                 </div>
-            </td>
-            <td className="py-2.5 pr-4 text-right">
-                <div className="flex items-center justify-end gap-2 text-xs">
-                    <Input 
-                        type="number" 
-                        min={1} 
-                        className="w-20 h-7 text-right text-xs" 
-                        placeholder={globalFallback ? String(globalFallback) : "Default"} 
-                        value={val} 
-                        onChange={e => setVal(e.target.value)}
-                        onBlur={handleSave}
-                        disabled={loading}
-                    />
+            )}
+            {activeNames.length === 0 && (
+                <p className="text-xs text-muted-foreground italic py-1">
+                    No overrides set — all entity types use the global default ({globalFallback}).
+                </p>
+            )}
+            {availableToAdd.length > 0 && (
+                <div className="flex items-center gap-2">
+                    <select
+                        id={`add-override-${overrideKey}`}
+                        className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
+                        defaultValue=""
+                        onChange={(e) => {
+                            if (e.target.value) { handleAdd(e.target.value); e.target.value = ""; }
+                        }}
+                    >
+                        <option value="" disabled>Select entity type…</option>
+                        {availableToAdd.map(et => (
+                            <option key={et.id} value={et.name}>{et.icon} {et.name}</option>
+                        ))}
+                    </select>
+                    <span className="text-[10px] text-muted-foreground">Add entity-specific override</span>
                 </div>
-            </td>
-        </tr>
+            )}
+        </div>
     );
-};import {
+}
+
+import {
     Card,
     CardContent,
     CardDescription,
@@ -632,26 +751,11 @@ function IntelligenceTab({ settings, onUpdateSettings, llmConfigs, llmProviders,
                         <p className="text-[10px] text-muted-foreground">
                             Different entities accumulate interactions at different rates (e.g., an API token might need 1,000 interactions before compaction, while a Contact might need only 5).
                         </p>
-                        <div className="border border-border rounded-md overflow-hidden bg-background">
-                            <table className="w-full text-left">
-                                <thead className="bg-muted text-xs text-muted-foreground uppercase">
-                                    <tr>
-                                        <th className="py-2 pl-4 font-medium">Entity Type</th>
-                                        <th className="py-2 pr-4 font-medium text-right">Threshold Override</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {entityTypes?.map(et => (
-                                        <ThresholdOverrideRow 
-                                            key={et.id} 
-                                            entityType={et} 
-                                            overrideKey="intelligence_extraction_threshold"
-                                            globalFallback={settings.intelligence_extraction_threshold || 10}
-                                        />
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
+                        <ThresholdOverridesTable
+                            entityTypes={entityTypes}
+                            overrideKey="intelligence_extraction_threshold"
+                            globalFallback={settings.intelligence_extraction_threshold || 10}
+                        />
                     </div>
                 </CardContent>
             </Card>
@@ -821,26 +925,11 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                         <p className="text-[10px] text-muted-foreground">
                             Specify whether certain entities should extract knowledge at different rates.
                         </p>
-                        <div className="border border-border rounded-md overflow-hidden bg-background">
-                            <table className="w-full text-left">
-                                <thead className="bg-muted text-xs text-muted-foreground uppercase">
-                                    <tr>
-                                        <th className="py-2 pl-4 font-medium">Entity Type</th>
-                                        <th className="py-2 pr-4 font-medium text-right">Threshold Override</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {entityTypes?.map(et => (
-                                        <ThresholdOverrideRow 
-                                            key={et.id} 
-                                            entityType={et} 
-                                            overrideKey="knowledge_extraction_threshold"
-                                            globalFallback={settings.knowledge_threshold || 5}
-                                        />
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
+                        <ThresholdOverridesTable
+                            entityTypes={entityTypes}
+                            overrideKey="knowledge_extraction_threshold"
+                            globalFallback={settings.knowledge_threshold || 5}
+                        />
                     </div>
                 </CardContent>
             </Card>
