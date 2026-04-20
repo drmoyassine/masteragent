@@ -6,6 +6,8 @@ import api, {
   getInteractionsAdmin,
   getMemoriesAdmin,
   getInsightsAdmin,
+  updateInsightAdmin,
+  deleteInsightAdmin,
   getLessonsAdmin,
   getMemoryDetail,
   updateMemoryAdmin,
@@ -22,7 +24,6 @@ import api, {
   getInteractionFilterOptionsAdmin,
   getEntityTypes,
   getLessonTypes,
-  getChannelTypes
 } from "@/lib/api";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { Button } from "@/components/ui/button";
@@ -130,6 +131,9 @@ export default function MemoryExplorerPage() {
 
   // Memory Inspector State
   const [editingMemory, setEditingMemory] = useState(null);
+
+  // Intelligence Inspector State
+  const [editingIntelligence, setEditingIntelligence] = useState(null);
   
   // Bulk Operations State
   const [selectedInteractionIds, setSelectedInteractionIds] = useState([]);
@@ -452,6 +456,46 @@ export default function MemoryExplorerPage() {
       toast.error("Failed to queue memories");
     } finally {
       setProcessingBulk(false);
+    }
+  };
+
+  const handleUpdateIntelligence = async () => {
+    if (!editingIntelligence) return;
+    try {
+      await updateInsightAdmin(editingIntelligence.id, {
+        name: editingIntelligence.name,
+        knowledge_type: editingIntelligence.knowledge_type,
+        content: editingIntelligence.content,
+        summary: editingIntelligence.summary,
+      });
+      toast.success("Intelligence updated");
+      setEditingIntelligence(null);
+      loadInsights();
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || "Failed to update intelligence");
+    }
+  };
+
+  const handleApproveIntelligence = async (id) => {
+    try {
+      await updateInsightAdmin(id, { status: "confirmed" });
+      toast.success("Intelligence confirmed");
+      loadInsights();
+    } catch (error) {
+      toast.error("Failed to confirm intelligence");
+    }
+  };
+
+  const handleDeleteIntelligence = async () => {
+    if (!editingIntelligence) return;
+    if (!window.confirm("Delete this intelligence record? This cannot be reversed.")) return;
+    try {
+      await deleteInsightAdmin(editingIntelligence.id);
+      toast.success("Intelligence deleted");
+      setEditingIntelligence(null);
+      loadInsights();
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || "Failed to delete intelligence");
     }
   };
 
@@ -802,7 +846,7 @@ export default function MemoryExplorerPage() {
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
                 <CardTitle>Intelligence (Tier 2)</CardTitle>
-                <CardDescription>Entity facts and preferences extracted from memories</CardDescription>
+                <CardDescription>Deal signals and behavioral patterns extracted from memories</CardDescription>
               </div>
               <Button variant="outline" size="icon" onClick={loadInsights} disabled={loading}>
                  <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
@@ -816,30 +860,49 @@ export default function MemoryExplorerPage() {
                         <TableHead>ID</TableHead>
                         <TableHead>Created</TableHead>
                         <TableHead>Entity</TableHead>
-                        <TableHead>Type</TableHead>
-                        <TableHead>Name / Summary</TableHead>
+                        <TableHead>Signal</TableHead>
+                        <TableHead>Intelligence Report</TableHead>
                         <TableHead>Status</TableHead>
+                        <TableHead>Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                        {intelligence.length === 0 ? (
-                          <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">No intelligence found.</TableCell></TableRow>
+                          <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">No intelligence found.</TableCell></TableRow>
                        ) : intelligence.map(ins => (
-                         <TableRow key={ins.id}>
+                         <TableRow key={ins.id} className="cursor-pointer hover:bg-accent/50" onClick={() => setEditingIntelligence(ins)}>
                             <TableCell className="font-mono text-muted-foreground">#{ins.seq_id}</TableCell>
                             <TableCell className="whitespace-nowrap">{format(new Date(ins.created_at), "MMM d, yyyy")}</TableCell>
                             <TableCell>
                                <Badge variant="outline" style={{ borderColor: stringToColor(ins.primary_entity_type), color: stringToColor(ins.primary_entity_type) }}>
                                   {ins.primary_entity_type}
                                </Badge>
-                               <span className="font-mono text-xs ml-2">{ins.primary_entity_id}</span>
+                               <span className="font-mono text-xs ml-2 text-muted-foreground">{ins.primary_entity_id}</span>
                             </TableCell>
-                            <TableCell><Badge variant="outline">{ins.insight_type}</Badge></TableCell>
                             <TableCell>
-                               <div className="font-medium">{ins.name}</div>
-                               <div className="text-sm text-muted-foreground line-clamp-1">{ins.summary}</div>
+                               <Badge variant="outline" style={{ borderColor: stringToColor(ins.knowledge_type), color: stringToColor(ins.knowledge_type) }}>
+                                  {ins.knowledge_type || "other"}
+                               </Badge>
                             </TableCell>
-                            <TableCell><Badge variant="secondary">{ins.status}</Badge></TableCell>
+                            <TableCell className="max-w-sm">
+                               <div className="font-medium text-sm">{ins.name}</div>
+                               <div className="text-xs text-muted-foreground line-clamp-2 mt-0.5">{ins.summary}</div>
+                            </TableCell>
+                            <TableCell>
+                               <Badge variant={ins.status === "confirmed" ? "default" : "secondary"}>{ins.status}</Badge>
+                            </TableCell>
+                            <TableCell onClick={(e) => e.stopPropagation()}>
+                               <div className="flex gap-1">
+                                 {ins.status === "draft" && (
+                                   <Button variant="ghost" size="icon" onClick={() => handleApproveIntelligence(ins.id)}>
+                                     <Check className="w-4 h-4 text-green-500" />
+                                   </Button>
+                                 )}
+                                 <Button variant="ghost" size="icon" onClick={() => setEditingIntelligence(ins)}>
+                                   <Edit className="w-4 h-4" />
+                                 </Button>
+                               </div>
+                            </TableCell>
                          </TableRow>
                        ))}
                     </TableBody>
@@ -930,6 +993,107 @@ export default function MemoryExplorerPage() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Intelligence Inspector Dialog */}
+      <Dialog open={!!editingIntelligence} onOpenChange={() => setEditingIntelligence(null)}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Intelligence Inspector</DialogTitle>
+            <DialogDescription>Review and edit the intelligence report for this entity</DialogDescription>
+          </DialogHeader>
+          {editingIntelligence && (
+            <ScrollArea className="flex-1 overflow-y-auto pr-4">
+              <div className="space-y-4 py-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Entity Type</Label>
+                    <div className="font-medium">{editingIntelligence.primary_entity_type}</div>
+                  </div>
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Entity ID</Label>
+                    <div className="font-mono text-sm">{editingIntelligence.primary_entity_id}</div>
+                  </div>
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Created</Label>
+                    <div className="font-medium">{format(new Date(editingIntelligence.created_at), "MMM d, yyyy")}</div>
+                  </div>
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Status</Label>
+                    <Badge variant={editingIntelligence.status === "confirmed" ? "default" : "secondary"} className="mt-1">
+                      {editingIntelligence.status}
+                    </Badge>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label>Title</Label>
+                    <Input
+                      value={editingIntelligence.name || ""}
+                      onChange={(e) => setEditingIntelligence({ ...editingIntelligence, name: e.target.value })}
+                      className="mt-1"
+                    />
+                  </div>
+                  <div>
+                    <Label>Signal Type</Label>
+                    <Input
+                      value={editingIntelligence.knowledge_type || ""}
+                      onChange={(e) => setEditingIntelligence({ ...editingIntelligence, knowledge_type: e.target.value })}
+                      className="mt-1 font-mono text-sm"
+                      placeholder="e.g. risk, budget, objection"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <Label>Intelligence Report</Label>
+                  <Textarea
+                    value={editingIntelligence.content || ""}
+                    onChange={(e) => setEditingIntelligence({ ...editingIntelligence, content: e.target.value })}
+                    rows={7}
+                    className="mt-1 text-sm"
+                  />
+                </div>
+
+                <div>
+                  <Label>Summary <span className="text-muted-foreground text-xs font-normal">(one-line actionable takeaway)</span></Label>
+                  <Textarea
+                    value={editingIntelligence.summary || ""}
+                    onChange={(e) => setEditingIntelligence({ ...editingIntelligence, summary: e.target.value })}
+                    rows={2}
+                    className="mt-1 text-sm"
+                  />
+                </div>
+
+                {editingIntelligence.source_memory_ids?.length > 0 && (
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Source Memories ({editingIntelligence.source_memory_ids.length})</Label>
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {editingIntelligence.source_memory_ids.map((id, i) => (
+                        <Badge key={i} variant="outline" className="font-mono text-xs">{id.slice(0, 8)}...</Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </ScrollArea>
+          )}
+          <DialogFooter className="mt-4 sm:justify-between">
+            <Button variant="destructive" onClick={handleDeleteIntelligence} disabled={!editingIntelligence}>
+              <Trash2 className="w-4 h-4 mr-2" /> Delete
+            </Button>
+            <div className="flex gap-2">
+              {editingIntelligence?.status === "draft" && (
+                <Button variant="outline" onClick={() => { handleApproveIntelligence(editingIntelligence.id); setEditingIntelligence(null); }}>
+                  <Check className="w-4 h-4 mr-2 text-green-500" /> Confirm
+                </Button>
+              )}
+              <Button variant="outline" onClick={() => setEditingIntelligence(null)}>Cancel</Button>
+              <Button onClick={handleUpdateIntelligence} disabled={!editingIntelligence}>Save Changes</Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Memory Inspector Dialog */}
       <Dialog open={!!editingMemory} onOpenChange={() => setEditingMemory(null)}>
