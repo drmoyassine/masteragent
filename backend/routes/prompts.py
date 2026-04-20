@@ -329,6 +329,13 @@ async def create_section(
         success = await storage_service.create_section(folder_path, filename, section_data.content, version)
         if not success:
             raise HTTPException(status_code=500, detail="Failed to create section")
+            
+        content_data = await storage_service.get_prompt_content(folder_path, version)
+        if content_data and "manifest" in content_data:
+            manifest = content_data["manifest"]
+            if filename not in manifest.get("sections", []):
+                manifest.setdefault("sections", []).append(filename)
+                await storage_service.update_manifest(folder_path, manifest, version)
     except HTTPException:
         raise
     except Exception as e:
@@ -398,6 +405,13 @@ async def delete_section(
         success = await storage_service.delete_section(folder_path, filename, version)
         if not success:
             raise HTTPException(status_code=404, detail="Section not found")
+            
+        content_data = await storage_service.get_prompt_content(folder_path, version)
+        if content_data and "manifest" in content_data:
+            manifest = content_data["manifest"]
+            if filename in manifest.get("sections", []):
+                manifest["sections"].remove(filename)
+                await storage_service.update_manifest(folder_path, manifest, version)
     except HTTPException:
         raise
     except Exception as e:
@@ -425,15 +439,23 @@ async def reorder_sections(
 
     try:
         storage_service = get_storage_service(user["id"])
+        new_sections_list = []
         for i, section in enumerate(reorder_data.sections):
             old_filename = section["filename"]
             name = section.get("name", old_filename.split("_", 1)[1].replace(".md", ""))
             new_filename = f"{str(i + 1).zfill(2)}_{name}.md"
+            new_sections_list.append(new_filename)
             if old_filename != new_filename:
                 section_data = await storage_service.get_section(folder_path, old_filename, version)
                 if section_data:
                     await storage_service.create_section(folder_path, new_filename, section_data["content"], version)
                     await storage_service.delete_section(folder_path, old_filename, version)
+                    
+        content_data = await storage_service.get_prompt_content(folder_path, version)
+        if content_data and "manifest" in content_data:
+            manifest = content_data["manifest"]
+            manifest["sections"] = new_sections_list
+            await storage_service.update_manifest(folder_path, manifest, version)
     except HTTPException:
         raise
     except Exception as e:
