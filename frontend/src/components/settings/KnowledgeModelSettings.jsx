@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import {
-    Database, Plus, Trash2, Tag, BookOpen, Settings, ChevronRight, Info,
-    Save, Loader2, Brain, Sparkles, Shield, Users, ChevronDown
+    Database, Plus, Trash2, BookOpen, Settings, ChevronRight,
+    Save, Loader2, Brain, Sparkles, Users, ChevronDown
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -57,9 +57,7 @@ const CONTACT_INTELLIGENCE_SIGNALS = `## BUDGET & READINESS
 - Explicit pain statements, workflow friction, unmet needs
 - Strategic priorities, growth plans, operational challenges`;
 
-const DEFAULT_NER_SCHEMA = {
-    labels: ["person", "organization", "location", "product", "event", "date"],
-};
+
 
 // ─── Entity Detail Panel ────────────────────────────────────────────────────
 function EntityDetailPanel({ entityType, entityTypes }) {
@@ -71,9 +69,6 @@ function EntityDetailPanel({ entityType, entityTypes }) {
     const [subtypes, setSubtypes] = useState([]);
     const [newSubtype, setNewSubtype] = useState("");
 
-    // NER Schema
-    const [nerSchemaText, setNerSchemaText] = useState("");
-    const [nerSchemaError, setNerSchemaError] = useState("");
 
     // Signals (local draft state)
     const [intelSignals, setIntelSignals] = useState("");
@@ -83,7 +78,6 @@ function EntityDetailPanel({ entityType, entityTypes }) {
     // Accordion state
     const [openSections, setOpenSections] = useState({
         subtypes: false,
-        ner: false,
         intelligence: true,
         knowledge: false,
         thresholds: false,
@@ -101,11 +95,6 @@ function EntityDetailPanel({ entityType, entityTypes }) {
             const res = await getEntityTypeConfig(entityType);
             const data = res.data;
             setConfig(data);
-            setNerSchemaText(
-                data.ner_schema
-                    ? JSON.stringify(data.ner_schema, null, 2)
-                    : JSON.stringify(DEFAULT_NER_SCHEMA, null, 2)
-            );
             setIntelSignals(data.intelligence_signals_prompt || "");
             setKnowledgeSignals(data.knowledge_signals_prompt || "");
             setSignalsDirty(false);
@@ -144,15 +133,6 @@ function EntityDetailPanel({ entityType, entityTypes }) {
         }
     };
 
-    const saveNerSchema = () => {
-        try {
-            const parsed = JSON.parse(nerSchemaText);
-            setNerSchemaError("");
-            saveField({ ner_schema: parsed });
-        } catch {
-            setNerSchemaError("Invalid JSON");
-        }
-    };
 
     const saveSignals = () => {
         saveField({
@@ -264,52 +244,6 @@ function EntityDetailPanel({ entityType, entityTypes }) {
                 </div>
             </Section>
 
-            {/* ─── NER Config ──────────────────────────────────── */}
-            <Section id="ner" icon={Tag} title="Entity Recognition (NER)">
-                <div className="flex items-center justify-between">
-                    <div>
-                        <Label className="text-xs">NER enabled</Label>
-                        <p className="text-[10px] text-muted-foreground">
-                            Extract named entities from interactions
-                        </p>
-                    </div>
-                    <Switch
-                        checked={config?.ner_enabled ?? true}
-                        onCheckedChange={(v) => saveField({ ner_enabled: v })}
-                    />
-                </div>
-
-                <div className="space-y-1">
-                    <div className="flex items-center gap-1.5">
-                        <Label className="text-xs font-mono">NER Schema (JSON)</Label>
-                        <Info
-                            className="w-3 h-3 text-muted-foreground"
-                            title='{"labels": ["person","organization",...]}'
-                        />
-                    </div>
-                    <Textarea
-                        value={nerSchemaText}
-                        onChange={(e) => {
-                            setNerSchemaText(e.target.value);
-                            setNerSchemaError("");
-                        }}
-                        className="text-xs font-mono h-24 resize-none"
-                        placeholder='{"labels": ["person", "organization", ...]}'
-                    />
-                    {nerSchemaError && (
-                        <p className="text-[10px] text-destructive">{nerSchemaError}</p>
-                    )}
-                    <Button
-                        size="sm"
-                        variant="secondary"
-                        className="h-7 text-xs"
-                        onClick={saveNerSchema}
-                        disabled={saving}
-                    >
-                        Save Schema
-                    </Button>
-                </div>
-            </Section>
 
             {/* ─── Intelligence Signals ──────────────────────── */}
             <Section id="intelligence" icon={Brain} title="Intelligence Signals" badge={intelSignals ? "configured" : null}>
