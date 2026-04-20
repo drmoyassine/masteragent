@@ -497,11 +497,21 @@ def _run_migrations(cursor):
         ("embedding_enabled", "BOOLEAN DEFAULT TRUE"),
         ("pii_scrub_knowledge", "BOOLEAN DEFAULT TRUE"),
         ("metadata_field_map", "JSONB DEFAULT '{}'"),
-        ("intelligence_signals_prompt", "TEXT DEFAULT NULL"),
-        ("knowledge_signals_prompt", "TEXT DEFAULT NULL"),
+        ("intelligence_signals_prompt", "JSONB DEFAULT NULL"),
+        ("knowledge_signals_prompt", "JSONB DEFAULT NULL"),
     ]:
         cursor.execute(f"ALTER TABLE memory_entity_type_config ADD COLUMN IF NOT EXISTS {col} {col_def}")
                 
+    # Migrate signal columns from TEXT to JSONB (if they were created as TEXT in a prior version)
+    for col in ("intelligence_signals_prompt", "knowledge_signals_prompt"):
+        try:
+            cursor.execute(f"""
+                ALTER TABLE memory_entity_type_config
+                ALTER COLUMN {col} TYPE JSONB USING {col}::jsonb
+            """)
+        except Exception:
+            conn.rollback()  # Column already JSONB or empty — safe to skip
+
     # Drop legacy and dead columns
     try:
         cursor.execute("ALTER TABLE memory_settings DROP COLUMN IF EXISTS knowledge_trigger_days")

@@ -1,21 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
-    Database, Plus, Trash2, BookOpen, Settings, ChevronRight,
-    Save, Loader2, Brain, Sparkles, Users, ChevronDown, Smile
+    Database, Plus, Trash2, Settings, ChevronRight,
+    Save, Loader2, Brain, Sparkles, Users, ChevronDown, BookOpen, Pencil, X
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import {
-    Card,
-    CardContent,
-    CardDescription,
-    CardHeader,
-    CardTitle,
-} from "@/components/ui/card";
 import {
     Dialog,
     DialogContent,
@@ -33,30 +25,15 @@ import {
     deleteEntitySubtype,
 } from "@/lib/api";
 
-// ─── Default Intelligence Signals Template ─────────────────────────────────
-const CONTACT_INTELLIGENCE_SIGNALS = `## BUDGET & READINESS
-- Evidence of confirmed budget, approved spending, or pricing discussions
-- Funding stage, fiscal year timing, procurement process mentions
-
-## TIMELINE & MOMENTUM
-- Deadline commitments, go-live dates, implementation timelines
-- Urgency indicators, stalled deals, delays, or acceleration signals
-
-## STAKEHOLDERS & DECISION PROCESS
-- New decision-makers surfaced, champions identified, blockers revealed
-- Internal politics, approval chains, committee involvement
-
-## QUALIFICATION & FIT
-- Use-case alignment, technical requirements match/mismatch
-- Deal stage progression, trial/POC outcomes, competitive evaluations
-
-## OBJECTIONS & RISK
-- Pricing pushback, feature gaps, integration concerns
-- Competitor mentions, contract hesitation, legal/compliance blockers
-
-## PAIN POINTS & NEEDS
-- Explicit pain statements, workflow friction, unmet needs
-- Strategic priorities, growth plans, operational challenges`;
+// ─── Default Intelligence Signals Template (structured) ─────────────────────
+const DEFAULT_CONTACT_SIGNALS = [
+    { name: "Budget & Readiness", description: "Evidence of confirmed budget, approved spending, pricing discussions, fiscal year timing, procurement process mentions" },
+    { name: "Timeline & Momentum", description: "Deadline commitments, go-live dates, implementation timelines, urgency indicators, stalled deals, delays or acceleration" },
+    { name: "Stakeholders & Decision Process", description: "New decision-makers surfaced, champions identified, blockers revealed, approval chains, committee involvement" },
+    { name: "Qualification & Fit", description: "Use-case alignment, technical requirements match/mismatch, deal stage progression, trial/POC outcomes, competitive evaluations" },
+    { name: "Objections & Risk", description: "Pricing pushback, feature gaps, integration concerns, competitor mentions, contract hesitation, legal/compliance blockers" },
+    { name: "Pain Points & Needs", description: "Explicit pain statements, workflow friction, unmet needs, strategic priorities, growth plans, operational challenges" },
+];
 
 // ─── Curated Entity Emoji Set ───────────────────────────────────────────────
 const ENTITY_ICONS = [
@@ -106,7 +83,134 @@ function EmojiPicker({ currentIcon, onSelect, size = "text-lg" }) {
     );
 }
 
+// ─── Signal Card List ────────────────────────────────────────────────────────
+function SignalList({ signals, onChange, defaultTemplate, defaultLabel }) {
+    const [newName, setNewName] = useState("");
+    const [newDesc, setNewDesc] = useState("");
+    const [editIdx, setEditIdx] = useState(null);
+    const [editName, setEditName] = useState("");
+    const [editDesc, setEditDesc] = useState("");
 
+    const addSignal = () => {
+        if (!newName.trim()) return;
+        onChange([...(signals || []), { name: newName.trim(), description: newDesc.trim() }]);
+        setNewName("");
+        setNewDesc("");
+    };
+
+    const removeSignal = (idx) => {
+        onChange((signals || []).filter((_, i) => i !== idx));
+    };
+
+    const startEdit = (idx) => {
+        setEditIdx(idx);
+        setEditName(signals[idx].name);
+        setEditDesc(signals[idx].description);
+    };
+
+    const saveEdit = () => {
+        if (editIdx === null) return;
+        const updated = [...(signals || [])];
+        updated[editIdx] = { name: editName.trim(), description: editDesc.trim() };
+        onChange(updated);
+        setEditIdx(null);
+    };
+
+    const cancelEdit = () => setEditIdx(null);
+
+    return (
+        <div className="space-y-2">
+            {/* Existing signals */}
+            {(signals || []).map((signal, idx) => (
+                <div key={idx} className="border border-border/40 rounded-md p-2.5 bg-background/50 group">
+                    {editIdx === idx ? (
+                        <div className="space-y-2">
+                            <Input
+                                value={editName}
+                                onChange={(e) => setEditName(e.target.value)}
+                                className="text-xs h-7 font-medium"
+                                autoFocus
+                            />
+                            <Input
+                                value={editDesc}
+                                onChange={(e) => setEditDesc(e.target.value)}
+                                className="text-xs h-7"
+                                placeholder="Description..."
+                            />
+                            <div className="flex gap-1.5">
+                                <Button size="sm" className="h-6 text-[10px] px-2" onClick={saveEdit}>Save</Button>
+                                <Button size="sm" variant="ghost" className="h-6 text-[10px] px-2" onClick={cancelEdit}>Cancel</Button>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="flex items-start gap-2">
+                            <div className="flex-1 min-w-0">
+                                <p className="text-xs font-medium">{signal.name}</p>
+                                {signal.description && (
+                                    <p className="text-[10px] text-muted-foreground mt-0.5 leading-relaxed">{signal.description}</p>
+                                )}
+                            </div>
+                            <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                                <button onClick={() => startEdit(idx)} className="p-1 hover:bg-muted rounded" title="Edit">
+                                    <Pencil className="w-3 h-3 text-muted-foreground" />
+                                </button>
+                                <button onClick={() => removeSignal(idx)} className="p-1 hover:bg-destructive/10 rounded" title="Remove">
+                                    <Trash2 className="w-3 h-3 text-muted-foreground hover:text-destructive" />
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            ))}
+
+            {/* Empty state with template loader */}
+            {(!signals || signals.length === 0) && defaultTemplate && (
+                <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs gap-1 w-full border-dashed"
+                    onClick={() => onChange(defaultTemplate)}
+                >
+                    <Sparkles className="w-3 h-3" /> {defaultLabel || "Load default signals"}
+                </Button>
+            )}
+
+            {/* Add new signal */}
+            <div className="border border-dashed border-border/50 rounded-md p-2.5 space-y-1.5">
+                <div className="flex gap-2">
+                    <Input
+                        value={newName}
+                        onChange={(e) => setNewName(e.target.value)}
+                        placeholder="Signal name..."
+                        className="text-xs h-7 flex-1"
+                        onKeyDown={(e) => e.key === "Enter" && addSignal()}
+                    />
+                    <Button
+                        size="sm"
+                        variant="secondary"
+                        className="h-7 text-[10px] px-2 shrink-0"
+                        onClick={addSignal}
+                        disabled={!newName.trim()}
+                    >
+                        <Plus className="w-3 h-3 mr-0.5" /> Add
+                    </Button>
+                </div>
+                {newName.trim() && (
+                    <Input
+                        value={newDesc}
+                        onChange={(e) => setNewDesc(e.target.value)}
+                        placeholder="Description (what to look for)..."
+                        className="text-xs h-7"
+                        onKeyDown={(e) => e.key === "Enter" && addSignal()}
+                    />
+                )}
+            </div>
+        </div>
+    );
+}
+
+
+// ─── Entity Detail Panel ────────────────────────────────────────────────────
 function EntityDetailPanel({ entityType, entityTypes }) {
     const [config, setConfig] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -116,10 +220,9 @@ function EntityDetailPanel({ entityType, entityTypes }) {
     const [subtypes, setSubtypes] = useState([]);
     const [newSubtype, setNewSubtype] = useState("");
 
-
-    // Signals (local draft state)
-    const [intelSignals, setIntelSignals] = useState("");
-    const [knowledgeSignals, setKnowledgeSignals] = useState("");
+    // Signals (local draft state — structured arrays)
+    const [intelSignals, setIntelSignals] = useState([]);
+    const [knowledgeSignals, setKnowledgeSignals] = useState([]);
     const [signalsDirty, setSignalsDirty] = useState(false);
 
     // Accordion state
@@ -142,8 +245,8 @@ function EntityDetailPanel({ entityType, entityTypes }) {
             const res = await getEntityTypeConfig(entityType);
             const data = res.data;
             setConfig(data);
-            setIntelSignals(data.intelligence_signals_prompt || "");
-            setKnowledgeSignals(data.knowledge_signals_prompt || "");
+            setIntelSignals(data.intelligence_signals_prompt || []);
+            setKnowledgeSignals(data.knowledge_signals_prompt || []);
             setSignalsDirty(false);
         } catch {
             // Config may not exist yet
@@ -180,11 +283,10 @@ function EntityDetailPanel({ entityType, entityTypes }) {
         }
     };
 
-
     const saveSignals = () => {
         saveField({
-            intelligence_signals_prompt: intelSignals || null,
-            knowledge_signals_prompt: knowledgeSignals || null,
+            intelligence_signals_prompt: intelSignals.length > 0 ? intelSignals : null,
+            knowledge_signals_prompt: knowledgeSignals.length > 0 ? knowledgeSignals : null,
         });
         setSignalsDirty(false);
     };
@@ -291,51 +393,27 @@ function EntityDetailPanel({ entityType, entityTypes }) {
                 </div>
             </Section>
 
-
             {/* ─── Intelligence Signals ──────────────────────── */}
-            <Section id="intelligence" icon={Brain} title="Intelligence Signals" badge={intelSignals ? "configured" : null}>
+            <Section id="intelligence" icon={Brain} title="Intelligence Signals" badge={intelSignals.length || null}>
                 <p className="text-[10px] text-muted-foreground leading-relaxed">
                     Define the signal categories the LLM should probe for when analyzing this entity type's memories.
-                    This text gets injected into the intelligence generation prompt as <code className="text-[10px] bg-muted px-1 rounded">{"{{ intelligence_signals }}"}</code>.
                 </p>
-                <Textarea
-                    value={intelSignals}
-                    onChange={(e) => {
-                        setIntelSignals(e.target.value);
-                        setSignalsDirty(true);
-                    }}
-                    className="text-xs font-mono h-48 resize-y"
-                    placeholder="## BUDGET & READINESS&#10;- Evidence of confirmed budget...&#10;&#10;## TIMELINE & MOMENTUM&#10;- Deadline commitments..."
+                <SignalList
+                    signals={intelSignals}
+                    onChange={(v) => { setIntelSignals(v); setSignalsDirty(true); }}
+                    defaultTemplate={DEFAULT_CONTACT_SIGNALS}
+                    defaultLabel="Load default contact signals"
                 />
-                {!intelSignals && (
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-7 text-xs gap-1"
-                        onClick={() => {
-                            setIntelSignals(CONTACT_INTELLIGENCE_SIGNALS);
-                            setSignalsDirty(true);
-                        }}
-                    >
-                        <Sparkles className="w-3 h-3" /> Load default contact signals
-                    </Button>
-                )}
             </Section>
 
             {/* ─── Knowledge Signals ──────────────────────────── */}
-            <Section id="knowledge" icon={BookOpen} title="Knowledge Signals" badge={knowledgeSignals ? "configured" : null}>
+            <Section id="knowledge" icon={BookOpen} title="Knowledge Signals" badge={knowledgeSignals.length || null}>
                 <p className="text-[10px] text-muted-foreground leading-relaxed">
-                    Define what types of generalizable knowledge should be extracted from this entity type's intelligence.
-                    Injected as <code className="text-[10px] bg-muted px-1 rounded">{"{{ knowledge_signals }}"}</code>.
+                    Define what types of generalizable knowledge should be extracted from confirmed intelligence.
                 </p>
-                <Textarea
-                    value={knowledgeSignals}
-                    onChange={(e) => {
-                        setKnowledgeSignals(e.target.value);
-                        setSignalsDirty(true);
-                    }}
-                    className="text-xs font-mono h-32 resize-y"
-                    placeholder="## PROCESS PATTERNS&#10;- Recurring workflows...&#10;&#10;## RISK INDICATORS&#10;- Common failure patterns..."
+                <SignalList
+                    signals={knowledgeSignals}
+                    onChange={(v) => { setKnowledgeSignals(v); setSignalsDirty(true); }}
                 />
             </Section>
 
@@ -432,7 +510,6 @@ function EntityDetailPanel({ entityType, entityTypes }) {
 // ─── Main Component ─────────────────────────────────────────────────────────
 export function KnowledgeModelSettings({
     entityTypes,
-    lessonTypes,
     newType,
     setNewType,
     addTypeDialogOpen,
@@ -519,50 +596,6 @@ export function KnowledgeModelSettings({
                         </p>
                     )}
                 </div>
-
-                {/* Knowledge Types link (secondary) */}
-                <div className="border-t border-border/50 pt-3 mt-3">
-                    <button
-                        onClick={() => {
-                            setNewType({ name: "", description: "", type: "lesson" });
-                            setAddTypeDialogOpen(true);
-                        }}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-muted/30 rounded-lg transition-colors"
-                    >
-                        <BookOpen className="w-4 h-4 text-muted-foreground" />
-                        <div className="flex-1 min-w-0">
-                            <p className="text-xs font-medium">Knowledge Types</p>
-                            <p className="text-[10px] text-muted-foreground">
-                                {lessonTypes?.length || 0} types defined
-                            </p>
-                        </div>
-                        <Plus className="w-3 h-3 text-muted-foreground" />
-                    </button>
-                    {lessonTypes?.length > 0 && (
-                        <div className="flex flex-wrap gap-1 px-3 mt-1.5">
-                            {lessonTypes.map((lt) => (
-                                <Badge
-                                    key={lt.id}
-                                    variant="outline"
-                                    className="text-[10px] h-5 gap-1 pr-1"
-                                    style={{ borderColor: lt.color || "#6B7280" }}
-                                >
-                                    <span
-                                        className="w-1.5 h-1.5 rounded-full"
-                                        style={{ backgroundColor: lt.color || "#6B7280" }}
-                                    />
-                                    {lt.name}
-                                    <button
-                                        onClick={() => onDeleteType("lesson", lt.id)}
-                                        className="hover:text-destructive transition-colors"
-                                    >
-                                        <Trash2 className="w-2.5 h-2.5" />
-                                    </button>
-                                </Badge>
-                            ))}
-                        </div>
-                    )}
-                </div>
             </div>
 
             {/* ─── Right Panel: Entity Config ─────────────────── */}
@@ -623,13 +656,11 @@ export function KnowledgeModelSettings({
                 )}
             </div>
 
-            {/* ─── Add Type Dialog ─────────────────────────────── */}
+            {/* ─── Add Entity Type Dialog ──────────────────────── */}
             <Dialog open={addTypeDialogOpen} onOpenChange={setAddTypeDialogOpen}>
                 <DialogContent>
                     <DialogHeader>
-                        <DialogTitle>
-                            Add {newType.type === "entity" ? "Entity" : "Knowledge"} Type
-                        </DialogTitle>
+                        <DialogTitle>Add Entity Type</DialogTitle>
                     </DialogHeader>
                     <div className="space-y-4 py-2">
                         <div className="space-y-2">
@@ -637,7 +668,7 @@ export function KnowledgeModelSettings({
                             <Input
                                 value={newType.name}
                                 onChange={(e) => setNewType({ ...newType, name: e.target.value })}
-                                placeholder={newType.type === "entity" ? "e.g. vendor" : "e.g. compliance"}
+                                placeholder="e.g. vendor"
                             />
                         </div>
                         <div className="space-y-2">

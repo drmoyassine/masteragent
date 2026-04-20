@@ -37,9 +37,6 @@ import {
   getEntityTypes,
   createEntityType,
   deleteEntityType,
-  getLessonTypes,
-  createLessonType,
-  deleteLessonType,
   getMemorySettings,
   updateMemorySettings
 } from "@/lib/api";
@@ -80,7 +77,6 @@ export default function SettingsPage({ onDisconnect }) {
   const [promptsKeys, setPromptsKeys] = useState([]);
   const [memoryKeys, setMemoryKeys] = useState([]);
   const [entityTypes, setEntityTypes] = useState([]);
-  const [lessonTypes, setLessonTypes] = useState([]);
 
   // --- UI State ---
   const [updating, setUpdating] = useState(false);
@@ -120,8 +116,7 @@ export default function SettingsPage({ onDisconnect }) {
         llmRes,
         pKeysRes,
         mKeysRes,
-        entityRes,
-        lessonRes
+        entityRes
       ] = await Promise.all([
         getSettings(),
         getMemorySettings(),
@@ -129,8 +124,7 @@ export default function SettingsPage({ onDisconnect }) {
         getLLMConfigs(),
         getApiKeys(),
         getAgents(),
-        getEntityTypes(),
-        getLessonTypes()
+        getEntityTypes()
       ]);
 
       setSettings(promptSettingsRes.data);
@@ -145,7 +139,6 @@ export default function SettingsPage({ onDisconnect }) {
       setPromptsKeys(pKeysRes.data);
       setMemoryKeys(mKeysRes.data);
       setEntityTypes(entityRes.data);
-      setLessonTypes(lessonRes.data);
     } catch (error) {
       toast.error("Failed to load settings data");
     } finally {
@@ -349,10 +342,8 @@ export default function SettingsPage({ onDisconnect }) {
   // Knowledge Model
   const handleAddType = async () => {
     try {
-      if (newType.type === "entity") await createEntityType(newType);
-      else if (newType.type === "lesson") await createLessonType(newType);
-
-      toast.success(`${newType.type} type added`);
+      await createEntityType(newType);
+      toast.success("Entity type added");
       setAddTypeDialogOpen(false);
       loadAllData();
     } catch (error) {
@@ -361,12 +352,10 @@ export default function SettingsPage({ onDisconnect }) {
   };
 
   const handleDeleteType = async (type, id) => {
-    if (!window.confirm(`Are you sure you want to delete this ${type} type?`)) return;
+    if (!window.confirm(`Are you sure you want to delete this entity type?`)) return;
     try {
-      if (type === "entity") await deleteEntityType(id);
-      else if (type === "lesson") await deleteLessonType(id);
-
-      toast.success(`${type} type deleted`);
+      await deleteEntityType(id);
+      toast.success("Entity type deleted");
       loadAllData();
     } catch (error) {
       toast.error("Failed to delete type");
@@ -511,7 +500,6 @@ export default function SettingsPage({ onDisconnect }) {
           {activeTab === "model" && (
             <KnowledgeModelSettings
               entityTypes={entityTypes}
-              lessonTypes={lessonTypes}
               newType={newType}
               setNewType={setNewType}
               addTypeDialogOpen={addTypeDialogOpen}

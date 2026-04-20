@@ -389,9 +389,11 @@ async def update_entity_type_config(
     if body.metadata_field_map is not None:
         fields.append("metadata_field_map = %s"); values.append(json.dumps(body.metadata_field_map))
     if "intelligence_signals_prompt" in body.model_fields_set:
-        fields.append("intelligence_signals_prompt = %s"); values.append(body.intelligence_signals_prompt)
+        fields.append("intelligence_signals_prompt = %s")
+        values.append(json.dumps(body.intelligence_signals_prompt) if body.intelligence_signals_prompt is not None else None)
     if "knowledge_signals_prompt" in body.model_fields_set:
-        fields.append("knowledge_signals_prompt = %s"); values.append(body.knowledge_signals_prompt)
+        fields.append("knowledge_signals_prompt = %s")
+        values.append(json.dumps(body.knowledge_signals_prompt) if body.knowledge_signals_prompt is not None else None)
 
     if not fields:
         raise HTTPException(status_code=400, detail="No fields to update")
