@@ -67,6 +67,25 @@ async def create_entity_type(data: EntityTypeCreate, user: dict = Depends(requir
         cursor.execute("SELECT * FROM memory_entity_types WHERE id = %s", (type_id,))
         return dict(cursor.fetchone())
 
+@router.patch("/config/entity-types/{type_id}", response_model=EntityTypeResponse)
+async def update_entity_type(type_id: str, data: dict, user: dict = Depends(require_admin_auth)):
+    allowed = {"name", "description", "icon"}
+    updates = {k: v for k, v in data.items() if k in allowed}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+    fields = ", ".join(f"{k} = %s" for k in updates)
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"UPDATE memory_entity_types SET {fields} WHERE id = %s",
+            list(updates.values()) + [type_id]
+        )
+        cursor.execute("SELECT * FROM memory_entity_types WHERE id = %s", (type_id,))
+        row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Entity type not found")
+    return dict(row)
+
 @router.delete("/config/entity-types/{type_id}")
 async def delete_entity_type(type_id: str, user: dict = Depends(require_admin_auth)):
     with get_memory_db_context() as conn:

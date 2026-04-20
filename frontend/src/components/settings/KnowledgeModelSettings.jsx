@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
     Database, Plus, Trash2, BookOpen, Settings, ChevronRight,
-    Save, Loader2, Brain, Sparkles, Users, ChevronDown
+    Save, Loader2, Brain, Sparkles, Users, ChevronDown, Smile
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,6 +27,7 @@ import { toast } from "sonner";
 import {
     getEntityTypeConfig,
     updateEntityTypeConfig,
+    updateEntityType,
     getEntitySubtypes,
     createEntitySubtype,
     deleteEntitySubtype,
@@ -57,9 +58,55 @@ const CONTACT_INTELLIGENCE_SIGNALS = `## BUDGET & READINESS
 - Explicit pain statements, workflow friction, unmet needs
 - Strategic priorities, growth plans, operational challenges`;
 
+// ─── Curated Entity Emoji Set ───────────────────────────────────────────────
+const ENTITY_ICONS = [
+    "👤","👥","🏢","🏭","🏫","🏥","🏦","🏛️",
+    "📋","📦","📁","📂","🗂️","📊","📈","📉",
+    "🤝","🎯","💼","🔑","⚙️","🔧","🛠️","🔩",
+    "💡","🚀","⭐","🌐","🔗","💬","📧","📞",
+    "🛒","💳","💰","🏷️","🎁","📣","📡","🤖",
+];
+
+// ─── Emoji Picker ────────────────────────────────────────────────────────────
+function EmojiPicker({ currentIcon, onSelect, size = "text-lg" }) {
+    const [open, setOpen] = useState(false);
+    const ref = useRef(null);
+
+    useEffect(() => {
+        const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+        document.addEventListener("mousedown", handler);
+        return () => document.removeEventListener("mousedown", handler);
+    }, []);
+
+    return (
+        <div className="relative" ref={ref}>
+            <button
+                onClick={() => setOpen((v) => !v)}
+                title="Change icon"
+                className={`${size} leading-none hover:scale-110 transition-transform cursor-pointer select-none p-1 rounded hover:bg-muted/50`}
+            >
+                {currentIcon || "📁"}
+            </button>
+            {open && (
+                <div className="absolute z-50 top-full left-0 mt-1 p-2 bg-popover border border-border rounded-lg shadow-xl grid grid-cols-8 gap-0.5 w-56">
+                    {ENTITY_ICONS.map((emoji) => (
+                        <button
+                            key={emoji}
+                            onClick={() => { onSelect(emoji); setOpen(false); }}
+                            className={`text-base p-1 rounded hover:bg-muted/70 transition-colors ${
+                                currentIcon === emoji ? "bg-primary/20 ring-1 ring-primary" : ""
+                            }`}
+                        >
+                            {emoji}
+                        </button>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
 
 
-// ─── Entity Detail Panel ────────────────────────────────────────────────────
 function EntityDetailPanel({ entityType, entityTypes }) {
     const [config, setConfig] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -392,6 +439,7 @@ export function KnowledgeModelSettings({
     setAddTypeDialogOpen,
     onAddType,
     onDeleteType,
+    onReload,
     loading,
 }) {
     const [selectedEntity, setSelectedEntity] = useState(null);
@@ -436,7 +484,18 @@ export function KnowledgeModelSettings({
                                         : "hover:bg-muted/50 border border-transparent"
                                     }`}
                             >
-                                <span className="text-base">{et.icon || "📁"}</span>
+                                <span onClick={(e) => e.stopPropagation()}>
+                                    <EmojiPicker
+                                        size="text-base"
+                                        currentIcon={et.icon}
+                                        onSelect={async (emoji) => {
+                                            try {
+                                                await updateEntityType(et.id, { icon: emoji });
+                                                onReload();
+                                            } catch { toast.error("Failed to update icon"); }
+                                        }}
+                                    />
+                                </span>
                                 <div className="flex-1 min-w-0">
                                     <p className={`text-sm truncate ${isActive ? "font-semibold" : "font-medium"}`}>
                                         {et.name}
@@ -512,9 +571,22 @@ export function KnowledgeModelSettings({
                     <div>
                         <div className="flex items-center justify-between mb-4">
                             <div className="flex items-center gap-2">
-                                <span className="text-lg">
-                                    {entityTypes.find((et) => et.name === selectedEntity)?.icon || "📁"}
-                                </span>
+                                {(() => {
+                                    const et = entityTypes.find((e) => e.name === selectedEntity);
+                                    return (
+                                        <EmojiPicker
+                                            size="text-2xl"
+                                            currentIcon={et?.icon}
+                                            onSelect={async (emoji) => {
+                                                if (!et) return;
+                                                try {
+                                                    await updateEntityType(et.id, { icon: emoji });
+                                                    onReload();
+                                                } catch { toast.error("Failed to update icon"); }
+                                            }}
+                                        />
+                                    );
+                                })()}
                                 <div>
                                     <h2 className="text-lg font-semibold capitalize">{selectedEntity}</h2>
                                     <p className="text-xs text-muted-foreground">

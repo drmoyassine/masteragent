@@ -104,6 +104,7 @@ export const initMemorySystem = () => api.post('/memory/init');
 // Entity Types
 export const getEntityTypes = () => api.get('/memory/config/entity-types');
 export const createEntityType = (data) => api.post('/memory/config/entity-types', data);
+export const updateEntityType = (id, data) => api.patch(`/memory/config/entity-types/${id}`, data);
 export const deleteEntityType = (id) => api.delete(`/memory/config/entity-types/${id}`);
 
 // Entity Subtypes

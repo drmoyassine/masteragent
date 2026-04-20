@@ -518,6 +518,7 @@ export default function SettingsPage({ onDisconnect }) {
               setAddTypeDialogOpen={setAddTypeDialogOpen}
               onAddType={handleAddType}
               onDeleteType={handleDeleteType}
+              onReload={loadAllData}
               loading={loading}
             />
           )}
