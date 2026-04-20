@@ -230,7 +230,6 @@ function EntityDetailPanel({ entityType, entityTypes }) {
         subtypes: false,
         intelligence: true,
         knowledge: false,
-        thresholds: false,
     });
 
     const toggleSection = (key) =>
@@ -417,78 +416,7 @@ function EntityDetailPanel({ entityType, entityTypes }) {
                 />
             </Section>
 
-            {/* ─── Thresholds & Automation ────────────────────── */}
-            <Section id="thresholds" icon={Settings} title="Thresholds & Automation">
-                <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-1">
-                        <Label className="text-xs">Intelligence extraction threshold</Label>
-                        <p className="text-[10px] text-muted-foreground">
-                            Memories needed before running intelligence extraction
-                        </p>
-                        <Input
-                            type="number"
-                            min={1}
-                            value={config?.intelligence_extraction_threshold ?? 10}
-                            onChange={(e) =>
-                                saveField({
-                                    intelligence_extraction_threshold:
-                                        parseInt(e.target.value) || 10,
-                                })
-                            }
-                            className="text-xs h-8 w-24"
-                        />
-                    </div>
-                    <div className="space-y-1">
-                        <Label className="text-xs">Knowledge extraction threshold</Label>
-                        <p className="text-[10px] text-muted-foreground">
-                            Intelligence items needed before knowledge generation
-                        </p>
-                        <Input
-                            type="number"
-                            min={1}
-                            value={config?.knowledge_extraction_threshold ?? ""}
-                            onChange={(e) =>
-                                saveField({
-                                    knowledge_extraction_threshold:
-                                        parseInt(e.target.value) || null,
-                                })
-                            }
-                            className="text-xs h-8 w-24"
-                            placeholder="global"
-                        />
-                    </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4 pt-2">
-                    <div className="flex items-center justify-between">
-                        <div>
-                            <Label className="text-xs">Auto-approve intelligence</Label>
-                            <p className="text-[10px] text-muted-foreground">
-                                Skip draft → confirmed review
-                            </p>
-                        </div>
-                        <Switch
-                            checked={config?.intelligence_auto_approve ?? false}
-                            onCheckedChange={(v) =>
-                                saveField({ Intelligence_auto_approve: v })
-                            }
-                        />
-                    </div>
-                    <div className="flex items-center justify-between">
-                        <div>
-                            <Label className="text-xs">Auto-promote knowledge</Label>
-                            <p className="text-[10px] text-muted-foreground">
-                                Auto-generate from confirmed intelligence
-                            </p>
-                        </div>
-                        <Switch
-                            checked={config?.knowledge_auto_promote ?? false}
-                            onCheckedChange={(v) =>
-                                saveField({ knowledge_auto_promote: v })
-                            }
-                        />
-                    </div>
-                </div>
-            </Section>
+
 
             {/* ─── Save Signals FAB ───────────────────────────── */}
             {signalsDirty && (
