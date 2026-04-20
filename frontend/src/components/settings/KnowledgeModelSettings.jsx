@@ -85,7 +85,7 @@ function EntityTypeConfigPanel({ entityTypeName }) {
                 <CollapsibleTrigger asChild>
                     <button className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground mt-1 transition-colors">
                         <Settings className="w-3 h-3" />
-                        Configure NER &amp; thresholds
+                        Configure NER &amp; schema
                         <ChevronRight className={`w-3 h-3 transition-transform ${open ? "rotate-90" : ""}`} />
                     </button>
                 </CollapsibleTrigger>

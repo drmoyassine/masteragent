@@ -171,7 +171,7 @@ function ThresholdOverridesTable({ entityTypes, overrideKey, globalFallback }) {
                     >
                         <option value="" disabled>Select entity type…</option>
                         {availableToAdd.map(et => (
-                            <option key={et.id} value={et.name}>{et.icon} {et.name}</option>
+                            <option key={et.id} value={et.name}>{et.name}</option>
                         ))}
                     </select>
                     <span className="text-[10px] text-muted-foreground">Add entity-specific override</span>
