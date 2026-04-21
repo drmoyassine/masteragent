@@ -70,12 +70,17 @@ const webpackConfig = {
     configure: (webpackConfig) => {
 
       // -----------------------------------------------------------------
-      // Force @milkdown/* packages through Babel transpilation.
-      // CRA's default Webpack config excludes ALL of node_modules from the
-      // babel-loader. @milkdown/kit ships ES modules (with class syntax,
-      // private fields, etc.) that must be transpiled for the browser.
-      // Without this, `super()` calls in ProseMirror subclasses throw:
-      //   "Must call super constructor in derived class before accessing 'this'"
+      // EXCLUDE @milkdown from CRA's node_modules babel-loader.
+      //
+      // CRA has a second babel-loader rule that processes ALL node_modules
+      // through `babel-preset-react-app/dependencies`. That preset includes
+      // `@babel/plugin-transform-class-properties` which transforms private
+      // field initializers (#field = value) by moving them BEFORE super()
+      // in the transpiled output. This breaks @milkdown/transformer's
+      // ParserState class which uses `#marks = Mark.none` as a class field.
+      //
+      // Modern browsers natively support private fields, static blocks, etc.
+      // so we simply exclude @milkdown from Babel entirely.
       // -----------------------------------------------------------------
       webpackConfig.module.rules.forEach((rule) => {
         if (!rule.oneOf) return;
@@ -85,10 +90,21 @@ const webpackConfig = {
             oneOfRule.loader.includes('babel-loader') &&
             oneOfRule.exclude
           ) {
-            // Replace the blanket node_modules exclude with one that
-            // allows @milkdown/* and prosemirror-* packages to be transpiled.
-            // This prevents ES5 subclasses from extending ES6 base classes.
-            oneOfRule.exclude = /node_modules\/(?!(@milkdown|prosemirror-.*))/;
+            // CRA's default exclude for the node_modules babel-loader is:
+            //   /@babel(?:\/|\\{1,2})runtime/
+            // We extend it to ALSO exclude @milkdown packages.
+            const origExclude = oneOfRule.exclude;
+            oneOfRule.exclude = (filePath) => {
+              // Normalize to forward slashes for cross-platform matching
+              const normalized = filePath.replace(/\\/g, '/');
+              if (normalized.includes('/@milkdown/') || normalized.includes('/milkdown/')) {
+                return true; // exclude from babel = don't transpile
+              }
+              // Fall back to the original exclude behavior
+              if (origExclude instanceof RegExp) return origExclude.test(filePath);
+              if (typeof origExclude === 'function') return origExclude(filePath);
+              return false;
+            };
           }
         });
       });
