@@ -10,15 +10,17 @@ import {
   CommandSeparator,
 } from "@/components/ui/command";
 
+// Trigger characters that activate the variable autocomplete
+const TRIGGER_CHARS = ['@', '/'];
+
 // ---------------------------------------------------------------------------
 // Module-level mention state
 // Bridges imperative DOM events → React rendering via a listener pattern.
-// Safe as a singleton because only one editor exists at a time
-// (section switching causes full remount via key={section.filename}).
 // ---------------------------------------------------------------------------
 const mentionState = {
   active: false,
-  triggerPos: 0,  // ProseMirror doc position right AFTER the '@'
+  triggerPos: 0,
+  triggerChar: '',
   query: "",
   coords: { top: 0, left: 0 },
   view: null,
@@ -27,6 +29,7 @@ const mentionState = {
     this.listeners.forEach(l => l({
       active: this.active,
       triggerPos: this.triggerPos,
+      triggerChar: this.triggerChar,
       query: this.query,
       coords: { ...this.coords },
       view: this.view,
@@ -35,6 +38,7 @@ const mentionState = {
   reset() {
     this.active = false;
     this.triggerPos = 0;
+    this.triggerChar = '';
     this.query = "";
     this.view = null;
     this.notify();
@@ -48,25 +52,32 @@ const mentionState = {
 export function attachMentionDetection(view) {
   if (!view || !view.dom) return () => {};
 
-  // After every DOM input event, check if we should activate / update / close
-  const handleInput = () => {
+  const checkMention = () => {
     const { state } = view;
     const { from } = state.selection;
 
     if (!mentionState.active) {
-      // Check if user just typed '@' — look at the character before cursor
+      // --- ACTIVATION: check if the char before cursor is a trigger ---
       if (from < 1) return;
+
       const charBeforeCursor = state.doc.textBetween(from - 1, from);
-      if (charBeforeCursor !== '@') return;
+      if (!TRIGGER_CHARS.includes(charBeforeCursor)) return;
 
-      // Check that '@' is preceded by whitespace or is at start of text block
-      const twoBack = from >= 2 ? state.doc.textBetween(from - 2, from - 1) : ' ';
-      if (!/[\s\n]/.test(twoBack) && from - 1 !== state.selection.$from.start()) return;
+      // Ensure the trigger is at start of text block or preceded by whitespace
+      const resolvedPos = state.selection.$from;
+      const startOfTextBlock = resolvedPos.start();
+      const triggerOffset = from - 1;
 
-      // Activate!
+      if (triggerOffset > startOfTextBlock) {
+        const charBeforeTrigger = state.doc.textBetween(triggerOffset - 1, triggerOffset);
+        if (!/[\s\n]/.test(charBeforeTrigger)) return;
+      }
+
+      // Activate
       const coords = view.coordsAtPos(from);
       mentionState.active = true;
-      mentionState.triggerPos = from; // position right after '@'
+      mentionState.triggerPos = from; // position right after trigger char
+      mentionState.triggerChar = charBeforeCursor;
       mentionState.query = "";
       mentionState.coords = { top: coords.top, left: coords.left };
       mentionState.view = view;
@@ -74,7 +85,7 @@ export function attachMentionDetection(view) {
       return;
     }
 
-    // Already active — update the query or close
+    // --- ALREADY ACTIVE: update query or close ---
     const cursorPos = from;
 
     if (cursorPos < mentionState.triggerPos) {
@@ -87,7 +98,9 @@ export function attachMentionDetection(view) {
       return;
     }
 
-    const textSinceTrigger = state.doc.textBetween(mentionState.triggerPos, cursorPos);
+    const textSinceTrigger = cursorPos > mentionState.triggerPos
+      ? state.doc.textBetween(mentionState.triggerPos, cursorPos)
+      : "";
 
     if (textSinceTrigger.includes(' ') || textSinceTrigger.includes('\n')) {
       mentionState.reset();
@@ -100,6 +113,14 @@ export function attachMentionDetection(view) {
     mentionState.notify();
   };
 
+  // Use requestAnimationFrame to ensure ProseMirror has finished processing
+  // the keystroke and updated view.state before we read from it.
+  // Without this, the input event fires before ProseMirror settles,
+  // causing us to read stale positions → flash/disappear bug.
+  const handleInput = () => {
+    requestAnimationFrame(checkMention);
+  };
+
   const handleKeyDown = (e) => {
     if (!mentionState.active) return;
     if (e.key === 'Escape') {
@@ -109,13 +130,23 @@ export function attachMentionDetection(view) {
     }
   };
 
-  // Listen on the ProseMirror contenteditable element
+  // Also close the popover when clicking outside
+  const handleClickOutside = (e) => {
+    if (!mentionState.active) return;
+    // If click is outside the editor, close
+    if (!view.dom.contains(e.target)) {
+      mentionState.reset();
+    }
+  };
+
   view.dom.addEventListener('input', handleInput);
   view.dom.addEventListener('keydown', handleKeyDown, true);
+  document.addEventListener('mousedown', handleClickOutside);
 
   return () => {
     view.dom.removeEventListener('input', handleInput);
     view.dom.removeEventListener('keydown', handleKeyDown, true);
+    document.removeEventListener('mousedown', handleClickOutside);
     mentionState.reset();
   };
 }
@@ -130,6 +161,7 @@ export function MentionPopover({ variablesRef }) {
     coords: { top: 0, left: 0 },
     view: null,
     triggerPos: 0,
+    triggerChar: '',
   });
 
   useEffect(() => {
@@ -138,14 +170,14 @@ export function MentionPopover({ variablesRef }) {
     return () => mentionState.listeners.delete(listener);
   }, []);
 
-  const { active, query, coords, view, triggerPos } = state;
+  const { active, query, coords, view, triggerPos, triggerChar } = state;
 
   const handleSelect = useCallback((variableName) => {
     if (!view) return;
 
     const { state: editorState, dispatch } = view;
-    // Replace from '@' (triggerPos - 1) through current cursor with {{variable}}
-    const from = Math.max(0, triggerPos - 1);
+    // Replace from trigger char position through current cursor with {{variable}}
+    const from = Math.max(0, triggerPos - 1); // include the trigger char itself
     const to = editorState.selection.from;
 
     const tr = editorState.tr.insertText(`{{${variableName}}}`, from, to);
@@ -167,15 +199,22 @@ export function MentionPopover({ variablesRef }) {
     v.name.toLowerCase().includes(query.toLowerCase())
   );
 
+  const triggerLabel = triggerChar === '/' ? 'slash' : '@';
+
   return createPortal(
     <div
       className="fixed z-50 animate-in fade-in zoom-in-95"
       style={{ top: coords.top + 22, left: coords.left }}
+      onMouseDown={(e) => e.preventDefault()} // prevent editor blur
     >
       <Command
         className="w-64 rounded-md border shadow-md bg-popover text-popover-foreground"
         shouldFilter={false}
       >
+        <div className="px-3 py-1.5 text-xs text-muted-foreground border-b">
+          Insert variable via <code className="text-xs">{triggerLabel}</code>
+          {query && <span> · filtering: <code className="text-xs">{query}</code></span>}
+        </div>
         <CommandList className="max-h-64 overflow-y-auto">
           <CommandEmpty>No variables found.</CommandEmpty>
 
