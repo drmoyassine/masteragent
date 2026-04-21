@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/command";
 
 // Trigger characters that activate the variable autocomplete
-const TRIGGER_CHARS = ['@', '/'];
+const TRIGGER_CHARS = ['@'];
 
 // ---------------------------------------------------------------------------
 // Module-level mention state

@@ -5,6 +5,9 @@ import { commonmark } from '@milkdown/kit/preset/commonmark';
 import { listener, listenerCtx } from '@milkdown/kit/plugin/listener';
 import { insert } from '@milkdown/kit/utils';
 import { attachMentionDetection, MentionPopover } from './milkdown/VariableMentionPlugin';
+import { SlashMenu } from './milkdown/SlashMenu';
+
+import { slashFactory } from '@milkdown/kit/plugin/slash';
 
 const MilkdownInner = forwardRef(({ value, onChange, variables }, ref) => {
   const variablesRef = useRef(variables);
@@ -30,7 +33,8 @@ const MilkdownInner = forwardRef(({ value, onChange, variables }, ref) => {
         });
       })
       .use(commonmark)
-      .use(listener);
+      .use(listener)
+      .use(slashFactory('my-slash'));
   }, []); // Empty deps: key={section.filename} handles section switching.
 
   // After the editor finishes loading, grab the ProseMirror EditorView
@@ -78,6 +82,7 @@ const MilkdownInner = forwardRef(({ value, onChange, variables }, ref) => {
         <Milkdown />
       </div>
       <MentionPopover variablesRef={variablesRef} />
+      <SlashMenu />
     </>
   );
 });
