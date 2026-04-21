@@ -86,8 +86,9 @@ const webpackConfig = {
             oneOfRule.exclude
           ) {
             // Replace the blanket node_modules exclude with one that
-            // allows @milkdown/* packages to be transpiled.
-            oneOfRule.exclude = /node_modules\/(?!@milkdown)/;
+            // allows @milkdown/* and prosemirror-* packages to be transpiled.
+            // This prevents ES5 subclasses from extending ES6 base classes.
+            oneOfRule.exclude = /node_modules\/(?!(@milkdown|prosemirror-.*))/;
           }
         });
       });
