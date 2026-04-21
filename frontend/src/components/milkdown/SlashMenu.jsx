@@ -1,8 +1,9 @@
-import React, { useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useInstance } from '@milkdown/react';
 import { editorViewCtx, commandsCtx } from '@milkdown/kit/core';
-import { SlashProvider } from '@milkdown/kit/plugin/slash';
-import { callCommand } from '@milkdown/kit/utils';
+import { $prose } from '@milkdown/kit/utils';
+import { Plugin, PluginKey } from '@milkdown/prose/state';
 import {
   createCodeBlockCommand,
   insertHrCommand,
@@ -12,161 +13,260 @@ import {
   wrapInHeadingCommand,
   wrapInOrderedListCommand,
 } from '@milkdown/kit/preset/commonmark';
+import { insertTableCommand } from '@milkdown/kit/preset/gfm';
 import {
   Heading1, Heading2, Heading3,
-  List, ListOrdered, Quote, Code, Minus, Type,
+  List, ListOrdered, Quote, Code, Minus, Type, Table,
 } from 'lucide-react';
 
-// Menu configuration — each item maps to a Milkdown command
+// ---------------------------------------------------------------------------
+// Slash menu item definitions
+// ---------------------------------------------------------------------------
 const SLASH_ITEMS = [
-  { label: 'Text',           icon: Type,        command: turnIntoTextCommand.key },
-  { label: 'Heading 1',      icon: Heading1,    command: wrapInHeadingCommand.key, args: 1 },
-  { label: 'Heading 2',      icon: Heading2,    command: wrapInHeadingCommand.key, args: 2 },
-  { label: 'Heading 3',      icon: Heading3,    command: wrapInHeadingCommand.key, args: 3 },
-  { label: 'Bullet List',    icon: List,        command: wrapInBulletListCommand.key },
-  { label: 'Ordered List',   icon: ListOrdered, command: wrapInOrderedListCommand.key },
-  { label: 'Blockquote',     icon: Quote,       command: wrapInBlockquoteCommand.key },
-  { label: 'Code Block',     icon: Code,        command: createCodeBlockCommand.key },
-  { label: 'Divider',        icon: Minus,       command: insertHrCommand.key },
+  { label: 'Text',           icon: Type,        commandKey: turnIntoTextCommand.key },
+  { label: 'Heading 1',      icon: Heading1,    commandKey: wrapInHeadingCommand.key, args: 1 },
+  { label: 'Heading 2',      icon: Heading2,    commandKey: wrapInHeadingCommand.key, args: 2 },
+  { label: 'Heading 3',      icon: Heading3,    commandKey: wrapInHeadingCommand.key, args: 3 },
+  { label: 'Bullet List',    icon: List,        commandKey: wrapInBulletListCommand.key },
+  { label: 'Ordered List',   icon: ListOrdered, commandKey: wrapInOrderedListCommand.key },
+  { label: 'Table',          icon: Table,       commandKey: insertTableCommand.key, args: { row: 3, col: 3 } },
+  { label: 'Blockquote',     icon: Quote,       commandKey: wrapInBlockquoteCommand.key },
+  { label: 'Code Block',     icon: Code,        commandKey: createCodeBlockCommand.key },
+  { label: 'Divider',        icon: Minus,       commandKey: insertHrCommand.key },
 ];
 
-/**
- * Slash menu component — renders inside the editor and is positioned by SlashProvider.
- * Uses Milkdown's official plugin-slash architecture.
- */
-export function SlashMenu() {
-  const menuRef = useRef(null);
-  const providerRef = useRef(null);
-  const [loading, getEditor] = useInstance();
-  const [selectedIndex, setSelectedIndex] = React.useState(0);
+// ---------------------------------------------------------------------------
+// Module-level slash state — bridges ProseMirror plugin → React rendering
+// ---------------------------------------------------------------------------
+const slashState = {
+  active: false,
+  triggerPos: 0, // doc position right AFTER the '/'
+  query: "",
+  coords: { top: 0, left: 0 },
+  view: null,
+  listeners: new Set(),
+  notify() {
+    this.listeners.forEach(l => l({
+      active: this.active,
+      triggerPos: this.triggerPos,
+      query: this.query,
+      coords: { ...this.coords },
+      view: this.view,
+    }));
+  },
+  reset() {
+    this.active = false;
+    this.triggerPos = 0;
+    this.query = "";
+    this.view = null;
+    this.notify();
+  },
+};
 
-  // Execute a slash command
-  const executeCommand = useCallback((item) => {
-    if (loading) return;
-    const editor = getEditor();
-    if (!editor) return;
+// ---------------------------------------------------------------------------
+// ProseMirror plugin — detects '/' in view.update
+// ---------------------------------------------------------------------------
+export const slashPlugin = $prose(() => {
+  return new Plugin({
+    key: new PluginKey('slash-menu'),
+    view() {
+      slashState.reset();
 
-    editor.action((ctx) => {
-      // First clear the '/' trigger text from the current block
-      const view = ctx.get(editorViewCtx);
-      const { state } = view;
-      const { $from } = state.selection;
+      return {
+        update(view, prevState) {
+          const { state } = view;
 
-      // Find the '/' character and delete it + any query text after it
-      const parentText = $from.parent.textContent;
-      const slashIndex = parentText.lastIndexOf('/');
-      if (slashIndex >= 0) {
-        const startOfParent = $from.start();
-        const from = startOfParent + slashIndex;
-        const to = $from.pos;
-        const tr = state.tr.delete(from, to);
-        view.dispatch(tr);
-      }
+          if (prevState.doc.eq(state.doc) && prevState.selection.eq(state.selection)) return;
 
-      // Then execute the actual command
-      const commands = ctx.get(commandsCtx);
-      commands.call(item.command, item.args);
-    });
+          const { from } = state.selection;
 
-    providerRef.current?.hide();
-  }, [loading, getEditor]);
+          if (!slashState.active) {
+            // Only activate on text changes
+            if (prevState.doc.eq(state.doc)) return;
+            if (from < 1) return;
 
-  // Set up SlashProvider after editor loads
-  useEffect(() => {
-    if (loading || !menuRef.current) return;
+            const charBefore = state.doc.textBetween(from - 1, from);
+            if (charBefore !== '/') return;
 
-    const editor = getEditor();
-    if (!editor) return;
+            // Must be at start of text block or preceded by whitespace
+            const $from = state.selection.$from;
+            const startOfBlock = $from.start();
+            const triggerOffset = from - 1;
 
-    // Create the slash provider using Milkdown's official API
-    const provider = new SlashProvider({
-      content: menuRef.current,
-      trigger: '/',
-      debounce: 50,
-      offset: 8,
-    });
+            if (triggerOffset > startOfBlock) {
+              const charBeforeTrigger = state.doc.textBetween(triggerOffset - 1, triggerOffset);
+              if (!/[\s\n]/.test(charBeforeTrigger)) return;
+            }
 
-    providerRef.current = provider;
+            const coords = view.coordsAtPos(from);
+            slashState.active = true;
+            slashState.triggerPos = from;
+            slashState.query = "";
+            slashState.coords = { top: coords.top, left: coords.left };
+            slashState.view = view;
+            slashState.notify();
+            return;
+          }
 
-    // Hook the provider into the editor's update cycle
-    // by accessing the ProseMirror view
-    editor.action((ctx) => {
-      const view = ctx.get(editorViewCtx);
+          // --- ACTIVE: update query or close ---
+          if (from < slashState.triggerPos) {
+            slashState.reset();
+            return;
+          }
 
-      // SlashProvider.update() needs to be called on every editor view update.
-      // We wrap it into ProseMirror's plugin view lifecycle via a direct subscription.
-      const originalDispatch = view.dispatch.bind(view);
-      view.dispatch = (...args) => {
-        const prevState = view.state;
-        originalDispatch(...args);
-        provider.update(view, prevState);
+          if (slashState.triggerPos < 1 || slashState.triggerPos - 1 >= state.doc.content.size) {
+            slashState.reset();
+            return;
+          }
+          const triggerChar = state.doc.textBetween(slashState.triggerPos - 1, slashState.triggerPos);
+          if (triggerChar !== '/') {
+            slashState.reset();
+            return;
+          }
+
+          const textSinceTrigger = from > slashState.triggerPos
+            ? state.doc.textBetween(slashState.triggerPos, from)
+            : "";
+
+          if (textSinceTrigger.includes(' ') || textSinceTrigger.includes('\n')) {
+            slashState.reset();
+            return;
+          }
+
+          slashState.query = textSinceTrigger;
+          const coords = view.coordsAtPos(slashState.triggerPos);
+          slashState.coords = { top: coords.top, left: coords.left };
+          slashState.notify();
+        },
+
+        destroy() {
+          slashState.reset();
+        },
       };
+    },
+  });
+});
 
-      // Also handle initial state
-      provider.update(view);
-    });
+// ---------------------------------------------------------------------------
+// React popover — subscribes to slashState
+// ---------------------------------------------------------------------------
+export function SlashMenu() {
+  const [loading, getEditor] = useInstance();
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [state, setState] = useState({
+    active: false, query: "", coords: { top: 0, left: 0 }, view: null, triggerPos: 0,
+  });
 
-    return () => {
-      provider.destroy();
-      providerRef.current = null;
+  useEffect(() => {
+    const listener = (snapshot) => {
+      setState(snapshot);
+      setSelectedIndex(0); // reset selection on any state change
     };
-  }, [loading, getEditor]);
+    slashState.listeners.add(listener);
+    return () => slashState.listeners.delete(listener);
+  }, []);
+
+  const { active, query, coords, view, triggerPos } = state;
+
+  // Filter items by query
+  const filteredItems = SLASH_ITEMS.filter(item =>
+    item.label.toLowerCase().includes(query.toLowerCase())
+  );
+
+  // Execute: Step 1 — delete '/' + query, Step 2 — run command
+  const executeCommand = useCallback((item) => {
+    if (loading || !view) return;
+    const editor = getEditor();
+    if (!editor) return;
+
+    // Step 1: Delete the '/' trigger and any query text
+    const { state: editorState } = view;
+    const deleteFrom = Math.max(0, triggerPos - 1); // include the '/'
+    const deleteTo = editorState.selection.from;
+    if (deleteFrom < deleteTo) {
+      view.dispatch(editorState.tr.delete(deleteFrom, deleteTo));
+    }
+
+    // Step 2: Execute the block command on the now-updated state
+    try {
+      editor.action((ctx) => {
+        const commands = ctx.get(commandsCtx);
+        commands.call(item.commandKey, item.args);
+      });
+    } catch (e) {
+      console.warn('[SlashMenu] Command failed:', item.label, e);
+    }
+
+    view.focus();
+    slashState.reset();
+  }, [loading, getEditor, view, triggerPos]);
 
   // Keyboard navigation
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (!menuRef.current || menuRef.current.dataset.show !== 'true') return;
+      if (!slashState.active) return;
 
       if (e.key === 'ArrowDown') {
         e.preventDefault();
-        setSelectedIndex(i => (i + 1) % SLASH_ITEMS.length);
+        e.stopPropagation();
+        setSelectedIndex(i => (i + 1) % Math.max(1, filteredItems.length));
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
-        setSelectedIndex(i => (i - 1 + SLASH_ITEMS.length) % SLASH_ITEMS.length);
+        e.stopPropagation();
+        setSelectedIndex(i => (i - 1 + filteredItems.length) % Math.max(1, filteredItems.length));
       } else if (e.key === 'Enter') {
         e.preventDefault();
-        executeCommand(SLASH_ITEMS[selectedIndex]);
-        setSelectedIndex(0);
+        e.stopPropagation();
+        if (filteredItems[selectedIndex]) {
+          executeCommand(filteredItems[selectedIndex]);
+        }
       } else if (e.key === 'Escape') {
-        providerRef.current?.hide();
-        setSelectedIndex(0);
+        e.preventDefault();
+        e.stopPropagation();
+        slashState.reset();
       }
     };
 
     document.addEventListener('keydown', handleKeyDown, true);
     return () => document.removeEventListener('keydown', handleKeyDown, true);
-  }, [selectedIndex, executeCommand]);
+  }, [selectedIndex, filteredItems, executeCommand]);
 
-  return (
+  if (!active || filteredItems.length === 0) return null;
+
+  return createPortal(
     <div
-      ref={menuRef}
-      className="hidden data-[show=true]:block absolute z-50 w-56 rounded-md border shadow-md bg-popover text-popover-foreground p-1 animate-in fade-in zoom-in-95"
+      className="fixed z-50 animate-in fade-in zoom-in-95"
+      style={{ top: coords.top + 22, left: coords.left }}
+      onMouseDown={(e) => e.preventDefault()}
     >
-      <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground border-b mb-1">
-        Block Type
+      <div className="w-56 rounded-md border shadow-md bg-popover text-popover-foreground p-1">
+        <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground border-b mb-1">
+          Block Type
+          {query && <span> · <code className="text-xs">{query}</code></span>}
+        </div>
+        {filteredItems.map((item, idx) => {
+          const Icon = item.icon;
+          return (
+            <button
+              key={item.label}
+              className={`flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm cursor-pointer transition-colors
+                ${idx === selectedIndex
+                  ? 'bg-accent text-accent-foreground'
+                  : 'hover:bg-accent/50 text-foreground'
+                }`}
+              onMouseEnter={() => setSelectedIndex(idx)}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                executeCommand(item);
+              }}
+            >
+              <Icon className="w-4 h-4 text-muted-foreground" />
+              {item.label}
+            </button>
+          );
+        })}
       </div>
-      {SLASH_ITEMS.map((item, idx) => {
-        const Icon = item.icon;
-        return (
-          <button
-            key={item.label}
-            className={`flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm cursor-pointer transition-colors
-              ${idx === selectedIndex
-                ? 'bg-accent text-accent-foreground'
-                : 'hover:bg-accent/50 text-foreground'
-              }`}
-            onMouseEnter={() => setSelectedIndex(idx)}
-            onMouseDown={(e) => {
-              e.preventDefault(); // prevent editor blur
-              executeCommand(item);
-              setSelectedIndex(0);
-            }}
-          >
-            <Icon className="w-4 h-4 text-muted-foreground" />
-            {item.label}
-          </button>
-        );
-      })}
-    </div>
+    </div>,
+    document.body
   );
 }
