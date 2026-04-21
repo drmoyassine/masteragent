@@ -217,6 +217,10 @@
 .milkdown-table-block {
     position: relative;
     margin: 1em 0;
+    /* Padding accommodates the absolutely-positioned handles (above + left)
+       so they stay within the parent bounding box and don't trigger pointerleave */
+    padding-top: 24px;
+    padding-left: 24px;
 }
 .milkdown-table-block .table-wrapper {
     position: relative;
