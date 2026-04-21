@@ -213,6 +213,202 @@
     pointer-events: none;
 }
 
+/* ── Table Block Widget (Milkdown component) ── */
+.milkdown-table-block {
+    position: relative;
+    margin: 1em 0;
+}
+.milkdown-table-block .table-wrapper {
+    position: relative;
+    overflow: visible;
+}
+.milkdown-table-block table.children {
+    border-collapse: collapse;
+    width: 100%;
+    table-layout: fixed;
+    border: 1px solid hsl(240 4% 26%);
+    border-radius: 6px;
+}
+.milkdown-table-block table.children th,
+.milkdown-table-block table.children td {
+    border: 1px solid hsl(240 4% 26%);
+    padding: 0.5em 0.75em;
+    min-width: 80px;
+    vertical-align: top;
+    position: relative;
+}
+.milkdown-table-block table.children th {
+    background: hsl(240 4% 16%);
+    font-weight: 600;
+}
+.milkdown-table-block table.children td {
+    background: transparent;
+}
+.milkdown-table-block .selectedCell::after {
+    z-index: 2;
+    position: absolute;
+    content: "";
+    left: 0; right: 0; top: 0; bottom: 0;
+    background: hsl(142 71% 45% / 0.12);
+    pointer-events: none;
+}
+
+/* ── Handles (shared) ── */
+.milkdown-table-block .handle {
+    position: absolute;
+    z-index: 10;
+    display: none;
+    cursor: pointer;
+    user-select: none;
+}
+.milkdown-table-block .handle[data-show="true"] {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* ── Cell Handles (drag handles for row/col) ── */
+.milkdown-table-block .cell-handle {
+    padding: 2px;
+    border-radius: 4px;
+    background: hsl(240 4% 20%);
+    border: 1px solid hsl(240 4% 30%);
+    color: hsl(240 5% 65%);
+    transition: background 0.15s, color 0.15s;
+    flex-direction: column;
+}
+.milkdown-table-block .cell-handle:hover {
+    background: hsl(240 4% 26%);
+    color: hsl(0 0% 95%);
+}
+.milkdown-table-block .cell-handle .milkdown-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+}
+.milkdown-table-block .cell-handle .milkdown-icon svg {
+    width: 14px;
+    height: 14px;
+}
+
+/* ── Button Groups (align/delete actions) ── */
+.milkdown-table-block .button-group {
+    display: none;
+    gap: 2px;
+    padding: 4px;
+    background: hsl(240 4% 16%);
+    border: 1px solid hsl(240 4% 30%);
+    border-radius: 6px;
+    margin-top: 4px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+}
+.milkdown-table-block .button-group[data-show="true"] {
+    display: flex;
+}
+.milkdown-table-block .button-group button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: hsl(240 5% 65%);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+.milkdown-table-block .button-group button:hover {
+    background: hsl(240 4% 26%);
+    color: hsl(0 0% 95%);
+}
+.milkdown-table-block .button-group button .milkdown-icon {
+    display: flex;
+}
+
+/* ── Line Handles (add row/col lines) ── */
+.milkdown-table-block .line-handle {
+    background: transparent;
+}
+.milkdown-table-block .line-handle[data-display-type="tool"] .add-button {
+    display: flex;
+}
+.milkdown-table-block .line-handle[data-display-type="indicator"] {
+    pointer-events: none;
+}
+.milkdown-table-block .line-handle .add-button {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: hsl(142 71% 45%);
+    color: hsl(0 0% 10%);
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 700;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    transition: transform 0.15s, box-shadow 0.15s;
+    z-index: 11;
+}
+.milkdown-table-block .line-handle .add-button:hover {
+    transform: scale(1.15);
+    box-shadow: 0 3px 10px rgba(0,0,0,0.4);
+}
+.milkdown-table-block .line-handle .add-button .milkdown-icon {
+    display: flex;
+}
+.milkdown-table-block .line-handle .add-button svg {
+    width: 12px;
+    height: 12px;
+}
+
+/* X-line handle (horizontal — add row) */
+.milkdown-table-block [data-role="x-line-drag-handle"] {
+    left: 0;
+    height: 4px;
+    justify-content: center;
+}
+.milkdown-table-block [data-role="x-line-drag-handle"][data-display-type="indicator"] {
+    background: hsl(142 71% 45% / 0.5);
+    height: 3px;
+}
+
+/* Y-line handle (vertical — add col) */
+.milkdown-table-block [data-role="y-line-drag-handle"] {
+    top: 0;
+    width: 4px;
+    align-items: center;
+}
+.milkdown-table-block [data-role="y-line-drag-handle"][data-display-type="indicator"] {
+    background: hsl(142 71% 45% / 0.5);
+    width: 3px;
+}
+
+/* ── Drag Preview ── */
+.milkdown-table-block .drag-preview {
+    position: absolute;
+    z-index: 20;
+    pointer-events: none;
+    opacity: 0.6;
+    display: none;
+}
+.milkdown-table-block .drag-preview[data-show="true"] {
+    display: block;
+}
+.milkdown-table-block .drag-preview table {
+    border-collapse: collapse;
+}
+.milkdown-table-block .drag-preview th,
+.milkdown-table-block .drag-preview td {
+    border: 1px solid hsl(142 71% 45% / 0.4);
+    padding: 0.5em 0.75em;
+    background: hsl(240 4% 16%);
+}
+
 /* ── Horizontal Rule ── */
 .milkdown-editor .ProseMirror hr {
     border: none;
