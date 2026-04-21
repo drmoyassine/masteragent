@@ -140,24 +140,50 @@
     background-color: hsl(240 10% 3.9%);
 }
 
-/* Code/Markdown textarea */
-.code-editor {
+/* Milkdown editor container — inherits the code-editor look */
+.milkdown-editor {
     width: 100%;
     height: 100%;
     background: transparent;
-    border: none;
     color: hsl(0 0% 98%);
     font-family: 'JetBrains Mono', monospace;
     font-size: 14px;
     line-height: 1.6;
     padding: 1.5rem;
-    resize: none;
     outline: none;
+    overflow-y: auto;
 }
 
-.code-editor::placeholder {
-    color: hsl(240 5% 45%);
+/* ProseMirror focus ring */
+.milkdown-editor .ProseMirror {
+    outline: none;
+    min-height: 100%;
 }
+
+/* Style Markdown elements using Tailwind prose overrides */
+.milkdown-editor .ProseMirror h1 { font-size: 1.5em; font-weight: 700; margin: 0.5em 0; }
+.milkdown-editor .ProseMirror h2 { font-size: 1.25em; font-weight: 600; margin: 0.4em 0; }
+.milkdown-editor .ProseMirror h3 { font-size: 1.1em; font-weight: 600; margin: 0.3em 0; }
+.milkdown-editor .ProseMirror code {
+    background: hsl(240 4% 16%);
+    padding: 0.1em 0.3em;
+    border-radius: 2px;
+    font-size: 0.9em;
+}
+.milkdown-editor .ProseMirror blockquote {
+    border-left: 3px solid hsl(142 71% 45% / 0.4);
+    padding-left: 1em;
+    color: hsl(240 5% 65%);
+}
+
+/* Placeholder text when editor is empty */
+.milkdown-editor .ProseMirror p.is-editor-empty:first-child::before {
+    content: attr(data-placeholder);
+    color: hsl(240 5% 45%);
+    pointer-events: none;
+    position: absolute;
+}
+
 
 /* Version Badge */
 .version-badge {

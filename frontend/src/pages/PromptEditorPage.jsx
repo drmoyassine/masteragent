@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   DndContext,
@@ -77,7 +77,7 @@ import {
 } from "@/lib/api";
 import { toast } from "sonner";
 import VariablesPanel from "@/components/VariablesPanel";
-import VariableAutocomplete from "@/components/VariableAutocomplete";
+import MilkdownEditor from "@/components/MilkdownEditor";
 
 // Sortable Section Item Component
 function SortableSectionItem({ section, isSelected, onSelect, sectionIndex }) {
@@ -158,6 +158,9 @@ export default function PromptEditorPage() {
   
   // Variables panel visibility
   const [showVariablesPanel, setShowVariablesPanel] = useState(true);
+
+  // Editor ref for imperative ops
+  const editorRef = useRef(null);
 
   // DnD sensors
   const sensors = useSensors(
@@ -582,9 +585,7 @@ export default function PromptEditorPage() {
                         variant="secondary"
                         className="text-xs font-mono bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 hover:bg-green-200 dark:hover:bg-green-900/50 cursor-pointer transition-colors"
                         onClick={() => {
-                          // Insert variable at cursor position
-                          const variableSyntax = `{{${v.name}}}`;
-                          setSectionContent(prev => prev + variableSyntax);
+                          editorRef.current?.insertText(`{{${v.name}}}`);
                         }}
                       >
                         {`{{${v.name}}}`}
@@ -595,12 +596,12 @@ export default function PromptEditorPage() {
               )}
 
               <div className="editor-content">
-                <VariableAutocomplete
+                <MilkdownEditor
+                  key={selectedSection.filename}
                   value={sectionContent}
-                  onChange={(e) => setSectionContent(e.target.value)}
+                  onChange={setSectionContent}
                   variables={availableVariables}
-                  className="code-editor"
-                  placeholder="Write your prompt section content here... Use @ to insert variables"
+                  ref={editorRef}
                   data-testid="section-editor"
                 />
               </div>
