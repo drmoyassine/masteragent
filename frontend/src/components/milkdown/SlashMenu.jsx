@@ -1,46 +1,104 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useInstance } from '@milkdown/react';
-import { editorViewCtx, commandsCtx } from '@milkdown/kit/core';
+import { editorViewCtx } from '@milkdown/kit/core';
 import { $prose } from '@milkdown/kit/utils';
 import { Plugin, PluginKey } from '@milkdown/prose/state';
-import {
-  createCodeBlockCommand,
-  insertHrCommand,
-  turnIntoTextCommand,
-  wrapInBlockquoteCommand,
-  wrapInBulletListCommand,
-  wrapInHeadingCommand,
-  wrapInOrderedListCommand,
-} from '@milkdown/kit/preset/commonmark';
-import { insertTableCommand } from '@milkdown/kit/preset/gfm';
+import { setBlockType, wrapIn } from '@milkdown/prose/commands';
 import {
   Heading1, Heading2, Heading3,
   List, ListOrdered, Quote, Code, Minus, Type, Table,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
-// Slash menu item definitions
+// Command executors — bypass Milkdown's CommandManager, use ProseMirror directly
+// ---------------------------------------------------------------------------
+function executeSetBlockType(view, nodeTypeName, attrs) {
+  const nodeType = view.state.schema.nodes[nodeTypeName];
+  if (!nodeType) {
+    console.warn(`[SlashMenu] Node type "${nodeTypeName}" not found in schema`);
+    return false;
+  }
+  return setBlockType(nodeType, attrs)(view.state, view.dispatch, view);
+}
+
+function executeWrapIn(view, nodeTypeName) {
+  const nodeType = view.state.schema.nodes[nodeTypeName];
+  if (!nodeType) {
+    console.warn(`[SlashMenu] Node type "${nodeTypeName}" not found in schema`);
+    return false;
+  }
+  return wrapIn(nodeType)(view.state, view.dispatch, view);
+}
+
+function executeInsertTable(view, rows = 3, cols = 3) {
+  const { schema } = view.state;
+  const tableType = schema.nodes.table;
+  const tableRowType = schema.nodes.table_row;
+  const tableCellType = schema.nodes.table_cell;
+  const tableHeaderType = schema.nodes.table_header;
+  const paragraphType = schema.nodes.paragraph;
+
+  if (!tableType || !tableRowType || !paragraphType) {
+    console.warn('[SlashMenu] Table node types not found in schema');
+    return false;
+  }
+
+  const cellType = tableCellType || tableHeaderType;
+  if (!cellType) return false;
+
+  const headerRow = tableRowType.create(null,
+    Array.from({ length: cols }, () =>
+      (tableHeaderType || cellType).create(null, paragraphType.create())
+    )
+  );
+  const dataRows = Array.from({ length: rows - 1 }, () =>
+    tableRowType.create(null,
+      Array.from({ length: cols }, () =>
+        cellType.create(null, paragraphType.create())
+      )
+    )
+  );
+  const table = tableType.create(null, [headerRow, ...dataRows]);
+
+  const { tr, selection } = view.state;
+  view.dispatch(tr.replaceSelectionWith(table).scrollIntoView());
+  return true;
+}
+
+function executeInsertHr(view) {
+  const hrType = view.state.schema.nodes.hr;
+  if (!hrType) {
+    console.warn('[SlashMenu] HR node type not found in schema');
+    return false;
+  }
+  const { tr, selection } = view.state;
+  view.dispatch(tr.replaceSelectionWith(hrType.create()).scrollIntoView());
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Slash menu item definitions — each has a direct executor
 // ---------------------------------------------------------------------------
 const SLASH_ITEMS = [
-  { label: 'Text',           icon: Type,        commandKey: turnIntoTextCommand.key },
-  { label: 'Heading 1',      icon: Heading1,    commandKey: wrapInHeadingCommand.key, args: 1 },
-  { label: 'Heading 2',      icon: Heading2,    commandKey: wrapInHeadingCommand.key, args: 2 },
-  { label: 'Heading 3',      icon: Heading3,    commandKey: wrapInHeadingCommand.key, args: 3 },
-  { label: 'Bullet List',    icon: List,        commandKey: wrapInBulletListCommand.key },
-  { label: 'Ordered List',   icon: ListOrdered, commandKey: wrapInOrderedListCommand.key },
-  { label: 'Table',          icon: Table,       commandKey: insertTableCommand.key, args: { row: 3, col: 3 } },
-  { label: 'Blockquote',     icon: Quote,       commandKey: wrapInBlockquoteCommand.key },
-  { label: 'Code Block',     icon: Code,        commandKey: createCodeBlockCommand.key },
-  { label: 'Divider',        icon: Minus,       commandKey: insertHrCommand.key },
+  { label: 'Text',           icon: Type,        exec: (v) => executeSetBlockType(v, 'paragraph') },
+  { label: 'Heading 1',      icon: Heading1,    exec: (v) => executeSetBlockType(v, 'heading', { level: 1 }) },
+  { label: 'Heading 2',      icon: Heading2,    exec: (v) => executeSetBlockType(v, 'heading', { level: 2 }) },
+  { label: 'Heading 3',      icon: Heading3,    exec: (v) => executeSetBlockType(v, 'heading', { level: 3 }) },
+  { label: 'Bullet List',    icon: List,        exec: (v) => executeWrapIn(v, 'bullet_list') },
+  { label: 'Ordered List',   icon: ListOrdered, exec: (v) => executeWrapIn(v, 'ordered_list') },
+  { label: 'Table',          icon: Table,       exec: (v) => executeInsertTable(v, 3, 3) },
+  { label: 'Blockquote',     icon: Quote,       exec: (v) => executeWrapIn(v, 'blockquote') },
+  { label: 'Code Block',     icon: Code,        exec: (v) => executeSetBlockType(v, 'code_block') },
+  { label: 'Divider',        icon: Minus,       exec: (v) => executeInsertHr(v) },
 ];
 
 // ---------------------------------------------------------------------------
-// Module-level slash state — bridges ProseMirror plugin → React rendering
+// Module-level slash state
 // ---------------------------------------------------------------------------
 const slashState = {
   active: false,
-  triggerPos: 0, // doc position right AFTER the '/'
+  triggerPos: 0,
   query: "",
   coords: { top: 0, left: 0 },
   view: null,
@@ -81,14 +139,12 @@ export const slashPlugin = $prose(() => {
           const { from } = state.selection;
 
           if (!slashState.active) {
-            // Only activate on text changes
             if (prevState.doc.eq(state.doc)) return;
             if (from < 1) return;
 
             const charBefore = state.doc.textBetween(from - 1, from);
             if (charBefore !== '/') return;
 
-            // Must be at start of text block or preceded by whitespace
             const $from = state.selection.$from;
             const startOfBlock = $from.start();
             const triggerOffset = from - 1;
@@ -108,7 +164,7 @@ export const slashPlugin = $prose(() => {
             return;
           }
 
-          // --- ACTIVE: update query or close ---
+          // Update query or close
           if (from < slashState.triggerPos) {
             slashState.reset();
             return;
@@ -148,7 +204,7 @@ export const slashPlugin = $prose(() => {
 });
 
 // ---------------------------------------------------------------------------
-// React popover — subscribes to slashState
+// React popover
 // ---------------------------------------------------------------------------
 export function SlashMenu() {
   const [loading, getEditor] = useInstance();
@@ -160,7 +216,7 @@ export function SlashMenu() {
   useEffect(() => {
     const listener = (snapshot) => {
       setState(snapshot);
-      setSelectedIndex(0); // reset selection on any state change
+      setSelectedIndex(0);
     };
     slashState.listeners.add(listener);
     return () => slashState.listeners.delete(listener);
@@ -168,38 +224,31 @@ export function SlashMenu() {
 
   const { active, query, coords, view, triggerPos } = state;
 
-  // Filter items by query
   const filteredItems = SLASH_ITEMS.filter(item =>
     item.label.toLowerCase().includes(query.toLowerCase())
   );
 
-  // Execute: Step 1 — delete '/' + query, Step 2 — run command
+  // Execute: delete '/' + query, then run the ProseMirror command directly
   const executeCommand = useCallback((item) => {
-    if (loading || !view) return;
-    const editor = getEditor();
-    if (!editor) return;
+    if (!view) return;
 
     // Step 1: Delete the '/' trigger and any query text
     const { state: editorState } = view;
-    const deleteFrom = Math.max(0, triggerPos - 1); // include the '/'
+    const deleteFrom = Math.max(0, triggerPos - 1);
     const deleteTo = editorState.selection.from;
     if (deleteFrom < deleteTo) {
       view.dispatch(editorState.tr.delete(deleteFrom, deleteTo));
     }
 
-    // Step 2: Execute the block command on the now-updated state
-    try {
-      editor.action((ctx) => {
-        const commands = ctx.get(commandsCtx);
-        commands.call(item.commandKey, item.args);
-      });
-    } catch (e) {
-      console.warn('[SlashMenu] Command failed:', item.label, e);
+    // Step 2: Execute via direct ProseMirror commands on the updated state
+    const result = item.exec(view);
+    if (!result) {
+      console.warn(`[SlashMenu] Command "${item.label}" returned false — may not be applicable in current context`);
     }
 
     view.focus();
     slashState.reset();
-  }, [loading, getEditor, view, triggerPos]);
+  }, [view, triggerPos]);
 
   // Keyboard navigation
   useEffect(() => {
