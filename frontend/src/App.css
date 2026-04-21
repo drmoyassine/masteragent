@@ -261,14 +261,31 @@
 .milkdown-table-block .handle {
     position: absolute;
     z-index: 10;
-    display: none;
-    cursor: pointer;
-    user-select: none;
-}
-.milkdown-table-block .handle[data-show="true"] {
     display: flex;
     align-items: center;
     justify-content: center;
+    cursor: pointer;
+    user-select: none;
+    /* Hide via opacity/visibility (NOT display:none) so transitions work */
+    visibility: hidden;
+    opacity: 0;
+    pointer-events: none;
+    /* Delay hiding so user can move pointer to the handle */
+    transition: visibility 0s 0.35s, opacity 0.15s 0.25s, pointer-events 0s 0.35s;
+}
+.milkdown-table-block .handle[data-show="true"] {
+    visibility: visible;
+    opacity: 1;
+    pointer-events: auto;
+    /* Show immediately */
+    transition: visibility 0s 0s, opacity 0.1s 0s, pointer-events 0s 0s;
+}
+/* Keep handle visible while the user is hovering it */
+.milkdown-table-block .handle:hover {
+    visibility: visible !important;
+    opacity: 1 !important;
+    pointer-events: auto !important;
+    transition-delay: 0s !important;
 }
 
 /* ── Cell Handles (drag handles for row/col) ── */
@@ -278,7 +295,7 @@
     background: hsl(240 4% 20%);
     border: 1px solid hsl(240 4% 30%);
     color: hsl(240 5% 65%);
-    transition: background 0.15s, color 0.15s;
+    transition: background 0.15s, color 0.15s, visibility 0s 0.35s, opacity 0.15s 0.25s, pointer-events 0s 0.35s;
     flex-direction: column;
 }
 .milkdown-table-block .cell-handle:hover {

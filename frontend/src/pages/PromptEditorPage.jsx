@@ -30,6 +30,8 @@ import {
   ChevronDown,
   AlertCircle,
   Braces,
+  Code,
+  Eye,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -140,6 +142,7 @@ export default function PromptEditorPage() {
   const [newVersionDialog, setNewVersionDialog] = useState(false);
   const [renderDialog, setRenderDialog] = useState(false);
   const [deleteDialog, setDeleteDialog] = useState(false);
+  const [markdownMode, setMarkdownMode] = useState(false);
 
   // New section form
   const [newSection, setNewSection] = useState({ name: "", title: "", content: "" });
@@ -565,6 +568,16 @@ export default function PromptEditorPage() {
                   <Button
                     variant="ghost"
                     size="sm"
+                    onClick={() => setMarkdownMode((m) => !m)}
+                    className="text-muted-foreground hover:text-foreground"
+                    data-testid="toggle-markdown-btn"
+                    title={markdownMode ? 'Switch to rich editor' : 'Switch to markdown source'}
+                  >
+                    {markdownMode ? <Eye className="w-4 h-4" /> : <Code className="w-4 h-4" />}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
                     onClick={() => setDeleteDialog(true)}
                     className="text-destructive hover:text-destructive"
                     data-testid="delete-section-btn"
@@ -596,14 +609,24 @@ export default function PromptEditorPage() {
               )}
 
               <div className="editor-content">
-                <MilkdownEditor
-                  key={selectedSection.filename}
-                  value={sectionContent}
-                  onChange={setSectionContent}
-                  variables={availableVariables}
-                  ref={editorRef}
-                  data-testid="section-editor"
-                />
+                {markdownMode ? (
+                  <textarea
+                    className="w-full h-full bg-transparent text-foreground font-mono text-sm p-4 resize-none outline-none border-none"
+                    value={sectionContent}
+                    onChange={(e) => setSectionContent(e.target.value)}
+                    spellCheck={false}
+                    data-testid="markdown-source-editor"
+                  />
+                ) : (
+                  <MilkdownEditor
+                    key={selectedSection.filename}
+                    value={sectionContent}
+                    onChange={setSectionContent}
+                    variables={availableVariables}
+                    ref={editorRef}
+                    data-testid="section-editor"
+                  />
+                )}
               </div>
             </>
           ) : (
