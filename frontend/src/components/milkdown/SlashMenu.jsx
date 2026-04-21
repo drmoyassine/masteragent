@@ -34,35 +34,43 @@ function executeWrapIn(view, nodeTypeName) {
 function executeInsertTable(view, rows = 3, cols = 3) {
   const { schema } = view.state;
   const tableType = schema.nodes.table;
+  const tableHeaderRowType = schema.nodes.table_header_row;
   const tableRowType = schema.nodes.table_row;
+  const tableHeaderCellType = schema.nodes.table_header;
   const tableCellType = schema.nodes.table_cell;
-  const tableHeaderType = schema.nodes.table_header;
   const paragraphType = schema.nodes.paragraph;
 
-  if (!tableType || !tableRowType || !paragraphType) {
-    console.warn('[SlashMenu] Table node types not found in schema');
+  if (!tableType || !tableHeaderRowType || !tableRowType || !paragraphType) {
+    console.warn('[SlashMenu] Table node types not found in schema. Available:', Object.keys(schema.nodes));
     return false;
   }
 
-  const cellType = tableCellType || tableHeaderType;
-  if (!cellType) return false;
+  // Build header cells (th) — must use table_header node type + alignment attr
+  const headerCells = Array.from({ length: cols }, () =>
+    tableHeaderCellType.createAndFill({ alignment: 'left' })
+  );
+  const headerRow = tableHeaderRowType.create(null, headerCells);
 
-  const headerRow = tableRowType.create(null,
-    Array.from({ length: cols }, () =>
-      (tableHeaderType || cellType).create(null, paragraphType.create())
-    )
-  );
-  const dataRows = Array.from({ length: rows - 1 }, () =>
-    tableRowType.create(null,
-      Array.from({ length: cols }, () =>
-        cellType.create(null, paragraphType.create())
-      )
-    )
-  );
+  // Build data rows with table_cell node type
+  const dataRows = Array.from({ length: Math.max(rows - 1, 1) }, () => {
+    const cells = Array.from({ length: cols }, () =>
+      tableCellType.createAndFill({ alignment: 'left' })
+    );
+    return tableRowType.create(null, cells);
+  });
+
   const table = tableType.create(null, [headerRow, ...dataRows]);
 
   const { tr, selection } = view.state;
-  view.dispatch(tr.replaceSelectionWith(table).scrollIntoView());
+  const _tr = tr.replaceSelectionWith(table);
+
+  // Place cursor in the first header cell
+  const resolvedPos = _tr.doc.resolve(selection.from + 3);
+  const sel = view.state.constructor.near
+    ? view.state.constructor.near(resolvedPos)
+    : null;
+
+  view.dispatch(_tr.scrollIntoView());
   return true;
 }
 
