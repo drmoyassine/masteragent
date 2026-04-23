@@ -171,6 +171,7 @@ export const bulkReprocessMemoriesAdmin = (data) => api.post('/memory/admin/memo
 export const getInsightsAdmin = (params) => api.get('/memory/intelligence', { params });
 export const updateInsightAdmin = (id, data) => api.patch(`/memory/intelligence/${id}`, data);
 export const deleteInsightAdmin = (id) => api.delete(`/memory/intelligence/${id}`);
+export const bulkDeleteIntelligenceAdmin = (data) => api.post('/memory/intelligence/bulk-delete', data);
 export const getInteractionFilterOptionsAdmin = (params) => api.get('/memory/interactions/filter-options', { params });
 export const getDailyMemories = (date) => api.get(`/memory/admin/daily/${date}`);
 export const getTimeline = (entityType, entityId) => api.get(`/memory/admin/timeline/${entityType}/${entityId}`);
@@ -182,6 +183,7 @@ export const getLessonsAdmin = (params) => api.get('/memory/knowledge', { params
 export const createLessonAdmin = (data) => api.post('/memory/knowledge', data);
 export const updateLessonAdmin = (id, data) => api.put(`/memory/knowledge/\$\{id\}`, data);
 export const deleteLessonAdmin = (id) => api.delete(`/memory/knowledge/\$\{id\}`);
+export const bulkDeleteKnowledgeAdmin = (data) => api.post('/memory/knowledge/bulk-delete', data);
 
 // Outbound Webhooks - Admin UI
 export const getOutboundWebhooks = () => api.get('/memory/outbound-webhooks');

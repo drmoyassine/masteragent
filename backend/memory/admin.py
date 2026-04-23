@@ -79,11 +79,18 @@ async def list_intelligence(
 
         params += [limit, offset]
         cursor.execute(f"""
-            SELECT id, seq_id, primary_entity_type, primary_entity_id, source_memory_ids,
-                   knowledge_type, name, content, summary, status,
-                   created_by, confirmed_by, confirmed_at, created_at, updated_at
-            FROM intelligence {where}
-            ORDER BY created_at DESC
+            SELECT i.id, i.seq_id, i.primary_entity_type, i.primary_entity_id, i.source_memory_ids,
+                   i.knowledge_type, i.name, i.content, i.summary, i.status,
+                   i.created_by, i.confirmed_by, i.confirmed_at, i.created_at, i.updated_at,
+                   ep.display_name as entity_display_name,
+                   ep.subtype as entity_subtype_resolved,
+                   ep.properties as entity_properties
+            FROM intelligence i
+            LEFT JOIN entity_profiles ep
+              ON ep.entity_type = i.primary_entity_type
+              AND ep.entity_id = i.primary_entity_id
+            {where}
+            ORDER BY i.created_at DESC
             LIMIT %s OFFSET %s
         """, params)
         rows = cursor.fetchall()
@@ -188,6 +195,18 @@ async def delete_intelligence(insight_id: str, admin: dict = Depends(require_adm
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM intelligence WHERE id = %s", (insight_id,))
+
+
+class BulkIntelligenceDelete(BaseModel):
+    intelligence_ids: list[str]
+
+@router.post("/intelligence/bulk-delete")
+async def bulk_delete_intelligence(body: BulkIntelligenceDelete, admin: dict = Depends(require_admin_auth)):
+    """Bulk delete intelligence records."""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM intelligence WHERE id = ANY(%s)", (body.intelligence_ids,))
+    return {"deleted": len(body.intelligence_ids)}
 
 
 @router.post("/intelligence/{insight_id}/promote")
@@ -330,6 +349,19 @@ async def delete_knowledge(lesson_id: str, admin: dict = Depends(require_admin_a
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM knowledge WHERE id = %s", (lesson_id,))
+
+
+class BulkKnowledgeDelete(BaseModel):
+    knowledge_ids: list[str]
+
+@router.post("/knowledge/bulk-delete")
+async def bulk_delete_knowledge(body: BulkKnowledgeDelete, admin: dict = Depends(require_admin_auth)):
+    """Bulk delete knowledge records."""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM knowledge WHERE id = ANY(%s)", (body.knowledge_ids,))
+    return {"deleted": len(body.knowledge_ids)}
+
 
 
 # ============================================================
@@ -973,11 +1005,18 @@ async def list_admin_memories(
 
         params_page = list(params) + [limit, offset]
         cursor.execute(f"""
-            SELECT id, seq_id, date, primary_entity_type, primary_entity_id,
-                   interaction_count, content_summary, related_entities,
-                   intents, compacted, processing_errors, created_at
-            FROM memories {where}
-            ORDER BY created_at DESC
+            SELECT m.id, m.seq_id, m.date, m.primary_entity_type, m.primary_entity_id,
+                   m.interaction_count, m.content_summary, m.related_entities,
+                   m.intents, m.compacted, m.processing_errors, m.created_at,
+                   ep.display_name as entity_display_name,
+                   ep.subtype as entity_subtype_resolved,
+                   ep.properties as entity_properties
+            FROM memories m
+            LEFT JOIN entity_profiles ep
+              ON ep.entity_type = m.primary_entity_type
+              AND ep.entity_id = m.primary_entity_id
+            {where}
+            ORDER BY m.created_at DESC
             LIMIT %s OFFSET %s
         """, params_page)
         rows = cursor.fetchall()

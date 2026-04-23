@@ -25,6 +25,8 @@ import api, {
   getEntityTypes,
   getLessonTypes,
   getEntityTypeConfig,
+  bulkDeleteIntelligenceAdmin,
+  bulkDeleteKnowledgeAdmin,
 } from "@/lib/api";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { Button } from "@/components/ui/button";
@@ -145,64 +147,138 @@ export default function MemoryExplorerPage() {
   // Bulk Operations State
   const [selectedInteractionIds, setSelectedInteractionIds] = useState([]);
   const [selectedMemoryIds, setSelectedMemoryIds] = useState([]);
+  const [selectedIntelligenceIds, setSelectedIntelligenceIds] = useState([]);
+  const [selectedKnowledgeIds, setSelectedKnowledgeIds] = useState([]);
 
-  // ─── Interaction Column Configuration ──────────────────────────────────
-  const DEFAULT_COLUMNS = [
-    { key: "select", label: "", fixed: true },
-    { key: "seq_id", label: "ID" },
-    { key: "timestamp", label: "Time" },
-    { key: "interaction_type", label: "Interaction Type" },
-    { key: "entity_type", label: "Entity Type" },
-    { key: "entity_subtype", label: "Sub-Type" },
-    { key: "entity_id", label: "Entity" },
-    { key: "content", label: "Content" },
-    { key: "agent", label: "Agent" },
-    { key: "service_status", label: "Service Status" },
-    { key: "status", label: "Memorization" },
-    { key: "actions", label: "Actions", fixed: true },
-  ];
+  // ─── Generic Column Config System ─────────────────────────────────────
+  const COLUMN_DEFS = {
+    interactions: [
+      { key: "select", label: "", fixed: true },
+      { key: "seq_id", label: "ID" },
+      { key: "timestamp", label: "Time" },
+      { key: "interaction_type", label: "Interaction Type" },
+      { key: "entity_type", label: "Entity Type" },
+      { key: "entity_subtype", label: "Sub-Type" },
+      { key: "entity_id", label: "Entity" },
+      { key: "content", label: "Content" },
+      { key: "agent", label: "Agent" },
+      { key: "service_status", label: "Service Status" },
+      { key: "status", label: "Memorization" },
+      { key: "actions", label: "Actions", fixed: true },
+    ],
+    memories: [
+      { key: "select", label: "", fixed: true },
+      { key: "seq_id", label: "ID" },
+      { key: "date", label: "Date" },
+      { key: "entity_type", label: "Entity Type" },
+      { key: "entity_subtype", label: "Entity Subtype" },
+      { key: "entity_id", label: "Entity" },
+      { key: "interaction_count", label: "Interactions" },
+      { key: "service_status", label: "Service Status" },
+      { key: "compacted", label: "Compacted" },
+    ],
+    intelligence: [
+      { key: "select", label: "", fixed: true },
+      { key: "seq_id", label: "ID" },
+      { key: "created_at", label: "Created" },
+      { key: "entity", label: "Entity" },
+      { key: "signal", label: "Signal" },
+      { key: "report", label: "Intelligence Report" },
+      { key: "status", label: "Status" },
+      { key: "actions", label: "Actions", fixed: true },
+    ],
+    knowledge: [
+      { key: "select", label: "", fixed: true },
+      { key: "seq_id", label: "ID" },
+      { key: "type", label: "Type" },
+      { key: "name", label: "Name" },
+      { key: "content", label: "Content" },
+      { key: "status", label: "Status" },
+      { key: "actions", label: "Actions", fixed: true },
+    ],
+  };
 
-  const loadColumnsFromStorage = () => {
+  const loadColCfg = (tableKey) => {
+    const defaults = COLUMN_DEFS[tableKey];
     try {
-      const saved = localStorage.getItem("memory-explorer-columns");
+      const saved = localStorage.getItem(`me-cols-${tableKey}`);
       if (saved) {
         const parsed = JSON.parse(saved);
-        // Merge with defaults to pick up new columns
         const savedKeys = parsed.map(c => c.key);
-        const merged = parsed.filter(c => DEFAULT_COLUMNS.some(d => d.key === c.key));
-        DEFAULT_COLUMNS.forEach(d => {
-          if (!savedKeys.includes(d.key)) merged.push({ ...d, visible: true });
-        });
+        const merged = parsed.filter(c => defaults.some(d => d.key === c.key));
+        defaults.forEach(d => { if (!savedKeys.includes(d.key)) merged.push({ ...d, visible: true }); });
         return merged;
       }
     } catch { /* ignore */ }
-    return DEFAULT_COLUMNS.map(c => ({ ...c, visible: true }));
+    return defaults.map(c => ({ ...c, visible: true }));
   };
 
-  const [columnConfig, setColumnConfig] = useState(loadColumnsFromStorage);
+  const [colCfg, setColCfg] = useState(() => ({
+    interactions: loadColCfg("interactions"),
+    memories: loadColCfg("memories"),
+    intelligence: loadColCfg("intelligence"),
+    knowledge: loadColCfg("knowledge"),
+  }));
 
-  const toggleColumn = (key) => {
-    setColumnConfig(prev => {
-      const updated = prev.map(c => c.key === key ? { ...c, visible: !c.visible } : c);
-      localStorage.setItem("memory-explorer-columns", JSON.stringify(updated));
+  const toggleCol = (tableKey, key) => {
+    setColCfg(prev => {
+      const updated = { ...prev, [tableKey]: prev[tableKey].map(c => c.key === key ? { ...c, visible: !c.visible } : c) };
+      localStorage.setItem(`me-cols-${tableKey}`, JSON.stringify(updated[tableKey]));
       return updated;
     });
   };
 
-  const moveColumn = (key, direction) => {
-    setColumnConfig(prev => {
-      const idx = prev.findIndex(c => c.key === key);
+  const moveCol = (tableKey, key, dir) => {
+    setColCfg(prev => {
+      const arr = [...prev[tableKey]];
+      const idx = arr.findIndex(c => c.key === key);
       if (idx < 0) return prev;
-      const targetIdx = idx + direction;
-      if (targetIdx < 0 || targetIdx >= prev.length) return prev;
-      const updated = [...prev];
-      [updated[idx], updated[targetIdx]] = [updated[targetIdx], updated[idx]];
-      localStorage.setItem("memory-explorer-columns", JSON.stringify(updated));
+      const t = idx + dir;
+      if (t < 0 || t >= arr.length) return prev;
+      [arr[idx], arr[t]] = [arr[t], arr[idx]];
+      const updated = { ...prev, [tableKey]: arr };
+      localStorage.setItem(`me-cols-${tableKey}`, JSON.stringify(arr));
       return updated;
     });
   };
 
-  const visibleColumns = columnConfig.filter(c => c.visible || c.fixed);
+  const visCols = (tableKey) => colCfg[tableKey].filter(c => c.visible || c.fixed);
+
+  // Column toggle popover renderer (shared across all tabs)
+  const renderColumnToggle = (tableKey) => (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="outline" size="icon" title="Toggle columns">
+          <Settings2 className="w-4 h-4" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-64 p-0">
+        <div className="px-3 py-2 border-b border-border/50">
+          <p className="text-sm font-medium">Toggle Columns</p>
+          <p className="text-[10px] text-muted-foreground">Show/hide and reorder table columns</p>
+        </div>
+        <div className="max-h-72 overflow-y-auto py-1">
+          {colCfg[tableKey].filter(c => !c.fixed).map(col => (
+            <div key={col.key} className="flex items-center gap-2 px-3 py-1.5 hover:bg-muted/50">
+              <button onClick={() => toggleCol(tableKey, col.key)}
+                className={`p-0.5 rounded transition-colors ${col.visible ? 'text-primary' : 'text-muted-foreground/40'}`}>
+                {col.visible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+              </button>
+              <span className={`text-xs flex-1 ${col.visible ? '' : 'text-muted-foreground/50'}`}>{col.label}</span>
+              <div className="flex gap-0.5">
+                <button onClick={() => moveCol(tableKey, col.key, -1)} className="p-0.5 text-muted-foreground hover:text-foreground rounded" title="Move up">
+                  <ChevronUp className="w-3 h-3" />
+                </button>
+                <button onClick={() => moveCol(tableKey, col.key, 1)} className="p-0.5 text-muted-foreground hover:text-foreground rounded" title="Move down">
+                  <ChevronDown className="w-3 h-3" />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
 
   useEffect(() => {
     loadInitialData();
@@ -228,17 +304,22 @@ export default function MemoryExplorerPage() {
       }
 
       if (dynamicColKeys.size > 0) {
-        setColumnConfig(prev => {
-          const existingKeys = new Set(prev.map(c => c.key));
-          const newDynamic = [...dynamicColKeys]
-            .filter(k => !existingKeys.has(`dyn_${k}`))
-            .map(k => ({ key: `dyn_${k}`, label: k.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()), visible: true, dynamic: true }));
-          if (newDynamic.length === 0) return prev;
-          // Insert dynamic columns before 'actions'
-          const actionsIdx = prev.findIndex(c => c.key === 'actions');
-          const updated = [...prev];
-          updated.splice(actionsIdx >= 0 ? actionsIdx : updated.length, 0, ...newDynamic);
-          localStorage.setItem("memory-explorer-columns", JSON.stringify(updated));
+        // Inject dynamic CRM columns into interactions, memories, and intelligence
+        setColCfg(prev => {
+          const updated = { ...prev };
+          for (const tableKey of ["interactions", "memories", "intelligence"]) {
+            const existingKeys = new Set(updated[tableKey].map(c => c.key));
+            const newDynamic = [...dynamicColKeys]
+              .filter(k => !existingKeys.has(`dyn_${k}`))
+              .map(k => ({ key: `dyn_${k}`, label: k.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()), visible: true, dynamic: true }));
+            if (newDynamic.length > 0) {
+              const actionsIdx = updated[tableKey].findIndex(c => c.key === 'actions');
+              const arr = [...updated[tableKey]];
+              arr.splice(actionsIdx >= 0 ? actionsIdx : arr.length, 0, ...newDynamic);
+              updated[tableKey] = arr;
+              localStorage.setItem(`me-cols-${tableKey}`, JSON.stringify(arr));
+            }
+          }
           return updated;
         });
       }
@@ -550,6 +631,52 @@ export default function MemoryExplorerPage() {
     }
   };
 
+  // Intelligence bulk operations
+  const toggleSelectAllIntelligence = (checked) => {
+    if (checked) setSelectedIntelligenceIds(intelligence.map(i => i.id));
+    else setSelectedIntelligenceIds([]);
+  };
+  const toggleIntelligenceItem = (id) => {
+    setSelectedIntelligenceIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+  const handleBulkDeleteIntelligence = async () => {
+    if (!window.confirm(`Delete ${selectedIntelligenceIds.length} intelligence records? This cannot be reversed.`)) return;
+    setProcessingBulk(true);
+    try {
+      const res = await bulkDeleteIntelligenceAdmin({ intelligence_ids: selectedIntelligenceIds });
+      toast.success(`Deleted ${res.data.deleted} intelligence records`);
+      setSelectedIntelligenceIds([]);
+      loadInsights();
+    } catch (error) {
+      toast.error("Failed to delete intelligence");
+    } finally {
+      setProcessingBulk(false);
+    }
+  };
+
+  // Knowledge bulk operations
+  const toggleSelectAllKnowledge = (checked) => {
+    if (checked) setSelectedKnowledgeIds(knowledge.map(k => k.id));
+    else setSelectedKnowledgeIds([]);
+  };
+  const toggleKnowledgeItem = (id) => {
+    setSelectedKnowledgeIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+  const handleBulkDeleteKnowledge = async () => {
+    if (!window.confirm(`Delete ${selectedKnowledgeIds.length} knowledge records? This cannot be reversed.`)) return;
+    setProcessingBulk(true);
+    try {
+      const res = await bulkDeleteKnowledgeAdmin({ knowledge_ids: selectedKnowledgeIds });
+      toast.success(`Deleted ${res.data.deleted} knowledge records`);
+      setSelectedKnowledgeIds([]);
+      loadLessons();
+    } catch (error) {
+      toast.error("Failed to delete knowledge");
+    } finally {
+      setProcessingBulk(false);
+    }
+  };
+
   const handleUpdateIntelligence = async () => {
     if (!editingIntelligence) return;
     try {
@@ -720,40 +847,7 @@ export default function MemoryExplorerPage() {
                 <Button variant="outline" size="icon" onClick={loadInteractions} disabled={loading}>
                    <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
                 </Button>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button variant="outline" size="icon" title="Toggle columns">
-                      <Settings2 className="w-4 h-4" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent align="end" className="w-64 p-0">
-                    <div className="px-3 py-2 border-b border-border/50">
-                      <p className="text-sm font-medium">Toggle Columns</p>
-                      <p className="text-[10px] text-muted-foreground">Show/hide and reorder table columns</p>
-                    </div>
-                    <div className="max-h-72 overflow-y-auto py-1">
-                      {columnConfig.filter(c => !c.fixed).map((col) => (
-                        <div key={col.key} className="flex items-center gap-2 px-3 py-1.5 hover:bg-muted/50">
-                          <button
-                            onClick={() => toggleColumn(col.key)}
-                            className={`p-0.5 rounded transition-colors ${col.visible ? 'text-primary' : 'text-muted-foreground/40'}`}
-                          >
-                            {col.visible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-                          </button>
-                          <span className={`text-xs flex-1 ${col.visible ? '' : 'text-muted-foreground/50'}`}>{col.label}</span>
-                          <div className="flex gap-0.5">
-                            <button onClick={() => moveColumn(col.key, -1)} className="p-0.5 text-muted-foreground hover:text-foreground rounded" title="Move up">
-                              <ChevronUp className="w-3 h-3" />
-                            </button>
-                            <button onClick={() => moveColumn(col.key, 1)} className="p-0.5 text-muted-foreground hover:text-foreground rounded" title="Move down">
-                              <ChevronDown className="w-3 h-3" />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </PopoverContent>
-                </Popover>
+                {renderColumnToggle("interactions")}
               </div>
             </CardHeader>
             <CardContent>
@@ -761,7 +855,7 @@ export default function MemoryExplorerPage() {
                  <Table>
                     <TableHeader className="sticky top-0 z-10 bg-background shadow-[0_1px_0_0_hsl(var(--border))]">
                       <TableRow>
-                        {visibleColumns.map(col => {
+                        {visCols("interactions").map(col => {
                           if (col.key === "select") return (
                             <TableHead key={col.key} className="w-[40px]">
                               <Checkbox 
@@ -776,10 +870,13 @@ export default function MemoryExplorerPage() {
                     </TableHeader>
                     <TableBody>
                        {interactions.length === 0 ? (
-                          <TableRow><TableCell colSpan={visibleColumns.length} className="text-center text-muted-foreground py-8">No interactions found.</TableCell></TableRow>
+                          <TableRow><TableCell colSpan={visCols("interactions").length} className="text-center text-muted-foreground py-8">No interactions found.</TableCell></TableRow>
                        ) : interactions.map(i => (
-                         <TableRow key={i.id} className={selectedInteractionIds.includes(i.id) ? "bg-accent/30" : ""}>
-                           {visibleColumns.map(col => {
+                         <TooltipProvider key={i.id}>
+                           <Tooltip delayDuration={300}>
+                             <TooltipTrigger asChild>
+                         <TableRow className={selectedInteractionIds.includes(i.id) ? "bg-accent/30" : ""}>
+                           {visCols("interactions").map(col => {
                              switch (col.key) {
                                case "select":
                                  return (
@@ -883,6 +980,12 @@ export default function MemoryExplorerPage() {
                              }
                            })}
                          </TableRow>
+                             </TooltipTrigger>
+                             <TooltipContent side="bottom" align="start" className="max-w-2xl bg-secondary text-secondary-foreground border-border break-words shadow-lg pointer-events-none z-40">
+                               <p className="text-sm leading-relaxed whitespace-pre-wrap line-clamp-4">{i.content}</p>
+                             </TooltipContent>
+                           </Tooltip>
+                         </TooltipProvider>
                        ))}
                     </TableBody>
                  </Table>
@@ -916,6 +1019,7 @@ export default function MemoryExplorerPage() {
                 <Button variant="outline" size="icon" onClick={loadMemories} disabled={loading}>
                    <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
                 </Button>
+                {renderColumnToggle("memories")}
               </div>
             </CardHeader>
             <CardContent>
@@ -923,73 +1027,38 @@ export default function MemoryExplorerPage() {
                  <Table>
                     <TableHeader className="sticky top-0 z-10 bg-background shadow-[0_1px_0_0_hsl(var(--border))]">
                       <TableRow>
-                        <TableHead className="w-[40px]">
-                            <Checkbox 
-                                checked={memories.length > 0 && selectedMemoryIds.length === memories.length} 
-                                onCheckedChange={(c) => toggleSelectAllMemories(c)} 
-                            />
-                        </TableHead>
-                        <TableHead>ID</TableHead>
-                        <TableHead>Date</TableHead>
-                        <TableHead>Entity Type</TableHead>
-                        <TableHead>Entity Subtype</TableHead>
-                        <TableHead>Entity ID</TableHead>
-                        <TableHead>Interactions</TableHead>
-                        <TableHead>Service Status</TableHead>
-                        <TableHead>Compacted</TableHead>
+                        {visCols("memories").map(col => {
+                          if (col.key === "select") return (
+                            <TableHead key={col.key} className="w-[40px]">
+                              <Checkbox checked={memories.length > 0 && selectedMemoryIds.length === memories.length} onCheckedChange={(c) => toggleSelectAllMemories(c)} />
+                            </TableHead>
+                          );
+                          return <TableHead key={col.key}>{col.label}</TableHead>;
+                        })}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                         {memories.length === 0 ? (
-                          <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-8">No memories found.</TableCell></TableRow>
+                          <TableRow><TableCell colSpan={visCols("memories").length} className="text-center text-muted-foreground py-8">No memories found.</TableCell></TableRow>
                        ) : memories.map(m => (
                          <TooltipProvider key={m.id}>
                            <Tooltip delayDuration={300}>
                              <TooltipTrigger asChild>
                                <TableRow className="cursor-pointer hover:bg-accent/50" onClick={() => setEditingMemory(m)}>
-                                  <TableCell onClick={(e) => e.stopPropagation()}>
-                                     <Checkbox 
-                                        checked={selectedMemoryIds.includes(m.id)} 
-                                        onCheckedChange={() => toggleMemory(m.id)} 
-                                     />
-                                  </TableCell>
-                                  <TableCell className="font-mono text-muted-foreground">#{m.seq_id}</TableCell>
-                                  <TableCell className="whitespace-nowrap">{m.date}</TableCell>
-                                  <TableCell>
-                                     <Badge variant="outline" style={{ borderColor: stringToColor(m.primary_entity_type), color: stringToColor(m.primary_entity_type) }}>
-                                        {m.primary_entity_type}
-                                     </Badge>
-                                  </TableCell>
-                                  <TableCell>-</TableCell>
-                                  <TableCell className="font-mono text-xs">{m.primary_entity_id}</TableCell>
-                                  <TableCell>{m.interaction_count}</TableCell>
-                                  <TableCell>
-                                     <div className="flex gap-2 items-center">
-                                       <TooltipProvider>
-                                         <Tooltip>
-                                           <TooltipTrigger>
-                                             <Badge variant="outline" className={m.processing_errors?.summarization ? "border-red-500/50 text-red-500" : "border-emerald-500/50 text-emerald-500"}>
-                                               {m.processing_errors?.summarization ? <XCircle className="w-3 h-3 mr-1" /> : <CheckCircle2 className="w-3 h-3 mr-1" />}
-                                               Summarization
-                                             </Badge>
-                                           </TooltipTrigger>
-                                           {m.processing_errors?.summarization && <TooltipContent side="top" className="bg-red-950 text-red-100 border-red-900 z-50"><p className="max-w-xs">{m.processing_errors.summarization}</p></TooltipContent>}
-                                         </Tooltip>
-                                       </TooltipProvider>
-                                       <TooltipProvider>
-                                         <Tooltip>
-                                           <TooltipTrigger>
-                                             <Badge variant="outline" className={m.processing_errors?.embeddings ? "border-red-500/50 text-red-500" : "border-emerald-500/50 text-emerald-500"}>
-                                               {m.processing_errors?.embeddings ? <XCircle className="w-3 h-3 mr-1" /> : <CheckCircle2 className="w-3 h-3 mr-1" />}
-                                               Embedding
-                                             </Badge>
-                                           </TooltipTrigger>
-                                           {m.processing_errors?.embeddings && <TooltipContent side="top" className="bg-red-950 text-red-100 border-red-900 z-50"><p className="max-w-xs">{m.processing_errors.embeddings}</p></TooltipContent>}
-                                         </Tooltip>
-                                       </TooltipProvider>
-                                     </div>
-                                  </TableCell>
-                                  <TableCell>{m.compacted ? <Check className="w-4 h-4 text-green-500" /> : ""}</TableCell>
+                                 {visCols("memories").map(col => {
+                                   switch (col.key) {
+                                     case "select": return <TableCell key={col.key} onClick={(e) => e.stopPropagation()}><Checkbox checked={selectedMemoryIds.includes(m.id)} onCheckedChange={() => toggleMemory(m.id)} /></TableCell>;
+                                     case "seq_id": return <TableCell key={col.key} className="font-mono text-muted-foreground">#{m.seq_id}</TableCell>;
+                                     case "date": return <TableCell key={col.key} className="whitespace-nowrap">{m.date}</TableCell>;
+                                     case "entity_type": return <TableCell key={col.key}><Badge variant="outline" style={{ borderColor: stringToColor(m.primary_entity_type), color: stringToColor(m.primary_entity_type) }}>{m.primary_entity_type}</Badge></TableCell>;
+                                     case "entity_subtype": return <TableCell key={col.key} className="text-xs">{m.entity_subtype_resolved || "-"}</TableCell>;
+                                     case "entity_id": return (<TableCell key={col.key}><div className="flex flex-col">{m.entity_display_name && <span className="text-xs font-medium">{m.entity_display_name}</span>}<span className="font-mono text-xs text-muted-foreground">{m.primary_entity_id}</span></div></TableCell>);
+                                     case "interaction_count": return <TableCell key={col.key}>{m.interaction_count}</TableCell>;
+                                     case "service_status": return (<TableCell key={col.key}><div className="flex gap-2 items-center"><TooltipProvider><Tooltip><TooltipTrigger><Badge variant="outline" className={m.processing_errors?.summarization ? "border-red-500/50 text-red-500" : "border-emerald-500/50 text-emerald-500"}>{m.processing_errors?.summarization ? <XCircle className="w-3 h-3 mr-1" /> : <CheckCircle2 className="w-3 h-3 mr-1" />}Summarization</Badge></TooltipTrigger>{m.processing_errors?.summarization && <TooltipContent side="top" className="bg-red-950 text-red-100 border-red-900 z-50"><p className="max-w-xs">{m.processing_errors.summarization}</p></TooltipContent>}</Tooltip></TooltipProvider><TooltipProvider><Tooltip><TooltipTrigger><Badge variant="outline" className={m.processing_errors?.embeddings ? "border-red-500/50 text-red-500" : "border-emerald-500/50 text-emerald-500"}>{m.processing_errors?.embeddings ? <XCircle className="w-3 h-3 mr-1" /> : <CheckCircle2 className="w-3 h-3 mr-1" />}Embedding</Badge></TooltipTrigger>{m.processing_errors?.embeddings && <TooltipContent side="top" className="bg-red-950 text-red-100 border-red-900 z-50"><p className="max-w-xs">{m.processing_errors.embeddings}</p></TooltipContent>}</Tooltip></TooltipProvider></div></TableCell>);
+                                     case "compacted": return <TableCell key={col.key}>{m.compacted ? <Check className="w-4 h-4 text-green-500" /> : ""}</TableCell>;
+                                     default: { if (col.key.startsWith('dyn_')) { const pk = col.key.slice(4); const v = m.entity_properties?.[pk]; return <TableCell key={col.key} className="text-xs">{v != null ? String(v) : "-"}</TableCell>; } return <TableCell key={col.key}>-</TableCell>; }
+                                   }
+                                 })}
                                </TableRow>
                              </TooltipTrigger>
                              <TooltipContent side="bottom" align="start" className="max-w-2xl bg-secondary text-secondary-foreground border-border break-words shadow-lg pointer-events-none z-40">
@@ -1013,62 +1082,65 @@ export default function MemoryExplorerPage() {
                 <CardTitle>Intelligence (Tier 2)</CardTitle>
                 <CardDescription>Deal signals and behavioral patterns extracted from memories</CardDescription>
               </div>
-              <Button variant="outline" size="icon" onClick={loadInsights} disabled={loading}>
-                 <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
-              </Button>
+              <div className="flex items-center gap-2">
+                {selectedIntelligenceIds.length > 0 && (
+                    <div className="flex gap-2 bg-accent px-4 py-1.5 rounded-md items-center border shadow-sm animate-in fade-in zoom-in-95 duration-200">
+                        <span className="text-sm font-medium mr-2">{selectedIntelligenceIds.length} selected</span>
+                        <Button variant="destructive" size="sm" onClick={handleBulkDeleteIntelligence} disabled={processingBulk}>
+                             <Trash2 className="w-4 h-4 mr-2" />
+                             Delete
+                        </Button>
+                    </div>
+                )}
+                <Button variant="outline" size="icon" onClick={loadInsights} disabled={loading}>
+                   <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+                </Button>
+                {renderColumnToggle("intelligence")}
+              </div>
             </CardHeader>
             <CardContent>
                <div className="h-[500px] overflow-auto relative rounded-md border">
                  <Table>
                     <TableHeader className="sticky top-0 z-10 bg-background shadow-[0_1px_0_0_hsl(var(--border))]">
                       <TableRow>
-                        <TableHead>ID</TableHead>
-                        <TableHead>Created</TableHead>
-                        <TableHead>Entity</TableHead>
-                        <TableHead>Signal</TableHead>
-                        <TableHead>Intelligence Report</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Actions</TableHead>
+                        {visCols("intelligence").map(col => {
+                          if (col.key === "select") return (
+                            <TableHead key={col.key} className="w-[40px]">
+                              <Checkbox checked={intelligence.length > 0 && selectedIntelligenceIds.length === intelligence.length} onCheckedChange={(c) => toggleSelectAllIntelligence(c)} />
+                            </TableHead>
+                          );
+                          return <TableHead key={col.key}>{col.label}</TableHead>;
+                        })}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                        {intelligence.length === 0 ? (
-                          <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">No intelligence found.</TableCell></TableRow>
+                          <TableRow><TableCell colSpan={visCols("intelligence").length} className="text-center text-muted-foreground py-8">No intelligence found.</TableCell></TableRow>
                        ) : intelligence.map(ins => (
-                         <TableRow key={ins.id} className="cursor-pointer hover:bg-accent/50" onClick={() => setEditingIntelligence(ins)}>
-                            <TableCell className="font-mono text-muted-foreground">#{ins.seq_id}</TableCell>
-                            <TableCell className="whitespace-nowrap">{format(new Date(ins.created_at), "MMM d, yyyy")}</TableCell>
-                            <TableCell>
-                               <Badge variant="outline" style={{ borderColor: stringToColor(ins.primary_entity_type), color: stringToColor(ins.primary_entity_type) }}>
-                                  {ins.primary_entity_type}
-                               </Badge>
-                               <span className="font-mono text-xs ml-2 text-muted-foreground">{ins.primary_entity_id}</span>
-                            </TableCell>
-                            <TableCell>
-                               <Badge variant="outline" style={{ borderColor: stringToColor(ins.knowledge_type), color: stringToColor(ins.knowledge_type) }}>
-                                  {ins.knowledge_type || "other"}
-                               </Badge>
-                            </TableCell>
-                            <TableCell className="max-w-sm">
-                               <div className="font-medium text-sm">{ins.name}</div>
-                               <div className="text-xs text-muted-foreground line-clamp-2 mt-0.5">{ins.summary}</div>
-                            </TableCell>
-                            <TableCell>
-                               <Badge variant={ins.status === "confirmed" ? "default" : "secondary"}>{ins.status}</Badge>
-                            </TableCell>
-                            <TableCell onClick={(e) => e.stopPropagation()}>
-                               <div className="flex gap-1">
-                                 {ins.status === "draft" && (
-                                   <Button variant="ghost" size="icon" onClick={() => handleApproveIntelligence(ins.id)}>
-                                     <Check className="w-4 h-4 text-green-500" />
-                                   </Button>
-                                 )}
-                                 <Button variant="ghost" size="icon" onClick={() => setEditingIntelligence(ins)}>
-                                   <Edit className="w-4 h-4" />
-                                 </Button>
-                               </div>
-                            </TableCell>
-                         </TableRow>
+                         <TooltipProvider key={ins.id}>
+                           <Tooltip delayDuration={300}>
+                             <TooltipTrigger asChild>
+                               <TableRow className={`cursor-pointer hover:bg-accent/50 ${selectedIntelligenceIds.includes(ins.id) ? "bg-accent/30" : ""}`} onClick={() => setEditingIntelligence(ins)}>
+                                 {visCols("intelligence").map(col => {
+                                   switch (col.key) {
+                                     case "select": return <TableCell key={col.key} onClick={(e) => e.stopPropagation()}><Checkbox checked={selectedIntelligenceIds.includes(ins.id)} onCheckedChange={() => toggleIntelligenceItem(ins.id)} /></TableCell>;
+                                     case "seq_id": return <TableCell key={col.key} className="font-mono text-muted-foreground">#{ins.seq_id}</TableCell>;
+                                     case "created_at": return <TableCell key={col.key} className="whitespace-nowrap">{format(new Date(ins.created_at), "MMM d, yyyy")}</TableCell>;
+                                     case "entity": return (<TableCell key={col.key}><Badge variant="outline" style={{ borderColor: stringToColor(ins.primary_entity_type), color: stringToColor(ins.primary_entity_type) }}>{ins.primary_entity_type}</Badge><span className="font-mono text-xs ml-2 text-muted-foreground">{ins.entity_display_name || ins.primary_entity_id}</span></TableCell>);
+                                     case "signal": return (<TableCell key={col.key}><Badge variant="outline" style={{ borderColor: stringToColor(ins.knowledge_type), color: stringToColor(ins.knowledge_type) }}>{ins.knowledge_type || "other"}</Badge></TableCell>);
+                                     case "report": return (<TableCell key={col.key} className="max-w-sm"><div className="font-medium text-sm">{ins.name}</div><div className="text-xs text-muted-foreground line-clamp-2 mt-0.5">{ins.summary}</div></TableCell>);
+                                     case "status": return (<TableCell key={col.key}><Badge variant={ins.status === "confirmed" ? "default" : "secondary"}>{ins.status}</Badge></TableCell>);
+                                     case "actions": return (<TableCell key={col.key} onClick={(e) => e.stopPropagation()}><div className="flex gap-1">{ins.status === "draft" && (<Button variant="ghost" size="icon" onClick={() => handleApproveIntelligence(ins.id)}><Check className="w-4 h-4 text-green-500" /></Button>)}<Button variant="ghost" size="icon" onClick={() => setEditingIntelligence(ins)}><Edit className="w-4 h-4" /></Button></div></TableCell>);
+                                     default: { if (col.key.startsWith('dyn_')) { const pk = col.key.slice(4); const v = ins.entity_properties?.[pk]; return <TableCell key={col.key} className="text-xs">{v != null ? String(v) : "-"}</TableCell>; } return <TableCell key={col.key}>-</TableCell>; }
+                                   }
+                                 })}
+                               </TableRow>
+                             </TooltipTrigger>
+                             <TooltipContent side="bottom" align="start" className="max-w-2xl bg-secondary text-secondary-foreground border-border break-words shadow-lg pointer-events-none z-40">
+                               <p className="text-sm leading-relaxed whitespace-pre-wrap">{ins.content || ins.summary}</p>
+                             </TooltipContent>
+                           </Tooltip>
+                         </TooltipProvider>
                        ))}
                     </TableBody>
                  </Table>
@@ -1086,6 +1158,15 @@ export default function MemoryExplorerPage() {
                 <CardDescription>Global system-wide rules extracted from intelligence</CardDescription>
               </div>
               <div className="flex items-center gap-2">
+                {selectedKnowledgeIds.length > 0 && (
+                    <div className="flex gap-2 bg-accent px-4 py-1.5 rounded-md items-center border shadow-sm animate-in fade-in zoom-in-95 duration-200">
+                        <span className="text-sm font-medium mr-2">{selectedKnowledgeIds.length} selected</span>
+                        <Button variant="destructive" size="sm" onClick={handleBulkDeleteKnowledge} disabled={processingBulk}>
+                             <Trash2 className="w-4 h-4 mr-2" />
+                             Delete
+                        </Button>
+                    </div>
+                )}
                 <Select value={lessonStatusFilter} onValueChange={setLessonStatusFilter}>
                   <SelectTrigger className="w-32">
                     <SelectValue />
@@ -1100,6 +1181,7 @@ export default function MemoryExplorerPage() {
                   <Plus className="w-4 h-4 mr-2" />
                   New Knowledge
                 </Button>
+                {renderColumnToggle("knowledge")}
               </div>
             </CardHeader>
             <CardContent>
@@ -1107,49 +1189,43 @@ export default function MemoryExplorerPage() {
                  <Table>
                     <TableHeader className="sticky top-0 z-10 bg-background shadow-[0_1px_0_0_hsl(var(--border))]">
                       <TableRow>
-                        <TableHead>ID</TableHead>
-                        <TableHead>Type</TableHead>
-                        <TableHead>Name</TableHead>
-                        <TableHead>Content</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Actions</TableHead>
+                        {visCols("knowledge").map(col => {
+                          if (col.key === "select") return (
+                            <TableHead key={col.key} className="w-[40px]">
+                              <Checkbox checked={knowledge.length > 0 && selectedKnowledgeIds.length === knowledge.length} onCheckedChange={(c) => toggleSelectAllKnowledge(c)} />
+                            </TableHead>
+                          );
+                          return <TableHead key={col.key}>{col.label}</TableHead>;
+                        })}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                        {knowledge.length === 0 ? (
-                          <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">No knowledge found.</TableCell></TableRow>
-                       ) : knowledge.map(knowledge => (
-                         <TableRow key={knowledge.id}>
-                            <TableCell className="font-mono text-muted-foreground">#{knowledge.seq_id}</TableCell>
-                            <TableCell>
-                               <div className="flex items-center gap-2">
-                                 <div className="w-3 h-3 rounded-full" style={{ backgroundColor: getLessonTypeColor(knowledge.type) }} />
-                                 <Badge variant="outline">{knowledge.type}</Badge>
-                               </div>
-                            </TableCell>
-                            <TableCell className="font-medium">{knowledge.name}</TableCell>
-                            <TableCell className="max-w-[250px] truncate" title={knowledge.body}>{knowledge.body}</TableCell>
-                            <TableCell>
-                               <Badge variant={knowledge.status === "approved" ? "default" : "secondary"}>
-                                 {knowledge.status}
-                               </Badge>
-                            </TableCell>
-                            <TableCell>
-                               <div className="flex gap-1">
-                                 {knowledge.status === "draft" && (
-                                   <Button variant="ghost" size="icon" onClick={() => handleApproveLesson(knowledge.id)}>
-                                     <Check className="w-4 h-4 text-green-500" />
-                                   </Button>
-                                 )}
-                                 <Button variant="ghost" size="icon" onClick={() => setEditingLesson(knowledge)}>
-                                   <Edit className="w-4 h-4" />
-                                 </Button>
-                                 <Button variant="ghost" size="icon" onClick={() => handleDeleteLesson(knowledge.id)}>
-                                   <Trash2 className="w-4 h-4 text-destructive" />
-                                 </Button>
-                               </div>
-                            </TableCell>
-                         </TableRow>
+                          <TableRow><TableCell colSpan={visCols("knowledge").length} className="text-center text-muted-foreground py-8">No knowledge found.</TableCell></TableRow>
+                       ) : knowledge.map(k => (
+                         <TooltipProvider key={k.id}>
+                           <Tooltip delayDuration={300}>
+                             <TooltipTrigger asChild>
+                               <TableRow className={`cursor-pointer hover:bg-accent/50 ${selectedKnowledgeIds.includes(k.id) ? "bg-accent/30" : ""}`}>
+                                 {visCols("knowledge").map(col => {
+                                   switch (col.key) {
+                                     case "select": return <TableCell key={col.key} onClick={(e) => e.stopPropagation()}><Checkbox checked={selectedKnowledgeIds.includes(k.id)} onCheckedChange={() => toggleKnowledgeItem(k.id)} /></TableCell>;
+                                     case "seq_id": return <TableCell key={col.key} className="font-mono text-muted-foreground">#{k.seq_id}</TableCell>;
+                                     case "type": return (<TableCell key={col.key}><div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full" style={{ backgroundColor: getLessonTypeColor(k.knowledge_type) }} /><Badge variant="outline">{k.knowledge_type}</Badge></div></TableCell>);
+                                     case "name": return <TableCell key={col.key} className="font-medium">{k.name}</TableCell>;
+                                     case "content": return <TableCell key={col.key} className="max-w-[250px] truncate">{k.content}</TableCell>;
+                                     case "status": return (<TableCell key={col.key}><Badge variant={k.visibility === "approved" ? "default" : "secondary"}>{k.visibility}</Badge></TableCell>);
+                                     case "actions": return (<TableCell key={col.key} onClick={(e) => e.stopPropagation()}><div className="flex gap-1">{k.visibility === "draft" && (<Button variant="ghost" size="icon" onClick={() => handleApproveLesson(k.id)}><Check className="w-4 h-4 text-green-500" /></Button>)}<Button variant="ghost" size="icon" onClick={() => setEditingLesson(k)}><Edit className="w-4 h-4" /></Button><Button variant="ghost" size="icon" onClick={() => handleDeleteLesson(k.id)}><Trash2 className="w-4 h-4 text-destructive" /></Button></div></TableCell>);
+                                     default: return <TableCell key={col.key}>-</TableCell>;
+                                   }
+                                 })}
+                               </TableRow>
+                             </TooltipTrigger>
+                             <TooltipContent side="bottom" align="start" className="max-w-2xl bg-secondary text-secondary-foreground border-border break-words shadow-lg pointer-events-none z-40">
+                               <p className="text-sm leading-relaxed whitespace-pre-wrap">{k.summary || k.content}</p>
+                             </TooltipContent>
+                           </Tooltip>
+                         </TooltipProvider>
                        ))}
                     </TableBody>
                  </Table>
