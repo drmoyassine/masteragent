@@ -77,7 +77,8 @@ import {
   Settings2,
   Eye,
   EyeOff,
-  GripVertical
+  ChevronUp,
+  ChevronDown
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -741,11 +742,11 @@ export default function MemoryExplorerPage() {
                           </button>
                           <span className={`text-xs flex-1 ${col.visible ? '' : 'text-muted-foreground/50'}`}>{col.label}</span>
                           <div className="flex gap-0.5">
-                            <button onClick={() => moveColumn(col.key, -1)} className="p-0.5 text-muted-foreground hover:text-foreground rounded">
-                              <GripVertical className="w-3 h-3 rotate-90" style={{transform: 'rotate(0deg) scaleY(-1)'}}/>
+                            <button onClick={() => moveColumn(col.key, -1)} className="p-0.5 text-muted-foreground hover:text-foreground rounded" title="Move up">
+                              <ChevronUp className="w-3 h-3" />
                             </button>
-                            <button onClick={() => moveColumn(col.key, 1)} className="p-0.5 text-muted-foreground hover:text-foreground rounded">
-                              <GripVertical className="w-3 h-3" />
+                            <button onClick={() => moveColumn(col.key, 1)} className="p-0.5 text-muted-foreground hover:text-foreground rounded" title="Move down">
+                              <ChevronDown className="w-3 h-3" />
                             </button>
                           </div>
                         </div>
@@ -758,7 +759,7 @@ export default function MemoryExplorerPage() {
             <CardContent>
                <div className="h-[500px] overflow-auto relative rounded-md border">
                  <Table>
-                    <TableHeader className="sticky top-0 z-10 bg-background">
+                    <TableHeader className="sticky top-0 z-10 bg-background shadow-[0_1px_0_0_hsl(var(--border))]">
                       <TableRow>
                         {visibleColumns.map(col => {
                           if (col.key === "select") return (
@@ -918,9 +919,9 @@ export default function MemoryExplorerPage() {
               </div>
             </CardHeader>
             <CardContent>
-               <ScrollArea className="h-[500px]">
+               <div className="h-[500px] overflow-auto relative rounded-md border">
                  <Table>
-                    <TableHeader>
+                    <TableHeader className="sticky top-0 z-10 bg-background shadow-[0_1px_0_0_hsl(var(--border))]">
                       <TableRow>
                         <TableHead className="w-[40px]">
                             <Checkbox 
@@ -940,7 +941,7 @@ export default function MemoryExplorerPage() {
                     </TableHeader>
                     <TableBody>
                         {memories.length === 0 ? (
-                          <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">No memories found.</TableCell></TableRow>
+                          <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-8">No memories found.</TableCell></TableRow>
                        ) : memories.map(m => (
                          <TooltipProvider key={m.id}>
                            <Tooltip delayDuration={300}>
@@ -999,7 +1000,7 @@ export default function MemoryExplorerPage() {
                        ))}
                     </TableBody>
                  </Table>
-               </ScrollArea>
+               </div>
             </CardContent>
           </Card>
         </TabsContent>
@@ -1017,9 +1018,9 @@ export default function MemoryExplorerPage() {
               </Button>
             </CardHeader>
             <CardContent>
-               <ScrollArea className="h-[500px]">
+               <div className="h-[500px] overflow-auto relative rounded-md border">
                  <Table>
-                    <TableHeader>
+                    <TableHeader className="sticky top-0 z-10 bg-background shadow-[0_1px_0_0_hsl(var(--border))]">
                       <TableRow>
                         <TableHead>ID</TableHead>
                         <TableHead>Created</TableHead>
@@ -1071,7 +1072,7 @@ export default function MemoryExplorerPage() {
                        ))}
                     </TableBody>
                  </Table>
-               </ScrollArea>
+               </div>
             </CardContent>
           </Card>
         </TabsContent>
@@ -1102,9 +1103,9 @@ export default function MemoryExplorerPage() {
               </div>
             </CardHeader>
             <CardContent>
-               <ScrollArea className="h-[500px]">
+               <div className="h-[500px] overflow-auto relative rounded-md border">
                  <Table>
-                    <TableHeader>
+                    <TableHeader className="sticky top-0 z-10 bg-background shadow-[0_1px_0_0_hsl(var(--border))]">
                       <TableRow>
                         <TableHead>ID</TableHead>
                         <TableHead>Type</TableHead>
@@ -1152,7 +1153,7 @@ export default function MemoryExplorerPage() {
                        ))}
                     </TableBody>
                  </Table>
-               </ScrollArea>
+               </div>
             </CardContent>
           </Card>
         </TabsContent>
