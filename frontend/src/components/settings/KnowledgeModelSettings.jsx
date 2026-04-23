@@ -210,6 +210,33 @@ function SignalList({ signals, onChange, defaultTemplate, defaultLabel }) {
 }
 
 
+// ─── Accordion Section (stable component — must be outside render body) ─────
+function AccordionSection({ id, icon: Icon, title, badge, isOpen, onToggle, children }) {
+    return (
+        <div className="border border-border/50 rounded-lg overflow-hidden">
+            <button
+                onClick={onToggle}
+                className="w-full flex items-center gap-2.5 px-4 py-3 text-left hover:bg-muted/30 transition-colors"
+            >
+                <Icon className="w-4 h-4 text-primary shrink-0" />
+                <span className="text-sm font-medium flex-1">{title}</span>
+                {badge && (
+                    <Badge variant="secondary" className="text-[10px] h-5">{badge}</Badge>
+                )}
+                <ChevronDown
+                    className={`w-4 h-4 text-muted-foreground transition-transform ${isOpen ? "rotate-180" : ""}`}
+                />
+            </button>
+            {isOpen && (
+                <div className="px-4 pb-4 pt-1 space-y-3 border-t border-border/30 bg-muted/10">
+                    {children}
+                </div>
+            )}
+        </div>
+    );
+}
+
+
 // ─── Entity Detail Panel ────────────────────────────────────────────────────
 function EntityDetailPanel({ entityType, entityTypes }) {
     const [config, setConfig] = useState(null);
@@ -369,35 +396,10 @@ function EntityDetailPanel({ entityType, entityTypes }) {
         );
     }
 
-    // Accordion section helper
-    const Section = ({ id, icon: Icon, title, badge, children }) => (
-        <div className="border border-border/50 rounded-lg overflow-hidden">
-            <button
-                onClick={() => toggleSection(id)}
-                className="w-full flex items-center gap-2.5 px-4 py-3 text-left hover:bg-muted/30 transition-colors"
-            >
-                <Icon className="w-4 h-4 text-primary shrink-0" />
-                <span className="text-sm font-medium flex-1">{title}</span>
-                {badge && (
-                    <Badge variant="secondary" className="text-[10px] h-5">{badge}</Badge>
-                )}
-                <ChevronDown
-                    className={`w-4 h-4 text-muted-foreground transition-transform ${openSections[id] ? "rotate-180" : ""
-                        }`}
-                />
-            </button>
-            {openSections[id] && (
-                <div className="px-4 pb-4 pt-1 space-y-3 border-t border-border/30 bg-muted/10">
-                    {children}
-                </div>
-            )}
-        </div>
-    );
-
     return (
         <div className="space-y-3">
             {/* ─── Entity Schema Mapping ──────────────────────── */}
-            <Section id="schema" icon={FileText} title="Entity Schema" badge={discoveredSchema.length ? `${discoveredSchema.length} fields` : null}>
+            <AccordionSection id="schema" icon={FileText} title="Entity Schema" badge={discoveredSchema.length ? `${discoveredSchema.length} fields` : null} isOpen={openSections.schema} onToggle={() => toggleSection("schema")}>
                 <p className="text-[10px] text-muted-foreground leading-relaxed mb-2">
                     Map CRM fields to semantic roles. {discoveredSchema.length > 0 ? "Fields auto-detected from ingested data." : "Configure manually or ingest data to auto-detect fields."}
                 </p>
@@ -511,10 +513,10 @@ function EntityDetailPanel({ entityType, entityTypes }) {
                         </Button>
                     </div>
                 )}
-            </Section>
+            </AccordionSection>
 
             {/* ─── Sub-types ──────────────────────────────────── */}
-            <Section id="subtypes" icon={Users} title="Sub-types" badge={subtypes.length || null}>
+            <AccordionSection id="subtypes" icon={Users} title="Sub-types" badge={subtypes.length || null} isOpen={openSections.subtypes} onToggle={() => toggleSection("subtypes")}>
                 <div className="flex flex-wrap gap-1.5">
                     {subtypes.map((st) => (
                         <Badge
@@ -553,10 +555,10 @@ function EntityDetailPanel({ entityType, entityTypes }) {
                         <Plus className="w-3 h-3 mr-1" /> Add
                     </Button>
                 </div>
-            </Section>
+            </AccordionSection>
 
             {/* ─── Intelligence Signals ──────────────────────── */}
-            <Section id="intelligence" icon={Brain} title="Intelligence Signals" badge={intelSignals.length || null}>
+            <AccordionSection id="intelligence" icon={Brain} title="Intelligence Signals" badge={intelSignals.length || null} isOpen={openSections.intelligence} onToggle={() => toggleSection("intelligence")}>
                 <p className="text-[10px] text-muted-foreground leading-relaxed">
                     Define the signal categories the LLM should probe for when analyzing this entity type's memories.
                 </p>
@@ -566,10 +568,10 @@ function EntityDetailPanel({ entityType, entityTypes }) {
                     defaultTemplate={DEFAULT_CONTACT_SIGNALS}
                     defaultLabel="Load default contact signals"
                 />
-            </Section>
+            </AccordionSection>
 
             {/* ─── Knowledge Signals ──────────────────────────── */}
-            <Section id="knowledge" icon={BookOpen} title="Knowledge Signals" badge={knowledgeSignals.length || null}>
+            <AccordionSection id="knowledge" icon={BookOpen} title="Knowledge Signals" badge={knowledgeSignals.length || null} isOpen={openSections.knowledge} onToggle={() => toggleSection("knowledge")}>
                 <p className="text-[10px] text-muted-foreground leading-relaxed">
                     Define what types of generalizable knowledge should be extracted from confirmed intelligence.
                 </p>
@@ -577,7 +579,7 @@ function EntityDetailPanel({ entityType, entityTypes }) {
                     signals={knowledgeSignals}
                     onChange={(v) => { setKnowledgeSignals(v); setSignalsDirty(true); }}
                 />
-            </Section>
+            </AccordionSection>
 
 
 
