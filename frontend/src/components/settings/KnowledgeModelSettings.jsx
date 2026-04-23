@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
     Database, Plus, Trash2, Settings, ChevronRight,
-    Save, Loader2, Brain, Sparkles, Users, ChevronDown, BookOpen, Pencil, X, FileText
+    Save, Loader2, Brain, Sparkles, Users, ChevronDown, BookOpen, Pencil, X, FileText, RefreshCw
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,6 +23,7 @@ import {
     getEntitySubtypes,
     createEntitySubtype,
     deleteEntitySubtype,
+    triggerBackfillProfiles,
 } from "@/lib/api";
 
 // ─── Default Intelligence Signals Template (structured) ─────────────────────
@@ -258,6 +259,7 @@ function EntityDetailPanel({ entityType, entityTypes }) {
     // Dirty tracking
     const [signalsDirty, setSignalsDirty] = useState(false);
     const [schemaDirty, setSchemaDirty] = useState(false);
+    const [backfilling, setBackfilling] = useState(false);
 
     // Sync triggers local state
     const [newTrigger, setNewTrigger] = useState("");
@@ -511,6 +513,41 @@ function EntityDetailPanel({ entityType, entityTypes }) {
                             {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
                             Save Schema
                         </Button>
+                    </div>
+                )}
+
+                {/* Backfill Profiles */}
+                {!schemaDirty && fieldMap.name_field && (
+                    <div className="mt-4 pt-3 border-t border-border/30">
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <Label className="text-xs font-medium">Backfill Entity Profiles</Label>
+                                <p className="text-[10px] text-muted-foreground">
+                                    Scan existing interactions and extract profiles using the mapping above.
+                                </p>
+                            </div>
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                className="gap-1.5 text-xs shrink-0"
+                                disabled={backfilling}
+                                onClick={async () => {
+                                    setBackfilling(true);
+                                    try {
+                                        const res = await triggerBackfillProfiles();
+                                        const d = res.data;
+                                        toast.success(`Backfilled ${d.backfilled} profiles${d.skipped ? `, ${d.skipped} skipped` : ""}`);
+                                    } catch {
+                                        toast.error("Backfill failed");
+                                    } finally {
+                                        setBackfilling(false);
+                                    }
+                                }}
+                            >
+                                {backfilling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                                {backfilling ? "Backfilling..." : "Run Backfill"}
+                            </Button>
+                        </div>
                     </div>
                 )}
             </AccordionSection>

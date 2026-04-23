@@ -175,6 +175,7 @@ export const getInteractionFilterOptionsAdmin = (params) => api.get('/memory/int
 export const getDailyMemories = (date) => api.get(`/memory/admin/daily/${date}`);
 export const getTimeline = (entityType, entityId) => api.get(`/memory/admin/timeline/${entityType}/${entityId}`);
 export const triggerMemoryGeneration = (includeToday = false) => api.post('/memory/trigger/generate-memories', null, { params: { include_today: includeToday } });
+export const triggerBackfillProfiles = () => api.post('/memory/trigger/backfill-profiles');
 
 // Public Knowledge - Admin UI
 export const getLessonsAdmin = (params) => api.get('/memory/knowledge', { params });
