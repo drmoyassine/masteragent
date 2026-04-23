@@ -498,9 +498,28 @@ async def trigger_backfill_profiles(admin: dict = Depends(require_admin_auth)):
                 skipped += 1
                 errors.append(f"{entity_type}/{row['primary_entity_id']}: {str(e)[:100]}")
 
+    # Mass-backfill primary_entity_subtype on ALL interactions from entity_profiles
+    subtypes_updated = 0
+    try:
+        with get_memory_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE interactions i
+                SET primary_entity_subtype = ep.subtype
+                FROM entity_profiles ep
+                WHERE i.primary_entity_type = ep.entity_type
+                  AND i.primary_entity_id = ep.entity_id
+                  AND i.primary_entity_subtype IS NULL
+                  AND ep.subtype IS NOT NULL
+            """)
+            subtypes_updated = cursor.rowcount
+    except Exception as e:
+        errors.append(f"Subtype backfill failed: {str(e)[:100]}")
+
     return {
         "backfilled": backfilled,
         "skipped": skipped,
+        "subtypes_updated": subtypes_updated,
         "errors": errors[:20],
     }
 
@@ -601,7 +620,8 @@ async def list_interactions(
             SELECT i.id, i.seq_id, i.timestamp, i.interaction_type, i.agent_id, i.agent_name,
                    i.primary_entity_type, i.primary_entity_id, i.primary_entity_subtype,
                    i.has_attachments, i.source, i.status, i.created_at, i.content, i.processing_errors,
-                   ep.display_name as entity_display_name
+                   ep.display_name as entity_display_name,
+                   ep.subtype as entity_subtype_resolved
             FROM interactions i
             LEFT JOIN entity_profiles ep
               ON ep.entity_type = i.primary_entity_type

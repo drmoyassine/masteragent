@@ -72,9 +72,14 @@ import {
   Search,
   XCircle,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  Settings2,
+  Eye,
+  EyeOff,
+  GripVertical
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 const stringToColor = (str) => {
   if (!str) return 'hsl(0, 0%, 50%)';
@@ -138,6 +143,64 @@ export default function MemoryExplorerPage() {
   // Bulk Operations State
   const [selectedInteractionIds, setSelectedInteractionIds] = useState([]);
   const [selectedMemoryIds, setSelectedMemoryIds] = useState([]);
+
+  // ─── Interaction Column Configuration ──────────────────────────────────
+  const DEFAULT_COLUMNS = [
+    { key: "select", label: "", fixed: true },
+    { key: "seq_id", label: "ID" },
+    { key: "timestamp", label: "Time" },
+    { key: "interaction_type", label: "Interaction Type" },
+    { key: "entity_type", label: "Entity Type" },
+    { key: "entity_subtype", label: "Sub-Type" },
+    { key: "entity_id", label: "Entity" },
+    { key: "content", label: "Content" },
+    { key: "agent", label: "Agent" },
+    { key: "service_status", label: "Service Status" },
+    { key: "status", label: "Memorization" },
+    { key: "actions", label: "Actions", fixed: true },
+  ];
+
+  const loadColumnsFromStorage = () => {
+    try {
+      const saved = localStorage.getItem("memory-explorer-columns");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // Merge with defaults to pick up new columns
+        const savedKeys = parsed.map(c => c.key);
+        const merged = parsed.filter(c => DEFAULT_COLUMNS.some(d => d.key === c.key));
+        DEFAULT_COLUMNS.forEach(d => {
+          if (!savedKeys.includes(d.key)) merged.push({ ...d, visible: true });
+        });
+        return merged;
+      }
+    } catch { /* ignore */ }
+    return DEFAULT_COLUMNS.map(c => ({ ...c, visible: true }));
+  };
+
+  const [columnConfig, setColumnConfig] = useState(loadColumnsFromStorage);
+
+  const toggleColumn = (key) => {
+    setColumnConfig(prev => {
+      const updated = prev.map(c => c.key === key ? { ...c, visible: !c.visible } : c);
+      localStorage.setItem("memory-explorer-columns", JSON.stringify(updated));
+      return updated;
+    });
+  };
+
+  const moveColumn = (key, direction) => {
+    setColumnConfig(prev => {
+      const idx = prev.findIndex(c => c.key === key);
+      if (idx < 0) return prev;
+      const targetIdx = idx + direction;
+      if (targetIdx < 0 || targetIdx >= prev.length) return prev;
+      const updated = [...prev];
+      [updated[idx], updated[targetIdx]] = [updated[targetIdx], updated[idx]];
+      localStorage.setItem("memory-explorer-columns", JSON.stringify(updated));
+      return updated;
+    });
+  };
+
+  const visibleColumns = columnConfig.filter(c => c.visible || c.fixed);
 
   useEffect(() => {
     loadInitialData();
@@ -629,108 +692,166 @@ export default function MemoryExplorerPage() {
                 <Button variant="outline" size="icon" onClick={loadInteractions} disabled={loading}>
                    <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
                 </Button>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="icon" title="Toggle columns">
+                      <Settings2 className="w-4 h-4" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent align="end" className="w-64 p-0">
+                    <div className="px-3 py-2 border-b border-border/50">
+                      <p className="text-sm font-medium">Toggle Columns</p>
+                      <p className="text-[10px] text-muted-foreground">Show/hide and reorder table columns</p>
+                    </div>
+                    <div className="max-h-72 overflow-y-auto py-1">
+                      {columnConfig.filter(c => !c.fixed).map((col) => (
+                        <div key={col.key} className="flex items-center gap-2 px-3 py-1.5 hover:bg-muted/50">
+                          <button
+                            onClick={() => toggleColumn(col.key)}
+                            className={`p-0.5 rounded transition-colors ${col.visible ? 'text-primary' : 'text-muted-foreground/40'}`}
+                          >
+                            {col.visible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                          </button>
+                          <span className={`text-xs flex-1 ${col.visible ? '' : 'text-muted-foreground/50'}`}>{col.label}</span>
+                          <div className="flex gap-0.5">
+                            <button onClick={() => moveColumn(col.key, -1)} className="p-0.5 text-muted-foreground hover:text-foreground rounded">
+                              <GripVertical className="w-3 h-3 rotate-90" style={{transform: 'rotate(0deg) scaleY(-1)'}}/>
+                            </button>
+                            <button onClick={() => moveColumn(col.key, 1)} className="p-0.5 text-muted-foreground hover:text-foreground rounded">
+                              <GripVertical className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </PopoverContent>
+                </Popover>
               </div>
             </CardHeader>
             <CardContent>
-               <ScrollArea className="h-[500px]">
+               <div className="h-[500px] overflow-auto relative rounded-md border">
                  <Table>
-                    <TableHeader>
+                    <TableHeader className="sticky top-0 z-10 bg-background">
                       <TableRow>
-                        <TableHead className="w-[40px]">
-                            <Checkbox 
+                        {visibleColumns.map(col => {
+                          if (col.key === "select") return (
+                            <TableHead key={col.key} className="w-[40px]">
+                              <Checkbox 
                                 checked={interactions.length > 0 && selectedInteractionIds.length === interactions.length} 
                                 onCheckedChange={(c) => toggleSelectAllInteractions(c)} 
-                            />
-                        </TableHead>
-                        <TableHead>ID</TableHead>
-                        <TableHead>Time</TableHead>
-                        <TableHead>Interaction Type</TableHead>
-                        <TableHead>Entity Type</TableHead>
-                        <TableHead>Entity Sub-Type</TableHead>
-                        <TableHead>Entity ID</TableHead>
-                        <TableHead>Interaction Blob</TableHead>
-                        <TableHead>Agent</TableHead>
-                        <TableHead>Service Status</TableHead>
-                        <TableHead>Memorization</TableHead>
-                        <TableHead>Actions</TableHead>
+                              />
+                            </TableHead>
+                          );
+                          return <TableHead key={col.key}>{col.label}</TableHead>;
+                        })}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                        {interactions.length === 0 ? (
-                          <TableRow><TableCell colSpan={10} className="text-center text-muted-foreground py-8">No interactions found.</TableCell></TableRow>
+                          <TableRow><TableCell colSpan={visibleColumns.length} className="text-center text-muted-foreground py-8">No interactions found.</TableCell></TableRow>
                        ) : interactions.map(i => (
                          <TableRow key={i.id} className={selectedInteractionIds.includes(i.id) ? "bg-accent/30" : ""}>
-                            <TableCell>
-                               <Checkbox 
-                                   checked={selectedInteractionIds.includes(i.id)} 
-                                   onCheckedChange={() => toggleInteraction(i.id)}
-                                   onClick={(e) => e.stopPropagation()}
-                               />
-                            </TableCell>
-                            <TableCell className="font-mono text-muted-foreground">#{i.seq_id}</TableCell>
-                            <TableCell className="whitespace-nowrap">{format(new Date(i.timestamp), "MMM d, yyyy h:mm a")}</TableCell>
-                            <TableCell>
-                               <Badge variant="outline" style={{ borderColor: stringToColor(i.interaction_type), color: stringToColor(i.interaction_type) }}>
-                                  {i.interaction_type}
-                               </Badge>
-                            </TableCell>
-                            <TableCell>
-                               <Badge variant="outline" style={{ borderColor: stringToColor(i.primary_entity_type), color: stringToColor(i.primary_entity_type) }}>
-                                  {i.primary_entity_type}
-                               </Badge>
-                            </TableCell>
-                            <TableCell>{i.primary_entity_subtype || "-"}</TableCell>
-                            <TableCell>
-                               {i.entity_display_name ? (
-                                 <div>
-                                   <div className="text-sm font-medium">{i.entity_display_name}</div>
-                                   <div className="font-mono text-[10px] text-muted-foreground">#{i.primary_entity_id}</div>
-                                 </div>
-                               ) : (
-                                 <span className="font-mono text-xs">{i.primary_entity_id}</span>
-                               )}
-                            </TableCell>
-                            <TableCell className="max-w-xs truncate">{i.content}</TableCell>
-                            <TableCell>{i.agent_name || i.agent_id}</TableCell>
-                            <TableCell>
-                               <div className="flex gap-2 items-center">
-                                 {i.has_attachments && (
-                                   <TooltipProvider>
-                                     <Tooltip>
-                                       <TooltipTrigger>
-                                         <Badge variant="outline" className={i.processing_errors?.vision ? "border-red-500/50 text-red-500" : "border-emerald-500/50 text-emerald-500"}>
-                                           {i.processing_errors?.vision ? <XCircle className="w-3 h-3 mr-1" /> : <CheckCircle2 className="w-3 h-3 mr-1" />}
-                                           Vision
-                                         </Badge>
-                                       </TooltipTrigger>
-                                       {i.processing_errors?.vision && <TooltipContent className="bg-red-950 text-red-100 border-red-900"><p className="max-w-xs">{i.processing_errors.vision}</p></TooltipContent>}
-                                     </Tooltip>
-                                   </TooltipProvider>
-                                 )}
-                                 <TooltipProvider>
-                                   <Tooltip>
-                                     <TooltipTrigger>
-                                       <Badge variant="outline" className={i.processing_errors?.embeddings ? "border-red-500/50 text-red-500" : "border-emerald-500/50 text-emerald-500"}>
-                                         {i.processing_errors?.embeddings ? <XCircle className="w-3 h-3 mr-1" /> : <CheckCircle2 className="w-3 h-3 mr-1" />}
-                                         Embedding
-                                       </Badge>
-                                     </TooltipTrigger>
-                                     {i.processing_errors?.embeddings && <TooltipContent className="bg-red-950 text-red-100 border-red-900"><p className="max-w-xs">{i.processing_errors.embeddings}</p></TooltipContent>}
-                                   </Tooltip>
-                                 </TooltipProvider>
-                               </div>
-                            </TableCell>
-                            <TableCell>{i.status}</TableCell>
-                            <TableCell>
-                               <Button variant="ghost" size="icon" onClick={() => setEditingInteraction(i)}>
-                                  <Edit className="w-4 h-4" />
-                               </Button>
-                            </TableCell>
+                           {visibleColumns.map(col => {
+                             switch (col.key) {
+                               case "select":
+                                 return (
+                                   <TableCell key={col.key}>
+                                     <Checkbox 
+                                       checked={selectedInteractionIds.includes(i.id)} 
+                                       onCheckedChange={() => toggleInteraction(i.id)}
+                                       onClick={(e) => e.stopPropagation()}
+                                     />
+                                   </TableCell>
+                                 );
+                               case "seq_id":
+                                 return <TableCell key={col.key} className="font-mono text-muted-foreground">#{i.seq_id}</TableCell>;
+                               case "timestamp":
+                                 return <TableCell key={col.key} className="whitespace-nowrap">{format(new Date(i.timestamp), "MMM d, yyyy h:mm a")}</TableCell>;
+                               case "interaction_type":
+                                 return (
+                                   <TableCell key={col.key}>
+                                     <Badge variant="outline" style={{ borderColor: stringToColor(i.interaction_type), color: stringToColor(i.interaction_type) }}>
+                                       {i.interaction_type}
+                                     </Badge>
+                                   </TableCell>
+                                 );
+                               case "entity_type":
+                                 return (
+                                   <TableCell key={col.key}>
+                                     <Badge variant="outline" style={{ borderColor: stringToColor(i.primary_entity_type), color: stringToColor(i.primary_entity_type) }}>
+                                       {i.primary_entity_type}
+                                     </Badge>
+                                   </TableCell>
+                                 );
+                               case "entity_subtype":
+                                 return <TableCell key={col.key}>{i.primary_entity_subtype || i.entity_subtype_resolved || "-"}</TableCell>;
+                               case "entity_id":
+                                 return (
+                                   <TableCell key={col.key}>
+                                     {i.entity_display_name ? (
+                                       <div>
+                                         <div className="text-sm font-medium">{i.entity_display_name}</div>
+                                         <div className="font-mono text-[10px] text-muted-foreground">#{i.primary_entity_id}</div>
+                                       </div>
+                                     ) : (
+                                       <span className="font-mono text-xs">{i.primary_entity_id}</span>
+                                     )}
+                                   </TableCell>
+                                 );
+                               case "content":
+                                 return <TableCell key={col.key} className="max-w-xs truncate">{i.content}</TableCell>;
+                               case "agent":
+                                 return <TableCell key={col.key}>{i.agent_name || i.agent_id}</TableCell>;
+                               case "service_status":
+                                 return (
+                                   <TableCell key={col.key}>
+                                     <div className="flex gap-2 items-center">
+                                       {i.has_attachments && (
+                                         <TooltipProvider>
+                                           <Tooltip>
+                                             <TooltipTrigger>
+                                               <Badge variant="outline" className={i.processing_errors?.vision ? "border-red-500/50 text-red-500" : "border-emerald-500/50 text-emerald-500"}>
+                                                 {i.processing_errors?.vision ? <XCircle className="w-3 h-3 mr-1" /> : <CheckCircle2 className="w-3 h-3 mr-1" />}
+                                                 Vision
+                                               </Badge>
+                                             </TooltipTrigger>
+                                             {i.processing_errors?.vision && <TooltipContent className="bg-red-950 text-red-100 border-red-900"><p className="max-w-xs">{i.processing_errors.vision}</p></TooltipContent>}
+                                           </Tooltip>
+                                         </TooltipProvider>
+                                       )}
+                                       <TooltipProvider>
+                                         <Tooltip>
+                                           <TooltipTrigger>
+                                             <Badge variant="outline" className={i.processing_errors?.embeddings ? "border-red-500/50 text-red-500" : "border-emerald-500/50 text-emerald-500"}>
+                                               {i.processing_errors?.embeddings ? <XCircle className="w-3 h-3 mr-1" /> : <CheckCircle2 className="w-3 h-3 mr-1" />}
+                                               Embedding
+                                             </Badge>
+                                           </TooltipTrigger>
+                                           {i.processing_errors?.embeddings && <TooltipContent className="bg-red-950 text-red-100 border-red-900"><p className="max-w-xs">{i.processing_errors.embeddings}</p></TooltipContent>}
+                                         </Tooltip>
+                                       </TooltipProvider>
+                                     </div>
+                                   </TableCell>
+                                 );
+                               case "status":
+                                 return <TableCell key={col.key}>{i.status}</TableCell>;
+                               case "actions":
+                                 return (
+                                   <TableCell key={col.key}>
+                                     <Button variant="ghost" size="icon" onClick={() => setEditingInteraction(i)}>
+                                       <Edit className="w-4 h-4" />
+                                     </Button>
+                                   </TableCell>
+                                 );
+                               default:
+                                 return <TableCell key={col.key}>-</TableCell>;
+                             }
+                           })}
                          </TableRow>
                        ))}
                     </TableBody>
                  </Table>
-               </ScrollArea>
+               </div>
             </CardContent>
           </Card>
         </TabsContent>
