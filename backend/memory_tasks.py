@@ -229,6 +229,112 @@ async def process_interaction(interaction_id: str):
     except Exception as e:
         logger.error(f"Failed to evaluate outbound webhooks for {interaction_id}: {e}")
 
+    # Entity Profile Extraction — sync display_name, subtype, status from CRM blob
+    try:
+        _sync_entity_profile(interaction)
+    except Exception as e:
+        logger.warning(f"Entity profile sync failed for {interaction_id}: {e}")
+
+
+def _sync_entity_profile(interaction: dict):
+    """Extract entity profile data from interaction metadata/content using the entity type's field map.
+
+    Reads metadata_field_map from entity type config to know which CRM fields to extract.
+    Checks profile_sync_triggers to decide if this interaction type should trigger extraction.
+    Falls back to parsing content as JSON if metadata is empty.
+    Auto-discovers schema keys from the first interaction for a new entity type.
+    """
+    entity_type = interaction.get("primary_entity_type", "")
+    entity_id = interaction.get("primary_entity_id", "")
+    interaction_type = interaction.get("interaction_type", "")
+    if not entity_type or not entity_id:
+        return
+
+    config = _get_entity_type_config(entity_type)
+    field_map = config.get("metadata_field_map") or {}
+    if isinstance(field_map, str):
+        field_map = json.loads(field_map)
+
+    # Check if this interaction_type is a configured sync trigger
+    sync_triggers = field_map.get("profile_sync_triggers", ["initial_memory_context"])
+    if interaction_type not in sync_triggers:
+        return
+
+    # Resolve the structured data — prefer metadata, fall back to parsing content
+    raw_data = interaction.get("metadata") or {}
+    if isinstance(raw_data, str):
+        try:
+            raw_data = json.loads(raw_data)
+        except (json.JSONDecodeError, TypeError):
+            raw_data = {}
+
+    if not raw_data or not isinstance(raw_data, dict):
+        # Fall back to parsing content as JSON (existing flows store CRM blob in content)
+        content = interaction.get("content", "")
+        if isinstance(content, str):
+            try:
+                parsed = json.loads(content)
+                # Handle n8n-style wrapped array: [{"json": {...}}]
+                if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
+                    raw_data = parsed[0].get("json", parsed[0])
+                elif isinstance(parsed, dict):
+                    raw_data = parsed
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+    if not raw_data or not isinstance(raw_data, dict):
+        logger.debug(f"No structured data found for profile sync: {entity_type}/{entity_id}")
+        return
+
+    # Extract fields using the configured field map
+    display_name = raw_data.get(field_map.get("name_field", ""), None)
+    subtype = raw_data.get(field_map.get("subtype_field", ""), None)
+    status = raw_data.get(field_map.get("status_field", ""), None)
+
+    # UPSERT entity profile
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO entity_profiles (entity_type, entity_id, display_name, subtype, status, properties, first_seen_at, last_synced_at)
+            VALUES (%s, %s, %s, %s, %s, %s, NOW(), NOW())
+            ON CONFLICT (entity_type, entity_id) DO UPDATE SET
+                display_name = COALESCE(EXCLUDED.display_name, entity_profiles.display_name),
+                subtype = COALESCE(EXCLUDED.subtype, entity_profiles.subtype),
+                status = COALESCE(EXCLUDED.status, entity_profiles.status),
+                properties = EXCLUDED.properties,
+                last_synced_at = NOW()
+        """, (
+            entity_type, entity_id,
+            str(display_name) if display_name else None,
+            str(subtype) if subtype else None,
+            str(status) if status else None,
+            json.dumps(raw_data, ensure_ascii=False, default=str),
+        ))
+
+        # Backfill primary_entity_subtype on interaction if not already set
+        if subtype and not interaction.get("primary_entity_subtype"):
+            cursor.execute(
+                "UPDATE interactions SET primary_entity_subtype = %s WHERE id = %s AND primary_entity_subtype IS NULL",
+                (str(subtype), interaction["id"])
+            )
+
+    # Auto-discover schema keys for this entity type (first time only)
+    existing_schema = config.get("discovered_schema")
+    if not existing_schema:
+        discovered_keys = sorted([k for k in raw_data.keys() if isinstance(k, str)])
+        if discovered_keys:
+            try:
+                with get_memory_db_context() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "UPDATE memory_entity_type_config SET discovered_schema = %s WHERE entity_type = %s AND discovered_schema IS NULL",
+                        (json.dumps(discovered_keys), entity_type)
+                    )
+                logger.info(f"Auto-discovered {len(discovered_keys)} schema fields for entity type '{entity_type}'")
+            except Exception as e:
+                logger.warning(f"Failed to save discovered schema for {entity_type}: {e}")
+
+    logger.info(f"Entity profile synced: {entity_type}/{entity_id} → name={display_name}, subtype={subtype}, status={status}")
 
 
 # ── Job log helpers (prevent double-firing) ───────────────────────────────────

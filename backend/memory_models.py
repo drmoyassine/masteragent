@@ -405,9 +405,10 @@ class EntityTypeConfig(BaseModel):
     ner_schema: Optional[Dict[str, Any]] = None
     embedding_enabled: bool = True
     pii_scrub_knowledge: bool = True
-    metadata_field_map: Dict[str, str] = {}
+    metadata_field_map: Dict[str, Any] = {}
     intelligence_signals_prompt: Optional[List[Dict[str, str]]] = None
     knowledge_signals_prompt: Optional[List[Dict[str, str]]] = None
+    discovered_schema: Optional[List[str]] = None
 
 class EntityTypeConfigUpdate(BaseModel):
     intelligence_extraction_threshold: Optional[int] = None
@@ -419,9 +420,10 @@ class EntityTypeConfigUpdate(BaseModel):
     ner_schema: Optional[Dict[str, Any]] = None
     embedding_enabled: Optional[bool] = None
     pii_scrub_knowledge: Optional[bool] = None
-    metadata_field_map: Optional[Dict[str, str]] = None
+    metadata_field_map: Optional[Dict[str, Any]] = None
     intelligence_signals_prompt: Optional[List[Dict[str, str]]] = None
     knowledge_signals_prompt: Optional[List[Dict[str, str]]] = None
+    discovered_schema: Optional[List[str]] = None
 
 # ============================================
 # Search Models

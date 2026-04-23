@@ -394,6 +394,9 @@ async def update_entity_type_config(
     if "knowledge_signals_prompt" in body.model_fields_set:
         fields.append("knowledge_signals_prompt = %s")
         values.append(json.dumps(body.knowledge_signals_prompt) if body.knowledge_signals_prompt is not None else None)
+    if "discovered_schema" in body.model_fields_set:
+        fields.append("discovered_schema = %s")
+        values.append(json.dumps(body.discovered_schema) if body.discovered_schema is not None else None)
 
     if not fields:
         raise HTTPException(status_code=400, detail="No fields to update")
@@ -444,6 +447,62 @@ async def trigger_lesson_check(admin: dict = Depends(require_admin_auth)):
     from memory.queue import knowledge_queue
     await knowledge_queue.add("generate_lesson", {}, {"priority": 1})
     return {"message": "Knowledge check queued"}
+
+
+@router.post("/trigger/backfill-profiles")
+async def trigger_backfill_profiles(admin: dict = Depends(require_admin_auth)):
+    """Backfill entity profiles from existing initial_memory_context interactions.
+    
+    Scans all entity types, finds interactions matching profile_sync_triggers,
+    and extracts entity profile data using the configured metadata_field_map.
+    """
+    from memory_tasks import _sync_entity_profile
+    backfilled = 0
+    skipped = 0
+    errors = []
+
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        # Get all entity type configs
+        cursor.execute("SELECT * FROM memory_entity_type_config")
+        configs = [dict(r) for r in cursor.fetchall()]
+
+    for config in configs:
+        entity_type = config["entity_type"]
+        field_map = config.get("metadata_field_map") or {}
+        if isinstance(field_map, str):
+            import json as _json
+            field_map = _json.loads(field_map)
+
+        sync_triggers = field_map.get("profile_sync_triggers", ["initial_memory_context"])
+        if not sync_triggers:
+            continue
+
+        with get_memory_db_context() as conn:
+            cursor = conn.cursor()
+            # For each unique entity, get the LATEST matching interaction
+            cursor.execute("""
+                SELECT DISTINCT ON (primary_entity_id) *
+                FROM interactions
+                WHERE primary_entity_type = %s
+                  AND interaction_type = ANY(%s)
+                ORDER BY primary_entity_id, timestamp DESC
+            """, (entity_type, sync_triggers))
+            rows = cursor.fetchall()
+
+        for row in rows:
+            try:
+                _sync_entity_profile(dict(row))
+                backfilled += 1
+            except Exception as e:
+                skipped += 1
+                errors.append(f"{entity_type}/{row['primary_entity_id']}: {str(e)[:100]}")
+
+    return {
+        "backfilled": backfilled,
+        "skipped": skipped,
+        "errors": errors[:20],
+    }
 
 
 # ============================================================
@@ -521,29 +580,34 @@ async def list_interactions(
         if interaction_types: final_interaction_types.extend([x.strip() for x in interaction_types.split(',') if x.strip() and x.strip() != 'all'])
 
         if final_entity_types:
-            conditions.append("primary_entity_type = ANY(%s)"); params.append(final_entity_types)
+            conditions.append("i.primary_entity_type = ANY(%s)"); params.append(final_entity_types)
         if entity_id:
-            conditions.append("primary_entity_id = %s"); params.append(entity_id)
+            conditions.append("i.primary_entity_id = %s"); params.append(entity_id)
         if final_interaction_types:
-            conditions.append("interaction_type = ANY(%s)"); params.append(final_interaction_types)
+            conditions.append("i.interaction_type = ANY(%s)"); params.append(final_interaction_types)
         if status:
-            conditions.append("status = %s"); params.append(status)
+            conditions.append("i.status = %s"); params.append(status)
         if since:
-            conditions.append("timestamp >= %s"); params.append(since)
+            conditions.append("i.timestamp >= %s"); params.append(since)
         if until:
-            conditions.append("timestamp <= %s"); params.append(until)
+            conditions.append("i.timestamp <= %s"); params.append(until)
 
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-        cursor.execute(f"SELECT COUNT(*) as total FROM interactions {where}", list(params))
+        cursor.execute(f"SELECT COUNT(*) as total FROM interactions i {where}", list(params))
         total = cursor.fetchone()["total"]
 
         params_page = list(params) + [limit, offset]
         cursor.execute(f"""
-            SELECT id, seq_id, timestamp, interaction_type, agent_id, agent_name,
-                   primary_entity_type, primary_entity_id, primary_entity_subtype,
-                   has_attachments, source, status, created_at, content, processing_errors
-            FROM interactions {where}
-            ORDER BY timestamp DESC
+            SELECT i.id, i.seq_id, i.timestamp, i.interaction_type, i.agent_id, i.agent_name,
+                   i.primary_entity_type, i.primary_entity_id, i.primary_entity_subtype,
+                   i.has_attachments, i.source, i.status, i.created_at, i.content, i.processing_errors,
+                   ep.display_name as entity_display_name
+            FROM interactions i
+            LEFT JOIN entity_profiles ep
+              ON ep.entity_type = i.primary_entity_type
+              AND ep.entity_id = i.primary_entity_id
+            {where}
+            ORDER BY i.timestamp DESC
             LIMIT %s OFFSET %s
         """, params_page)
         rows = cursor.fetchall()

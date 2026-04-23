@@ -198,6 +198,22 @@ def _create_interaction_tables(cursor):
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_interactions_status ON interactions (status)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_interactions_agent ON interactions (agent_id)")
 
+    # Entity profiles — stores per-entity instance data extracted from CRM blobs
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS entity_profiles (
+            entity_type       TEXT NOT NULL,
+            entity_id         TEXT NOT NULL,
+            display_name      TEXT,
+            subtype           TEXT,
+            status            TEXT,
+            properties        JSONB DEFAULT '{}',
+            first_seen_at     TIMESTAMPTZ DEFAULT NOW(),
+            last_synced_at    TIMESTAMPTZ DEFAULT NOW(),
+            PRIMARY KEY (entity_type, entity_id)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_entity_profiles_type ON entity_profiles (entity_type)")
+
 
 def _create_memory_tier_tables(cursor):
     """Tiers 1-3 + audit + webhooks: memories, intelligence, knowledge, audit_log, webhook_sources."""
@@ -499,6 +515,7 @@ def _run_migrations(cursor):
         ("metadata_field_map", "JSONB DEFAULT '{}'"),
         ("intelligence_signals_prompt", "JSONB DEFAULT NULL"),
         ("knowledge_signals_prompt", "JSONB DEFAULT NULL"),
+        ("discovered_schema", "JSONB DEFAULT NULL"),
     ]:
         cursor.execute(f"ALTER TABLE memory_entity_type_config ADD COLUMN IF NOT EXISTS {col} {col_def}")
                 

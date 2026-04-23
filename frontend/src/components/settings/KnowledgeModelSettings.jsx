@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
     Database, Plus, Trash2, Settings, ChevronRight,
-    Save, Loader2, Brain, Sparkles, Users, ChevronDown, BookOpen, Pencil, X
+    Save, Loader2, Brain, Sparkles, Users, ChevronDown, BookOpen, Pencil, X, FileText
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -223,12 +223,23 @@ function EntityDetailPanel({ entityType, entityTypes }) {
     // Signals (local draft state — structured arrays)
     const [intelSignals, setIntelSignals] = useState([]);
     const [knowledgeSignals, setKnowledgeSignals] = useState([]);
+
+    // Entity Schema (field map + discovered schema)
+    const [fieldMap, setFieldMap] = useState({});
+    const [discoveredSchema, setDiscoveredSchema] = useState([]);
+
+    // Dirty tracking
     const [signalsDirty, setSignalsDirty] = useState(false);
+    const [schemaDirty, setSchemaDirty] = useState(false);
+
+    // Sync triggers local state
+    const [newTrigger, setNewTrigger] = useState("");
 
     // Accordion state
     const [openSections, setOpenSections] = useState({
+        schema: true,
         subtypes: false,
-        intelligence: true,
+        intelligence: false,
         knowledge: false,
     });
 
@@ -246,7 +257,10 @@ function EntityDetailPanel({ entityType, entityTypes }) {
             setConfig(data);
             setIntelSignals(data.intelligence_signals_prompt || []);
             setKnowledgeSignals(data.knowledge_signals_prompt || []);
+            setFieldMap(data.metadata_field_map || {});
+            setDiscoveredSchema(data.discovered_schema || []);
             setSignalsDirty(false);
+            setSchemaDirty(false);
         } catch {
             // Config may not exist yet
             setConfig({});
@@ -288,6 +302,38 @@ function EntityDetailPanel({ entityType, entityTypes }) {
             knowledge_signals_prompt: knowledgeSignals.length > 0 ? knowledgeSignals : null,
         });
         setSignalsDirty(false);
+    };
+
+    const saveSchema = () => {
+        saveField({ metadata_field_map: fieldMap });
+        setSchemaDirty(false);
+    };
+
+    const updateFieldMap = (key, value) => {
+        setFieldMap((prev) => ({ ...prev, [key]: value }));
+        setSchemaDirty(true);
+    };
+
+    const addSyncTrigger = () => {
+        if (!newTrigger.trim()) return;
+        const triggers = fieldMap.profile_sync_triggers || ["initial_memory_context"];
+        if (triggers.includes(newTrigger.trim())) return;
+        updateFieldMap("profile_sync_triggers", [...triggers, newTrigger.trim()]);
+        setNewTrigger("");
+    };
+
+    const removeSyncTrigger = (trigger) => {
+        const triggers = (fieldMap.profile_sync_triggers || []).filter((t) => t !== trigger);
+        updateFieldMap("profile_sync_triggers", triggers);
+    };
+
+    const toggleDisplayColumn = (col) => {
+        const cols = fieldMap.display_columns || [];
+        if (cols.includes(col)) {
+            updateFieldMap("display_columns", cols.filter((c) => c !== col));
+        } else {
+            updateFieldMap("display_columns", [...cols, col]);
+        }
     };
 
     const handleAddSubtype = async () => {
@@ -350,6 +396,123 @@ function EntityDetailPanel({ entityType, entityTypes }) {
 
     return (
         <div className="space-y-3">
+            {/* ─── Entity Schema Mapping ──────────────────────── */}
+            <Section id="schema" icon={FileText} title="Entity Schema" badge={discoveredSchema.length ? `${discoveredSchema.length} fields` : null}>
+                <p className="text-[10px] text-muted-foreground leading-relaxed mb-2">
+                    Map CRM fields to semantic roles. {discoveredSchema.length > 0 ? "Fields auto-detected from ingested data." : "Configure manually or ingest data to auto-detect fields."}
+                </p>
+
+                {/* Semantic role mappings */}
+                <div className="space-y-2.5">
+                    {[
+                        { key: "name_field", label: "Display Name", placeholder: "e.g. full_name" },
+                        { key: "subtype_field", label: "Subtype", placeholder: "e.g. contact_type" },
+                        { key: "status_field", label: "Status", placeholder: "e.g. lead_stage" },
+                        { key: "summary_field", label: "Summary", placeholder: "e.g. case_summary" },
+                    ].map(({ key, label, placeholder }) => (
+                        <div key={key} className="flex items-center gap-2">
+                            <Label className="text-xs w-28 shrink-0">{label}</Label>
+                            {discoveredSchema.length > 0 ? (
+                                <select
+                                    value={fieldMap[key] || ""}
+                                    onChange={(e) => updateFieldMap(key, e.target.value || undefined)}
+                                    className="flex-1 h-8 text-xs rounded-md border border-input bg-background px-2 focus:outline-none focus:ring-1 focus:ring-ring"
+                                >
+                                    <option value="">— not mapped —</option>
+                                    {discoveredSchema.map((f) => (
+                                        <option key={f} value={f}>{f}</option>
+                                    ))}
+                                </select>
+                            ) : (
+                                <Input
+                                    value={fieldMap[key] || ""}
+                                    onChange={(e) => updateFieldMap(key, e.target.value || undefined)}
+                                    placeholder={placeholder}
+                                    className="text-xs h-8 flex-1"
+                                />
+                            )}
+                        </div>
+                    ))}
+                </div>
+
+                {/* Sync Triggers */}
+                <div className="mt-4 pt-3 border-t border-border/30">
+                    <Label className="text-xs font-medium">Profile Sync Triggers</Label>
+                    <p className="text-[10px] text-muted-foreground mb-2">
+                        Interaction types that trigger entity profile extraction.
+                    </p>
+                    <div className="flex flex-wrap gap-1.5 mb-2">
+                        {(fieldMap.profile_sync_triggers || ["initial_memory_context"]).map((trigger) => (
+                            <Badge key={trigger} variant="secondary" className="gap-1 pr-1 text-xs">
+                                {trigger}
+                                <button
+                                    onClick={() => removeSyncTrigger(trigger)}
+                                    className="ml-0.5 hover:text-destructive transition-colors"
+                                >
+                                    <X className="w-3 h-3" />
+                                </button>
+                            </Badge>
+                        ))}
+                    </div>
+                    <div className="flex gap-2">
+                        <Input
+                            value={newTrigger}
+                            onChange={(e) => setNewTrigger(e.target.value)}
+                            placeholder="Add trigger type..."
+                            className="text-xs h-8"
+                            onKeyDown={(e) => e.key === "Enter" && addSyncTrigger()}
+                        />
+                        <Button
+                            size="sm"
+                            variant="secondary"
+                            className="h-8 text-xs shrink-0"
+                            onClick={addSyncTrigger}
+                            disabled={!newTrigger.trim()}
+                        >
+                            <Plus className="w-3 h-3 mr-1" /> Add
+                        </Button>
+                    </div>
+                </div>
+
+                {/* Display Columns */}
+                {discoveredSchema.length > 0 && (
+                    <div className="mt-4 pt-3 border-t border-border/30">
+                        <Label className="text-xs font-medium">Display Columns</Label>
+                        <p className="text-[10px] text-muted-foreground mb-2">
+                            Select which fields appear as extra columns in the Memory Explorer tables.
+                        </p>
+                        <div className="flex flex-wrap gap-1.5">
+                            {discoveredSchema.map((col) => {
+                                const isActive = (fieldMap.display_columns || []).includes(col);
+                                return (
+                                    <button
+                                        key={col}
+                                        onClick={() => toggleDisplayColumn(col)}
+                                        className={`text-[10px] px-2 py-1 rounded-md border transition-colors ${
+                                            isActive
+                                                ? "bg-primary/10 border-primary/30 text-primary font-medium"
+                                                : "border-border/40 text-muted-foreground hover:bg-muted/50"
+                                        }`}
+                                    >
+                                        {col}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
+
+                {/* Save Schema */}
+                {schemaDirty && (
+                    <div className="flex justify-end pt-3">
+                        <Button size="sm" onClick={saveSchema} disabled={saving} className="gap-1.5">
+                            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                            Save Schema
+                        </Button>
+                    </div>
+                )}
+            </Section>
+
             {/* ─── Sub-types ──────────────────────────────────── */}
             <Section id="subtypes" icon={Users} title="Sub-types" badge={subtypes.length || null}>
                 <div className="flex flex-wrap gap-1.5">

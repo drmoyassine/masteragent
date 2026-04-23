@@ -680,7 +680,16 @@ export default function MemoryExplorerPage() {
                                </Badge>
                             </TableCell>
                             <TableCell>{i.primary_entity_subtype || "-"}</TableCell>
-                            <TableCell className="font-mono text-xs">{i.primary_entity_id}</TableCell>
+                            <TableCell>
+                               {i.entity_display_name ? (
+                                 <div>
+                                   <div className="text-sm font-medium">{i.entity_display_name}</div>
+                                   <div className="font-mono text-[10px] text-muted-foreground">#{i.primary_entity_id}</div>
+                                 </div>
+                               ) : (
+                                 <span className="font-mono text-xs">{i.primary_entity_id}</span>
+                               )}
+                            </TableCell>
                             <TableCell className="max-w-xs truncate">{i.content}</TableCell>
                             <TableCell>{i.agent_name || i.agent_id}</TableCell>
                             <TableCell>
