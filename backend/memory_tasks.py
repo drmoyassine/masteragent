@@ -634,9 +634,16 @@ async def _execute_pipeline_node(node: dict, ctx: dict):
         system_prompt = get_system_prompt_by_config_id(node_id)
         if not system_prompt:
             system_prompt = "You are an AI analyst. Identify a meaningful pattern or insight. Return JSON."
-        system_prompt = inject_variables(system_prompt, {
-            "entity": {"type": ctx.get("entity_type", ""), "id": ctx.get("entity_id", "")}
-        })
+        # Build variable map with entity info + entity-type signals
+        signal_vars = {"entity": {"type": ctx.get("entity_type", ""), "id": ctx.get("entity_id", "")}}
+        entity_config = ctx.get("config") or _get_entity_type_config(ctx.get("entity_type", ""))
+        if task_type == "intelligence_generation":
+            signals = entity_config.get("intelligence_signals_prompt") or []
+            signal_vars["intelligence_signals"] = _format_signal_definitions(signals)
+        elif task_type == "knowledge_generation":
+            signals = entity_config.get("knowledge_signals_prompt") or []
+            signal_vars["knowledge_signals"] = _format_signal_definitions(signals)
+        system_prompt = inject_variables(system_prompt, signal_vars)
         ctx["derived_text"] = await call_llm(
             ctx["derived_text"][:8000],
             system_prompt=system_prompt,
@@ -894,8 +901,11 @@ async def compact_entity(entity_type: str, entity_id: str):
             "risk, opportunity, or behavioral Intelligence. Return JSON only: "
             "{\"name\": \"...\", \"knowledge_type\": \"...\", \"content\": \"...\", \"summary\": \"...\"}"
         )
+    # Inject entity info + intelligence signals from entity-type config
+    intel_signals = config.get("intelligence_signals_prompt") or []
     system_prompt = inject_variables(system_prompt, {
-        "entity": {"type": entity_type, "id": entity_id}
+        "entity": {"type": entity_type, "id": entity_id},
+        "intelligence_signals": _format_signal_definitions(intel_signals),
     })
 
     if not pk_gen_node:
@@ -1104,6 +1114,17 @@ async def generate_knowledge_from_intelligence(intelligence: list):
     if not system_prompt:
         system_prompt = "You are an AI knowledge curator. Synthesize into generalizable Knowledge. Return JSON: {\"name\": \"...\", \"knowledge_type\": \"...\", \"content\": \"...\", \"summary\": \"...\", \"tags\": [...]}"
 
+    # Inject knowledge signals from entity-type config
+    entity_type = intelligence[0].get("primary_entity_type", "") if intelligence else ""
+    know_signals_text = ""
+    if entity_type:
+        know_config = _get_entity_type_config(entity_type)
+        know_signals = know_config.get("knowledge_signals_prompt") or []
+        know_signals_text = _format_signal_definitions(know_signals)
+    system_prompt = inject_variables(system_prompt, {
+        "knowledge_signals": know_signals_text,
+    })
+
     try:
         user_msg_parts = []
         if prior_knowledge_text:
@@ -1283,6 +1304,29 @@ def _get_entity_type_config(entity_type: str) -> dict:
         "pii_scrub_knowledge": True,
         "metadata_field_map": {},
     }
+
+
+def _format_signal_definitions(signals: list) -> str:
+    """Format entity-type signal definitions into a text block for LLM prompt injection.
+
+    Input:  [{"name": "Budget & Readiness", "description": "Evidence of confirmed budget, approved spending"}]
+    Output:
+      BUDGET & READINESS
+      - Evidence of confirmed budget
+      - Approved spending
+    """
+    if not signals:
+        return ""
+    parts = []
+    for signal in signals:
+        name = signal.get("name", "Unnamed Signal").upper()
+        desc = signal.get("description", "")
+        if desc:
+            bullets = [f"- {b.strip()}" for b in desc.split(",") if b.strip()]
+            parts.append(f"{name}\n" + "\n".join(bullets))
+        else:
+            parts.append(name)
+    return "\n\n".join(parts)
 
 
 def _format_ner_output(entities: list, intents: list, relationships: list) -> str:
