@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
+from pydantic import BaseModel
 
 from core.storage import get_memory_db_context
 from memory_models import (
