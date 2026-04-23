@@ -621,7 +621,8 @@ async def list_interactions(
                    i.primary_entity_type, i.primary_entity_id, i.primary_entity_subtype,
                    i.has_attachments, i.source, i.status, i.created_at, i.content, i.processing_errors,
                    ep.display_name as entity_display_name,
-                   ep.subtype as entity_subtype_resolved
+                   ep.subtype as entity_subtype_resolved,
+                   ep.properties as entity_properties
             FROM interactions i
             LEFT JOIN entity_profiles ep
               ON ep.entity_type = i.primary_entity_type

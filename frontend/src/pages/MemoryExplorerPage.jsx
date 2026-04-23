@@ -24,6 +24,7 @@ import api, {
   getInteractionFilterOptionsAdmin,
   getEntityTypes,
   getLessonTypes,
+  getEntityTypeConfig,
 } from "@/lib/api";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { Button } from "@/components/ui/button";
@@ -214,6 +215,32 @@ export default function MemoryExplorerPage() {
       ]);
       setEntityTypes(entityRes.data);
       setLessonTypes(lessonTypeRes.data);
+
+      // Fetch display_columns from entity type configs
+      const dynamicColKeys = new Set();
+      for (const et of entityRes.data) {
+        try {
+          const cfgRes = await getEntityTypeConfig(et.name);
+          const fieldMap = cfgRes.data?.metadata_field_map || {};
+          (fieldMap.display_columns || []).forEach(c => dynamicColKeys.add(c));
+        } catch { /* config may not exist */ }
+      }
+
+      if (dynamicColKeys.size > 0) {
+        setColumnConfig(prev => {
+          const existingKeys = new Set(prev.map(c => c.key));
+          const newDynamic = [...dynamicColKeys]
+            .filter(k => !existingKeys.has(`dyn_${k}`))
+            .map(k => ({ key: `dyn_${k}`, label: k.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()), visible: true, dynamic: true }));
+          if (newDynamic.length === 0) return prev;
+          // Insert dynamic columns before 'actions'
+          const actionsIdx = prev.findIndex(c => c.key === 'actions');
+          const updated = [...prev];
+          updated.splice(actionsIdx >= 0 ? actionsIdx : updated.length, 0, ...newDynamic);
+          localStorage.setItem("memory-explorer-columns", JSON.stringify(updated));
+          return updated;
+        });
+      }
     } catch (error) {
       console.error("Failed to load config data:", error);
     }
@@ -843,8 +870,15 @@ export default function MemoryExplorerPage() {
                                      </Button>
                                    </TableCell>
                                  );
-                               default:
+                               default: {
+                                 // Dynamic CRM columns from entity_properties
+                                 if (col.key.startsWith('dyn_')) {
+                                   const propKey = col.key.slice(4);
+                                   const val = i.entity_properties?.[propKey];
+                                   return <TableCell key={col.key} className="text-xs">{val != null ? String(val) : "-"}</TableCell>;
+                                 }
                                  return <TableCell key={col.key}>-</TableCell>;
+                               }
                              }
                            })}
                          </TableRow>
