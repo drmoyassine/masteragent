@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useBulkSelection } from "@/hooks/useBulkSelection";
+import { useColumnConfig } from "@/hooks/useColumnConfig";
 import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { format, subDays, subMonths, formatISO } from "date-fns";
@@ -144,11 +146,31 @@ export default function MemoryExplorerPage() {
   // Intelligence Inspector State
   const [editingIntelligence, setEditingIntelligence] = useState(null);
   
-  // Bulk Operations State
-  const [selectedInteractionIds, setSelectedInteractionIds] = useState([]);
-  const [selectedMemoryIds, setSelectedMemoryIds] = useState([]);
-  const [selectedIntelligenceIds, setSelectedIntelligenceIds] = useState([]);
-  const [selectedKnowledgeIds, setSelectedKnowledgeIds] = useState([]);
+  // Bulk Operations — extracted to useBulkSelection hook
+  const {
+    selectedIds: selectedInteractionIds,
+    toggleAll: toggleSelectAllInteractions,
+    toggleOne: toggleInteraction,
+    clear: clearInteractionSelection,
+  } = useBulkSelection(interactions);
+  const {
+    selectedIds: selectedMemoryIds,
+    toggleAll: toggleSelectAllMemories,
+    toggleOne: toggleMemory,
+    clear: clearMemorySelection,
+  } = useBulkSelection(memories);
+  const {
+    selectedIds: selectedIntelligenceIds,
+    toggleAll: toggleSelectAllIntelligence,
+    toggleOne: toggleIntelligenceItem,
+    clear: clearIntelligenceSelection,
+  } = useBulkSelection(intelligence);
+  const {
+    selectedIds: selectedKnowledgeIds,
+    toggleAll: toggleSelectAllKnowledge,
+    toggleOne: toggleKnowledgeItem,
+    clear: clearKnowledgeSelection,
+  } = useBulkSelection(knowledge);
 
   // ─── Generic Column Config System ─────────────────────────────────────
   const COLUMN_DEFS = {
@@ -198,51 +220,7 @@ export default function MemoryExplorerPage() {
     ],
   };
 
-  const loadColCfg = (tableKey) => {
-    const defaults = COLUMN_DEFS[tableKey];
-    try {
-      const saved = localStorage.getItem(`me-cols-${tableKey}`);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        const savedKeys = parsed.map(c => c.key);
-        const merged = parsed.filter(c => defaults.some(d => d.key === c.key));
-        defaults.forEach(d => { if (!savedKeys.includes(d.key)) merged.push({ ...d, visible: true }); });
-        return merged;
-      }
-    } catch { /* ignore */ }
-    return defaults.map(c => ({ ...c, visible: true }));
-  };
-
-  const [colCfg, setColCfg] = useState(() => ({
-    interactions: loadColCfg("interactions"),
-    memories: loadColCfg("memories"),
-    intelligence: loadColCfg("intelligence"),
-    knowledge: loadColCfg("knowledge"),
-  }));
-
-  const toggleCol = (tableKey, key) => {
-    setColCfg(prev => {
-      const updated = { ...prev, [tableKey]: prev[tableKey].map(c => c.key === key ? { ...c, visible: !c.visible } : c) };
-      localStorage.setItem(`me-cols-${tableKey}`, JSON.stringify(updated[tableKey]));
-      return updated;
-    });
-  };
-
-  const moveCol = (tableKey, key, dir) => {
-    setColCfg(prev => {
-      const arr = [...prev[tableKey]];
-      const idx = arr.findIndex(c => c.key === key);
-      if (idx < 0) return prev;
-      const t = idx + dir;
-      if (t < 0 || t >= arr.length) return prev;
-      [arr[idx], arr[t]] = [arr[t], arr[idx]];
-      const updated = { ...prev, [tableKey]: arr };
-      localStorage.setItem(`me-cols-${tableKey}`, JSON.stringify(arr));
-      return updated;
-    });
-  };
-
-  const visCols = (tableKey) => colCfg[tableKey].filter(c => c.visible || c.fixed);
+  const { colCfg, setColCfg, toggleCol, moveCol, visCols } = useColumnConfig(COLUMN_DEFS);
 
   // Column toggle popover renderer (shared across all tabs)
   const renderColumnToggle = (tableKey) => (
@@ -546,28 +524,14 @@ export default function MemoryExplorerPage() {
     }
   };
 
-  // Bulk Handlers
-  const toggleSelectAllInteractions = (checked) => {
-    if (checked) {
-      setSelectedInteractionIds(interactions.map(i => i.id));
-    } else {
-      setSelectedInteractionIds([]);
-    }
-  };
-
-  const toggleInteraction = (id) => {
-    setSelectedInteractionIds(prev => 
-      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
-    );
-  };
-
+  // Bulk action handlers
   const handleBulkDelete = async () => {
     if (!window.confirm(`Delete ${selectedInteractionIds.length} interactions? This cannot be reversed.`)) return;
     setProcessingBulk(true);
     try {
       const res = await bulkDeleteInteractionsAdmin({ interaction_ids: selectedInteractionIds });
       toast.success(`Deleted ${res.data.deleted} interactions`);
-      setSelectedInteractionIds([]);
+      clearInteractionSelection();
       loadInteractions();
     } catch (error) {
       toast.error("Failed to delete interactions");
@@ -582,7 +546,7 @@ export default function MemoryExplorerPage() {
     try {
       const res = await bulkReprocessInteractionsAdmin({ interaction_ids: selectedInteractionIds });
       toast.success(`Queued ${res.data.queued} interactions sequentially`);
-      setSelectedInteractionIds([]);
+      clearInteractionSelection();
       loadInteractions();
     } catch (error) {
       toast.error("Failed to queue interactions");
@@ -591,22 +555,13 @@ export default function MemoryExplorerPage() {
     }
   };
 
-  const toggleSelectAllMemories = (checked) => {
-    if (checked) setSelectedMemoryIds(memories.map(m => m.id));
-    else setSelectedMemoryIds([]);
-  };
-
-  const toggleMemory = (id) => {
-    setSelectedMemoryIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-  };
-
   const handleBulkDeleteMemories = async () => {
     if (!window.confirm(`Delete ${selectedMemoryIds.length} memories? This cannot be reversed.`)) return;
     setProcessingBulk(true);
     try {
       const res = await bulkDeleteMemoriesAdmin({ memory_ids: selectedMemoryIds });
       toast.success(`Deleted ${res.data.deleted} memories`);
-      setSelectedMemoryIds([]);
+      clearMemorySelection();
       loadMemories();
     } catch (error) {
       toast.error("Failed to delete memories");
@@ -621,7 +576,7 @@ export default function MemoryExplorerPage() {
     try {
       const res = await bulkReprocessMemoriesAdmin({ memory_ids: selectedMemoryIds });
       toast.success(`Dropped memories and re-queued ${res.data.queued} generation jobs`);
-      setSelectedMemoryIds([]);
+      clearMemorySelection();
       loadMemories();
       loadInteractions();
     } catch (error) {
@@ -631,21 +586,13 @@ export default function MemoryExplorerPage() {
     }
   };
 
-  // Intelligence bulk operations
-  const toggleSelectAllIntelligence = (checked) => {
-    if (checked) setSelectedIntelligenceIds(intelligence.map(i => i.id));
-    else setSelectedIntelligenceIds([]);
-  };
-  const toggleIntelligenceItem = (id) => {
-    setSelectedIntelligenceIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-  };
   const handleBulkDeleteIntelligence = async () => {
     if (!window.confirm(`Delete ${selectedIntelligenceIds.length} intelligence records? This cannot be reversed.`)) return;
     setProcessingBulk(true);
     try {
       const res = await bulkDeleteIntelligenceAdmin({ intelligence_ids: selectedIntelligenceIds });
       toast.success(`Deleted ${res.data.deleted} intelligence records`);
-      setSelectedIntelligenceIds([]);
+      clearIntelligenceSelection();
       loadInsights();
     } catch (error) {
       toast.error("Failed to delete intelligence");
@@ -654,21 +601,13 @@ export default function MemoryExplorerPage() {
     }
   };
 
-  // Knowledge bulk operations
-  const toggleSelectAllKnowledge = (checked) => {
-    if (checked) setSelectedKnowledgeIds(knowledge.map(k => k.id));
-    else setSelectedKnowledgeIds([]);
-  };
-  const toggleKnowledgeItem = (id) => {
-    setSelectedKnowledgeIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-  };
   const handleBulkDeleteKnowledge = async () => {
     if (!window.confirm(`Delete ${selectedKnowledgeIds.length} knowledge records? This cannot be reversed.`)) return;
     setProcessingBulk(true);
     try {
       const res = await bulkDeleteKnowledgeAdmin({ knowledge_ids: selectedKnowledgeIds });
       toast.success(`Deleted ${res.data.deleted} knowledge records`);
-      setSelectedKnowledgeIds([]);
+      clearKnowledgeSelection();
       loadLessons();
     } catch (error) {
       toast.error("Failed to delete knowledge");
