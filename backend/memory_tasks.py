@@ -50,6 +50,12 @@ from memory_services import (
 )
 from services.config_helpers import get_pipeline_configs, get_system_prompt_by_config_id, get_schema_by_config_id
 from services.prompt_renderer import inject_variables
+from memory_db_writes import insert_memory, insert_intelligence, insert_knowledge
+from memory_prior_context import (
+    fetch_prior_memories,
+    fetch_prior_intelligence,
+    fetch_prior_knowledge_semantic,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -529,7 +535,7 @@ async def _generate_memory_for_entity(entity_type: str, entity_id: str, interact
     ner_payload = _build_ner_text_payload(interactions)
 
     # 2. Build prior memory context (chrono 2 + semantic 2)
-    prior_context = await _fetch_prior_context(entity_type, entity_id, interaction_date, raw_text)
+    prior_context = await fetch_prior_memories(entity_type, entity_id, interaction_date, raw_text)
 
     # 3. Initialize the pipeline context object
     ctx = {
@@ -570,42 +576,19 @@ async def _generate_memory_for_entity(entity_type: str, entity_id: str, interact
     processing_errors = ctx["processing_errors"]
 
     memory_id = str(uuid.uuid4())
-    with get_memory_db_context() as conn:
-        cursor = conn.cursor()
-        if embedding:
-            cursor.execute("""
-                INSERT INTO memories (
-                    id, date, primary_entity_type, primary_entity_id,
-                    interaction_ids, interaction_count, content_summary,
-                    related_entities, intents, relationships, embedding, processing_errors
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (date, primary_entity_type, primary_entity_id) DO NOTHING
-            """, (
-                memory_id, interaction_date, entity_type, entity_id,
-                interaction_ids, len(interaction_ids), content_summary,
-                json.dumps(related_entities), intents,
-                json.dumps(relationships), embedding, json.dumps(processing_errors)
-            ))
-        else:
-            cursor.execute("""
-                INSERT INTO memories (
-                    id, date, primary_entity_type, primary_entity_id,
-                    interaction_ids, interaction_count, content_summary,
-                    related_entities, intents, relationships, processing_errors
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (date, primary_entity_type, primary_entity_id) DO NOTHING
-            """, (
-                memory_id, interaction_date, entity_type, entity_id,
-                interaction_ids, len(interaction_ids), content_summary,
-                json.dumps(related_entities), intents,
-                json.dumps(relationships), json.dumps(processing_errors)
-            ))
-
-        # Mark interactions as done (covers both pending and failed) and clear ephemeral embeddings
-        cursor.execute("""
-            UPDATE interactions SET status = 'done', embedding = NULL
-            WHERE id = ANY(%s) AND status IN ('pending', 'failed')
-        """, (interaction_ids,))
+    insert_memory(
+        memory_id=memory_id,
+        interaction_date=interaction_date,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        interaction_ids=interaction_ids,
+        content_summary=content_summary,
+        related_entities=related_entities,
+        intents=intents,
+        relationships=relationships,
+        embedding=embedding,
+        processing_errors=processing_errors,
+    )
 
     # Flush from Redis
     for iid in interaction_ids:
@@ -749,55 +732,8 @@ async def _execute_pipeline_node(node: dict, ctx: dict):
 
 
 # ── Prior Memory Context Fetcher ──────────────────────────────────────────────
-
-async def _fetch_prior_context(entity_type: str, entity_id: str, interaction_date: str, raw_text: str) -> str:
-    """Fetch prior memories (chronological + semantic) for context continuity.
-    Counts are user-configurable via memory_settings."""
-    settings = get_memory_settings()
-    PRIOR_CHRONO_COUNT = settings.get("prior_context_chrono_count", 2)
-    PRIOR_SEMANTIC_COUNT = settings.get("prior_context_semantic_count", 2)
-    try:
-        with get_memory_db_context() as conn:
-            cursor = conn.cursor()
-            prior_memories = {}
-
-            cursor.execute("""
-                SELECT id, date, content_summary FROM memories
-                WHERE primary_entity_type = %s AND primary_entity_id = %s
-                  AND date < %s AND content_summary IS NOT NULL
-                  AND LENGTH(TRIM(content_summary)) > 20
-                ORDER BY date DESC LIMIT %s
-            """, (entity_type, entity_id, interaction_date, PRIOR_CHRONO_COUNT))
-            for row in cursor.fetchall():
-                prior_memories[row["id"]] = dict(row)
-
-            if PRIOR_SEMANTIC_COUNT > 0 and raw_text:
-                try:
-                    search_embedding = await generate_embedding(raw_text[:2000])
-                    if search_embedding:
-                        cursor.execute("""
-                            SELECT id, date, content_summary FROM memories
-                            WHERE primary_entity_type = %s AND primary_entity_id = %s
-                              AND date < %s AND content_summary IS NOT NULL
-                              AND LENGTH(TRIM(content_summary)) > 20
-                              AND embedding IS NOT NULL
-                            ORDER BY embedding <=> %s::vector LIMIT %s
-                        """, (entity_type, entity_id, interaction_date,
-                              str(search_embedding), PRIOR_SEMANTIC_COUNT))
-                        for row in cursor.fetchall():
-                            if row["id"] not in prior_memories:
-                                prior_memories[row["id"]] = dict(row)
-                except Exception as e:
-                    logger.warning(f"Semantic prior memory search failed: {e}")
-
-            if prior_memories:
-                sorted_priors = sorted(prior_memories.values(), key=lambda m: str(m["date"]))
-                prior_lines = [f"[{m['date']}] {m['content_summary']}" for m in sorted_priors]
-                logger.info(f"Injecting {len(prior_memories)} prior memories for {entity_type}/{entity_id}")
-                return "\n".join(prior_lines)
-    except Exception as e:
-        logger.warning(f"Prior memory fetch failed for {entity_type}/{entity_id}: {e}")
-    return ""
+# Extracted to memory_prior_context — re-exported for backward compatibility.
+_fetch_prior_context = fetch_prior_memories
 
 
 # ── Compaction Check ─────────────────────────────────────────────────────────
@@ -896,80 +832,14 @@ async def compact_entity(entity_type: str, entity_id: str):
 
     # Fetch prior intelligence for this entity to avoid duplication
     settings = get_memory_settings()
-    prior_intel_chrono = settings.get("prior_intelligence_chrono_count", 3)
-    prior_intel_semantic = settings.get("prior_intelligence_semantic_count", 2)
-    prior_intelligence_text = ""
-
-    if prior_intel_chrono > 0 or prior_intel_semantic > 0:
-        try:
-            with get_memory_db_context() as conn:
-                cursor = conn.cursor()
-                prior_intel = {}
-
-                # Chronological prior intelligence
-                if prior_intel_chrono > 0:
-                    cursor.execute("""
-                        SELECT id, name, knowledge_type, content, summary, created_at
-                        FROM intelligence
-                        WHERE primary_entity_type = %s AND primary_entity_id = %s
-                          AND content IS NOT NULL AND LENGTH(TRIM(content)) > 10
-                        ORDER BY created_at DESC LIMIT %s
-                    """, (entity_type, entity_id, prior_intel_chrono))
-                    for row in cursor.fetchall():
-                        prior_intel[row["id"]] = dict(row)
-
-                # Semantic prior intelligence
-                if prior_intel_semantic > 0 and context:
-                    try:
-                        search_emb = await generate_embedding(context[:2000])
-                        if search_emb:
-                            cursor.execute("""
-                                SELECT id, name, knowledge_type, content, summary, created_at
-                                FROM intelligence
-                                WHERE primary_entity_type = %s AND primary_entity_id = %s
-                                  AND embedding IS NOT NULL
-                                  AND content IS NOT NULL AND LENGTH(TRIM(content)) > 10
-                                ORDER BY embedding <=> %s::vector LIMIT %s
-                            """, (entity_type, entity_id, str(search_emb), prior_intel_semantic))
-                            for row in cursor.fetchall():
-                                if row["id"] not in prior_intel:
-                                    prior_intel[row["id"]] = dict(row)
-                    except Exception as e:
-                        logger.warning(f"Semantic prior intelligence search failed: {e}")
-
-                if prior_intel:
-                    sorted_intel = sorted(prior_intel.values(), key=lambda x: str(x.get("created_at", "")))
-                    lines = [f"[{i.get('knowledge_type', 'other')}] {i.get('name', '')}: {i.get('summary') or i.get('content', '')[:200]}" for i in sorted_intel]
-                    prior_intelligence_text = "\n".join(lines)
-                    logger.info(f"Injecting {len(prior_intel)} prior intelligence for {entity_type}/{entity_id}")
-        except Exception as e:
-            logger.warning(f"Prior intelligence fetch failed: {e}")
+    prior_intelligence_text = await fetch_prior_intelligence(entity_type, entity_id, context)
 
     # Fetch prior knowledge (global, semantic) so intelligence is aware of established patterns
     prior_knowledge_in_intel = settings.get("prior_knowledge_in_intelligence_count", 2)
-    prior_knowledge_text = ""
-
-    if prior_knowledge_in_intel > 0 and context:
-        try:
-            search_emb = await generate_embedding(context[:2000])
-            if search_emb:
-                with get_memory_db_context() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute("""
-                        SELECT id, name, knowledge_type, content, summary
-                        FROM knowledge
-                        WHERE embedding IS NOT NULL
-                          AND content IS NOT NULL AND LENGTH(TRIM(content)) > 10
-                        ORDER BY embedding <=> %s::vector LIMIT %s
-                    """, (str(search_emb), prior_knowledge_in_intel))
-                    prior_k = [dict(r) for r in cursor.fetchall()]
-
-                if prior_k:
-                    lines = [f"[{k.get('knowledge_type', 'other')}] {k.get('name', '')}: {k.get('summary') or k.get('content', '')[:200]}" for k in prior_k]
-                    prior_knowledge_text = "\n".join(lines)
-                    logger.info(f"Injecting {len(prior_k)} prior knowledge items into intelligence generation for {entity_type}/{entity_id}")
-        except Exception as e:
-            logger.warning(f"Prior knowledge fetch for intelligence failed: {e}")
+    prior_knowledge_text = await fetch_prior_knowledge_semantic(
+        context, prior_knowledge_in_intel,
+        log_label=f"prior knowledge for intelligence ({entity_type}/{entity_id})",
+    )
 
     # Use pipeline-driven config lookup
     pipeline_nodes = get_pipeline_configs("intelligence")
@@ -1039,43 +909,20 @@ async def compact_entity(entity_type: str, entity_id: str):
         logger.warning(f"Intelligence embedding failed: {e}")
 
     auto_approve = config.get("intelligence_auto_approve", False)
-    status = "confirmed" if auto_approve else "draft"
     insight_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc).isoformat()
-
-    with get_memory_db_context() as conn:
-        cursor = conn.cursor()
-        if embedding:
-            cursor.execute("""
-                INSERT INTO intelligence (
-                    id, primary_entity_type, primary_entity_id, source_memory_ids,
-                    knowledge_type, name, content, summary, embedding,
-                    status, created_by, confirmed_at, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (
-                insight_id, entity_type, entity_id, memory_ids,
-                knowledge_type, name, content, summary, embedding,
-                status, "auto", now if auto_approve else None, now, now,
-            ))
-        else:
-            cursor.execute("""
-                INSERT INTO intelligence (
-                    id, primary_entity_type, primary_entity_id, source_memory_ids,
-                    knowledge_type, name, content, summary,
-                    status, created_by, confirmed_at, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (
-                insight_id, entity_type, entity_id, memory_ids,
-                knowledge_type, name, content, summary,
-                status, "auto", now if auto_approve else None, now, now,
-            ))
-
-        # Mark source memories as compacted
-        cursor.execute("""
-            UPDATE memories SET compacted = TRUE, compaction_count = compaction_count + 1
-            WHERE id = ANY(%s)
-        """, (memory_ids,))
-
+    insert_intelligence(
+        insight_id=insight_id,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        memory_ids=memory_ids,
+        knowledge_type=knowledge_type,
+        name=name,
+        content=content,
+        summary=summary,
+        embedding=embedding,
+        auto_approve=auto_approve,
+    )
+    status = "confirmed" if auto_approve else "draft"
     logger.info(f"Created Intelligence {insight_id} ({status}) for {entity_type}/{entity_id} from {len(memory_ids)} memories")
 
 
@@ -1162,32 +1009,10 @@ async def generate_knowledge_from_intelligence(intelligence: list):
     # Fetch prior knowledge via semantic search to avoid duplication
     settings = get_memory_settings()
     prior_knowledge_count = settings.get("prior_knowledge_semantic_count", 3)
-    prior_knowledge_text = ""
-
-    if prior_knowledge_count > 0 and context:
-        try:
-            search_emb = await generate_embedding(context[:2000])
-            if search_emb:
-                with get_memory_db_context() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute("""
-                        SELECT id, name, knowledge_type, content, summary, tags
-                        FROM knowledge
-                        WHERE embedding IS NOT NULL
-                          AND content IS NOT NULL AND LENGTH(TRIM(content)) > 10
-                        ORDER BY embedding <=> %s::vector LIMIT %s
-                    """, (str(search_emb), prior_knowledge_count))
-                    prior_items = [dict(r) for r in cursor.fetchall()]
-
-                if prior_items:
-                    lines = [
-                        f"[{k.get('knowledge_type', 'other')}] {k.get('name', '')}: {k.get('summary') or k.get('content', '')[:200]}"
-                        for k in prior_items
-                    ]
-                    prior_knowledge_text = "\n".join(lines)
-                    logger.info(f"Injecting {len(prior_items)} prior knowledge items for deduplication")
-        except Exception as e:
-            logger.warning(f"Prior knowledge fetch failed: {e}")
+    prior_knowledge_text = await fetch_prior_knowledge_semantic(
+        context, prior_knowledge_count,
+        log_label="prior knowledge for deduplication",
+    )
 
     # Use pipeline-driven config lookup
     pipeline_nodes = get_pipeline_configs("knowledge")
@@ -1249,31 +1074,16 @@ async def generate_knowledge_from_intelligence(intelligence: list):
         logger.warning(f"Knowledge embedding failed: {e}")
 
     knowledge_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc).isoformat()
-
-    with get_memory_db_context() as conn:
-        cursor = conn.cursor()
-        if embedding:
-            cursor.execute("""
-                INSERT INTO knowledge (
-                    id, source_intelligence_ids, knowledge_type, name, content, summary,
-                    embedding, visibility, tags, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (
-                knowledge_id, intelligence_ids, knowledge_type, name, content, summary,
-                embedding, "shared", tags, now, now,
-            ))
-        else:
-            cursor.execute("""
-                INSERT INTO knowledge (
-                    id, source_intelligence_ids, knowledge_type, name, content, summary,
-                    visibility, tags, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (
-                knowledge_id, intelligence_ids, knowledge_type, name, content, summary,
-                "shared", tags, now, now,
-            ))
-
+    insert_knowledge(
+        knowledge_id=knowledge_id,
+        intelligence_ids=intelligence_ids,
+        knowledge_type=knowledge_type,
+        name=name,
+        content=content,
+        summary=summary,
+        embedding=embedding,
+        tags=tags,
+    )
     logger.info(f"Generated Knowledge {knowledge_id} from {len(intelligence_ids)} intelligence")
 
 
@@ -1331,33 +1141,16 @@ async def promote_to_knowledge(insight_id: str):
         logger.warning(f"Knowledge embedding failed: {e}")
 
     knowledge_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc).isoformat()
-
-    with get_memory_db_context() as conn:
-        cursor = conn.cursor()
-        if embedding:
-            cursor.execute("""
-                INSERT INTO knowledge (
-                    id, source_intelligence_ids, knowledge_type, name, content, summary,
-                    embedding, visibility, tags, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (
-                knowledge_id, [insight_id], Intelligence["knowledge_type"],
-                Intelligence["name"], content, summary, embedding,
-                "shared", [], now, now,
-            ))
-        else:
-            cursor.execute("""
-                INSERT INTO knowledge (
-                    id, source_intelligence_ids, knowledge_type, name, content, summary,
-                    visibility, tags, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (
-                knowledge_id, [insight_id], Intelligence["knowledge_type"],
-                Intelligence["name"], content, summary,
-                "shared", [], now, now,
-            ))
-
+    insert_knowledge(
+        knowledge_id=knowledge_id,
+        intelligence_ids=[insight_id],
+        knowledge_type=Intelligence["knowledge_type"],
+        name=Intelligence["name"],
+        content=content,
+        summary=summary,
+        embedding=embedding,
+        tags=[],
+    )
     logger.info(f"Promoted Intelligence {insight_id} to Knowledge {knowledge_id}")
 
 
