@@ -4,7 +4,7 @@ import { useColumnConfig } from "@/hooks/useColumnConfig";
 import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { formatISO, subDays } from "date-fns";
-import api, {
+import {
   getInteractionsAdmin,
   getMemoriesAdmin,
   getInsightsAdmin,
@@ -29,21 +29,7 @@ import api, {
   bulkDeleteIntelligenceAdmin,
   bulkDeleteKnowledgeAdmin,
 } from "@/lib/api";
-import { MultiSelect } from "@/components/ui/multi-select";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Card,
-  CardContent,
-} from "@/components/ui/card";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   User,
@@ -68,6 +54,7 @@ import InteractionInspector from "@/components/memory/InteractionInspector";
 import MemoryInspector from "@/components/memory/MemoryInspector";
 import IntelligenceInspector from "@/components/memory/IntelligenceInspector";
 import { NewKnowledgeDialog, EditKnowledgeDialog } from "@/components/memory/KnowledgeDialogs";
+import FilterBar from "@/components/memory/FilterBar";
 
 export default function MemoryExplorerPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -649,54 +636,13 @@ export default function MemoryExplorerPage() {
       </div>
 
       {/* Global Filter Bar */}
-      <Card className="bg-card">
-        <CardContent className="p-4 flex flex-wrap gap-4 items-end">
-          <div className="space-y-1">
-            <Label>Entity Type</Label>
-            <MultiSelect
-              options={filterOptions.entity_types}
-              selected={appliedFilter.entity_types}
-              onChange={(val) => setAppliedFilter({ ...appliedFilter, entity_types: val })}
-              placeholder="All Entity Types"
-              className="w-48"
-            />
-          </div>
-          <div className="space-y-1">
-            <Label>Interaction Type</Label>
-            <MultiSelect
-              options={filterOptions.interaction_types}
-              selected={appliedFilter.interaction_types}
-              onChange={(val) => setAppliedFilter({ ...appliedFilter, interaction_types: val })}
-              placeholder="All Interaction Types"
-              className="w-64"
-            />
-          </div>
-          <div className="space-y-1">
-            <Label>Time Range</Label>
-            <Select value={appliedFilter.time_range} onValueChange={(v) => setAppliedFilter({ ...appliedFilter, time_range: v })}>
-              <SelectTrigger className="w-40">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Time</SelectItem>
-                <SelectItem value="last_24h">Last 24 Hours</SelectItem>
-                <SelectItem value="last_3d">Last 3 Days</SelectItem>
-                <SelectItem value="last_7d">Last 7 Days</SelectItem>
-                <SelectItem value="last_30d">Last 30 Days</SelectItem>
-                <SelectItem value="last_60d">Last 60 Days</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1 flex-1 min-w-[200px]">
-            <Label>Entity ID (Debounced text filter)</Label>
-            <Input
-              placeholder="Start typing specific entity ID (min 3 chars)..."
-              value={entityIdInput}
-              onChange={(e) => setEntityIdInput(e.target.value)}
-            />
-          </div>
-        </CardContent>
-      </Card>
+      <FilterBar
+        appliedFilter={appliedFilter}
+        setAppliedFilter={setAppliedFilter}
+        entityIdInput={entityIdInput}
+        setEntityIdInput={setEntityIdInput}
+        filterOptions={filterOptions}
+      />
 
       <Tabs value={activeTab} onValueChange={(tab) => {
         setActiveTab(tab);
