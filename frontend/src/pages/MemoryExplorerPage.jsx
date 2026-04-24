@@ -1,9 +1,9 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useBulkSelection } from "@/hooks/useBulkSelection";
 import { useColumnConfig } from "@/hooks/useColumnConfig";
 import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { format, subDays, subMonths, formatISO } from "date-fns";
+import { formatISO, subDays } from "date-fns";
 import api, {
   getInteractionsAdmin,
   getMemoriesAdmin,
@@ -11,7 +11,6 @@ import api, {
   updateInsightAdmin,
   deleteInsightAdmin,
   getLessonsAdmin,
-  getMemoryDetail,
   updateMemoryAdmin,
   deleteMemoryAdmin,
   bulkDeleteMemoriesAdmin,
@@ -34,23 +33,10 @@ import { MultiSelect } from "@/components/ui/multi-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
 import {
   Card,
   CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -59,47 +45,33 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
-  Database,
   User,
-  MessageSquare,
-  GraduationCap,
   Calendar,
-  Edit,
-  Trash2,
-  Plus,
-  Check,
-  RefreshCw,
   Lightbulb,
-  Search,
-  XCircle,
-  CheckCircle2,
-  AlertCircle,
+  GraduationCap,
+  RefreshCw,
   Settings2,
   Eye,
   EyeOff,
   ChevronUp,
   ChevronDown
 } from "lucide-react";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
-const stringToColor = (str) => {
-  if (!str) return 'hsl(0, 0%, 50%)';
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = str.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  const h = Math.abs(hash) % 360;
-  return `hsl(${h}, 70%, 40%)`;
-};
+// Extracted components
+import InteractionsTab from "@/components/memory/InteractionsTab";
+import MemoriesTab from "@/components/memory/MemoriesTab";
+import IntelligenceTab from "@/components/memory/IntelligenceTab";
+import KnowledgeTab from "@/components/memory/KnowledgeTab";
+import InteractionInspector from "@/components/memory/InteractionInspector";
+import MemoryInspector from "@/components/memory/MemoryInspector";
+import IntelligenceInspector from "@/components/memory/IntelligenceInspector";
+import { NewKnowledgeDialog, EditKnowledgeDialog } from "@/components/memory/KnowledgeDialogs";
 
 export default function MemoryExplorerPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  
+
   // Deep linking: initialize tab from URL, validate against available tabs
   const validTabs = ["interactions", "memories", "intelligence", "knowledge"];
   const urlTab = searchParams.get("tab");
@@ -108,13 +80,13 @@ export default function MemoryExplorerPage() {
   const [processingBulk, setProcessingBulk] = useState(false);
 
   // Global filters
-  const [appliedFilter, setAppliedFilter] = useState({ 
-    entity_types: [], 
+  const [appliedFilter, setAppliedFilter] = useState({
+    entity_types: [],
     interaction_types: [],
     entity_id: "",
     time_range: "all"
   });
-  
+
   const [entityIdInput, setEntityIdInput] = useState("");
 
   // Config meta & Dynamic Options
@@ -134,19 +106,12 @@ export default function MemoryExplorerPage() {
   const [newLesson, setNewLesson] = useState({ name: "", type: "", body: "", status: "draft" });
   const [showNewLessonDialog, setShowNewLessonDialog] = useState(false);
 
-  // Memory detail state
-  const [selectedMemory, setSelectedMemory] = useState(null);
-
-  // Interaction Inspector State
+  // Inspector state
   const [editingInteraction, setEditingInteraction] = useState(null);
-
-  // Memory Inspector State
   const [editingMemory, setEditingMemory] = useState(null);
-
-  // Intelligence Inspector State
   const [editingIntelligence, setEditingIntelligence] = useState(null);
-  
-  // Bulk Operations — extracted to useBulkSelection hook
+
+  // Bulk Operations
   const {
     selectedIds: selectedInteractionIds,
     toggleAll: toggleSelectAllInteractions,
@@ -222,7 +187,6 @@ export default function MemoryExplorerPage() {
 
   const { colCfg, setColCfg, toggleCol, moveCol, visCols } = useColumnConfig(COLUMN_DEFS);
 
-  // Column toggle popover renderer (shared across all tabs)
   const renderColumnToggle = (tableKey) => (
     <Popover>
       <PopoverTrigger asChild>
@@ -271,7 +235,6 @@ export default function MemoryExplorerPage() {
       setEntityTypes(entityRes.data);
       setLessonTypes(lessonTypeRes.data);
 
-      // Fetch display_columns from entity type configs
       const dynamicColKeys = new Set();
       for (const et of entityRes.data) {
         try {
@@ -282,7 +245,6 @@ export default function MemoryExplorerPage() {
       }
 
       if (dynamicColKeys.size > 0) {
-        // Inject dynamic CRM columns into interactions, memories, and intelligence
         setColCfg(prev => {
           const updated = { ...prev };
           for (const tableKey of ["interactions", "memories", "intelligence"]) {
@@ -423,7 +385,7 @@ export default function MemoryExplorerPage() {
     else if (activeTab === "knowledge") loadLessons();
   }, [activeTab, loadInteractions, loadMemories, loadInsights, loadLessons, loadFilterOptions]);
 
-  // Modals interaction logic
+  // ─── Knowledge Handlers ─────────────────────────────────────
   const handleCreateLesson = async () => {
     if (!newLesson.name || !newLesson.type || !newLesson.body) {
       toast.error("Please fill all fields");
@@ -478,20 +440,12 @@ export default function MemoryExplorerPage() {
     }
   };
 
-  const loadMemoryDetail = async (memoryId) => {
-    try {
-      const res = await getMemoryDetail(memoryId);
-      setSelectedMemory(res.data);
-    } catch (error) {
-      toast.error("Failed to load memory details");
-    }
-  };
-
   const getLessonTypeColor = (typeName) => {
     const type = lessonTypes.find(t => t.name === typeName);
     return type?.color || "#6B7280";
   };
 
+  // ─── Interaction Handlers ─────────────────────────────────────
   const handleUpdateInteraction = async () => {
     if (!editingInteraction) return;
     try {
@@ -524,7 +478,76 @@ export default function MemoryExplorerPage() {
     }
   };
 
-  // Bulk action handlers
+  // ─── Memory Handlers ─────────────────────────────────────
+  const handleUpdateMemory = async () => {
+    if (!editingMemory) return;
+    try {
+      await updateMemoryAdmin(editingMemory.id, {
+        content_summary: editingMemory.content_summary,
+      });
+      toast.success("Memory updated successfully");
+      setEditingMemory(null);
+      loadMemories();
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || "Failed to update memory");
+    }
+  };
+
+  const handleDeleteMemory = async () => {
+    if (!editingMemory) return;
+    if (!window.confirm("Delete this memory? This action cannot be reversed.")) return;
+    try {
+      await deleteMemoryAdmin(editingMemory.id);
+      toast.success("Memory deleted successfully");
+      setEditingMemory(null);
+      loadMemories();
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || "Failed to delete memory");
+    }
+  };
+
+  // ─── Intelligence Handlers ─────────────────────────────────────
+  const handleUpdateIntelligence = async () => {
+    if (!editingIntelligence) return;
+    try {
+      await updateInsightAdmin(editingIntelligence.id, {
+        name: editingIntelligence.name,
+        knowledge_type: editingIntelligence.knowledge_type,
+        content: editingIntelligence.content,
+        summary: editingIntelligence.summary,
+      });
+      toast.success("Intelligence updated");
+      setEditingIntelligence(null);
+      loadInsights();
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || "Failed to update intelligence");
+    }
+  };
+
+  const handleApproveIntelligence = async (id) => {
+    try {
+      await updateInsightAdmin(id, { status: "confirmed" });
+      toast.success("Intelligence confirmed");
+      loadInsights();
+    } catch (error) {
+      toast.error("Failed to confirm intelligence");
+    }
+  };
+
+  const handleDeleteIntelligence = async () => {
+    if (!editingIntelligence) return;
+    if (!window.confirm("Delete this intelligence record? This cannot be reversed.")) return;
+    try {
+      await deleteInsightAdmin(editingIntelligence.id);
+      toast.success("Intelligence deleted");
+      setEditingIntelligence(null);
+      loadInsights();
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || "Failed to delete intelligence");
+    }
+  };
+
+  // ─── Bulk Action Handlers ─────────────────────────────────────
   const handleBulkDelete = async () => {
     if (!window.confirm(`Delete ${selectedInteractionIds.length} interactions? This cannot be reversed.`)) return;
     setProcessingBulk(true);
@@ -616,73 +639,6 @@ export default function MemoryExplorerPage() {
     }
   };
 
-  const handleUpdateIntelligence = async () => {
-    if (!editingIntelligence) return;
-    try {
-      await updateInsightAdmin(editingIntelligence.id, {
-        name: editingIntelligence.name,
-        knowledge_type: editingIntelligence.knowledge_type,
-        content: editingIntelligence.content,
-        summary: editingIntelligence.summary,
-      });
-      toast.success("Intelligence updated");
-      setEditingIntelligence(null);
-      loadInsights();
-    } catch (error) {
-      toast.error(error?.response?.data?.detail || "Failed to update intelligence");
-    }
-  };
-
-  const handleApproveIntelligence = async (id) => {
-    try {
-      await updateInsightAdmin(id, { status: "confirmed" });
-      toast.success("Intelligence confirmed");
-      loadInsights();
-    } catch (error) {
-      toast.error("Failed to confirm intelligence");
-    }
-  };
-
-  const handleDeleteIntelligence = async () => {
-    if (!editingIntelligence) return;
-    if (!window.confirm("Delete this intelligence record? This cannot be reversed.")) return;
-    try {
-      await deleteInsightAdmin(editingIntelligence.id);
-      toast.success("Intelligence deleted");
-      setEditingIntelligence(null);
-      loadInsights();
-    } catch (error) {
-      toast.error(error?.response?.data?.detail || "Failed to delete intelligence");
-    }
-  };
-
-  const handleUpdateMemory = async () => {
-    if (!editingMemory) return;
-    try {
-      await updateMemoryAdmin(editingMemory.id, {
-        content_summary: editingMemory.content_summary,
-      });
-      toast.success("Memory updated successfully");
-      setEditingMemory(null);
-      loadMemories();
-    } catch (error) {
-      toast.error(error?.response?.data?.detail || "Failed to update memory");
-    }
-  };
-
-  const handleDeleteMemory = async () => {
-    if (!editingMemory) return;
-    if (!window.confirm("Delete this memory? This action cannot be reversed.")) return;
-    try {
-      await deleteMemoryAdmin(editingMemory.id);
-      toast.success("Memory deleted successfully");
-      setEditingMemory(null);
-      loadMemories();
-    } catch (error) {
-      toast.error(error?.response?.data?.detail || "Failed to delete memory");
-    }
-  };
-
   return (
     <div className="space-y-6" data-testid="memory-explorer-page">
       <div className="flex items-center justify-between">
@@ -761,799 +717,114 @@ export default function MemoryExplorerPage() {
           </TabsTrigger>
         </TabsList>
 
-        {/* Tab 1: Interactions */}
         <TabsContent value="interactions" className="space-y-4">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
-                <CardTitle>Interactions (Tier 0)</CardTitle>
-                <CardDescription>Raw inbound and outbound events</CardDescription>
-              </div>
-              <div className="flex items-center gap-2">
-                {selectedInteractionIds.length > 0 && (
-                    <div className="flex gap-2 bg-accent px-4 py-1.5 rounded-md items-center border shadow-sm animate-in fade-in zoom-in-95 duration-200">
-                        <span className="text-sm font-medium mr-2">{selectedInteractionIds.length} selected</span>
-                        <Button variant="outline" size="sm" onClick={handleBulkReprocess} disabled={processingBulk}>
-                             {processingBulk ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
-                             Re-Process
-                        </Button>
-                        <Button variant="destructive" size="sm" onClick={handleBulkDelete} disabled={processingBulk}>
-                             <Trash2 className="w-4 h-4 mr-2" />
-                             Delete
-                        </Button>
-                    </div>
-                )}
-                <Button variant="outline" size="icon" onClick={loadInteractions} disabled={loading}>
-                   <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
-                </Button>
-                {renderColumnToggle("interactions")}
-              </div>
-            </CardHeader>
-            <CardContent>
-               <div className="h-[500px] overflow-auto relative rounded-md border">
-                 <Table>
-                    <TableHeader className="sticky top-0 z-10 bg-background shadow-[0_1px_0_0_hsl(var(--border))]">
-                      <TableRow>
-                        {visCols("interactions").map(col => {
-                          if (col.key === "select") return (
-                            <TableHead key={col.key} className="w-[40px]">
-                              <Checkbox 
-                                checked={interactions.length > 0 && selectedInteractionIds.length === interactions.length} 
-                                onCheckedChange={(c) => toggleSelectAllInteractions(c)} 
-                              />
-                            </TableHead>
-                          );
-                          return <TableHead key={col.key}>{col.label}</TableHead>;
-                        })}
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                       {interactions.length === 0 ? (
-                          <TableRow><TableCell colSpan={visCols("interactions").length} className="text-center text-muted-foreground py-8">No interactions found.</TableCell></TableRow>
-                       ) : interactions.map(i => (
-                         <TooltipProvider key={i.id}>
-                           <Tooltip delayDuration={300}>
-                             <TooltipTrigger asChild>
-                         <TableRow className={selectedInteractionIds.includes(i.id) ? "bg-accent/30" : ""}>
-                           {visCols("interactions").map(col => {
-                             switch (col.key) {
-                               case "select":
-                                 return (
-                                   <TableCell key={col.key}>
-                                     <Checkbox 
-                                       checked={selectedInteractionIds.includes(i.id)} 
-                                       onCheckedChange={() => toggleInteraction(i.id)}
-                                       onClick={(e) => e.stopPropagation()}
-                                     />
-                                   </TableCell>
-                                 );
-                               case "seq_id":
-                                 return <TableCell key={col.key} className="font-mono text-muted-foreground">#{i.seq_id}</TableCell>;
-                               case "timestamp":
-                                 return <TableCell key={col.key} className="whitespace-nowrap">{format(new Date(i.timestamp), "MMM d, yyyy h:mm a")}</TableCell>;
-                               case "interaction_type":
-                                 return (
-                                   <TableCell key={col.key}>
-                                     <Badge variant="outline" style={{ borderColor: stringToColor(i.interaction_type), color: stringToColor(i.interaction_type) }}>
-                                       {i.interaction_type}
-                                     </Badge>
-                                   </TableCell>
-                                 );
-                               case "entity_type":
-                                 return (
-                                   <TableCell key={col.key}>
-                                     <Badge variant="outline" style={{ borderColor: stringToColor(i.primary_entity_type), color: stringToColor(i.primary_entity_type) }}>
-                                       {i.primary_entity_type}
-                                     </Badge>
-                                   </TableCell>
-                                 );
-                               case "entity_subtype":
-                                 return <TableCell key={col.key}>{i.primary_entity_subtype || i.entity_subtype_resolved || "-"}</TableCell>;
-                               case "entity_id":
-                                 return (
-                                   <TableCell key={col.key}>
-                                     {i.entity_display_name ? (
-                                       <div>
-                                         <div className="text-sm font-medium">{i.entity_display_name}</div>
-                                         <div className="font-mono text-[10px] text-muted-foreground">#{i.primary_entity_id}</div>
-                                       </div>
-                                     ) : (
-                                       <span className="font-mono text-xs">{i.primary_entity_id}</span>
-                                     )}
-                                   </TableCell>
-                                 );
-                               case "content":
-                                 return <TableCell key={col.key} className="max-w-xs truncate">{i.content}</TableCell>;
-                               case "agent":
-                                 return <TableCell key={col.key}>{i.agent_name || i.agent_id}</TableCell>;
-                               case "service_status":
-                                 return (
-                                   <TableCell key={col.key}>
-                                     <div className="flex gap-2 items-center">
-                                       {i.has_attachments && (
-                                         <TooltipProvider>
-                                           <Tooltip>
-                                             <TooltipTrigger>
-                                               <Badge variant="outline" className={i.processing_errors?.vision ? "border-red-500/50 text-red-500" : "border-emerald-500/50 text-emerald-500"}>
-                                                 {i.processing_errors?.vision ? <XCircle className="w-3 h-3 mr-1" /> : <CheckCircle2 className="w-3 h-3 mr-1" />}
-                                                 Vision
-                                               </Badge>
-                                             </TooltipTrigger>
-                                             {i.processing_errors?.vision && <TooltipContent className="bg-red-950 text-red-100 border-red-900"><p className="max-w-xs">{i.processing_errors.vision}</p></TooltipContent>}
-                                           </Tooltip>
-                                         </TooltipProvider>
-                                       )}
-                                       <TooltipProvider>
-                                         <Tooltip>
-                                           <TooltipTrigger>
-                                             <Badge variant="outline" className={i.processing_errors?.embeddings ? "border-red-500/50 text-red-500" : "border-emerald-500/50 text-emerald-500"}>
-                                               {i.processing_errors?.embeddings ? <XCircle className="w-3 h-3 mr-1" /> : <CheckCircle2 className="w-3 h-3 mr-1" />}
-                                               Embedding
-                                             </Badge>
-                                           </TooltipTrigger>
-                                           {i.processing_errors?.embeddings && <TooltipContent className="bg-red-950 text-red-100 border-red-900"><p className="max-w-xs">{i.processing_errors.embeddings}</p></TooltipContent>}
-                                         </Tooltip>
-                                       </TooltipProvider>
-                                     </div>
-                                   </TableCell>
-                                 );
-                               case "status":
-                                 return <TableCell key={col.key}>{i.status}</TableCell>;
-                               case "actions":
-                                 return (
-                                   <TableCell key={col.key}>
-                                     <Button variant="ghost" size="icon" onClick={() => setEditingInteraction(i)}>
-                                       <Edit className="w-4 h-4" />
-                                     </Button>
-                                   </TableCell>
-                                 );
-                               default: {
-                                 // Dynamic CRM columns from entity_properties
-                                 if (col.key.startsWith('dyn_')) {
-                                   const propKey = col.key.slice(4);
-                                   const val = i.entity_properties?.[propKey];
-                                   return <TableCell key={col.key} className="text-xs">{val != null ? String(val) : "-"}</TableCell>;
-                                 }
-                                 return <TableCell key={col.key}>-</TableCell>;
-                               }
-                             }
-                           })}
-                         </TableRow>
-                             </TooltipTrigger>
-                             <TooltipContent side="bottom" align="start" className="max-w-2xl bg-secondary text-secondary-foreground border-border break-words shadow-lg pointer-events-none z-40">
-                               <p className="text-sm leading-relaxed whitespace-pre-wrap line-clamp-4">{i.content}</p>
-                             </TooltipContent>
-                           </Tooltip>
-                         </TooltipProvider>
-                       ))}
-                    </TableBody>
-                 </Table>
-               </div>
-            </CardContent>
-          </Card>
+          <InteractionsTab
+            interactions={interactions}
+            selectedIds={selectedInteractionIds}
+            toggleAll={toggleSelectAllInteractions}
+            toggleOne={toggleInteraction}
+            onEdit={setEditingInteraction}
+            onBulkDelete={handleBulkDelete}
+            onBulkReprocess={handleBulkReprocess}
+            loading={loading}
+            visCols={visCols}
+            renderColumnToggle={renderColumnToggle}
+            onLoad={loadInteractions}
+            processingBulk={processingBulk}
+          />
         </TabsContent>
 
-        {/* Tab 2: Memories */}
         <TabsContent value="memories" className="space-y-4">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
-                <CardTitle>Memories (Tier 1)</CardTitle>
-                <CardDescription>Daily summaries of interactions for entities</CardDescription>
-              </div>
-              <div className="flex items-center gap-2">
-                {selectedMemoryIds.length > 0 && (
-                    <div className="flex gap-2 bg-accent px-4 py-1.5 rounded-md items-center border shadow-sm animate-in fade-in zoom-in-95 duration-200">
-                        <span className="text-sm font-medium mr-2">{selectedMemoryIds.length} selected</span>
-                        <Button variant="outline" size="sm" onClick={handleBulkReprocessMemories} disabled={processingBulk}>
-                             {processingBulk ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
-                             Re-Process
-                        </Button>
-                        <Button variant="destructive" size="sm" onClick={handleBulkDeleteMemories} disabled={processingBulk}>
-                             <Trash2 className="w-4 h-4 mr-2" />
-                             Delete
-                        </Button>
-                    </div>
-                )}
-                <Button variant="outline" size="icon" onClick={loadMemories} disabled={loading}>
-                   <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
-                </Button>
-                {renderColumnToggle("memories")}
-              </div>
-            </CardHeader>
-            <CardContent>
-               <div className="h-[500px] overflow-auto relative rounded-md border">
-                 <Table>
-                    <TableHeader className="sticky top-0 z-10 bg-background shadow-[0_1px_0_0_hsl(var(--border))]">
-                      <TableRow>
-                        {visCols("memories").map(col => {
-                          if (col.key === "select") return (
-                            <TableHead key={col.key} className="w-[40px]">
-                              <Checkbox checked={memories.length > 0 && selectedMemoryIds.length === memories.length} onCheckedChange={(c) => toggleSelectAllMemories(c)} />
-                            </TableHead>
-                          );
-                          return <TableHead key={col.key}>{col.label}</TableHead>;
-                        })}
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                        {memories.length === 0 ? (
-                          <TableRow><TableCell colSpan={visCols("memories").length} className="text-center text-muted-foreground py-8">No memories found.</TableCell></TableRow>
-                       ) : memories.map(m => (
-                         <TooltipProvider key={m.id}>
-                           <Tooltip delayDuration={300}>
-                             <TooltipTrigger asChild>
-                               <TableRow className="cursor-pointer hover:bg-accent/50" onClick={() => setEditingMemory(m)}>
-                                 {visCols("memories").map(col => {
-                                   switch (col.key) {
-                                     case "select": return <TableCell key={col.key} onClick={(e) => e.stopPropagation()}><Checkbox checked={selectedMemoryIds.includes(m.id)} onCheckedChange={() => toggleMemory(m.id)} /></TableCell>;
-                                     case "seq_id": return <TableCell key={col.key} className="font-mono text-muted-foreground">#{m.seq_id}</TableCell>;
-                                     case "date": return <TableCell key={col.key} className="whitespace-nowrap">{m.date}</TableCell>;
-                                     case "entity_type": return <TableCell key={col.key}><Badge variant="outline" style={{ borderColor: stringToColor(m.primary_entity_type), color: stringToColor(m.primary_entity_type) }}>{m.primary_entity_type}</Badge></TableCell>;
-                                     case "entity_subtype": return <TableCell key={col.key} className="text-xs">{m.entity_subtype_resolved || "-"}</TableCell>;
-                                     case "entity_id": return (<TableCell key={col.key}><div className="flex flex-col">{m.entity_display_name && <span className="text-xs font-medium">{m.entity_display_name}</span>}<span className="font-mono text-xs text-muted-foreground">{m.primary_entity_id}</span></div></TableCell>);
-                                     case "interaction_count": return <TableCell key={col.key}>{m.interaction_count}</TableCell>;
-                                     case "service_status": return (<TableCell key={col.key}><div className="flex gap-2 items-center"><TooltipProvider><Tooltip><TooltipTrigger><Badge variant="outline" className={m.processing_errors?.summarization ? "border-red-500/50 text-red-500" : "border-emerald-500/50 text-emerald-500"}>{m.processing_errors?.summarization ? <XCircle className="w-3 h-3 mr-1" /> : <CheckCircle2 className="w-3 h-3 mr-1" />}Summarization</Badge></TooltipTrigger>{m.processing_errors?.summarization && <TooltipContent side="top" className="bg-red-950 text-red-100 border-red-900 z-50"><p className="max-w-xs">{m.processing_errors.summarization}</p></TooltipContent>}</Tooltip></TooltipProvider><TooltipProvider><Tooltip><TooltipTrigger><Badge variant="outline" className={m.processing_errors?.embeddings ? "border-red-500/50 text-red-500" : "border-emerald-500/50 text-emerald-500"}>{m.processing_errors?.embeddings ? <XCircle className="w-3 h-3 mr-1" /> : <CheckCircle2 className="w-3 h-3 mr-1" />}Embedding</Badge></TooltipTrigger>{m.processing_errors?.embeddings && <TooltipContent side="top" className="bg-red-950 text-red-100 border-red-900 z-50"><p className="max-w-xs">{m.processing_errors.embeddings}</p></TooltipContent>}</Tooltip></TooltipProvider></div></TableCell>);
-                                     case "compacted": return <TableCell key={col.key}>{m.compacted ? <Check className="w-4 h-4 text-green-500" /> : ""}</TableCell>;
-                                     default: { if (col.key.startsWith('dyn_')) { const pk = col.key.slice(4); const v = m.entity_properties?.[pk]; return <TableCell key={col.key} className="text-xs">{v != null ? String(v) : "-"}</TableCell>; } return <TableCell key={col.key}>-</TableCell>; }
-                                   }
-                                 })}
-                               </TableRow>
-                             </TooltipTrigger>
-                             <TooltipContent side="bottom" align="start" className="max-w-2xl bg-secondary text-secondary-foreground border-border break-words shadow-lg pointer-events-none z-40">
-                               <p className="text-sm leading-relaxed whitespace-pre-wrap">{m.content_summary}</p>
-                             </TooltipContent>
-                           </Tooltip>
-                         </TooltipProvider>
-                       ))}
-                    </TableBody>
-                 </Table>
-               </div>
-            </CardContent>
-          </Card>
+          <MemoriesTab
+            memories={memories}
+            selectedIds={selectedMemoryIds}
+            toggleAll={toggleSelectAllMemories}
+            toggleOne={toggleMemory}
+            onEdit={setEditingMemory}
+            onBulkDelete={handleBulkDeleteMemories}
+            onBulkReprocess={handleBulkReprocessMemories}
+            loading={loading}
+            visCols={visCols}
+            renderColumnToggle={renderColumnToggle}
+            onLoad={loadMemories}
+            processingBulk={processingBulk}
+          />
         </TabsContent>
 
-        {/* Tab 3: Intelligence */}
         <TabsContent value="intelligence" className="space-y-4">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
-                <CardTitle>Intelligence (Tier 2)</CardTitle>
-                <CardDescription>Deal signals and behavioral patterns extracted from memories</CardDescription>
-              </div>
-              <div className="flex items-center gap-2">
-                {selectedIntelligenceIds.length > 0 && (
-                    <div className="flex gap-2 bg-accent px-4 py-1.5 rounded-md items-center border shadow-sm animate-in fade-in zoom-in-95 duration-200">
-                        <span className="text-sm font-medium mr-2">{selectedIntelligenceIds.length} selected</span>
-                        <Button variant="destructive" size="sm" onClick={handleBulkDeleteIntelligence} disabled={processingBulk}>
-                             <Trash2 className="w-4 h-4 mr-2" />
-                             Delete
-                        </Button>
-                    </div>
-                )}
-                <Button variant="outline" size="icon" onClick={loadInsights} disabled={loading}>
-                   <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
-                </Button>
-                {renderColumnToggle("intelligence")}
-              </div>
-            </CardHeader>
-            <CardContent>
-               <div className="h-[500px] overflow-auto relative rounded-md border">
-                 <Table>
-                    <TableHeader className="sticky top-0 z-10 bg-background shadow-[0_1px_0_0_hsl(var(--border))]">
-                      <TableRow>
-                        {visCols("intelligence").map(col => {
-                          if (col.key === "select") return (
-                            <TableHead key={col.key} className="w-[40px]">
-                              <Checkbox checked={intelligence.length > 0 && selectedIntelligenceIds.length === intelligence.length} onCheckedChange={(c) => toggleSelectAllIntelligence(c)} />
-                            </TableHead>
-                          );
-                          return <TableHead key={col.key}>{col.label}</TableHead>;
-                        })}
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                       {intelligence.length === 0 ? (
-                          <TableRow><TableCell colSpan={visCols("intelligence").length} className="text-center text-muted-foreground py-8">No intelligence found.</TableCell></TableRow>
-                       ) : intelligence.map(ins => (
-                         <TooltipProvider key={ins.id}>
-                           <Tooltip delayDuration={300}>
-                             <TooltipTrigger asChild>
-                               <TableRow className={`cursor-pointer hover:bg-accent/50 ${selectedIntelligenceIds.includes(ins.id) ? "bg-accent/30" : ""}`} onClick={() => setEditingIntelligence(ins)}>
-                                 {visCols("intelligence").map(col => {
-                                   switch (col.key) {
-                                     case "select": return <TableCell key={col.key} onClick={(e) => e.stopPropagation()}><Checkbox checked={selectedIntelligenceIds.includes(ins.id)} onCheckedChange={() => toggleIntelligenceItem(ins.id)} /></TableCell>;
-                                     case "seq_id": return <TableCell key={col.key} className="font-mono text-muted-foreground">#{ins.seq_id}</TableCell>;
-                                     case "created_at": return <TableCell key={col.key} className="whitespace-nowrap">{format(new Date(ins.created_at), "MMM d, yyyy")}</TableCell>;
-                                     case "entity": return (<TableCell key={col.key}><Badge variant="outline" style={{ borderColor: stringToColor(ins.primary_entity_type), color: stringToColor(ins.primary_entity_type) }}>{ins.primary_entity_type}</Badge><span className="font-mono text-xs ml-2 text-muted-foreground">{ins.entity_display_name || ins.primary_entity_id}</span></TableCell>);
-                                     case "signal": return (<TableCell key={col.key}><Badge variant="outline" style={{ borderColor: stringToColor(ins.knowledge_type), color: stringToColor(ins.knowledge_type) }}>{ins.knowledge_type || "other"}</Badge></TableCell>);
-                                     case "report": return (<TableCell key={col.key} className="max-w-sm"><div className="font-medium text-sm">{ins.name}</div><div className="text-xs text-muted-foreground line-clamp-2 mt-0.5">{ins.summary}</div></TableCell>);
-                                     case "status": return (<TableCell key={col.key}><Badge variant={ins.status === "confirmed" ? "default" : "secondary"}>{ins.status}</Badge></TableCell>);
-                                     case "actions": return (<TableCell key={col.key} onClick={(e) => e.stopPropagation()}><div className="flex gap-1">{ins.status === "draft" && (<Button variant="ghost" size="icon" onClick={() => handleApproveIntelligence(ins.id)}><Check className="w-4 h-4 text-green-500" /></Button>)}<Button variant="ghost" size="icon" onClick={() => setEditingIntelligence(ins)}><Edit className="w-4 h-4" /></Button></div></TableCell>);
-                                     default: { if (col.key.startsWith('dyn_')) { const pk = col.key.slice(4); const v = ins.entity_properties?.[pk]; return <TableCell key={col.key} className="text-xs">{v != null ? String(v) : "-"}</TableCell>; } return <TableCell key={col.key}>-</TableCell>; }
-                                   }
-                                 })}
-                               </TableRow>
-                             </TooltipTrigger>
-                             <TooltipContent side="bottom" align="start" className="max-w-2xl bg-secondary text-secondary-foreground border-border break-words shadow-lg pointer-events-none z-40">
-                               <p className="text-sm leading-relaxed whitespace-pre-wrap">{ins.content || ins.summary}</p>
-                             </TooltipContent>
-                           </Tooltip>
-                         </TooltipProvider>
-                       ))}
-                    </TableBody>
-                 </Table>
-               </div>
-            </CardContent>
-          </Card>
+          <IntelligenceTab
+            intelligence={intelligence}
+            selectedIds={selectedIntelligenceIds}
+            toggleAll={toggleSelectAllIntelligence}
+            toggleOne={toggleIntelligenceItem}
+            onEdit={setEditingIntelligence}
+            onApprove={handleApproveIntelligence}
+            onBulkDelete={handleBulkDeleteIntelligence}
+            loading={loading}
+            visCols={visCols}
+            renderColumnToggle={renderColumnToggle}
+            onLoad={loadInsights}
+            processingBulk={processingBulk}
+          />
         </TabsContent>
 
-        {/* Tab 4: Knowledge */}
         <TabsContent value="knowledge" className="space-y-4">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
-                <CardTitle>Knowledge (Tier 3)</CardTitle>
-                <CardDescription>Global system-wide rules extracted from intelligence</CardDescription>
-              </div>
-              <div className="flex items-center gap-2">
-                {selectedKnowledgeIds.length > 0 && (
-                    <div className="flex gap-2 bg-accent px-4 py-1.5 rounded-md items-center border shadow-sm animate-in fade-in zoom-in-95 duration-200">
-                        <span className="text-sm font-medium mr-2">{selectedKnowledgeIds.length} selected</span>
-                        <Button variant="destructive" size="sm" onClick={handleBulkDeleteKnowledge} disabled={processingBulk}>
-                             <Trash2 className="w-4 h-4 mr-2" />
-                             Delete
-                        </Button>
-                    </div>
-                )}
-                <Select value={lessonStatusFilter} onValueChange={setLessonStatusFilter}>
-                  <SelectTrigger className="w-32">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Status</SelectItem>
-                    <SelectItem value="draft">Drafts</SelectItem>
-                    <SelectItem value="approved">Approved</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Button onClick={() => setShowNewLessonDialog(true)}>
-                  <Plus className="w-4 h-4 mr-2" />
-                  New Knowledge
-                </Button>
-                {renderColumnToggle("knowledge")}
-              </div>
-            </CardHeader>
-            <CardContent>
-               <div className="h-[500px] overflow-auto relative rounded-md border">
-                 <Table>
-                    <TableHeader className="sticky top-0 z-10 bg-background shadow-[0_1px_0_0_hsl(var(--border))]">
-                      <TableRow>
-                        {visCols("knowledge").map(col => {
-                          if (col.key === "select") return (
-                            <TableHead key={col.key} className="w-[40px]">
-                              <Checkbox checked={knowledge.length > 0 && selectedKnowledgeIds.length === knowledge.length} onCheckedChange={(c) => toggleSelectAllKnowledge(c)} />
-                            </TableHead>
-                          );
-                          return <TableHead key={col.key}>{col.label}</TableHead>;
-                        })}
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                       {knowledge.length === 0 ? (
-                          <TableRow><TableCell colSpan={visCols("knowledge").length} className="text-center text-muted-foreground py-8">No knowledge found.</TableCell></TableRow>
-                       ) : knowledge.map(k => (
-                         <TooltipProvider key={k.id}>
-                           <Tooltip delayDuration={300}>
-                             <TooltipTrigger asChild>
-                               <TableRow className={`cursor-pointer hover:bg-accent/50 ${selectedKnowledgeIds.includes(k.id) ? "bg-accent/30" : ""}`}>
-                                 {visCols("knowledge").map(col => {
-                                   switch (col.key) {
-                                     case "select": return <TableCell key={col.key} onClick={(e) => e.stopPropagation()}><Checkbox checked={selectedKnowledgeIds.includes(k.id)} onCheckedChange={() => toggleKnowledgeItem(k.id)} /></TableCell>;
-                                     case "seq_id": return <TableCell key={col.key} className="font-mono text-muted-foreground">#{k.seq_id}</TableCell>;
-                                     case "type": return (<TableCell key={col.key}><div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full" style={{ backgroundColor: getLessonTypeColor(k.knowledge_type) }} /><Badge variant="outline">{k.knowledge_type}</Badge></div></TableCell>);
-                                     case "name": return <TableCell key={col.key} className="font-medium">{k.name}</TableCell>;
-                                     case "content": return <TableCell key={col.key} className="max-w-[250px] truncate">{k.content}</TableCell>;
-                                     case "status": return (<TableCell key={col.key}><Badge variant={k.visibility === "approved" ? "default" : "secondary"}>{k.visibility}</Badge></TableCell>);
-                                     case "actions": return (<TableCell key={col.key} onClick={(e) => e.stopPropagation()}><div className="flex gap-1">{k.visibility === "draft" && (<Button variant="ghost" size="icon" onClick={() => handleApproveLesson(k.id)}><Check className="w-4 h-4 text-green-500" /></Button>)}<Button variant="ghost" size="icon" onClick={() => setEditingLesson(k)}><Edit className="w-4 h-4" /></Button><Button variant="ghost" size="icon" onClick={() => handleDeleteLesson(k.id)}><Trash2 className="w-4 h-4 text-destructive" /></Button></div></TableCell>);
-                                     default: return <TableCell key={col.key}>-</TableCell>;
-                                   }
-                                 })}
-                               </TableRow>
-                             </TooltipTrigger>
-                             <TooltipContent side="bottom" align="start" className="max-w-2xl bg-secondary text-secondary-foreground border-border break-words shadow-lg pointer-events-none z-40">
-                               <p className="text-sm leading-relaxed whitespace-pre-wrap">{k.summary || k.content}</p>
-                             </TooltipContent>
-                           </Tooltip>
-                         </TooltipProvider>
-                       ))}
-                    </TableBody>
-                 </Table>
-               </div>
-            </CardContent>
-          </Card>
+          <KnowledgeTab
+            knowledge={knowledge}
+            selectedIds={selectedKnowledgeIds}
+            toggleAll={toggleSelectAllKnowledge}
+            toggleOne={toggleKnowledgeItem}
+            onEdit={setEditingLesson}
+            onApprove={handleApproveLesson}
+            onDelete={handleDeleteLesson}
+            onBulkDelete={handleBulkDeleteKnowledge}
+            lessonStatusFilter={lessonStatusFilter}
+            setLessonStatusFilter={setLessonStatusFilter}
+            onShowNewDialog={() => setShowNewLessonDialog(true)}
+            lessonTypes={lessonTypes}
+            getLessonTypeColor={getLessonTypeColor}
+            loading={loading}
+            visCols={visCols}
+            renderColumnToggle={renderColumnToggle}
+          />
         </TabsContent>
       </Tabs>
 
-      {/* Intelligence Inspector Dialog */}
-      <Dialog open={!!editingIntelligence} onOpenChange={() => setEditingIntelligence(null)}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
-          <DialogHeader>
-            <DialogTitle>Intelligence Inspector</DialogTitle>
-            <DialogDescription>Review and edit the intelligence report for this entity</DialogDescription>
-          </DialogHeader>
-          {editingIntelligence && (
-            <ScrollArea className="flex-1 overflow-y-auto pr-4">
-              <div className="space-y-4 py-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label className="text-xs text-muted-foreground">Entity Type</Label>
-                    <div className="font-medium">{editingIntelligence.primary_entity_type}</div>
-                  </div>
-                  <div>
-                    <Label className="text-xs text-muted-foreground">Entity ID</Label>
-                    <div className="font-mono text-sm">{editingIntelligence.primary_entity_id}</div>
-                  </div>
-                  <div>
-                    <Label className="text-xs text-muted-foreground">Created</Label>
-                    <div className="font-medium">{format(new Date(editingIntelligence.created_at), "MMM d, yyyy")}</div>
-                  </div>
-                  <div>
-                    <Label className="text-xs text-muted-foreground">Status</Label>
-                    <Badge variant={editingIntelligence.status === "confirmed" ? "default" : "secondary"} className="mt-1">
-                      {editingIntelligence.status}
-                    </Badge>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label>Title</Label>
-                    <Input
-                      value={editingIntelligence.name || ""}
-                      onChange={(e) => setEditingIntelligence({ ...editingIntelligence, name: e.target.value })}
-                      className="mt-1"
-                    />
-                  </div>
-                  <div>
-                    <Label>Signal Type</Label>
-                    <Input
-                      value={editingIntelligence.knowledge_type || ""}
-                      onChange={(e) => setEditingIntelligence({ ...editingIntelligence, knowledge_type: e.target.value })}
-                      className="mt-1 font-mono text-sm"
-                      placeholder="e.g. risk, budget, objection"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <Label>Intelligence Report</Label>
-                  <Textarea
-                    value={editingIntelligence.content || ""}
-                    onChange={(e) => setEditingIntelligence({ ...editingIntelligence, content: e.target.value })}
-                    rows={7}
-                    className="mt-1 text-sm"
-                  />
-                </div>
-
-                <div>
-                  <Label>Summary <span className="text-muted-foreground text-xs font-normal">(one-line actionable takeaway)</span></Label>
-                  <Textarea
-                    value={editingIntelligence.summary || ""}
-                    onChange={(e) => setEditingIntelligence({ ...editingIntelligence, summary: e.target.value })}
-                    rows={2}
-                    className="mt-1 text-sm"
-                  />
-                </div>
-
-                {editingIntelligence.source_memory_ids?.length > 0 && (
-                  <div>
-                    <Label className="text-xs text-muted-foreground">Source Memories ({editingIntelligence.source_memory_ids.length})</Label>
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {editingIntelligence.source_memory_ids.map((id, i) => (
-                        <Badge key={i} variant="outline" className="font-mono text-xs">{id.slice(0, 8)}...</Badge>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </ScrollArea>
-          )}
-          <DialogFooter className="mt-4 sm:justify-between">
-            <Button variant="destructive" onClick={handleDeleteIntelligence} disabled={!editingIntelligence}>
-              <Trash2 className="w-4 h-4 mr-2" /> Delete
-            </Button>
-            <div className="flex gap-2">
-              {editingIntelligence?.status === "draft" && (
-                <Button variant="outline" onClick={() => { handleApproveIntelligence(editingIntelligence.id); setEditingIntelligence(null); }}>
-                  <Check className="w-4 h-4 mr-2 text-green-500" /> Confirm
-                </Button>
-              )}
-              <Button variant="outline" onClick={() => setEditingIntelligence(null)}>Cancel</Button>
-              <Button onClick={handleUpdateIntelligence} disabled={!editingIntelligence}>Save Changes</Button>
-            </div>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Memory Inspector Dialog */}
-      <Dialog open={!!editingMemory} onOpenChange={() => setEditingMemory(null)}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
-          <DialogHeader>
-            <DialogTitle>Memory Inspector</DialogTitle>
-            <DialogDescription>View or edit aggregated memory properties</DialogDescription>
-          </DialogHeader>
-
-          {editingMemory && (
-            <ScrollArea className="flex-1 overflow-y-auto pr-4">
-              <div className="space-y-4 py-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label className="text-xs text-muted-foreground">Entity Type</Label>
-                    <div className="font-medium">{editingMemory.primary_entity_type}</div>
-                  </div>
-                  <div>
-                    <Label className="text-xs text-muted-foreground">Entity ID</Label>
-                    <div className="font-mono text-sm">{editingMemory.primary_entity_id}</div>
-                  </div>
-                  <div>
-                    <Label className="text-xs text-muted-foreground">Date Generated</Label>
-                    <div className="font-medium">{editingMemory.date}</div>
-                  </div>
-                  <div>
-                    <Label className="text-xs text-muted-foreground">Source Interactions</Label>
-                    <div className="font-medium">{editingMemory.interaction_count} records</div>
-                  </div>
-                </div>
-                
-                <div>
-                  <Label>Content Summary</Label>
-                  <Textarea 
-                    value={editingMemory.content_summary || ""} 
-                    onChange={(e) => setEditingMemory({ ...editingMemory, content_summary: e.target.value })} 
-                    rows={8} 
-                    className="mt-1"
-                  />
-                </div>
-
-                {editingMemory.intents?.length > 0 && (
-                  <div>
-                    <Label className="text-xs text-muted-foreground">Intents Detected</Label>
-                    <div className="flex flex-wrap gap-2 mt-1">
-                      {editingMemory.intents.map((intent, i) => (
-                        <Badge key={i} variant="secondary">{intent}</Badge>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {editingMemory.related_entities?.length > 0 && (
-                  <div>
-                    <Label className="text-xs text-muted-foreground">Related Entities</Label>
-                    <div className="flex flex-wrap gap-2 mt-1">
-                      {editingMemory.related_entities.map((entity, i) => (
-                        <Badge key={i} variant="outline">
-                          <User className="w-3 h-3 mr-1" />
-                          {typeof entity === "string" ? entity : entity.name || entity.entity_id}
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </ScrollArea>
-          )}
-
-          <DialogFooter className="mt-4 sm:justify-between">
-            <Button 
-                variant="destructive" 
-                onClick={handleDeleteMemory}
-                disabled={!editingMemory}
-            >
-                <Trash2 className="w-4 h-4 mr-2" />
-                Delete
-            </Button>
-            <div className="flex gap-2">
-                <Button variant="outline" onClick={() => setEditingMemory(null)}>Cancel</Button>
-                <Button onClick={handleUpdateMemory} disabled={!editingMemory}>
-                    Save Changes
-                </Button>
-            </div>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* New Knowledge Dialog */}
-      <Dialog open={showNewLessonDialog} onOpenChange={setShowNewLessonDialog}>
-         <DialogContent>
-           <DialogHeader>
-             <DialogTitle>Create New Knowledge</DialogTitle>
-             <DialogDescription>Add a curated knowledge to your knowledge base</DialogDescription>
-           </DialogHeader>
-           <div className="space-y-4 py-4">
-             <div>
-               <Label>Name</Label>
-               <Input value={newLesson.name} onChange={(e) => setNewLesson({ ...newLesson, name: e.target.value })} placeholder="Knowledge title" />
-             </div>
-             <div>
-               <Label>Type</Label>
-               <Select value={newLesson.type} onValueChange={(v) => setNewLesson({ ...newLesson, type: v })}>
-                 <SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger>
-                 <SelectContent>
-                   {lessonTypes.map(t => <SelectItem key={t.id} value={t.name}>{t.name}</SelectItem>)}
-                 </SelectContent>
-               </Select>
-             </div>
-             <div>
-               <Label>Body</Label>
-               <Textarea value={newLesson.body} onChange={(e) => setNewLesson({ ...newLesson, body: e.target.value })} placeholder="Knowledge content (Markdown supported)" rows={6} />
-             </div>
-             <div>
-               <Label>Status</Label>
-               <Select value={newLesson.status} onValueChange={(v) => setNewLesson({ ...newLesson, status: v })}>
-                 <SelectTrigger><SelectValue /></SelectTrigger>
-                 <SelectContent>
-                   <SelectItem value="draft">Draft</SelectItem>
-                   <SelectItem value="approved">Approved</SelectItem>
-                 </SelectContent>
-               </Select>
-             </div>
-           </div>
-           <DialogFooter>
-             <Button variant="outline" onClick={() => setShowNewLessonDialog(false)}>Cancel</Button>
-             <Button onClick={handleCreateLesson}>Create Knowledge</Button>
-           </DialogFooter>
-         </DialogContent>
-       </Dialog>
-
-       {/* Edit Knowledge Dialog */}
-       <Dialog open={!!editingLesson} onOpenChange={() => setEditingLesson(null)}>
-         <DialogContent>
-           <DialogHeader><DialogTitle>Edit Knowledge</DialogTitle></DialogHeader>
-           {editingLesson && (
-             <div className="space-y-4 py-4">
-               <div>
-                 <Label>Name</Label>
-                 <Input value={editingLesson.name} onChange={(e) => setEditingLesson({ ...editingLesson, name: e.target.value })} />
-               </div>
-               <div>
-                 <Label>Type</Label>
-                 <Select value={editingLesson.type} onValueChange={(v) => setEditingLesson({ ...editingLesson, type: v })}>
-                   <SelectTrigger><SelectValue /></SelectTrigger>
-                   <SelectContent>
-                     {lessonTypes.map(t => <SelectItem key={t.id} value={t.name}>{t.name}</SelectItem>)}
-                   </SelectContent>
-                 </Select>
-               </div>
-               <div>
-                 <Label>Body</Label>
-                 <Textarea value={editingLesson.body} onChange={(e) => setEditingLesson({ ...editingLesson, body: e.target.value })} rows={6} />
-               </div>
-               <div>
-                 <Label>Status</Label>
-                 <Select value={editingLesson.status} onValueChange={(v) => setEditingLesson({ ...editingLesson, status: v })}>
-                   <SelectTrigger><SelectValue /></SelectTrigger>
-                   <SelectContent>
-                     <SelectItem value="draft">Draft</SelectItem>
-                     <SelectItem value="approved">Approved</SelectItem>
-                   </SelectContent>
-                 </Select>
-               </div>
-             </div>
-           )}
-           <DialogFooter>
-             <Button variant="outline" onClick={() => setEditingLesson(null)}>Cancel</Button>
-             <Button onClick={handleUpdateLesson}>Update Knowledge</Button>
-           </DialogFooter>
-         </DialogContent>
-       </Dialog>
-
-       {/* Interaction Inspector Dialog */}
-       <Dialog open={!!editingInteraction} onOpenChange={() => setEditingInteraction(null)}>
-         <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col">
-           <DialogHeader>
-             <DialogTitle>Interaction Inspector</DialogTitle>
-             <DialogDescription>
-               {editingInteraction?.status === "pending" 
-                 ? "Edit raw interaction properties before they are processed by the memory pipeline."
-                 : "This interaction is locked because it has already been processed."}
-             </DialogDescription>
-           </DialogHeader>
-           
-           {editingInteraction && (
-             <ScrollArea className="flex-1 pr-4">
-               <div className="space-y-4 py-4">
-                 <div className="grid grid-cols-2 gap-4">
-                   <div>
-                     <Label>Interaction Type</Label>
-                     <Input 
-                       value={editingInteraction.interaction_type} 
-                       onChange={(e) => setEditingInteraction({ ...editingInteraction, interaction_type: e.target.value })}
-                       disabled={editingInteraction.status !== "pending"}
-                     />
-                   </div>
-                   <div>
-                     <Label>Source</Label>
-                     <Input 
-                       value={editingInteraction.source} 
-                       onChange={(e) => setEditingInteraction({ ...editingInteraction, source: e.target.value })}
-                       disabled={editingInteraction.status !== "pending"}
-                     />
-                   </div>
-                   <div>
-                     <Label>Entity Type</Label>
-                     <Select 
-                       value={editingInteraction.primary_entity_type} 
-                       onValueChange={(v) => setEditingInteraction({ ...editingInteraction, primary_entity_type: v })}
-                       disabled={editingInteraction.status !== "pending"}
-                     >
-                       <SelectTrigger><SelectValue /></SelectTrigger>
-                       <SelectContent>
-                         {entityTypes.map(t => <SelectItem key={t.id} value={t.name}>{t.name}</SelectItem>)}
-                       </SelectContent>
-                     </Select>
-                   </div>
-                   <div>
-                     <Label>Entity Sub-Type</Label>
-                     <Input 
-                       value={editingInteraction.primary_entity_subtype || ""} 
-                       onChange={(e) => setEditingInteraction({ ...editingInteraction, primary_entity_subtype: e.target.value })}
-                       disabled={editingInteraction.status !== "pending"}
-                     />
-                   </div>
-                   <div className="col-span-2">
-                     <Label>Entity ID</Label>
-                     <Input 
-                       value={editingInteraction.primary_entity_id} 
-                       onChange={(e) => setEditingInteraction({ ...editingInteraction, primary_entity_id: e.target.value })}
-                       disabled={editingInteraction.status !== "pending"}
-                       className="font-mono text-sm"
-                     />
-                   </div>
-                 </div>
-                 
-                 <div>
-                   <Label>Interaction Blob</Label>
-                   <Textarea 
-                     value={editingInteraction.content} 
-                     onChange={(e) => setEditingInteraction({ ...editingInteraction, content: e.target.value })} 
-                     rows={10} 
-                     disabled={editingInteraction.status !== "pending"}
-                     className="font-mono text-sm"
-                   />
-                 </div>
-
-                 {editingInteraction.processing_errors && Object.keys(editingInteraction.processing_errors).length > 0 && (
-                   <div className="bg-red-950/20 border border-red-900/50 rounded-md p-3 mt-4">
-                     <Label className="text-red-400 mb-2 block flex items-center"><AlertCircle className="w-4 h-4 mr-2" /> Captured Pipeline Errors</Label>
-                     <pre className="text-xs text-red-300/80 font-mono overflow-x-auto">
-                       {JSON.stringify(editingInteraction.processing_errors, null, 2)}
-                     </pre>
-                   </div>
-                 )}
-               </div>
-             </ScrollArea>
-           )}
-
-           <DialogFooter className="mt-4 sm:justify-between">
-             <Button 
-               variant="destructive" 
-               onClick={handleDeleteInteraction}
-               disabled={!editingInteraction}
-             >
-               <Trash2 className="w-4 h-4 mr-2" />
-               Delete
-             </Button>
-             <div className="flex gap-2">
-               <Button variant="outline" onClick={() => setEditingInteraction(null)}>Cancel</Button>
-               <Button 
-                 onClick={handleUpdateInteraction} 
-                 disabled={!editingInteraction || editingInteraction.status !== "pending"}
-               >
-                 Save Changes
-               </Button>
-             </div>
-           </DialogFooter>
-         </DialogContent>
-       </Dialog>
+      {/* Inspector Dialogs */}
+      <InteractionInspector
+        editingInteraction={editingInteraction}
+        setEditingInteraction={setEditingInteraction}
+        entityTypes={entityTypes}
+        onUpdate={handleUpdateInteraction}
+        onDelete={handleDeleteInteraction}
+      />
+      <MemoryInspector
+        editingMemory={editingMemory}
+        setEditingMemory={setEditingMemory}
+        onUpdate={handleUpdateMemory}
+        onDelete={handleDeleteMemory}
+      />
+      <IntelligenceInspector
+        editingIntelligence={editingIntelligence}
+        setEditingIntelligence={setEditingIntelligence}
+        onUpdate={handleUpdateIntelligence}
+        onApprove={handleApproveIntelligence}
+        onDelete={handleDeleteIntelligence}
+      />
+      <NewKnowledgeDialog
+        open={showNewLessonDialog}
+        onOpenChange={setShowNewLessonDialog}
+        newLesson={newLesson}
+        setNewLesson={setNewLesson}
+        lessonTypes={lessonTypes}
+        onCreate={handleCreateLesson}
+      />
+      <EditKnowledgeDialog
+        editingLesson={editingLesson}
+        setEditingLesson={setEditingLesson}
+        lessonTypes={lessonTypes}
+        onUpdate={handleUpdateLesson}
+      />
     </div>
   );
 }
