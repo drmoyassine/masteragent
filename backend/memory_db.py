@@ -553,6 +553,29 @@ def _run_migrations(cursor):
     except Exception as e:
         logger.warning(f"Rename compaction_threshold skipped: {e}")
 
+    # Rename legacy auto-approve / auto-promote columns to current naming
+    try:
+        cursor.execute("""
+            DO $$
+            BEGIN
+                IF EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='memory_entity_type_config' AND column_name='insight_auto_approve')
+                   AND NOT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='memory_entity_type_config' AND column_name='intelligence_auto_approve') THEN
+                    ALTER TABLE memory_entity_type_config RENAME COLUMN insight_auto_approve TO intelligence_auto_approve;
+                END IF;
+                IF EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='memory_entity_type_config' AND column_name='lesson_auto_promote')
+                   AND NOT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='memory_entity_type_config' AND column_name='knowledge_auto_promote') THEN
+                    ALTER TABLE memory_entity_type_config RENAME COLUMN lesson_auto_promote TO knowledge_auto_promote;
+                END IF;
+            END
+            $$;
+        """)
+    except Exception as e:
+        logger.warning(f"Rename auto-approve columns skipped: {e}")
+
+    # Ensure columns exist (for fresh DBs that never had legacy names but were created before this column was in CREATE TABLE)
+    cursor.execute("ALTER TABLE memory_entity_type_config ADD COLUMN IF NOT EXISTS intelligence_auto_approve BOOLEAN DEFAULT FALSE")
+    cursor.execute("ALTER TABLE memory_entity_type_config ADD COLUMN IF NOT EXISTS knowledge_auto_promote BOOLEAN DEFAULT FALSE")
+
     # Job log table (safe to CREATE IF NOT EXISTS in migration too)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS memory_job_log (
