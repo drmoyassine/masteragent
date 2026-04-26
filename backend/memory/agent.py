@@ -20,7 +20,7 @@ from memory_models import (
     IntelligenceCreate, IntelligenceUpdate, IntelligenceResponse,
     KnowledgeCreate, KnowledgeUpdate, KnowledgeResponse,
     SearchRequest, SearchResponse, SearchResult,
-    ContextStatusResponse,
+    ContextStatusResponse, IntelligenceContextItem, KnowledgeContextItem,
 )
 from memory_services import (
     generate_embedding,
@@ -200,15 +200,37 @@ async def get_has_context(
         i_rows = cursor.fetchall()
         cursor.execute("SELECT id, date FROM memories WHERE primary_entity_type = %s AND primary_entity_id = %s ORDER BY date DESC", (entity_type, entity_id))
         m_rows = cursor.fetchall()
-        cursor.execute("SELECT id, created_at FROM intelligence WHERE primary_entity_type = %s AND primary_entity_id = %s ORDER BY created_at DESC", (entity_type, entity_id))
+        cursor.execute(
+            "SELECT id, name, summary, status, knowledge_type, created_at FROM intelligence WHERE primary_entity_type = %s AND primary_entity_id = %s ORDER BY created_at DESC",
+            (entity_type, entity_id)
+        )
         ins_rows = cursor.fetchall()
-        
-    i_ids = [r["id"] for r in i_rows]; m_ids = [r["id"] for r in m_rows]; ins_ids = [r["id"] for r in ins_rows]
+        cursor.execute("SELECT id, name, summary, visibility, created_at FROM knowledge ORDER BY created_at DESC LIMIT 30")
+        k_rows = cursor.fetchall()
+
+    i_ids = [r["id"] for r in i_rows]
+    m_ids = [r["id"] for r in m_rows]
+    ins_ids = [r["id"] for r in ins_rows]
+    intelligences = [
+        IntelligenceContextItem(
+            id=r["id"], name=r["name"] or "", summary=r.get("summary"),
+            status=r["status"], knowledge_type=r.get("knowledge_type"),
+            created_at=str(r["created_at"])
+        ) for r in ins_rows
+    ]
+    knowledge_items = [
+        KnowledgeContextItem(
+            id=r["id"], name=r["name"] or "", summary=r.get("summary"),
+            visibility=r.get("visibility"), created_at=str(r["created_at"])
+        ) for r in k_rows
+    ]
     return ContextStatusResponse(
         has_context=bool(i_ids or m_ids or ins_ids),
         interactions_count=len(i_ids), last_interaction_date=str(i_rows[0]["timestamp"]) if i_rows else None, interactions_ids=i_ids,
         memories_count=len(m_ids), last_memory_date=str(m_rows[0]["date"]) if m_rows else None, memories_ids=m_ids,
-        Intelligences_count=len(ins_ids), last_Intelligence_date=str(ins_rows[0]["created_at"]) if ins_rows else None, Intelligences_ids=ins_ids
+        Intelligences_count=len(ins_ids), last_Intelligence_date=str(ins_rows[0]["created_at"]) if ins_rows else None, Intelligences_ids=ins_ids,
+        intelligences=intelligences,
+        knowledge_count=len(knowledge_items), knowledge=knowledge_items,
     )
 
 

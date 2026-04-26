@@ -27,6 +27,7 @@ import {
   getLessonTypes,
   getEntityTypeConfig,
   bulkDeleteIntelligenceAdmin,
+  bulkApproveIntelligenceAdmin,
   bulkDeleteKnowledgeAdmin,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -611,6 +612,20 @@ export default function MemoryExplorerPage() {
     }
   };
 
+  const handleBulkApproveIntelligence = async () => {
+    setProcessingBulk(true);
+    try {
+      const res = await bulkApproveIntelligenceAdmin({ intelligence_ids: selectedIntelligenceIds });
+      toast.success(`Approved ${res.data.approved} intelligence records`);
+      clearIntelligenceSelection();
+      loadInsights();
+    } catch (error) {
+      toast.error("Failed to approve intelligence");
+    } finally {
+      setProcessingBulk(false);
+    }
+  };
+
   const handleBulkDeleteKnowledge = async () => {
     if (!window.confirm(`Delete ${selectedKnowledgeIds.length} knowledge records? This cannot be reversed.`)) return;
     setProcessingBulk(true);
@@ -706,6 +721,7 @@ export default function MemoryExplorerPage() {
             onEdit={setEditingIntelligence}
             onApprove={handleApproveIntelligence}
             onBulkDelete={handleBulkDeleteIntelligence}
+            onBulkApprove={handleBulkApproveIntelligence}
             loading={loading}
             visCols={visCols}
             renderColumnToggle={renderColumnToggle}

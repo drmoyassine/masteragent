@@ -5,14 +5,15 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { RefreshCw, Trash2, Check, Edit } from "lucide-react";
+import { RefreshCw, Trash2, Check, Edit, CheckCheck } from "lucide-react";
 import { stringToColor } from "./utils";
 
 export default function IntelligenceTab({
   intelligence, selectedIds, toggleAll, toggleOne,
-  onEdit, onApprove, onBulkDelete,
+  onEdit, onApprove, onBulkDelete, onBulkApprove,
   loading, visCols, renderColumnToggle, onLoad, processingBulk,
 }) {
+  const hasDraftSelected = selectedIds.some(id => intelligence.find(i => i.id === id)?.status === "draft");
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
@@ -24,6 +25,12 @@ export default function IntelligenceTab({
           {selectedIds.length > 0 && (
             <div className="flex gap-2 bg-accent px-4 py-1.5 rounded-md items-center border shadow-sm animate-in fade-in zoom-in-95 duration-200">
               <span className="text-sm font-medium mr-2">{selectedIds.length} selected</span>
+              {hasDraftSelected && (
+                <Button variant="outline" size="sm" onClick={onBulkApprove} disabled={processingBulk} className="border-green-600 text-green-500 hover:bg-green-600/10">
+                  <CheckCheck className="w-4 h-4 mr-2" />
+                  Approve
+                </Button>
+              )}
               <Button variant="destructive" size="sm" onClick={onBulkDelete} disabled={processingBulk}>
                 <Trash2 className="w-4 h-4 mr-2" />
                 Delete

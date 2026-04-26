@@ -477,6 +477,21 @@ class TimelineEntry(BaseModel):
     source: str
     status: str
 
+class IntelligenceContextItem(BaseModel):
+    id: str
+    name: str
+    summary: Optional[str] = None
+    status: str
+    knowledge_type: Optional[str] = None
+    created_at: str
+
+class KnowledgeContextItem(BaseModel):
+    id: str
+    name: str
+    summary: Optional[str] = None
+    visibility: Optional[str] = None
+    created_at: str
+
 class ContextStatusResponse(BaseModel):
     has_context: bool
     interactions_count: int
@@ -487,7 +502,10 @@ class ContextStatusResponse(BaseModel):
     memories_ids: List[str] = []
     Intelligences_count: int
     last_Intelligence_date: Optional[str] = None
-    Intelligences_ids: List[str] = []
+    Intelligences_ids: List[str] = []  # kept for backward compat
+    intelligences: List[IntelligenceContextItem] = []
+    knowledge_count: int = 0
+    knowledge: List[KnowledgeContextItem] = []
 
 # ============================================
 # Outbound Webhook Models

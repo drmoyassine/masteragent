@@ -181,6 +181,81 @@ function ThresholdOverridesTable({ entityTypes, overrideKey, globalFallback }) {
     );
 }
 
+// ─── Auto-Approve Toggle Table ──────────────────────────────────────────────
+// Shows all entity types with a boolean switch for intelligence_auto_approve
+// or knowledge_auto_promote per entity.
+// readKey: DB column name (lowercase), writeKey: Pydantic field name (may differ in casing)
+function AutoApproveTable({ entityTypes, readKey, writeKey, label }) {
+    const [states, setStates] = useState({}); // { entityName: bool }
+    const [loadingMap, setLoadingMap] = useState({});
+    const [initialLoading, setInitialLoading] = useState(true);
+
+    useEffect(() => {
+        if (!entityTypes?.length) { setInitialLoading(false); return; }
+        let cancelled = false;
+        (async () => {
+            const result = {};
+            await Promise.all(entityTypes.map(async (et) => {
+                try {
+                    const res = await api.get(`/memory/entity-type-config/${et.name}`);
+                    result[et.name] = res.data[readKey] ?? false;
+                } catch { result[et.name] = false; }
+            }));
+            if (!cancelled) { setStates(result); setInitialLoading(false); }
+        })();
+        return () => { cancelled = true; };
+    }, [entityTypes, readKey]);
+
+    const handleToggle = async (entityName, value) => {
+        setLoadingMap(p => ({ ...p, [entityName]: true }));
+        setStates(p => ({ ...p, [entityName]: value }));
+        try {
+            await api.patch(`/memory/entity-type-config/${entityName}`, { [writeKey]: value });
+            toast.success(`${entityName}: ${label} ${value ? "enabled" : "disabled"}`);
+        } catch {
+            setStates(p => ({ ...p, [entityName]: !value }));
+            toast.error("Failed to update setting");
+        } finally {
+            setLoadingMap(p => ({ ...p, [entityName]: false }));
+        }
+    };
+
+    if (initialLoading) return <p className="text-xs text-muted-foreground py-2">Loading…</p>;
+    if (!entityTypes?.length) return <p className="text-xs text-muted-foreground py-2 italic">No entity types configured.</p>;
+
+    return (
+        <div className="border border-border rounded-md overflow-hidden bg-background">
+            <table className="w-full text-left">
+                <thead className="bg-muted text-xs text-muted-foreground uppercase">
+                    <tr>
+                        <th className="py-2 pl-4 font-medium">Entity Type</th>
+                        <th className="py-2 pr-4 font-medium text-right">{label}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {(entityTypes || []).map(et => (
+                        <tr key={et.name} className="border-t border-border text-sm">
+                            <td className="py-2.5 pl-4">
+                                <div className="flex items-center gap-2 font-medium">
+                                    <span className="text-lg leading-none">{et.icon || "📦"}</span>
+                                    <span className="capitalize">{et.name}</span>
+                                </div>
+                            </td>
+                            <td className="py-2.5 pr-4 text-right">
+                                <Switch
+                                    checked={!!states[et.name]}
+                                    onCheckedChange={(v) => handleToggle(et.name, v)}
+                                    disabled={loadingMap[et.name]}
+                                />
+                            </td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    );
+}
+
 import {
     Card,
     CardContent,
@@ -699,6 +774,23 @@ function IntelligenceTab({ settings, onUpdateSettings, llmConfigs, llmProviders,
                                 globalFallback={settings.intelligence_extraction_threshold || 10}
                             />
                         </div>
+                    </div>
+
+                    {/* § Auto-Approve */}
+                    <div className="space-y-4 pt-2">
+                        <h4 className="text-sm font-semibold flex items-center gap-1.5 border-b pb-1">
+                            <CheckCircle2 className="w-4 h-4 text-green-500" />
+                            Auto-Approve
+                        </h4>
+                        <p className="text-[10px] text-muted-foreground -mt-2">
+                            When enabled, newly generated intelligence items are automatically set to <span className="font-mono">confirmed</span> instead of <span className="font-mono">draft</span>. Only enable for entity types where you trust the pipeline output.
+                        </p>
+                        <AutoApproveTable
+                            entityTypes={entityTypes}
+                            readKey="intelligence_auto_approve"
+                            writeKey="Intelligence_auto_approve"
+                            label="Auto-Approve"
+                        />
                     </div>
                 </CardContent>
             </Card>

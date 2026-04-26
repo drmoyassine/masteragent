@@ -210,6 +210,23 @@ async def bulk_delete_intelligence(body: BulkIntelligenceDelete, admin: dict = D
     return {"deleted": len(body.intelligence_ids)}
 
 
+class BulkIntelligenceApprove(BaseModel):
+    intelligence_ids: list[str]
+
+@router.post("/intelligence/bulk-approve")
+async def bulk_approve_intelligence(body: BulkIntelligenceApprove, admin: dict = Depends(require_admin_auth)):
+    """Bulk approve (confirm) intelligence records."""
+    now = datetime.now(timezone.utc).isoformat()
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE intelligence
+            SET status = 'confirmed', confirmed_by = 'admin', confirmed_at = %s, updated_at = %s
+            WHERE id = ANY(%s)
+        """, (now, now, body.intelligence_ids))
+    return {"approved": len(body.intelligence_ids)}
+
+
 @router.post("/intelligence/{insight_id}/promote")
 async def promote_insight_to_lesson(
     insight_id: str,
