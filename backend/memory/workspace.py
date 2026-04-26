@@ -219,7 +219,7 @@ async def _run_chat(
             body.message,
             system_prompt=system_prompt_text,
             max_tokens=1200,
-            task_type="summarization",
+            task_type="intelligence_generation",
         )
     except Exception as e:
         logger.error(f"Workspace LLM call failed: {e}")
