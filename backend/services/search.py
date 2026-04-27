@@ -88,7 +88,7 @@ async def search_interactions_by_fulltext(
                        ts_rank(to_tsvector('simple', coalesce(content, '')), websearch_to_tsquery('simple', %s)) AS score
                 FROM interactions WHERE {where}
                 ORDER BY score DESC LIMIT %s
-            """, params + [query, limit])
+            """, [query] + params + [limit])
             return [dict(r) for r in cursor.fetchall()]
     except Exception as e:
         logger.error(f"fulltext interaction search error: {e}")
@@ -170,7 +170,7 @@ async def search_memories_by_fulltext(
                        ts_rank(to_tsvector('simple', coalesce(content_summary, '')), websearch_to_tsquery('simple', %s)) AS score
                 FROM memories WHERE {where}
                 ORDER BY score DESC LIMIT %s
-            """, params + [query, limit])
+            """, [query] + params + [limit])
             return [dict(r) for r in cursor.fetchall()]
     except Exception as e:
         logger.error(f"fulltext memory search error: {e}")
@@ -258,7 +258,7 @@ async def search_intelligence_by_fulltext(
                        ts_rank(to_tsvector('simple', coalesce(name, '') || ' ' || coalesce(summary, '') || ' ' || coalesce(content, '')), websearch_to_tsquery('simple', %s)) AS score
                 FROM intelligence WHERE {where}
                 ORDER BY score DESC LIMIT %s
-            """, params + [query, limit])
+            """, [query] + params + [limit])
             return [dict(r) for r in cursor.fetchall()]
     except Exception as e:
         logger.error(f"fulltext Intelligence search error: {e}")
@@ -337,7 +337,7 @@ async def search_knowledge_by_fulltext(
                        ts_rank(to_tsvector('simple', coalesce(name, '') || ' ' || coalesce(summary, '') || ' ' || coalesce(content, '')), websearch_to_tsquery('simple', %s)) AS score
                 FROM knowledge WHERE {where}
                 ORDER BY score DESC LIMIT %s
-            """, params + [query, limit])
+            """, [query] + params + [limit])
             return [dict(r) for r in cursor.fetchall()]
     except Exception as e:
         logger.error(f"fulltext Knowledge search error: {e}")
