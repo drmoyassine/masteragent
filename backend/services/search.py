@@ -47,7 +47,7 @@ async def search_interactions_by_vector(
                        GREATEST(0, (1 - (embedding <=> %s::vector)) - {decay_sql}) AS score
                 FROM interactions WHERE {where}
                 ORDER BY score DESC LIMIT %s
-            """, params + [query_vector, limit])
+            """, [query_vector] + params + [limit])
             return [dict(r) for r in cursor.fetchall()]
     except Exception as e:
         logger.error(f"pgvector interaction search error: {e}")
@@ -131,7 +131,7 @@ async def search_memories_by_vector(
                        GREATEST(0, (1 - (embedding <=> %s::vector)) - {decay_sql}) AS score
                 FROM memories WHERE {where}
                 ORDER BY score DESC LIMIT %s
-            """, params + [query_vector, limit])
+            """, [query_vector] + params + [limit])
             return [dict(r) for r in cursor.fetchall()]
     except Exception as e:
         logger.error(f"pgvector memory search error: {e}")
@@ -216,7 +216,7 @@ async def search_intelligence_by_vector(
                        GREATEST(0, (1 - (embedding <=> %s::vector)) - {decay_sql}) AS score
                 FROM intelligence WHERE {where}
                 ORDER BY score DESC LIMIT %s
-            """, params + [query_vector, limit])
+            """, [query_vector] + params + [limit])
             return [dict(r) for r in cursor.fetchall()]
     except Exception as e:
         logger.error(f"pgvector Intelligence search error: {e}")
@@ -301,7 +301,7 @@ async def search_knowledge_by_vector(
                        GREATEST(0, (1 - (embedding <=> %s::vector)) - {decay_sql}) AS score
                 FROM knowledge WHERE {where}
                 ORDER BY score DESC LIMIT %s
-            """, params + [query_vector, limit])
+            """, [query_vector] + params + [limit])
             return [dict(r) for r in cursor.fetchall()]
     except Exception as e:
         logger.error(f"pgvector Knowledge search error: {e}")
