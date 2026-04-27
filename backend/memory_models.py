@@ -431,7 +431,7 @@ class EntityTypeConfigUpdate(BaseModel):
 
 class SearchRequest(BaseModel):
     query: str
-    layers: List[str] = Field(default_factory=lambda: ["interactions", "memories", "Intelligences", "knowledge"])
+    layers: List[str] = Field(default_factory=lambda: ["interactions", "memories", "intelligence", "knowledge"])
     entity_type: Optional[str] = None
     entity_subtype: Optional[str] = None
     entity_id: Optional[str] = None
