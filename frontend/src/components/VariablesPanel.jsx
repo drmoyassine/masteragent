@@ -7,6 +7,7 @@ import {
   Pencil,
   X,
   Check,
+  Database,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,6 +38,7 @@ import {
   deletePromptVariable,
   getAccountVariables,
   createAccountVariable,
+  getAvailableVariables,
 } from "@/lib/api";
 import { toast } from "sonner";
 
@@ -50,6 +52,7 @@ import { toast } from "sonner";
 export default function VariablesPanel({ promptId, version, onVariablesChange }) {
   const [promptVariables, setPromptVariables] = useState([]);
   const [accountVariables, setAccountVariables] = useState([]);
+  const [systemVariables, setSystemVariables] = useState([]);
   const [loading, setLoading] = useState(true);
   
   // Dialog states
@@ -75,12 +78,16 @@ export default function VariablesPanel({ promptId, version, onVariablesChange })
   const loadVariables = async () => {
     setLoading(true);
     try {
-      const [promptRes, accountRes] = await Promise.all([
+      const [promptRes, accountRes, availableRes] = await Promise.all([
         getPromptVariables(promptId, version),
         getAccountVariables(),
+        getAvailableVariables(promptId, version).catch(() => ({ data: [] })),
       ]);
       setPromptVariables(promptRes.data || []);
       setAccountVariables(accountRes.data || []);
+      // Extract system-sourced variables (entity schema fields)
+      const sysVars = (availableRes.data || []).filter(v => v.source === "system");
+      setSystemVariables(sysVars);
     } catch (error) {
       console.error("Failed to load variables:", error);
       toast.error("Failed to load variables");
@@ -95,10 +102,10 @@ export default function VariablesPanel({ promptId, version, onVariablesChange })
       return;
     }
 
-    // Validate variable name format
-    const namePattern = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+    // Validate variable name format (dots allowed for entity.type notation)
+    const namePattern = /^[a-zA-Z_][a-zA-Z0-9_.]*$/;
     if (!namePattern.test(formData.name)) {
-      toast.error("Variable name must start with a letter or underscore and contain only alphanumeric characters");
+      toast.error("Variable name must start with a letter/underscore and contain only letters, numbers, underscores, or dots");
       return;
     }
 
@@ -336,6 +343,40 @@ export default function VariablesPanel({ promptId, version, onVariablesChange })
               </div>
             )}
           </div>
+
+          {/* Entity Schema Variables Section */}
+          {systemVariables.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Database className="w-4 h-4 text-muted-foreground" />
+                <span className="text-sm font-medium">Entity Fields</span>
+                <Badge variant="secondary" className="text-xs">
+                  System
+                </Badge>
+              </div>
+
+              <div className="space-y-1.5 pl-6">
+                {systemVariables.map((variable) => (
+                  <div
+                    key={variable.name}
+                    className="variable-item p-2 rounded-md border border-border/50 bg-muted/20"
+                    data-testid={`system-variable-${variable.name}`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <code className="text-xs font-mono text-emerald-400">
+                        {`{{${variable.name}}}`}
+                      </code>
+                    </div>
+                    {variable.description && (
+                      <p className="text-[10px] text-muted-foreground mt-0.5 leading-relaxed">
+                        {variable.description}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </ScrollArea>
 

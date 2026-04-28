@@ -91,33 +91,31 @@ async def render_prompt(
         folder_path = prompt["folder_path"]
         user_id = prompt["user_id"]
 
-    # Get sections via storage_service (delegated to prompts router helper)
-    from routes.prompts import get_prompt_sections
+    # Get sections via storage service (works for both local and GitHub storage)
+    from storage_service import get_storage_service
 
-    # Use a minimal user dict to satisfy require_auth
-    fake_user = {"id": user_id}
-    sections = await get_prompt_sections(prompt_id, version, fake_user)
-    if not sections:
+    storage_service = get_storage_service(user_id)
+    prompt_content = await storage_service.get_prompt_content(folder_path, version)
+    if not prompt_content or not prompt_content.get("sections"):
         raise HTTPException(status_code=404, detail="No sections found")
 
     compiled_parts = []
     sections_used = []
     all_variables = set()
 
-    for section in sections:
-        file_data = await github_api_request("GET", f"/contents/{folder_path}/{section['filename']}?ref={version}")
-        if file_data:
-            content = base64.b64decode(file_data["content"]).decode("utf-8")
-            all_variables.update(extract_variables(content))
-            content = inject_variables(
-                content,
-                render_data.variables or {},
-                prompt_id=prompt_id,
-                user_id=user_id,
-                version=version,
-            )
-            compiled_parts.append(content)
-            sections_used.append(section["filename"])
+    for section in prompt_content["sections"]:
+        content = section.get("content", "")
+        filename = section.get("filename", "unknown")
+        all_variables.update(extract_variables(content))
+        content = inject_variables(
+            content,
+            render_data.variables or {},
+            prompt_id=prompt_id,
+            user_id=user_id,
+            version=version,
+        )
+        compiled_parts.append(content)
+        sections_used.append(filename)
 
     compiled_prompt = "\n\n---\n\n".join(compiled_parts)
     remaining = extract_variables(compiled_prompt)

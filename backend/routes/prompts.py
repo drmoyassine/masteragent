@@ -226,13 +226,28 @@ async def update_prompt(prompt_id: str, prompt_data: PromptUpdate, user: dict = 
 
 @router.delete("/prompts/{prompt_id}")
 async def delete_prompt(prompt_id: str, user: dict = Depends(require_auth)):
+    from storage_service import get_storage_service
+
     with get_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT folder_path FROM prompts WHERE id = %s AND user_id = %s", (prompt_id, user["id"]))
-        if not cursor.fetchone():
+        row = cursor.fetchone()
+        if not row:
             raise HTTPException(status_code=404, detail="Prompt not found")
+        folder_path = row["folder_path"]
+
+        # Delete child records first (FK ordering)
+        cursor.execute("DELETE FROM prompt_variables WHERE prompt_id = %s", (prompt_id,))
         cursor.execute("DELETE FROM prompt_versions WHERE prompt_id = %s", (prompt_id,))
         cursor.execute("DELETE FROM prompts WHERE id = %s", (prompt_id,))
+
+    # Clean up storage files (best-effort, don't fail the request)
+    try:
+        storage_service = get_storage_service(user["id"])
+        await storage_service.delete_prompt(folder_path)
+    except Exception as e:
+        logger.warning(f"Failed to delete storage for {folder_path}: {e}")
+
     return {"message": "Prompt deleted"}
 
 

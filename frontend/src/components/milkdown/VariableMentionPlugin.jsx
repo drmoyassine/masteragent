@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Building, FileText } from 'lucide-react';
+import { Building, FileText, Database, Plus } from 'lucide-react';
 import { $prose } from '@milkdown/kit/utils';
 import { Plugin, PluginKey } from '@milkdown/prose/state';
 import {
@@ -131,7 +131,7 @@ export const mentionPlugin = $prose(() => {
 // ---------------------------------------------------------------------------
 // React popover — subscribes to mentionState
 // ---------------------------------------------------------------------------
-export function MentionPopover({ variablesRef }) {
+export function MentionPopover({ variablesRef, onCreateVariable }) {
   const [state, setState] = useState({
     active: false,
     query: "",
@@ -175,11 +175,24 @@ export function MentionPopover({ variablesRef }) {
     return () => document.removeEventListener('keydown', handleKeyDown, true);
   }, []);
 
+  const queryTrimmed = query.trim();
+
+  const handleCreate = useCallback(async () => {
+    if (!onCreateVariable || !queryTrimmed) return;
+    try {
+      await onCreateVariable(queryTrimmed);
+      handleSelect(queryTrimmed);
+    } catch (e) {
+      console.error("Failed to create variable inline:", e);
+    }
+  }, [onCreateVariable, queryTrimmed, handleSelect]);
+
   if (!active) return null;
 
   const variables = variablesRef.current || [];
   const promptVariables = variables.filter(v => v.source === "prompt");
   const accountVariables = variables.filter(v => v.source === "account");
+  const systemVariables = variables.filter(v => v.source === "system");
 
   const filteredPrompt = promptVariables.filter(v =>
     v.name.toLowerCase().includes(query.toLowerCase())
@@ -187,6 +200,15 @@ export function MentionPopover({ variablesRef }) {
   const filteredAccount = accountVariables.filter(v =>
     v.name.toLowerCase().includes(query.toLowerCase())
   );
+  const filteredSystem = systemVariables.filter(v =>
+    v.name.toLowerCase().includes(query.toLowerCase())
+  );
+
+  // Fix 4: Show "Create variable" action if query doesn't exactly match an existing variable
+  const allNames = variables.map(v => v.name.toLowerCase());
+  const showCreateAction = queryTrimmed.length > 0
+    && /^[a-zA-Z_][a-zA-Z0-9_.]*$/.test(queryTrimmed)
+    && !allNames.includes(queryTrimmed.toLowerCase());
 
   return createPortal(
     <div
@@ -195,7 +217,7 @@ export function MentionPopover({ variablesRef }) {
       onMouseDown={(e) => e.preventDefault()}
     >
       <Command
-        className="w-64 rounded-md border shadow-md bg-popover text-popover-foreground"
+        className="w-72 rounded-md border shadow-md bg-popover text-popover-foreground"
         shouldFilter={false}
       >
         <div className="px-3 py-1.5 text-xs text-muted-foreground border-b">
@@ -237,6 +259,47 @@ export function MentionPopover({ variablesRef }) {
                 </CommandItem>
               ))}
             </CommandGroup>
+          )}
+
+          {filteredSystem.length > 0 && (
+            <>
+              <CommandSeparator />
+              <CommandGroup heading="Entity Fields">
+                {filteredSystem.map(v => (
+                  <CommandItem
+                    key={`system-${v.name}`}
+                    value={v.name}
+                    onSelect={() => handleSelect(v.name)}
+                  >
+                    <Database className="w-3 h-3 mr-2 text-emerald-500" />
+                    <code className="text-sm font-mono">{v.name}</code>
+                    {v.description && (
+                      <span className="ml-1 text-[10px] text-muted-foreground truncate max-w-[120px]">
+                        {v.description}
+                      </span>
+                    )}
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            </>
+          )}
+
+          {/* Fix 4: Inline create variable */}
+          {showCreateAction && (
+            <>
+              <CommandSeparator />
+              <CommandGroup>
+                <CommandItem
+                  value={`__create_${queryTrimmed}`}
+                  onSelect={handleCreate}
+                  className="text-primary"
+                >
+                  <Plus className="w-3 h-3 mr-2" />
+                  <span className="text-sm">Create variable: </span>
+                  <code className="text-sm font-mono ml-1">{queryTrimmed}</code>
+                </CommandItem>
+              </CommandGroup>
+            </>
           )}
         </CommandList>
       </Command>

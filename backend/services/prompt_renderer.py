@@ -33,7 +33,7 @@ def inject_variables(
     user_id: str = None,
     version: str = "v1",
 ) -> str:
-    """Inject variables with resolution order: account → prompt → runtime."""
+    """Inject variables with resolution order: account → prompt → entity profile → runtime."""
     resolved = {}
 
     # Bundle DB operations within a single connection
@@ -58,6 +58,22 @@ def inject_variables(
 
     # 1. Runtime values (highest priority)
     resolved.update(variables)
+
+    # ── Entity profile resolution ──
+    # If entity_type + entity_id are in the runtime variables, resolve entity
+    # profile properties as dot-notation variables (e.g., entity.name, contact.status)
+    entity_type = resolved.get("entity_type") or resolved.get("entity.type")
+    entity_id = resolved.get("entity_id") or resolved.get("entity.id")
+
+    if entity_type and entity_id:
+        try:
+            entity_vars = _resolve_entity_profile_variables(entity_type, entity_id)
+            # Entity vars have lower priority than explicit runtime values
+            for k, v in entity_vars.items():
+                if k not in resolved:
+                    resolved[k] = v
+        except Exception as e:
+            logger.debug(f"Entity profile resolution skipped: {e}")
     
     # Flatten variables to support dot notation (e.g., {{entity.name}})
     flat_resolved = _flatten_dict(resolved)
@@ -69,3 +85,80 @@ def inject_variables(
             result = re.sub(r"\{\{\s*" + re.escape(key) + r"\s*\}\}", str(value), result)
             
     return result
+
+
+def _resolve_entity_profile_variables(entity_type: str, entity_id: str) -> dict:
+    """Resolve entity profile data into dot-notation variables.
+    
+    Reads entity_profiles + memory_entity_type_config to build:
+      - entity.type, entity.id, entity.name, entity.status, etc.
+      - {entity_type}.name, {entity_type}.status, etc. (e.g., contact.name)
+    """
+    from core.storage import get_memory_db_context
+
+    entity_vars = {}
+
+    # Always set the basic entity identifiers
+    entity_vars["entity"] = {"type": entity_type, "id": entity_id}
+    entity_vars[entity_type] = {"type": entity_type, "id": entity_id}
+
+    try:
+        with get_memory_db_context() as conn:
+            cursor = conn.cursor()
+
+            # Fetch entity profile
+            cursor.execute(
+                "SELECT display_name, subtype, status, properties FROM entity_profiles WHERE entity_type = %s AND entity_id = %s",
+                (entity_type, entity_id),
+            )
+            profile = cursor.fetchone()
+
+            # Fetch entity type config for field mappings
+            cursor.execute(
+                "SELECT metadata_field_map, discovered_schema FROM memory_entity_type_config WHERE entity_type = %s",
+                (entity_type,),
+            )
+            config = cursor.fetchone()
+
+        if profile:
+            # Map the semantic role fields
+            entity_vars["entity"]["name"] = profile.get("display_name") or entity_id
+            entity_vars["entity"]["subtype"] = profile.get("subtype") or ""
+            entity_vars["entity"]["status"] = profile.get("status") or ""
+            entity_vars[entity_type]["name"] = profile.get("display_name") or entity_id
+            entity_vars[entity_type]["subtype"] = profile.get("subtype") or ""
+            entity_vars[entity_type]["status"] = profile.get("status") or ""
+
+            # Also expose all properties from the profile
+            properties = profile.get("properties") or {}
+            if isinstance(properties, str):
+                import json as _json
+                properties = _json.loads(properties)
+
+            for prop_key, prop_value in properties.items():
+                entity_vars["entity"][prop_key] = prop_value
+                entity_vars[entity_type][prop_key] = prop_value
+
+        if config:
+            field_map = config.get("metadata_field_map") or {}
+            if isinstance(field_map, str):
+                import json as _json
+                field_map = _json.loads(field_map)
+
+            # Map semantic roles to their configured field names for reference
+            for role in ("name_field", "subtype_field", "status_field", "summary_field"):
+                mapped_field = field_map.get(role)
+                if mapped_field and profile:
+                    props = profile.get("properties") or {}
+                    if isinstance(props, str):
+                        import json as _json
+                        props = _json.loads(props)
+                    role_key = role.replace("_field", "")
+                    val = props.get(mapped_field, "")
+                    entity_vars["entity"][role_key] = val or entity_vars["entity"].get(role_key, "")
+                    entity_vars[entity_type][role_key] = val or entity_vars[entity_type].get(role_key, "")
+
+    except Exception as e:
+        logger.debug(f"Failed to resolve entity profile for {entity_type}/{entity_id}: {e}")
+
+    return entity_vars

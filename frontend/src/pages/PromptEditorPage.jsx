@@ -29,9 +29,10 @@ import {
   Check,
   ChevronDown,
   AlertCircle,
-  Braces,
+
   Code,
   Eye,
+  Terminal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -76,6 +77,7 @@ import {
   renderPrompt,
   getAvailableVariables,
   reorderSections,
+  createPromptVariable,
 } from "@/lib/api";
 import { toast } from "sonner";
 import VariablesPanel from "@/components/VariablesPanel";
@@ -159,8 +161,7 @@ export default function PromptEditorPage() {
   // Available variables for autocomplete
   const [availableVariables, setAvailableVariables] = useState([]);
   
-  // Variables panel visibility
-  const [showVariablesPanel, setShowVariablesPanel] = useState(true);
+
 
   // Editor ref for imperative ops
   const editorRef = useRef(null);
@@ -280,6 +281,23 @@ export default function PromptEditorPage() {
   const handleVariablesChange = () => {
     loadAvailableVariables();
   };
+
+  // Fix 4: Inline variable creation from @ mention popover
+  const handleCreateVariableInline = useCallback(async (name) => {
+    try {
+      await createPromptVariable(promptId, {
+        name,
+        value: "",
+        description: "",
+        required: false,
+      }, currentVersion);
+      toast.success(`Variable "${name}" created`);
+      loadAvailableVariables();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Failed to create variable");
+      throw error;
+    }
+  }, [promptId, currentVersion]);
 
   const handleSaveSection = async () => {
     if (!selectedSection || !hasChanges) return;
@@ -472,19 +490,10 @@ export default function PromptEditorPage() {
             data-testid="render-btn"
           >
             <Play className="w-4 h-4 mr-2" />
-            Render
+            Render Endpoint
           </Button>
 
-          {/* Variables Toggle Button */}
-          <Button
-            variant={showVariablesPanel ? "default" : "outline"}
-            onClick={() => setShowVariablesPanel(!showVariablesPanel)}
-            className="font-mono"
-            data-testid="toggle-variables-btn"
-          >
-            <Braces className="w-4 h-4 mr-2" />
-            Variables
-          </Button>
+
 
           {/* Save Button */}
           <Button
@@ -623,6 +632,7 @@ export default function PromptEditorPage() {
                     value={sectionContent}
                     onChange={setSectionContent}
                     variables={availableVariables}
+                    onCreateVariable={handleCreateVariableInline}
                     ref={editorRef}
                     data-testid="section-editor"
                   />
@@ -642,15 +652,13 @@ export default function PromptEditorPage() {
         </div>
 
         {/* Variables Sidebar */}
-        {showVariablesPanel && (
-          <div className="variables-sidebar">
-            <VariablesPanel
-              promptId={promptId}
-              version={currentVersion}
-              onVariablesChange={handleVariablesChange}
-            />
-          </div>
-        )}
+        <div className="variables-sidebar">
+          <VariablesPanel
+            promptId={promptId}
+            version={currentVersion}
+            onVariablesChange={handleVariablesChange}
+          />
+        </div>
       </div>
 
       {/* New Section Dialog */}
@@ -763,25 +771,106 @@ export default function PromptEditorPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Render Dialog */}
+      {/* Render Endpoint Dialog */}
       <Dialog open={renderDialog} onOpenChange={setRenderDialog}>
-        <DialogContent className="sm:max-w-2xl" data-testid="render-dialog">
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto" data-testid="render-dialog">
           <DialogHeader>
-            <DialogTitle className="font-mono">Render Prompt</DialogTitle>
+            <DialogTitle className="font-mono flex items-center gap-2">
+              <Terminal className="w-5 h-5" />
+              Render Endpoint
+            </DialogTitle>
             <DialogDescription>
-              Provide variable values to compile your prompt.
+              Use this endpoint to compile your prompt with variable injection.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-4">
+            {/* Endpoint Info */}
+            <div className="space-y-2">
+              <Label className="font-mono text-xs text-muted-foreground uppercase tracking-wider">Endpoint</Label>
+              <div className="flex items-center gap-2">
+                <Badge variant="default" className="font-mono text-xs shrink-0">POST</Badge>
+                <code className="flex-1 text-sm font-mono bg-muted/50 px-3 py-1.5 rounded-md border border-border/50 truncate">
+                  /api/prompts/{promptId}/{currentVersion}/render
+                </code>
+              </div>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Badge variant="outline" className="font-mono text-[10px]">X-API-Key</Badge>
+                <span>Required — API key authentication</span>
+              </div>
+            </div>
+
+            {/* Request Schema */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="font-mono text-xs text-muted-foreground uppercase tracking-wider">Request Body</Label>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 text-xs font-mono"
+                  onClick={() => {
+                    const schema = JSON.stringify({
+                      variables: Object.fromEntries(
+                        getAllVariables().map(v => [v, `<${v}>`])
+                      )
+                    }, null, 2);
+                    navigator.clipboard.writeText(schema);
+                    toast.success("Schema copied");
+                  }}
+                  data-testid="copy-schema-btn"
+                >
+                  <Copy className="w-3 h-3 mr-1" /> Copy Schema
+                </Button>
+              </div>
+              <pre className="text-xs font-mono bg-muted/30 border border-border/50 rounded-md p-3 overflow-x-auto max-h-32">
+{JSON.stringify({
+  variables: Object.fromEntries(
+    getAllVariables().map(v => [v, `<${v}>`])
+  )
+}, null, 2)}
+              </pre>
+            </div>
+
+            {/* cURL */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="font-mono text-xs text-muted-foreground uppercase tracking-wider">cURL</Label>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 text-xs font-mono"
+                  onClick={() => {
+                    const body = JSON.stringify({
+                      variables: Object.fromEntries(
+                        getAllVariables().map(v => [v, renderVariables[v] || `<${v}>`])
+                      )
+                    });
+                    const curl = `curl -X POST "${window.location.origin}/api/prompts/${promptId}/${currentVersion}/render" \\
+  -H "Content-Type: application/json" \\
+  -H "X-API-Key: YOUR_API_KEY" \\
+  -d '${body}'`;
+                    navigator.clipboard.writeText(curl);
+                    toast.success("cURL command copied");
+                  }}
+                  data-testid="copy-curl-btn"
+                >
+                  <Copy className="w-3 h-3 mr-1" /> Copy cURL
+                </Button>
+              </div>
+            </div>
+
+            {/* Divider */}
+            <div className="border-t border-border/50 pt-4">
+              <Label className="font-mono text-xs text-muted-foreground uppercase tracking-wider">Try It</Label>
+            </div>
+
             {/* Variables Input */}
             {getAllVariables().length > 0 && (
               <div className="space-y-3">
-                <Label className="font-mono text-sm">VARIABLES</Label>
                 <div className="grid gap-3">
                   {getAllVariables().map((varName) => (
                     <div key={varName} className="flex items-center gap-3">
-                      <Label className="font-mono text-sm w-32 text-right text-muted-foreground">
+                      <Label className="font-mono text-xs w-36 text-right text-muted-foreground truncate" title={`{{${varName}}}`}>
                         {`{{${varName}}}`}
                       </Label>
                       <Input
@@ -793,7 +882,7 @@ export default function PromptEditorPage() {
                             [varName]: e.target.value,
                           }))
                         }
-                        className="font-mono flex-1"
+                        className="font-mono flex-1 h-8 text-sm"
                         data-testid={`render-var-${varName}`}
                       />
                     </div>
@@ -808,7 +897,7 @@ export default function PromptEditorPage() {
               data-testid="execute-render-btn"
             >
               <Play className="w-4 h-4 mr-2" />
-              Render Prompt
+              Execute Render
             </Button>
 
             {/* Error */}
@@ -834,23 +923,23 @@ export default function PromptEditorPage() {
             {renderResult && (
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label className="font-mono text-sm">COMPILED PROMPT</Label>
+                  <Label className="font-mono text-xs text-muted-foreground uppercase tracking-wider">Response</Label>
                   <Button
                     variant="ghost"
                     size="sm"
                     onClick={handleCopyRendered}
-                    className="font-mono"
+                    className="font-mono h-6 text-xs"
                     data-testid="copy-rendered-btn"
                   >
                     {copied ? (
-                      <Check className="w-4 h-4 mr-1" />
+                      <Check className="w-3 h-3 mr-1" />
                     ) : (
-                      <Copy className="w-4 h-4 mr-1" />
+                      <Copy className="w-3 h-3 mr-1" />
                     )}
                     {copied ? "Copied!" : "Copy"}
                   </Button>
                 </div>
-                <ScrollArea className="h-64 rounded-sm border border-border">
+                <ScrollArea className="h-48 rounded-sm border border-border">
                   <pre className="p-4 text-sm font-mono whitespace-pre-wrap">
                     {renderResult.compiled_prompt}
                   </pre>

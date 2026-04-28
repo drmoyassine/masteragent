@@ -92,10 +92,7 @@
     height: calc(100vh - 140px);
 }
 
-/* When variables panel is hidden */
-.editor-layout:not(:has(.variables-sidebar)) {
-    grid-template-columns: 280px 1fr;
-}
+
 
 .section-sidebar {
     border-right: 1px solid hsl(240 4% 16%);

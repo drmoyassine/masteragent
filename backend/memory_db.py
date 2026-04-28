@@ -851,6 +851,142 @@ def _seed_defaults():
                 ON CONFLICT (entity_type) DO NOTHING
             """, (entity_type,))
 
+        # Default knowledge signals per entity type (only applied when column is still NULL)
+        _DEFAULT_KNOWLEDGE_SIGNALS = {
+            "contact": [
+                {
+                    "name": "Conversion & Closing Patterns",
+                    "description": "Recurring sequences of touchpoints that led to commitment, "
+                        "common triggers that moved contacts from consideration to decision, "
+                        "timing patterns across the sales or enrollment funnel",
+                },
+                {
+                    "name": "Objection & Resolution Repertoire",
+                    "description": "Frequently surfacing objections by contact segment or profile, "
+                        "counter-arguments or reframings that resolved hesitation, "
+                        "objections that consistently killed deals and why",
+                },
+                {
+                    "name": "Relationship & Trust Signals",
+                    "description": "Communication styles and frequencies that built rapport, "
+                        "influencer dynamics (parents, advisors, peers) affecting decisions, "
+                        "trust-eroding events and how they were recovered",
+                },
+                {
+                    "name": "Segment Behavioral Patterns",
+                    "description": "Decision-making tendencies shared across a contact type or demographic, "
+                        "information needs at each stage, "
+                        "urgency or delay patterns tied to season, budget cycle, or life event",
+                },
+                {
+                    "name": "Customer Service Resolution Patterns",
+                    "description": "Issue types that recur across contacts and how they were resolved, "
+                        "escalation triggers and de-escalation tactics, "
+                        "service failures that drove churn and preventable patterns",
+                },
+            ],
+            "institution": [
+                {
+                    "name": "Partnership Value & Fit Signals",
+                    "description": "Institution traits (ranking, location, flexibility) that correlate with "
+                        "high student satisfaction or placement success, "
+                        "red flags in institutional behavior that predict problems",
+                },
+                {
+                    "name": "Negotiation & Capacity Dynamics",
+                    "description": "Pricing flexibility patterns, minimum cohort requirements, "
+                        "timeline rigidity vs. accommodation history, "
+                        "how institutions respond to non-standard requests",
+                },
+                {
+                    "name": "Reputation & Trust Indicators",
+                    "description": "Signals that built or eroded institutional trust over time, "
+                        "consistency between what institutions promise and deliver, "
+                        "staff relationship patterns that affect outcomes",
+                },
+                {
+                    "name": "Competitive Positioning Insights",
+                    "description": "How this institution is perceived versus alternatives by student segment, "
+                        "unique strengths consistently cited in decisions, "
+                        "weaknesses that cause it to lose placements to competitors",
+                },
+            ],
+            "program": [
+                {
+                    "name": "Demand & Fit Patterns",
+                    "description": "Student segments most attracted to this program type and why, "
+                        "program features that are deal-makers vs. nice-to-haves, "
+                        "mismatches between student expectations and program reality",
+                },
+                {
+                    "name": "Conversion & Drop-off Points",
+                    "description": "Stages where student interest consistently peaks or dies, "
+                        "information or experiences that convert interest to enrollment, "
+                        "common drop-off reasons and whether they are addressable",
+                },
+                {
+                    "name": "Competitive Differentiation",
+                    "description": "What distinguishes high-performing programs from alternatives, "
+                        "positioning language that resonates with each student segment, "
+                        "pricing and value framing that overcomes cost objections",
+                },
+                {
+                    "name": "Outcome & Satisfaction Drivers",
+                    "description": "Program elements most cited in positive post-experience feedback, "
+                        "recurring dissatisfiers and whether they are systemic, "
+                        "outcomes (career, academic, personal) that motivate referrals",
+                },
+            ],
+            "supplier": [
+                {
+                    "name": "Reliability & Service Quality Patterns",
+                    "description": "Recurring signals that predict supplier reliability or risk, "
+                        "service failure types and how quickly they were resolved, "
+                        "consistency between quoted and delivered quality",
+                },
+                {
+                    "name": "Cost-Value & Negotiation Dynamics",
+                    "description": "Where supplier pricing aligns or misaligns with student outcomes, "
+                        "flexibility shown on pricing, scope, or deadlines across engagements, "
+                        "hidden costs or value-adds that recur",
+                },
+                {
+                    "name": "Relationship Health Indicators",
+                    "description": "Communication patterns that indicate a strong vs. strained partnership, "
+                        "supplier behaviors that signal growing or shrinking commitment, "
+                        "escalation paths and resolution effectiveness",
+                },
+            ],
+            "product": [
+                {
+                    "name": "Demand Drivers & Positioning",
+                    "description": "Features or conditions that consistently increase product uptake, "
+                        "messaging frames that resonate with specific buyer segments, "
+                        "seasonal or lifecycle timing that influences demand",
+                },
+                {
+                    "name": "Objection & Barrier Patterns",
+                    "description": "Recurring objections by buyer type and effective responses, "
+                        "pricing sensitivities and how discounting affected close rates, "
+                        "competitor alternatives that come up most and how they were countered",
+                },
+                {
+                    "name": "Upsell & Cross-sell Signals",
+                    "description": "Product combinations that consistently appear in high-value deals, "
+                        "timing signals that indicate readiness for an upgrade or add-on, "
+                        "buyer profiles that over-index for expansion revenue",
+                },
+            ],
+        }
+
+        for entity_type, signals in _DEFAULT_KNOWLEDGE_SIGNALS.items():
+            cursor.execute("""
+                UPDATE memory_entity_type_config
+                SET knowledge_signals_prompt = %s
+                WHERE entity_type = %s
+                  AND knowledge_signals_prompt IS NULL
+            """, (json.dumps(signals), entity_type))
+
         logger.info("Memory system defaults seeded")
 
 

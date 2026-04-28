@@ -8,6 +8,7 @@ import { insert } from '@milkdown/kit/utils';
 import { tableBlock, tableBlockConfig } from '@milkdown/kit/component/table-block';
 import { mentionPlugin, MentionPopover } from './milkdown/VariableMentionPlugin';
 import { slashPlugin, SlashMenu } from './milkdown/SlashMenu';
+import { selectionToolbarPlugin, SelectionToolbar } from './milkdown/SelectionToolbar';
 
 // SVG icons for table controls (small, monochrome, 16x16)
 const icons = {
@@ -22,7 +23,7 @@ const icons = {
   row_drag_handle: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="19" r="1"/></svg>',
 };
 
-const MilkdownInner = forwardRef(({ value, onChange, variables }, ref) => {
+const MilkdownInner = forwardRef(({ value, onChange, variables, onCreateVariable }, ref) => {
   const variablesRef = useRef(variables);
 
   // Keep variables ref current without triggering editor rebuilds.
@@ -54,7 +55,8 @@ const MilkdownInner = forwardRef(({ value, onChange, variables }, ref) => {
       .use(tableBlock)
       .use(listener)
       .use(mentionPlugin)
-      .use(slashPlugin);
+      .use(slashPlugin)
+      .use(selectionToolbarPlugin);
   }, []); // Empty deps: key={section.filename} handles section switching.
 
   // Expose imperative insertText() to the parent via ref.
@@ -72,8 +74,9 @@ const MilkdownInner = forwardRef(({ value, onChange, variables }, ref) => {
       <div className="milkdown-editor prose prose-invert max-w-none">
         <Milkdown />
       </div>
-      <MentionPopover variablesRef={variablesRef} />
+      <MentionPopover variablesRef={variablesRef} onCreateVariable={onCreateVariable} />
       <SlashMenu />
+      <SelectionToolbar />
     </>
   );
 });

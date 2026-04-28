@@ -234,7 +234,7 @@ async def delete_prompt_variable(prompt_id: str, name: str, version: str = "v1",
 
 @router.get("/prompts/{prompt_id}/available-variables", response_model=List[AvailableVariableResponse])
 async def get_available_variables(prompt_id: str, version: str = "v1", user: dict = Depends(require_auth)):
-    """Get all available variables for a prompt (prompt-level + account-level)."""
+    """Get all available variables for a prompt (prompt-level + account-level + entity schema)."""
     variables = []
     seen = set()
     with get_db_context() as conn:
@@ -259,4 +259,70 @@ async def get_available_variables(prompt_id: str, version: str = "v1", user: dic
                     name=row["name"], value=row["value"], description=row["description"],
                     source="account", required=False,
                 ))
+
+    # Entity schema variables from the memory system (system-sourced, read-only)
+    try:
+        from core.storage import get_memory_db_context
+        with get_memory_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT etc.entity_type, etc.metadata_field_map, etc.discovered_schema,
+                       met.icon
+                FROM memory_entity_type_config etc
+                LEFT JOIN memory_entity_types met ON met.name = etc.entity_type
+            """)
+            configs = cursor.fetchall()
+
+        for config in configs:
+            entity_type = config["entity_type"]
+            field_map = config.get("metadata_field_map") or {}
+            discovered = config.get("discovered_schema") or []
+
+            if isinstance(field_map, str):
+                import json as _json
+                field_map = _json.loads(field_map)
+
+            icon = config.get("icon") or "📁"
+
+            # Always expose entity.type and entity.id
+            for base_prefix in ["entity", entity_type]:
+                for var_name, desc in [
+                    (f"{base_prefix}.type", f"Entity type name ({entity_type})"),
+                    (f"{base_prefix}.id", f"Entity ID (passed at render time)"),
+                    (f"{base_prefix}.name", f"Display name from {icon} {entity_type} profile"),
+                    (f"{base_prefix}.subtype", f"Subtype from {icon} {entity_type} profile"),
+                    (f"{base_prefix}.status", f"Status from {icon} {entity_type} profile"),
+                ]:
+                    if var_name not in seen:
+                        seen.add(var_name)
+                        variables.append(AvailableVariableResponse(
+                            name=var_name, value=None, description=desc,
+                            source="system", required=False,
+                        ))
+
+                # Semantic role fields from metadata_field_map
+                if field_map.get("summary_field"):
+                    var_name = f"{base_prefix}.summary"
+                    if var_name not in seen:
+                        seen.add(var_name)
+                        variables.append(AvailableVariableResponse(
+                            name=var_name, value=None,
+                            description=f"Summary field ({field_map['summary_field']}) from {icon} {entity_type}",
+                            source="system", required=False,
+                        ))
+
+                # Discovered schema fields (auto-detected CRM fields)
+                for field in discovered:
+                    var_name = f"{base_prefix}.{field}"
+                    if var_name not in seen:
+                        seen.add(var_name)
+                        variables.append(AvailableVariableResponse(
+                            name=var_name, value=None,
+                            description=f"CRM field '{field}' from {icon} {entity_type} profile",
+                            source="system", required=False,
+                        ))
+
+    except Exception as e:
+        logger.warning(f"Failed to load entity schema variables: {e}")
+
     return variables
