@@ -325,7 +325,7 @@ class MemoryResponse(BaseModel):
 class IntelligenceCreate(BaseModel):
     primary_entity_type: str
     primary_entity_id: str
-    Intelligence_type: Optional[str] = None  # behavior_pattern, risk_signal, opportunity,
+    knowledge_type: Optional[str] = None  # behavior_pattern, risk_signal, opportunity,
                                         # relationship_shift, preference, milestone
     name: str
     content: str                         # Markdown
@@ -338,7 +338,7 @@ class IntelligenceResponse(BaseModel):
     primary_entity_type: str
     primary_entity_id: str
     source_memory_ids: List[str]
-    Intelligence_type: Optional[str]
+    knowledge_type: Optional[str]
     name: str
     content: str
     summary: Optional[str]
@@ -353,7 +353,7 @@ class IntelligenceUpdate(BaseModel):
     name: Optional[str] = None
     content: Optional[str] = None
     summary: Optional[str] = None
-    Intelligence_type: Optional[str] = None
+    knowledge_type: Optional[str] = None
     status: Optional[str] = None
 
 # ============================================
