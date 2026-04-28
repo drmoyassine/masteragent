@@ -596,26 +596,7 @@ export default function PromptEditorPage() {
                 </div>
               </div>
 
-              {/* Available Variables Horizontal List */}
-              {availableVariables.length > 0 && (
-                <div className="flex items-center gap-3 px-4 py-2 bg-muted/50 border-b border-border">
-                  <span className="text-sm text-muted-foreground shrink-0">Variables:</span>
-                  <div className="flex flex-wrap gap-1.5 justify-end flex-1">
-                    {availableVariables.map((v) => (
-                      <Badge
-                        key={v.name}
-                        variant="secondary"
-                        className="text-xs font-mono bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 hover:bg-green-200 dark:hover:bg-green-900/50 cursor-pointer transition-colors"
-                        onClick={() => {
-                          editorRef.current?.insertText(`{{${v.name}}}`);
-                        }}
-                      >
-                        {`{{${v.name}}}`}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-              )}
+
 
               <div className="editor-content">
                 {markdownMode ? (
