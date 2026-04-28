@@ -28,6 +28,12 @@ export default function IntelligenceInspector({ editingIntelligence, setEditingI
                   <Label className="text-xs text-muted-foreground">Entity ID</Label>
                   <div className="font-mono text-sm">{editingIntelligence.primary_entity_id}</div>
                 </div>
+                {editingIntelligence.entity_display_name && (
+                  <div className="col-span-2">
+                    <Label className="text-xs text-muted-foreground">Entity Name</Label>
+                    <div className="font-semibold">{editingIntelligence.entity_display_name}</div>
+                  </div>
+                )}
                 <div>
                   <Label className="text-xs text-muted-foreground">Created</Label>
                   <div className="font-medium">{format(new Date(editingIntelligence.created_at), "MMM d, yyyy")}</div>

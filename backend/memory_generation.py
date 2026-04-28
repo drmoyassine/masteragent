@@ -8,6 +8,7 @@ from typing import Optional
 from core.storage import get_memory_db_context, flush_interaction_cache
 from memory_services import (
     call_llm,
+    call_llm_with_thinking,
     extract_entities,
     generate_embedding,
     get_llm_config,
@@ -27,6 +28,14 @@ from memory_helpers import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _llm_call(node: dict):
+    """Return (llm_fn, extra_kwargs) based on the node's thinking config."""
+    extra = node.get("extra_config") or {}
+    if extra.get("thinking_enabled"):
+        return call_llm_with_thinking, {"max_think_steps": int(extra.get("max_think_steps", 5))}
+    return call_llm, {}
 
 
 # ── Job log helpers (prevent double-firing) ───────────────────────────────────
@@ -303,19 +312,22 @@ async def _execute_pipeline_node(node: dict, ctx: dict):
             "entity": {"type": ctx["entity_type"], "id": ctx["entity_id"]},
             "date": ctx["interaction_date"]
         })
-        ctx["derived_text"] = await call_llm(
+        llm_fn, llm_kwargs = _llm_call(node)
+        ctx["derived_text"] = await llm_fn(
             llm_context[:10000],
             system_prompt=system_prompt,
             max_tokens=1200,
             config_id=node_id,
+            **llm_kwargs,
         )
         logger.info(f"Memory generation node {node_id}: produced summary")
 
     elif task_type == "summarization":
         system_prompt = get_system_prompt_by_config_id(node_id) or "Summarize this in 1-2 sentences:\n\n{{text}}"
         prompt = system_prompt.replace("{{text}}", ctx["derived_text"][:4000])
-        ctx["derived_text"] = await call_llm(
-            prompt, max_tokens=200, config_id=node_id,
+        llm_fn, llm_kwargs = _llm_call(node)
+        ctx["derived_text"] = await llm_fn(
+            prompt, max_tokens=200, config_id=node_id, **llm_kwargs,
         )
         logger.info(f"Summarization node {node_id}: summarized text")
 
@@ -324,11 +336,13 @@ async def _execute_pipeline_node(node: dict, ctx: dict):
             ctx["derived_text"] = await scrub_pii(ctx["derived_text"])
         else:
             system_prompt = get_system_prompt_by_config_id(node_id) or "Remove all PII from the following text. Return only the scrubbed text."
-            ctx["derived_text"] = await call_llm(
+            llm_fn, llm_kwargs = _llm_call(node)
+            ctx["derived_text"] = await llm_fn(
                 ctx["derived_text"][:8000],
                 system_prompt=system_prompt,
                 max_tokens=2000,
                 config_id=node_id,
+                **llm_kwargs,
             )
         logger.info(f"PII scrubbing node {node_id}: scrubbed text")
 
@@ -345,11 +359,13 @@ async def _execute_pipeline_node(node: dict, ctx: dict):
             signals = entity_config.get("knowledge_signals_prompt") or []
             signal_vars["knowledge_signals"] = _format_signal_definitions(signals)
         system_prompt = inject_variables(system_prompt, signal_vars)
-        ctx["derived_text"] = await call_llm(
+        llm_fn, llm_kwargs = _llm_call(node)
+        ctx["derived_text"] = await llm_fn(
             ctx["derived_text"][:8000],
             system_prompt=system_prompt,
             max_tokens=800,
             config_id=node_id,
+            **llm_kwargs,
         )
         logger.info(f"{task_type} node {node_id}: generated knowledge")
 

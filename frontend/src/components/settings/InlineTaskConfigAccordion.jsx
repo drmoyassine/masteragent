@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Brain, Sparkles, Clock, Eye, Layers, Cpu, EyeOff, AlertCircle, FileText, CheckCircle2, ChevronDown, ChevronUp, Save, RefreshCw, Trash2 } from "lucide-react";
+import { Brain, Sparkles, Clock, Eye, Layers, Cpu, EyeOff, AlertCircle, FileText, CheckCircle2, ChevronDown, ChevronUp, Save, RefreshCw, Trash2, Lightbulb } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -63,7 +63,9 @@ export function InlineTaskConfigAccordion({
         model_name: config.model_name || "",
         prompt_id: config.prompt_id || "",
         inline_system_prompt: config.inline_system_prompt || "",
-        inline_schema: config.inline_schema || ""
+        inline_schema: config.inline_schema || "",
+        thinking_enabled: config.extra_config?.thinking_enabled ?? false,
+        max_think_steps: config.extra_config?.max_think_steps ?? 5,
     });
     const [availablePrompts, setAvailablePrompts] = useState([]);
     
@@ -112,7 +114,12 @@ export function InlineTaskConfigAccordion({
             model_name: formData.model_name,
             prompt_id: isLinked ? (formData.prompt_id || null) : null,
             inline_system_prompt: isLinked ? null : formData.inline_system_prompt,
-            inline_schema: isLinked ? null : formData.inline_schema
+            inline_schema: isLinked ? null : formData.inline_schema,
+            extra_config: {
+                ...(config.extra_config || {}),
+                thinking_enabled: formData.thinking_enabled,
+                max_think_steps: Number(formData.max_think_steps),
+            },
         };
         onSaveConfig(config.id, payload);
         setExpanded(false);
@@ -320,6 +327,42 @@ export function InlineTaskConfigAccordion({
                         </div>
                     </div>
                     
+                    {/* Thinking Section */}
+                    {hasPrompting && !isGliner && !isZendata && (
+                        <div className="space-y-4 pt-4 border-t">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <h4 className="text-sm font-semibold flex items-center gap-2">
+                                        <Lightbulb className="w-4 h-4 text-yellow-400" /> Thinking
+                                    </h4>
+                                    <p className="text-xs text-muted-foreground mt-1">
+                                        Model reasons step-by-step before producing output. Each think step is an internal LLM call.
+                                    </p>
+                                </div>
+                                <Switch
+                                    checked={formData.thinking_enabled}
+                                    onCheckedChange={(v) => setFormData(f => ({ ...f, thinking_enabled: v }))}
+                                />
+                            </div>
+                            {formData.thinking_enabled && (
+                                <div className="flex items-center gap-4 bg-black/10 p-3 rounded-lg border border-yellow-400/20">
+                                    <Label className="text-xs whitespace-nowrap">Max Think Steps</Label>
+                                    <Input
+                                        type="number"
+                                        min={1}
+                                        max={10}
+                                        value={formData.max_think_steps}
+                                        onChange={(e) => setFormData(f => ({ ...f, max_think_steps: e.target.value }))}
+                                        className="w-24 h-8 text-sm"
+                                    />
+                                    <p className="text-xs text-muted-foreground">
+                                        Model uses what it needs, up to this limit. Default: 5.
+                                    </p>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
                     <div className="pt-4 flex justify-end gap-3 mt-4 border-t">
                         <Button variant="ghost" onClick={() => setExpanded(false)}>Cancel</Button>
                         <Button onClick={handleSave} className="bg-primary text-primary-foreground hover:bg-primary/90 gap-2">

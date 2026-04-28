@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import api, { triggerMemoryGeneration, fetchProviderModels } from "@/lib/api";
+import api, { triggerMemoryGeneration, triggerIntelligenceCheck, fetchProviderModels } from "@/lib/api";
 import { useEffect } from "react";
 
 // â”€â”€â”€ Threshold Overrides Table â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -656,6 +656,19 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
 // â”€â”€â”€ Intelligence Tab â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function IntelligenceTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, onDeleteConfig, onAddConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline, entityTypes }) {
     const privatePipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "intelligence").sort((a,b) => a.execution_order - b.execution_order);
+    const [isTriggering, setIsTriggering] = useState(false);
+
+    const handleRunNow = async () => {
+        setIsTriggering(true);
+        try {
+            await triggerIntelligenceCheck();
+            toast.success("Intelligence extraction check triggered. Entities at threshold will be queued.");
+        } catch (error) {
+            toast.error(error?.response?.data?.detail || "Failed to trigger intelligence check");
+        } finally {
+            setIsTriggering(false);
+        }
+    };
 
     return (
         <div className="space-y-6">
@@ -671,14 +684,26 @@ function IntelligenceTab({ settings, onUpdateSettings, llmConfigs, llmProviders,
 
             {/* Unified Intelligence Configuration */}
             <Card>
-                <CardHeader className="pb-3">
-                    <div className="flex items-center gap-2">
-                        <Settings className="w-5 h-5 text-purple-500" />
-                        <CardTitle className="text-lg">Intelligence Configuration</CardTitle>
+                <CardHeader className="pb-3 flex flex-row items-start justify-between">
+                    <div>
+                        <div className="flex items-center gap-2">
+                            <Settings className="w-5 h-5 text-purple-500" />
+                            <CardTitle className="text-lg">Intelligence Configuration</CardTitle>
+                        </div>
+                        <CardDescription className="text-xs mt-1.5">
+                            Prior context injection and mining trigger thresholds.
+                        </CardDescription>
                     </div>
-                    <CardDescription className="text-xs mt-1.5">
-                        Prior context injection and mining trigger thresholds.
-                    </CardDescription>
+                    <Button
+                        size="sm"
+                        variant="outline"
+                        className="gap-1.5"
+                        onClick={handleRunNow}
+                        disabled={isTriggering}
+                    >
+                        <Play className="w-3.5 h-3.5" />
+                        Run Now
+                    </Button>
                 </CardHeader>
                 <CardContent className="space-y-6">
                     {/* Â§ Prior Context */}

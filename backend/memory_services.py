@@ -7,6 +7,7 @@ This file re-exports everything so existing imports continue to work.
 from services import (  # noqa: F401
     call_llm,
     call_llm_vision,
+    call_llm_with_thinking,
     chunk_text,
     extract_entities,
     extract_entities_gliner,

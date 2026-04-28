@@ -1,4 +1,5 @@
 """services/llm.py — OpenAI-compatible LLM calls"""
+import json
 import logging
 from typing import Optional
 
@@ -7,6 +8,27 @@ import httpx
 from services.config_helpers import get_llm_config
 
 logger = logging.getLogger(__name__)
+
+_THINK_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "think",
+        "description": (
+            "Use this tool to reason, analyze, and reflect before producing your final output. "
+            "Call it as many times as needed to think through the problem thoroughly."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "reasoning": {
+                    "type": "string",
+                    "description": "Your internal reasoning, analysis, or reflection step.",
+                }
+            },
+            "required": ["reasoning"],
+        },
+    },
+}
 
 
 def _build_llm_headers(api_key: str) -> dict:
@@ -65,6 +87,99 @@ async def call_llm(
             raise RuntimeError(f"LLM call failed: {response.status_code} - {response.text}")
     except Exception as e:
         logger.error(f"LLM call error: {e}")
+        raise RuntimeError(str(e))
+    return ""
+
+
+async def call_llm_with_thinking(
+    prompt: str,
+    system_prompt: str = None,
+    max_tokens: int = 1000,
+    task_type: str = "summarization",
+    config_id: Optional[str] = None,
+    max_think_steps: int = 5,
+) -> str:
+    """Call LLM with n8n-style Think tool. Model reasons via think() calls before final output."""
+    if config_id:
+        from services.config_helpers import get_llm_config_by_id
+        config = get_llm_config_by_id(config_id)
+    else:
+        config = get_llm_config(task_type)
+
+    if not config:
+        logger.warning(f"LLM config not configured for {task_type}/{config_id}")
+        return ""
+
+    api_key = config.get("api_key_encrypted", "")
+    api_base = config.get("api_base_url", "https://api.openai.com/v1").rstrip("/")
+    model = config.get("model_name", "gpt-4o-mini")
+
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+
+    think_steps = 0
+
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            while True:
+                request_body = {
+                    "model": model,
+                    "messages": messages,
+                    "temperature": 0.3,
+                    "max_completion_tokens": max_tokens,
+                    "tools": [_THINK_TOOL],
+                    "tool_choice": "auto",
+                }
+
+                response = await client.post(
+                    f"{api_base}/chat/completions",
+                    headers=_build_llm_headers(api_key),
+                    json=request_body,
+                )
+                if response.status_code != 200:
+                    logger.error(f"LLM thinking call failed: {response.status_code} - {response.text}")
+                    raise RuntimeError(f"LLM call failed: {response.status_code} - {response.text}")
+
+                choice = response.json()["choices"][0]
+                assistant_message = choice["message"]
+                tool_calls = assistant_message.get("tool_calls") or []
+
+                if not tool_calls:
+                    return assistant_message.get("content") or ""
+
+                # Append assistant message and echo each think() call back as a tool result
+                messages.append(assistant_message)
+                for tc in tool_calls:
+                    if tc["function"]["name"] == "think":
+                        reasoning = json.loads(tc["function"]["arguments"]).get("reasoning", "")
+                        think_steps += 1
+                        logger.debug(f"[think step {think_steps}] {reasoning[:120]}")
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc["id"],
+                            "content": reasoning,
+                        })
+
+                if think_steps >= max_think_steps:
+                    # Budget exhausted — force final answer without tools
+                    final_resp = await client.post(
+                        f"{api_base}/chat/completions",
+                        headers=_build_llm_headers(api_key),
+                        json={
+                            "model": model,
+                            "messages": messages,
+                            "temperature": 0.3,
+                            "max_completion_tokens": max_tokens,
+                        },
+                    )
+                    if final_resp.status_code == 200:
+                        return final_resp.json()["choices"][0]["message"].get("content") or ""
+                    raise RuntimeError(f"Final LLM call failed: {final_resp.status_code}")
+
+    except Exception as e:
+        logger.error(f"LLM thinking call error: {e}")
         raise RuntimeError(str(e))
     return ""
 

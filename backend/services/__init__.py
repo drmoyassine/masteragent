@@ -7,7 +7,7 @@ or from the backward-compat shim: `from memory_services import call_llm`
 """
 from services.config_helpers import get_llm_config, get_memory_settings, get_system_prompt
 from services.embeddings import generate_embedding, generate_embeddings_batch
-from services.llm import call_llm, call_llm_vision
+from services.llm import call_llm, call_llm_vision, call_llm_with_thinking
 from services.processing import (
     chunk_text,
     extract_entities,
@@ -30,7 +30,7 @@ from services.search import (
 
 __all__ = [
     "get_llm_config", "get_memory_settings", "get_system_prompt",
-    "call_llm", "call_llm_vision",
+    "call_llm", "call_llm_vision", "call_llm_with_thinking",
     "generate_embedding", "generate_embeddings_batch",
     "search_interactions_by_vector", "search_interactions_by_fulltext",
     "search_memories_by_vector", "search_memories_by_fulltext",

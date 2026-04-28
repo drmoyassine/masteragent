@@ -28,6 +28,7 @@ import {
   getEntityTypeConfig,
   bulkDeleteIntelligenceAdmin,
   bulkApproveIntelligenceAdmin,
+  reprocessIntelligence,
   bulkDeleteKnowledgeAdmin,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -612,6 +613,19 @@ export default function MemoryExplorerPage() {
     }
   };
 
+  const handleBulkReprocessIntelligence = async () => {
+    setProcessingBulk(true);
+    try {
+      const res = await reprocessIntelligence(selectedIntelligenceIds);
+      toast.success(res.data.message);
+      clearIntelligenceSelection();
+    } catch (error) {
+      toast.error("Failed to queue reprocess");
+    } finally {
+      setProcessingBulk(false);
+    }
+  };
+
   const handleBulkApproveIntelligence = async () => {
     setProcessingBulk(true);
     try {
@@ -722,6 +736,7 @@ export default function MemoryExplorerPage() {
             onApprove={handleApproveIntelligence}
             onBulkDelete={handleBulkDeleteIntelligence}
             onBulkApprove={handleBulkApproveIntelligence}
+            onBulkReprocess={handleBulkReprocessIntelligence}
             loading={loading}
             visCols={visCols}
             renderColumnToggle={renderColumnToggle}

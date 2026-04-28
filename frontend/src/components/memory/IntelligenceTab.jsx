@@ -5,12 +5,12 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { RefreshCw, Trash2, Check, Edit, CheckCheck } from "lucide-react";
+import { RefreshCw, Trash2, Check, Edit, CheckCheck, RotateCcw } from "lucide-react";
 import { stringToColor } from "./utils";
 
 export default function IntelligenceTab({
   intelligence, selectedIds, toggleAll, toggleOne,
-  onEdit, onApprove, onBulkDelete, onBulkApprove,
+  onEdit, onApprove, onBulkDelete, onBulkApprove, onBulkReprocess,
   loading, visCols, renderColumnToggle, onLoad, processingBulk,
 }) {
   const hasDraftSelected = selectedIds.some(id => intelligence.find(i => i.id === id)?.status === "draft");
@@ -31,6 +31,10 @@ export default function IntelligenceTab({
                   Approve
                 </Button>
               )}
+              <Button variant="outline" size="sm" onClick={onBulkReprocess} disabled={processingBulk} className="border-blue-600 text-blue-400 hover:bg-blue-600/10">
+                <RotateCcw className="w-4 h-4 mr-2" />
+                Reprocess
+              </Button>
               <Button variant="destructive" size="sm" onClick={onBulkDelete} disabled={processingBulk}>
                 <Trash2 className="w-4 h-4 mr-2" />
                 Delete
@@ -72,7 +76,7 @@ export default function IntelligenceTab({
                             case "seq_id": return <TableCell key={col.key} className="font-mono text-muted-foreground">#{ins.seq_id}</TableCell>;
                             case "created_at": return <TableCell key={col.key} className="whitespace-nowrap">{format(new Date(ins.created_at), "MMM d, yyyy")}</TableCell>;
                             case "entity": return (<TableCell key={col.key}><Badge variant="outline" style={{ borderColor: stringToColor(ins.primary_entity_type), color: stringToColor(ins.primary_entity_type) }}>{ins.primary_entity_type}</Badge><span className="font-mono text-xs ml-2 text-muted-foreground">{ins.entity_display_name || ins.primary_entity_id}</span></TableCell>);
-                            case "signal": return (<TableCell key={col.key}><Badge variant="outline" style={{ borderColor: stringToColor(ins.knowledge_type), color: stringToColor(ins.knowledge_type) }}>{ins.knowledge_type || "other"}</Badge></TableCell>);
+                            case "signal": return (<TableCell key={col.key}><div className="flex flex-wrap gap-1">{(ins.knowledge_type || "other").split(",").map((t, i) => { const s = t.trim(); return <Badge key={i} variant="outline" style={{ borderColor: stringToColor(s), color: stringToColor(s) }}>{s}</Badge>; })}</div></TableCell>);
                             case "report": return (<TableCell key={col.key} className="max-w-sm"><div className="font-medium text-sm">{ins.name}</div><div className="text-xs text-muted-foreground line-clamp-2 mt-0.5">{ins.summary}</div></TableCell>);
                             case "status": return (<TableCell key={col.key}><Badge variant={ins.status === "confirmed" ? "default" : "secondary"}>{ins.status}</Badge></TableCell>);
                             case "actions": return (<TableCell key={col.key} onClick={(e) => e.stopPropagation()}><div className="flex gap-1">{ins.status === "draft" && (<Button variant="ghost" size="icon" onClick={() => onApprove(ins.id)}><Check className="w-4 h-4 text-green-500" /></Button>)}<Button variant="ghost" size="icon" onClick={() => onEdit(ins)}><Edit className="w-4 h-4" /></Button></div></TableCell>);
@@ -81,8 +85,18 @@ export default function IntelligenceTab({
                         })}
                       </TableRow>
                     </TooltipTrigger>
-                    <TooltipContent side="bottom" align="start" className="max-w-2xl bg-secondary text-secondary-foreground border-border break-words shadow-lg pointer-events-none z-40">
-                      <p className="text-sm leading-relaxed whitespace-pre-wrap">{ins.content || ins.summary}</p>
+                    <TooltipContent side="bottom" align="start" className="max-w-2xl bg-secondary text-secondary-foreground border-border break-words shadow-lg pointer-events-none z-40 space-y-2">
+                      <div className="flex items-center gap-2 pb-1 border-b border-border/50">
+                        <span className="text-xs font-semibold text-muted-foreground">{ins.entity_display_name || ins.primary_entity_id}</span>
+                        <div className="flex gap-1">{(ins.knowledge_type || "other").split(",").map((t, i) => { const s = t.trim(); return <Badge key={i} variant="outline" className="text-[10px] px-1 py-0" style={{ borderColor: stringToColor(s), color: stringToColor(s) }}>{s}</Badge>; })}</div>
+                      </div>
+                      <p className="text-sm leading-relaxed whitespace-pre-wrap">{ins.content}</p>
+                      {ins.summary && (
+                        <div className="pt-1 border-t border-border/50">
+                          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">Action</p>
+                          <p className="text-xs text-amber-400 leading-relaxed">{ins.summary}</p>
+                        </div>
+                      )}
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>

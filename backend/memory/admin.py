@@ -491,6 +491,38 @@ async def trigger_memory_generation(
     return {"message": "Memory generation queueing completed", "include_today": include_today}
 
 
+@router.post("/trigger/run-intelligence-check")
+async def trigger_intelligence_check(admin: dict = Depends(require_admin_auth)):
+    """Manually trigger intelligence extraction check across all entities."""
+    from memory_compaction import run_compaction_check
+    await run_compaction_check()
+    return {"message": "Intelligence extraction check completed"}
+
+
+@router.post("/trigger/reprocess-intelligence")
+async def trigger_reprocess_intelligence(body: dict, admin: dict = Depends(require_admin_auth)):
+    """Re-queue intelligence extraction for the entities of the given intelligence IDs."""
+    from memory.queue import knowledge_queue
+    intelligence_ids = body.get("intelligence_ids", [])
+    if not intelligence_ids:
+        return {"message": "No intelligence IDs provided", "queued": 0}
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        placeholders = ",".join(["%s"] * len(intelligence_ids))
+        cursor.execute(
+            f"SELECT DISTINCT primary_entity_type, primary_entity_id FROM intelligence WHERE id IN ({placeholders})",
+            intelligence_ids,
+        )
+        entities = [dict(r) for r in cursor.fetchall()]
+    for e in entities:
+        await knowledge_queue.add(
+            "generate_insight",
+            {"entity_type": e["primary_entity_type"], "entity_id": e["primary_entity_id"]},
+            {"priority": 3},
+        )
+    return {"message": f"Reprocess queued for {len(entities)} entity/entities", "queued": len(entities)}
+
+
 @router.post("/trigger/run-Knowledge-check")
 async def trigger_lesson_check(admin: dict = Depends(require_admin_auth)):
     """Manually trigger the Knowledge accumulation check via queue drop."""
