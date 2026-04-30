@@ -186,6 +186,8 @@ def _create_interaction_tables(cursor):
             primary_entity_id       TEXT NOT NULL,
             metadata                JSONB DEFAULT '{}',
             metadata_field_map      JSONB DEFAULT '{}',
+            has_attachments         BOOLEAN DEFAULT FALSE,
+            attachment_refs         JSONB DEFAULT '[]',
             embedding               vector,
             processing_errors       JSONB DEFAULT '{}',
             source                  TEXT DEFAULT 'api',
@@ -607,8 +609,10 @@ def _run_migrations(cursor):
         except Exception as e:
             logger.error(f"Failed to add {col} to memory_llm_providers: {e}")
 
-    # Interactions columns added for reactive webhooks
+    # Interactions columns added for attachments + reactive webhooks
     for col, col_def in [
+        ("has_attachments", "BOOLEAN DEFAULT FALSE"),
+        ("attachment_refs", "JSONB DEFAULT '[]'"),
         ("is_enriched", "BOOLEAN DEFAULT FALSE"),
         ("outbound_webhooks_fired", "TEXT[] DEFAULT '{}'"),
     ]:
