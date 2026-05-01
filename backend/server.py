@@ -165,8 +165,8 @@ mcp = FastApiMCP(
     include_tags=["📝 Prompts", "🧠 Memory"],
     http_client=_mcp_http_client,
 )
-mcp.mount()
-logger.info("MCP server mounted at /mcp")
+mcp.mount(mount_path="/api/mcp")
+logger.info("MCP server mounted at /api/mcp")
 
 # ─────────────────────────────────────────────
 # Middleware
