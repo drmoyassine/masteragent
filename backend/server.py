@@ -145,10 +145,11 @@ app.include_router(_meta_router, prefix="/api", include_in_schema=False)
 app.include_router(memory_router)
 
 # ─────────────────────────────────────────────
-# MCP Server (fastapi-mcp)
-# Exposes prompts + memory agent routes as MCP tools.
-# The http_client pre-injects MCP_SERVICE_KEY into every tool call so
-# n8n doesn't need to pass credentials — the MCP server is the trusted client.
+# MCP Servers (fastapi-mcp, streamable HTTP)
+# Two separate endpoints so n8n can connect per-domain:
+#   /api/prompts/mcp  → prompt CRUD + render + variables
+#   /api/memory/mcp   → memory agent SDK (ingest, search, CRUD)
+# The http_client pre-injects MCP_SERVICE_KEY into every tool call.
 # ─────────────────────────────────────────────
 import httpx
 from fastapi_mcp import FastApiMCP
@@ -159,14 +160,21 @@ _mcp_http_client = httpx.AsyncClient(headers={
     "X-API-Key": _mcp_svc_key,
 }) if _mcp_svc_key else None
 
-mcp = FastApiMCP(
+FastApiMCP(
     app,
-    name="MasterAgent",
-    include_tags=["📝 Prompts", "🧠 Memory"],
+    name="MasterAgent Prompts",
+    include_tags=["📝 Prompts"],
     http_client=_mcp_http_client,
-)
-mcp.mount(mount_path="/api/mcp")
-logger.info("MCP server mounted at /api/mcp")
+).mount_http(mount_path="/api/prompts/mcp")
+
+FastApiMCP(
+    app,
+    name="MasterAgent Memory",
+    include_tags=["🧠 Memory"],
+    http_client=_mcp_http_client,
+).mount_http(mount_path="/api/memory/mcp")
+
+logger.info("MCP servers mounted: /api/prompts/mcp, /api/memory/mcp")
 
 # ─────────────────────────────────────────────
 # Middleware
