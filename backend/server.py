@@ -145,6 +145,30 @@ app.include_router(_meta_router, prefix="/api", include_in_schema=False)
 app.include_router(memory_router)
 
 # ─────────────────────────────────────────────
+# MCP Server (fastapi-mcp)
+# Exposes prompts + memory agent routes as MCP tools.
+# The http_client pre-injects MCP_SERVICE_KEY into every tool call so
+# n8n doesn't need to pass credentials — the MCP server is the trusted client.
+# ─────────────────────────────────────────────
+import httpx
+from fastapi_mcp import FastApiMCP
+
+_mcp_svc_key = os.environ.get("MCP_SERVICE_KEY", "")
+_mcp_http_client = httpx.AsyncClient(headers={
+    "Authorization": f"Bearer {_mcp_svc_key}",
+    "X-API-Key": _mcp_svc_key,
+}) if _mcp_svc_key else None
+
+mcp = FastApiMCP(
+    app,
+    name="MasterAgent",
+    include_tags=["📝 Prompts", "🧠 Memory"],
+    http_client=_mcp_http_client,
+)
+mcp.mount()
+logger.info("MCP server mounted at /mcp")
+
+# ─────────────────────────────────────────────
 # Middleware
 # ─────────────────────────────────────────────
 app.add_middleware(

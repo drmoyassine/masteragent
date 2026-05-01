@@ -12,6 +12,6 @@ from memory.workspace import router as workspace_router
 memory_router = APIRouter(prefix="/api/memory")
 memory_router.include_router(admin_router, include_in_schema=False)
 memory_router.include_router(config_router, include_in_schema=False)
-memory_router.include_router(agent_router) # The actual Agent SDK
+memory_router.include_router(agent_router, tags=["🧠 Memory"])  # The actual Agent SDK
 memory_router.include_router(webhook_router, include_in_schema=False)
 memory_router.include_router(workspace_router, include_in_schema=False)

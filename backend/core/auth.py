@@ -36,6 +36,8 @@ SECRET_KEY: str = os.environ.get(
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_DAYS = 30
 
+_MCP_SERVICE_KEY: str = os.environ.get("MCP_SERVICE_KEY", "")
+
 _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
@@ -119,6 +121,8 @@ def require_auth(authorization: str = Header(None)) -> dict:
     Strict authentication dependency — raises HTTP 401 if user is not authenticated.
     Use as: user: dict = Depends(require_auth)
     """
+    if _MCP_SERVICE_KEY and authorization == f"Bearer {_MCP_SERVICE_KEY}":
+        return {"id": "mcp-service", "username": "mcp-service", "is_admin": True}
     user = get_current_user(authorization)
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")

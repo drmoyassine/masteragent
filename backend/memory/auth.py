@@ -9,6 +9,7 @@ Contains:
 """
 import json
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 
@@ -21,11 +22,15 @@ from core.utils import utcnow
 
 logger = logging.getLogger(__name__)
 
+_MCP_SERVICE_KEY: str = os.environ.get("MCP_SERVICE_KEY", "")
+
 
 async def verify_agent_key(x_api_key: str = Header(None, alias="X-API-Key")) -> dict:
     """Verify agent API key and return agent info."""
     if not x_api_key:
         raise HTTPException(status_code=401, detail="API key required")
+    if _MCP_SERVICE_KEY and x_api_key == _MCP_SERVICE_KEY:
+        return {"id": "mcp-service", "name": "MCP Service", "entity_type": "mcp"}
 
     import hashlib
     key_hash = hashlib.sha256(x_api_key.encode()).hexdigest()
