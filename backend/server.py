@@ -157,10 +157,9 @@ app.include_router(memory_router)
 #   (no anyOf / no array `type` / no null branches).
 # ─────────────────────────────────────────────
 import httpx
-from fastapi import Depends
-from fastapi_mcp import FastApiMCP, AuthConfig
+from fastapi_mcp import FastApiMCP
 
-from mcp_utils import sanitize_tools_for_gemini, verify_mcp_service_key
+from mcp_utils import sanitize_tools_for_gemini
 
 _mcp_svc_key = os.environ.get("MCP_SERVICE_KEY", "")
 _mcp_http_client = httpx.AsyncClient(headers={
@@ -168,14 +167,11 @@ _mcp_http_client = httpx.AsyncClient(headers={
     "X-API-Key": _mcp_svc_key,
 }) if _mcp_svc_key else None
 
-_mcp_auth = AuthConfig(dependencies=[Depends(verify_mcp_service_key)])
-
 _prompts_mcp = FastApiMCP(
     app,
     name="MasterAgent Prompts",
     include_tags=["📝 Prompts"],
     http_client=_mcp_http_client,
-    auth_config=_mcp_auth,
 )
 sanitize_tools_for_gemini(_prompts_mcp.tools)
 _prompts_mcp.mount_http(mount_path="/api/prompts/mcp")
@@ -185,15 +181,11 @@ _memory_mcp = FastApiMCP(
     name="MasterAgent Memory",
     include_tags=["🧠 Memory"],
     http_client=_mcp_http_client,
-    auth_config=_mcp_auth,
 )
 sanitize_tools_for_gemini(_memory_mcp.tools)
 _memory_mcp.mount_http(mount_path="/api/memory/mcp")
 
-logger.info(
-    "MCP servers mounted (auth: X-API-Key=MCP_SERVICE_KEY): "
-    "/api/prompts/mcp, /api/memory/mcp"
-)
+logger.info("MCP servers mounted: /api/prompts/mcp, /api/memory/mcp")
 
 # ─────────────────────────────────────────────
 # Middleware
@@ -205,6 +197,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+_MCP_PATHS = ("/api/prompts/mcp", "/api/memory/mcp")
+
+
+@app.middleware("http")
+async def mcp_auth_guard(request: Request, call_next):
+    """Protect MCP endpoints with X-API-Key (same key as the rest of the API).
+    Using middleware (not AuthConfig/dependencies) so no WWW-Authenticate /
+    OAuth headers are added that confuse n8n's MCP client."""
+    if _mcp_svc_key and request.url.path.startswith(_MCP_PATHS):
+        key = request.headers.get("x-api-key") or request.headers.get("X-API-Key", "")
+        bearer = request.headers.get("authorization", "")
+        if key != _mcp_svc_key and bearer != f"Bearer {_mcp_svc_key}":
+            from fastapi.responses import JSONResponse
+            return JSONResponse({"detail": "Invalid or missing MCP credentials"}, status_code=401)
+    return await call_next(request)
 
 
 @app.middleware("http")
