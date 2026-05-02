@@ -188,6 +188,40 @@ _memory_mcp.mount_http(mount_path="/api/memory/mcp")
 logger.info("MCP servers mounted: /api/prompts/mcp, /api/memory/mcp")
 
 # ─────────────────────────────────────────────
+# Sanitization self-check — fails loud at boot if any tool still leaks anyOf/etc
+# ─────────────────────────────────────────────
+import json as _json
+
+def _count_leaks(tools):
+    counts = {"anyOf": 0, "oneOf": 0, "allOf": 0, "list_type": 0, "ref": 0, "null_type": 0}
+    for t in tools:
+        s = _json.dumps(t.inputSchema)
+        counts["anyOf"] += s.count('"anyOf"')
+        counts["oneOf"] += s.count('"oneOf"')
+        counts["allOf"] += s.count('"allOf"')
+        counts["list_type"] += s.count('"type": [')
+        counts["ref"] += s.count('"$ref"')
+        counts["null_type"] += s.count('"null"')
+    return counts
+
+_p_leaks = _count_leaks(_prompts_mcp.tools)
+_m_leaks = _count_leaks(_memory_mcp.tools)
+logger.info(f"[mcp-sanitizer] prompts MCP tools={len(_prompts_mcp.tools)} leaks={_p_leaks}")
+logger.info(f"[mcp-sanitizer] memory MCP tools={len(_memory_mcp.tools)} leaks={_m_leaks}")
+for _name, _leaks in [("prompts", _p_leaks), ("memory", _m_leaks)]:
+    if any(v > 0 for v in _leaks.values()):
+        logger.error(f"[mcp-sanitizer] {_name} MCP STILL HAS LEAKS: {_leaks} — Gemini will reject")
+
+# Diagnostic: leak counts only (no schema content) — unauthenticated
+@app.get("/api/mcp-debug/leaks", include_in_schema=False)
+async def mcp_leaks():
+    return {
+        "prompts": {"tool_count": len(_prompts_mcp.tools), "leaks": _count_leaks(_prompts_mcp.tools)},
+        "memory":  {"tool_count": len(_memory_mcp.tools),  "leaks": _count_leaks(_memory_mcp.tools)},
+        "memory_tool_names": [t.name for t in _memory_mcp.tools],
+    }
+
+# ─────────────────────────────────────────────
 # Middleware
 # ─────────────────────────────────────────────
 app.add_middleware(
