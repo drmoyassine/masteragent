@@ -203,16 +203,53 @@ _MCP_PATHS = ("/api/prompts/mcp", "/api/memory/mcp")
 
 @app.middleware("http")
 async def mcp_auth_guard(request: Request, call_next):
-    """Protect MCP endpoints with X-API-Key (same key as the rest of the API).
-    Using middleware (not AuthConfig/dependencies) so no WWW-Authenticate /
-    OAuth headers are added that confuse n8n's MCP client."""
-    if _mcp_svc_key and request.url.path.startswith(_MCP_PATHS):
-        key = request.headers.get("x-api-key") or request.headers.get("X-API-Key", "")
-        bearer = request.headers.get("authorization", "")
-        if key != _mcp_svc_key and bearer != f"Bearer {_mcp_svc_key}":
-            from fastapi.responses import JSONResponse
-            return JSONResponse({"detail": "Invalid or missing MCP credentials"}, status_code=401)
-    return await call_next(request)
+    """Protect MCP endpoints.
+
+    Accepts any of:
+      - X-API-Key / Authorization: Bearer matching MCP_SERVICE_KEY (service key)
+      - X-API-Key / Authorization: Bearer matching any active key in memory_agents
+        (the UI-created 'Memory Keys')
+    Using middleware so no OAuth/WWW-Authenticate headers confuse n8n's MCP client.
+    """
+    if not request.url.path.startswith(_MCP_PATHS):
+        return await call_next(request)
+
+    from fastapi.responses import JSONResponse
+
+    raw_key = (
+        request.headers.get("x-api-key")
+        or request.headers.get("X-API-Key")
+        or ""
+    )
+    bearer = request.headers.get("authorization", "")
+    if bearer.lower().startswith("bearer "):
+        raw_key = raw_key or bearer[7:]
+
+    if not raw_key:
+        return JSONResponse({"detail": "API key required"}, status_code=401)
+
+    # Fast-path: service key
+    if _mcp_svc_key and raw_key == _mcp_svc_key:
+        return await call_next(request)
+
+    # Slow-path: check memory_agents table (same logic as verify_agent_key)
+    import hashlib
+    from core.storage import get_memory_db_context
+    try:
+        key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+        with get_memory_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id FROM memory_agents WHERE api_key_hash = %s AND is_active = TRUE",
+                (key_hash,)
+            )
+            if cursor.fetchone():
+                return await call_next(request)
+    except Exception as e:
+        logger.error(f"MCP auth DB error: {e}")
+        return JSONResponse({"detail": "Auth check failed"}, status_code=500)
+
+    return JSONResponse({"detail": "Invalid or missing MCP credentials"}, status_code=401)
 
 
 @app.middleware("http")
