@@ -149,10 +149,18 @@ app.include_router(memory_router)
 # Two separate endpoints so n8n can connect per-domain:
 #   /api/prompts/mcp  → prompt CRUD + render + variables
 #   /api/memory/mcp   → memory agent SDK (ingest, search, CRUD)
-# The http_client pre-injects MCP_SERVICE_KEY into every tool call.
+#
+# - Inbound auth: X-API-Key (or Authorization: Bearer) must equal
+#   MCP_SERVICE_KEY. Same credential the rest of the API accepts.
+# - Outbound: the http_client pre-injects MCP_SERVICE_KEY into every tool call.
+# - Tool schemas are sanitized so Gemini's strict OpenAPI subset accepts them
+#   (no anyOf / no array `type` / no null branches).
 # ─────────────────────────────────────────────
 import httpx
-from fastapi_mcp import FastApiMCP
+from fastapi import Depends
+from fastapi_mcp import FastApiMCP, AuthConfig
+
+from mcp_utils import sanitize_tools_for_gemini, verify_mcp_service_key
 
 _mcp_svc_key = os.environ.get("MCP_SERVICE_KEY", "")
 _mcp_http_client = httpx.AsyncClient(headers={
@@ -160,21 +168,32 @@ _mcp_http_client = httpx.AsyncClient(headers={
     "X-API-Key": _mcp_svc_key,
 }) if _mcp_svc_key else None
 
-FastApiMCP(
+_mcp_auth = AuthConfig(dependencies=[Depends(verify_mcp_service_key)])
+
+_prompts_mcp = FastApiMCP(
     app,
     name="MasterAgent Prompts",
     include_tags=["📝 Prompts"],
     http_client=_mcp_http_client,
-).mount_http(mount_path="/api/prompts/mcp")
+    auth_config=_mcp_auth,
+)
+sanitize_tools_for_gemini(_prompts_mcp.tools)
+_prompts_mcp.mount_http(mount_path="/api/prompts/mcp")
 
-FastApiMCP(
+_memory_mcp = FastApiMCP(
     app,
     name="MasterAgent Memory",
     include_tags=["🧠 Memory"],
     http_client=_mcp_http_client,
-).mount_http(mount_path="/api/memory/mcp")
+    auth_config=_mcp_auth,
+)
+sanitize_tools_for_gemini(_memory_mcp.tools)
+_memory_mcp.mount_http(mount_path="/api/memory/mcp")
 
-logger.info("MCP servers mounted: /api/prompts/mcp, /api/memory/mcp")
+logger.info(
+    "MCP servers mounted (auth: X-API-Key=MCP_SERVICE_KEY): "
+    "/api/prompts/mcp, /api/memory/mcp"
+)
 
 # ─────────────────────────────────────────────
 # Middleware
