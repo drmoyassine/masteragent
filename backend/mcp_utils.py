@@ -34,7 +34,6 @@ _GEMINI_ALLOWED_KEYS = {
     "type",
     "format",
     "description",
-    "nullable",
     "enum",
     "properties",
     "required",
@@ -44,7 +43,7 @@ _GEMINI_ALLOWED_KEYS = {
     "minimum",
     "maximum",
     "default",
-    "title",  # tolerated by Gemini, useful for humans
+    "title",
 }
 
 
@@ -68,22 +67,17 @@ def _sanitize_schema(node: Any) -> Any:
     if not isinstance(node, dict):
         return node
 
-    # 1. anyOf / oneOf with a null branch → flatten to the non-null branch and
-    #    mark nullable. Gemini accepts ``nullable: true`` but not ``anyOf``.
+    # 1. anyOf / oneOf with a null branch → flatten to the non-null branch.
+    #    Do NOT add nullable — n8n/langchain re-converts nullable to type arrays.
     for combiner in ("anyOf", "oneOf"):
         if combiner in node and isinstance(node[combiner], list):
             branches = node.pop(combiner)
             chosen = _pick_non_null_branch(branches) or (branches[0] if branches else {})
-            had_null = any(
-                isinstance(b, dict) and b.get("type") == "null" for b in branches
-            )
             # Merge chosen branch's keys into this node (chosen wins on type/format)
             for k, v in chosen.items():
                 node.setdefault(k, v)
                 if k in ("type", "format", "items", "properties", "enum"):
                     node[k] = v
-            if had_null:
-                node["nullable"] = True
 
     # 2. allOf with a single branch → merge it; multi-branch allOf is rare in
     #    FastAPI output, but if it happens we keep the first to stay valid.
@@ -96,10 +90,7 @@ def _sanitize_schema(node: Any) -> Any:
     # 3. type as a list → take first non-null
     if isinstance(node.get("type"), list):
         types = [t for t in node["type"] if t != "null"]
-        had_null = "null" in node["type"]
         node["type"] = types[0] if types else "string"
-        if had_null:
-            node["nullable"] = True
 
     # 4. Recurse into nested schemas.
     if "properties" in node and isinstance(node["properties"], dict):
@@ -115,7 +106,12 @@ def _sanitize_schema(node: Any) -> Any:
     if "items" in node and "type" not in node:
         node["type"] = "array"
 
-    # 6. Strip unsupported keys at this level.
+    # 6. Strip default:null — semantically wrong without nullable and can
+    #    trigger langchain/n8n to re-introduce anyOf/type arrays.
+    if node.get("default") is None and "default" in node:
+        node.pop("default")
+
+    # 7. Strip unsupported keys at this level.
     for k in list(node.keys()):
         if k not in _GEMINI_ALLOWED_KEYS:
             node.pop(k, None)

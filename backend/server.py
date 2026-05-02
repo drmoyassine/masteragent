@@ -193,7 +193,7 @@ logger.info("MCP servers mounted: /api/prompts/mcp, /api/memory/mcp")
 import json as _json
 
 def _count_leaks(tools):
-    counts = {"anyOf": 0, "oneOf": 0, "allOf": 0, "list_type": 0, "ref": 0, "null_type": 0}
+    counts = {"anyOf": 0, "oneOf": 0, "allOf": 0, "list_type": 0, "ref": 0, "nullable": 0, "default_null": 0}
     for t in tools:
         s = _json.dumps(t.inputSchema)
         counts["anyOf"] += s.count('"anyOf"')
@@ -201,7 +201,8 @@ def _count_leaks(tools):
         counts["allOf"] += s.count('"allOf"')
         counts["list_type"] += s.count('"type": [')
         counts["ref"] += s.count('"$ref"')
-        counts["null_type"] += s.count('"null"')
+        counts["nullable"] += s.count('"nullable"')
+        counts["default_null"] += s.count('"default": null')
     return counts
 
 _p_leaks = _count_leaks(_prompts_mcp.tools)
