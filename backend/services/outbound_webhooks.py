@@ -1,6 +1,7 @@
 import json
 import logging
 import asyncio
+from collections import defaultdict
 from datetime import datetime, timezone
 import httpx
 
@@ -62,9 +63,11 @@ async def evaluate_outbound_webhooks(interaction_id: str):
                 break
         
         if match:
-            # Refresh the Debian timer in Redis natively
+            # Refresh the sliding-window timer in Redis. TTL is debounce + 5 minutes
+            # so the key survives reasonable BullMQ queue backpressure.
             now_ts = datetime.now(timezone.utc).timestamp()
-            redis.set(f"outbound_debounce:{webhook_id}:{interaction['primary_entity_id']}", str(now_ts), ex=debounce_ms * 2 // 1000)
+            ttl_s = max(60, (debounce_ms + 5 * 60_000) // 1000)
+            redis.set(f"outbound_debounce:{webhook_id}:{interaction['primary_entity_id']}", str(now_ts), ex=ttl_s)
             
             # Enqueue delayed job
             try:
@@ -165,14 +168,30 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
         entity_type = trigger_rows[0]["primary_entity_type"]
         trigger_ids = [str(r["id"]) for r in trigger_rows]
 
-        # Step 2: Fetch ALL pending interactions for this entity (full conversation context)
-        cursor.execute("""
+        # Step 2: Fetch the payload's interactions.
+        #   - payload_mode == "all_window": all pending interactions for this entity
+        #     (full conversation timeline including outgoing/non-matching messages).
+        #   - payload_mode == "trigger_only": only the interactions matching the
+        #     webhook's trigger conditions.
+        step2_query = """
             SELECT id, interaction_type, content, metadata, timestamp, source
             FROM interactions
             WHERE primary_entity_type = %s AND primary_entity_id = %s
               AND status = 'pending'
-            ORDER BY timestamp ASC
-        """, (entity_type, entity_id))
+        """
+        step2_params: list = [entity_type, entity_id]
+
+        if payload_mode == "trigger_only" and conditions:
+            for key, value in conditions.items():
+                if isinstance(value, list):
+                    step2_query += f" AND {key} = ANY(%s)"
+                    step2_params.append(value)
+                else:
+                    step2_query += f" AND {key} = %s"
+                    step2_params.append(value)
+
+        step2_query += " ORDER BY timestamp ASC"
+        cursor.execute(step2_query, step2_params)
 
         interaction_payload = []
         for i in cursor.fetchall():
@@ -225,15 +244,12 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
                     "intents": row["intents"]
                 })
 
-        # Flag only the triggering interactions as fired (not the context ones)
-        cursor.execute("""
-            UPDATE interactions 
-            SET outbound_webhooks_fired = array_append(outbound_webhooks_fired, %s)
-            WHERE id = ANY(%s)
-        """, (webhook_id, trigger_ids))
-        conn.commit()
+    # NOTE: outbound_webhooks_fired is set only AFTER a successful POST, below.
+    # This prevents silent data loss when the receiver (e.g., n8n) is down,
+    # at the cost of possibly re-firing on the next legitimate trigger if a
+    # POST completes but the response is lost (n8n side should be idempotent
+    # or tolerant of this edge case).
 
-    # Fire Webhook Payload
     final_payload = {
         "webhook_id": webhook_id,
         "webhook_name": wh["name"],
@@ -243,13 +259,90 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
         "intelligence": intelligence_payload,
         "uncompacted_memories": uncompacted_memories,
     }
-    
+
+    # Duplicate-interaction watch: log a WARNING if the assembled payload
+    # contains repeated ids, or near-simultaneous repeats of
+    # (content, interaction_type, source). Set up to catch a previously-reported
+    # duplicate-payload incident the next time it reproduces.
+    _log_duplicate_interactions(wh["name"], entity_id, interaction_payload)
+
+    post_succeeded = False
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.post(wh["url"], json=final_payload, timeout=10.0)
+            resp = await client.post(wh["url"], json=final_payload, timeout=300.0)
             if resp.status_code >= 400:
                 logger.warning(f"Outbound webhook returned status: {resp.status_code} ({resp.text})")
             else:
+                post_succeeded = True
                 logger.info(f"Successfully posted {len(interaction_payload)} interactions + {len(intelligence_payload)} intelligence + {len(uncompacted_memories)} memories to {wh['url']}")
     except Exception as e:
         logger.error(f"Failed to post to outbound webhook {wh['name']}: {e}")
+
+    if not post_succeeded:
+        # Leave outbound_webhooks_fired unchanged. The next triggering message
+        # will re-bundle these interactions and try again. No retry storm here:
+        # only a new triggering message restarts the debounce window.
+        logger.warning(
+            f"Outbound webhook {wh['name']} not marked as fired for "
+            f"{len(trigger_ids)} interactions (will retry on next trigger)."
+        )
+        return
+
+    # Mark only the triggering interactions as fired (not the context ones).
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE interactions
+            SET outbound_webhooks_fired = array_append(outbound_webhooks_fired, %s)
+            WHERE id = ANY(%s)
+        """, (webhook_id, trigger_ids))
+        conn.commit()
+
+
+def _log_duplicate_interactions(webhook_name: str, entity_id: str, payload: list) -> None:
+    """Detection-only: log duplicates so we can investigate a reported but
+    unreproduced bug. Two checks:
+      1. repeated `id` (shouldn't happen — would indicate a SQL/code bug)
+      2. repeated `(content, interaction_type, source)` within a 5-second window
+         (would indicate upstream double-ingest)
+    """
+    seen_ids: dict = {}
+    dup_ids: list = []
+    for i in payload:
+        iid = i.get("id")
+        if iid in seen_ids:
+            dup_ids.append(iid)
+        else:
+            seen_ids[iid] = True
+    if dup_ids:
+        logger.warning(
+            f"[OUTBOUND_DUP_WATCH] webhook={webhook_name} entity={entity_id} "
+            f"repeated_ids={dup_ids}"
+        )
+
+    # Near-simultaneous content repeats: bucket by (content, interaction_type, source)
+    # and report any pair whose timestamps are within 5 seconds.
+    buckets: dict = defaultdict(list)
+    for i in payload:
+        key = (i.get("content"), i.get("interaction_type"), i.get("source"))
+        buckets[key].append((i.get("id"), i.get("timestamp")))
+    for key, occurrences in buckets.items():
+        if len(occurrences) < 2:
+            continue
+        parsed: list = []
+        for iid, ts in occurrences:
+            try:
+                parsed.append((iid, datetime.fromisoformat(str(ts).replace("Z", "+00:00").split("+")[0])))
+            except Exception:
+                parsed.append((iid, None))
+        parsed.sort(key=lambda x: x[1] or datetime.min)
+        for a, b in zip(parsed, parsed[1:]):
+            if a[1] is None or b[1] is None:
+                continue
+            delta = abs((b[1] - a[1]).total_seconds())
+            if delta <= 5.0:
+                logger.warning(
+                    f"[OUTBOUND_DUP_WATCH] webhook={webhook_name} entity={entity_id} "
+                    f"near-duplicate content ids=({a[0]}, {b[0]}) "
+                    f"delta_seconds={delta:.3f} type={key[1]} source={key[2]}"
+                )

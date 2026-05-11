@@ -56,7 +56,11 @@
       "WebFetch(domain:www.linkedin.com)",
       "Bash(node *)",
       "mcp__n8n-mcp__search_nodes",
-      "mcp__n8n-mcp__tools_documentation"
+      "mcp__n8n-mcp__tools_documentation",
+      "Bash(ls \"C:/Users/drmoy/.claude/projects/C--Users-drmoy-OneDrive---studygram-me-VsCode-masteragent/memory/\")",
+      "Bash(jq -r '.[0].text' \"/c/Users/drmoy/.claude/projects/C--Users-drmoy-OneDrive---studygram-me-VsCode-masteragent--claude-worktrees-priceless-curie-327a23/bdfd1b7c-c810-4bc2-a59e-476c960336e2/tool-results/mcp-n8n-mcp-n8n_get_workflow-1778502622494.txt\" | jq '.data.nodes[] | select\\(.name == \"whatsapp_message_received\" or .name == \"Validate payload\" or .name == \"Resolve routing\" or .name == \"Build context block\" or .name == \"Test filter \\(TEMP\\)\" or .name == \"Log AI reply to masteragent\"\\) | {name, parameters}')",
+      "Bash(ls /c/Users/drmoy/.claude/projects/ | head -20)",
+      "Bash(python -m py_compile backend/services/outbound_webhooks.py)"
     ]
   }
 }
