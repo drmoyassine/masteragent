@@ -276,6 +276,14 @@ class InteractionResponse(BaseModel):
     processing_errors: Optional[Dict[str, Any]] = None
     created_at: str
 
+class BulkInteractionCreate(BaseModel):
+    items: List[InteractionCreate] = Field(..., min_length=1, max_length=100, description="Batch of interactions to ingest (1–100 per request)")
+
+class BulkInteractionResponse(BaseModel):
+    ids: List[str]
+    count: int
+    status: str = "pending"
+
 class InteractionUpdate(BaseModel):
     interaction_type: Optional[str] = None
     primary_entity_type: Optional[str] = None
