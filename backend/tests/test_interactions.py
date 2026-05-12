@@ -66,6 +66,60 @@ class TestInteractionIngestion:
         print("✓ Missing required fields returns 422")
 
 
+class TestInteractionBulkIngestion:
+    """Bulk interaction ingestion via /interactions/bulk."""
+
+    def test_bulk_ingest_happy_path(self, agent, base_url):
+        items = [
+            {
+                "interaction_type": f"internal_ai_thought" if i == 0 else "internal_ai_tool_call",
+                "content": f"row-{i}",
+                "primary_entity_type": "contact",
+                "primary_entity_id": "test-contact-bulk-001",
+                "metadata": {"trace_id": "trace-abc", "step": i},
+                "source": "n8n:whatsapp_agent",
+            }
+            for i in range(5)
+        ]
+        resp = agent.post(f"{base_url}/api/memory/interactions/bulk", json={"items": items})
+        assert resp.status_code == 202, resp.text
+        data = resp.json()
+        assert data["count"] == 5
+        assert len(data["ids"]) == 5
+        assert all(isinstance(i, str) for i in data["ids"])
+        print(f"✓ Bulk ingested 5 interactions: trace={data['ids'][0]}…")
+
+    def test_bulk_ingest_rejects_oversized_batch(self, agent, base_url):
+        items = [{
+            "interaction_type": "internal_ai_tool_call",
+            "content": "x",
+            "primary_entity_type": "contact",
+            "primary_entity_id": "test-001",
+        } for _ in range(101)]
+        resp = agent.post(f"{base_url}/api/memory/interactions/bulk", json={"items": items})
+        assert resp.status_code == 422, f"Expected 422 for >100 items, got {resp.status_code}"
+        print("✓ Bulk endpoint rejects batches over 100 items")
+
+    def test_bulk_ingest_rejects_empty_batch(self, agent, base_url):
+        resp = agent.post(f"{base_url}/api/memory/interactions/bulk", json={"items": []})
+        assert resp.status_code == 422, f"Expected 422 for empty items, got {resp.status_code}"
+        print("✓ Bulk endpoint rejects empty batches")
+
+    def test_bulk_ingest_requires_api_key(self, api_client, base_url):
+        api_client.headers.pop("X-API-Key", None)
+        api_client.headers.pop("Authorization", None)
+        resp = api_client.post(f"{base_url}/api/memory/interactions/bulk", json={
+            "items": [{
+                "interaction_type": "internal_ai_tool_call",
+                "content": "nope",
+                "primary_entity_type": "contact",
+                "primary_entity_id": "test-001",
+            }]
+        })
+        assert resp.status_code == 401, f"Expected 401, got {resp.status_code}"
+        print("✓ Bulk endpoint rejects unauthenticated requests")
+
+
 class TestInteractionRetrieval:
     """Admin read of interactions."""
 

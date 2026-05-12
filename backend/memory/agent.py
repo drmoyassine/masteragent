@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from core.storage import get_memory_db_context, cache_interaction, flush_interaction_cache
 from memory_models import (
     InteractionCreate, InteractionResponse, InteractionUpdate,
+    BulkInteractionCreate, BulkInteractionResponse,
     MemoryCreate, MemoryUpdate, MemoryResponse,
     IntelligenceCreate, IntelligenceUpdate, IntelligenceResponse,
     KnowledgeCreate, KnowledgeUpdate, KnowledgeResponse,
@@ -100,6 +101,61 @@ async def ingest_interaction(
         primary_entity_subtype=body.primary_entity_subtype, has_attachments=body.has_attachments,
         source=body.source, status="pending", created_at=now
     )
+
+
+@router.post("/interactions/bulk", response_model=BulkInteractionResponse, tags=["🔄 Interactions"], status_code=202)
+async def ingest_interactions_bulk(
+    body: BulkInteractionCreate,
+    response: Response,
+    agent: dict = Depends(verify_agent_key)
+):
+    """Ingest 1–100 interactions in a single request.
+
+    Counts as one call against the per-agent rate limit (a single trace from
+    an AI agent often produces 10+ rows; charging per-row would burn the quota).
+    All rows are inserted in one transaction; each is enqueued individually
+    for the existing processing pipeline.
+    """
+    if not check_rate_limit(agent["id"]):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+    now = datetime.now(timezone.utc).isoformat()
+    items = body.items
+    ids = [str(uuid.uuid4()) for _ in items]
+
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        for interaction_id, item in zip(ids, items):
+            cursor.execute("""
+                INSERT INTO interactions (
+                    id, timestamp, interaction_type, agent_id, agent_name,
+                    content, primary_entity_type, primary_entity_subtype, primary_entity_id,
+                    metadata, metadata_field_map, has_attachments, attachment_refs,
+                    processing_errors, source, status, created_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                interaction_id, now, item.interaction_type, agent["id"], item.agent_name or agent.get("name"),
+                item.content, item.primary_entity_type, item.primary_entity_subtype, item.primary_entity_id,
+                json.dumps(item.metadata or {}, ensure_ascii=False), json.dumps(item.metadata_field_map or {}, ensure_ascii=False),
+                item.has_attachments, json.dumps(list(item.attachment_refs or []), ensure_ascii=False),
+                json.dumps({}), item.source, "pending", now
+            ))
+
+    from memory.queue import interactions_queue
+    for interaction_id in ids:
+        await interactions_queue.add(
+            "ingest_interaction",
+            {"interaction_id": interaction_id},
+            {"attempts": 3, "backoff": {"type": "exponential", "delay": 2000}}
+        )
+
+    log_audit(agent["id"], "ingest_interactions_bulk", "interaction", ids[0], {
+        "count": len(ids),
+        "interaction_types": sorted({i.interaction_type for i in items}),
+    })
+
+    response.status_code = 202
+    return BulkInteractionResponse(ids=ids, count=len(ids), status="pending")
 
 
 @router.get("/interactions", tags=["🔄 Interactions"])
