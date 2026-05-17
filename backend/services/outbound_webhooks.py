@@ -209,12 +209,11 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
         uncompacted_memories = []
 
         if wh["include_latest_memory"]:
-            # All confirmed intelligence for this entity (condensed from older memories)
+            # All intelligence for this entity
             cursor.execute("""
-                SELECT id, knowledge_type, name, content, summary, created_at
+                SELECT id, knowledge_type, name, content, summary, status, created_at
                 FROM intelligence
                 WHERE primary_entity_type = %s AND primary_entity_id = %s
-                  AND status = 'confirmed'
                 ORDER BY created_at ASC
             """, (entity_type, entity_id))
             for row in cursor.fetchall():
@@ -224,15 +223,16 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
                     "name": row["name"],
                     "content": row["content"],
                     "summary": row["summary"],
+                    "status": row["status"],
                     "created_at": str(row["created_at"])
                 })
 
-            # Uncompacted memories (not yet condensed into intelligence)
+            # All memories for this entity (compacted flag included so consumers
+            # can distinguish frontier from rolled-up daily summaries).
             cursor.execute("""
-                SELECT id, date, content_summary, related_entities, intents
+                SELECT id, date, content_summary, related_entities, intents, compacted
                 FROM memories
                 WHERE primary_entity_type = %s AND primary_entity_id = %s
-                  AND compacted = FALSE
                 ORDER BY date ASC
             """, (entity_type, entity_id))
             for row in cursor.fetchall():
@@ -241,7 +241,8 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
                     "date": str(row["date"]),
                     "content_summary": row["content_summary"],
                     "related_entities": row["related_entities"],
-                    "intents": row["intents"]
+                    "intents": row["intents"],
+                    "compacted": row["compacted"]
                 })
 
     # NOTE: outbound_webhooks_fired is set only AFTER a successful POST, below.
