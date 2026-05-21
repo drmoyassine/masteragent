@@ -309,9 +309,9 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
                 "is_enriched": i["is_enriched"],
             })
 
-        # ── Entity context: the "uncondensed frontier" ──────────────────
+        # ── Entity context: full memory tiers for the entity ──────────────────
         intelligence_payload = []
-        uncompacted_memories = []
+        memories_payload = []
 
         if wh["include_latest_memory"]:
             # All intelligence for this entity
@@ -341,7 +341,7 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
                 ORDER BY date ASC
             """, (entity_type, entity_id))
             for row in cursor.fetchall():
-                uncompacted_memories.append({
+                memories_payload.append({
                     "id": row["id"],
                     "date": str(row["date"]),
                     "content_summary": row["content_summary"],
@@ -363,7 +363,7 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
         "entity_id": entity_id,
         "interactions": interaction_payload,
         "intelligence": intelligence_payload,
-        "uncompacted_memories": uncompacted_memories,
+        "memories": memories_payload,
     }
 
     # Duplicate-interaction watch: log a WARNING if the assembled payload
@@ -380,7 +380,7 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
                 logger.warning(f"Outbound webhook returned status: {resp.status_code} ({resp.text})")
             else:
                 post_succeeded = True
-                logger.info(f"Successfully posted {len(interaction_payload)} interactions + {len(intelligence_payload)} intelligence + {len(uncompacted_memories)} memories to {wh['url']}")
+                logger.info(f"Successfully posted {len(interaction_payload)} interactions + {len(intelligence_payload)} intelligence + {len(memories_payload)} memories to {wh['url']}")
     except Exception as e:
         logger.error(f"Failed to post to outbound webhook {wh['name']}: {e}")
 

@@ -379,7 +379,7 @@ async def get_context(
         "entity_id": entity_id,
         "interactions": interactions,
         "intelligence": intelligence,
-        "uncompacted_memories": memories,
+        "memories": memories,
     }
 
 
