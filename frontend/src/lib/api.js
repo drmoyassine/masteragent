@@ -194,6 +194,12 @@ export const createOutboundWebhook = (data) => api.post('/memory/outbound-webhoo
 export const updateOutboundWebhook = (id, data) => api.patch(`/memory/outbound-webhooks/${id}`, data);
 export const deleteOutboundWebhook = (id) => api.delete(`/memory/outbound-webhooks/${id}`);
 
+// Vision Completion Webhooks - Admin UI
+export const getVisionWebhooks = () => api.get('/memory/vision-webhooks');
+export const createVisionWebhook = (data) => api.post('/memory/vision-webhooks', data);
+export const updateVisionWebhook = (id, data) => api.patch(`/memory/vision-webhooks/${id}`, data);
+export const deleteVisionWebhook = (id) => api.delete(`/memory/vision-webhooks/${id}`);
+
 // ============================================
 // Variables System APIs
 // ============================================

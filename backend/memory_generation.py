@@ -155,7 +155,31 @@ async def run_daily_memory_generation(include_today: bool = False):
 
 async def _generate_memory_for_entity(entity_type: str, entity_id: str, interaction_date: str):
     """Generate a single daily memory record for one entity on one date.
-    Uses the sequential pipeline executor to process nodes in DB-defined order."""
+    Uses the sequential pipeline executor to process nodes in DB-defined order.
+
+    Acquires the per-entity memory lock so outbound webhooks for the same entity
+    wait until the job completes (then re-read context with the freshly-generated
+    memory included). Released in a finally block."""
+    from services import memory_lock
+
+    # Best-effort: if another memory job is already holding the lock for this
+    # entity, skip — that job will produce the memory. The daily scheduler will
+    # also retry on the next run.
+    if not memory_lock.acquire(entity_type, entity_id):
+        logger.info(
+            f"Memory lock held for {entity_type}/{entity_id}; another job in flight. Skipping."
+        )
+        return
+
+    try:
+        await _generate_memory_for_entity_impl(entity_type, entity_id, interaction_date)
+    finally:
+        memory_lock.release(entity_type, entity_id)
+
+
+async def _generate_memory_for_entity_impl(entity_type: str, entity_id: str, interaction_date: str):
+    """Implementation body. Wrapped by _generate_memory_for_entity which holds
+    the per-entity memory lock for the duration."""
 
     config = _get_entity_type_config(entity_type)
 

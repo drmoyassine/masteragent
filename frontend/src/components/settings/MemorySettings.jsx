@@ -283,6 +283,7 @@ import {
 import { InlineTaskConfigAccordion } from "./InlineTaskConfigAccordion";
 import { DraggablePipeline } from "./DraggablePipeline";
 import { OutboundWebhooksSettings } from "./OutboundWebhooksSettings";
+import { VisionWebhooksSettings } from "./VisionWebhooksSettings";
 
 // â”€â”€â”€ Prompt Structure Preview â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function PromptStructurePreview({ sections }) {
@@ -417,6 +418,9 @@ function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProvide
 
             {/* Outbound Webhooks */}
             <OutboundWebhooksSettings />
+
+            {/* Vision Completion Webhooks */}
+            <VisionWebhooksSettings />
         </div>
     );
 }
@@ -541,6 +545,56 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
                             Combined unique memories are injected under "Prior Context" in the LLM prompt.
                             Set both to 0 to disable prior context entirely. Duplicates are automatically deduplicated.
                         </p>
+                    </div>
+
+                    {/* Â§ Threshold Trigger */}
+                    <div className="space-y-4 pt-2">
+                        <h4 className="text-sm font-semibold flex items-center gap-1.5 border-b pb-1">
+                            <Layers className="w-4 h-4 text-amber-500" />
+                            Threshold Trigger
+                        </h4>
+                        <p className="text-[10px] text-muted-foreground -mt-2">
+                            Fire a memory job whenever the entity accumulates this many pending interactions —
+                            in addition to the daily schedule, whichever comes first. Set to 0 to keep daily-only.
+                            Only fires after a "safe boundary" interaction so a conversation isn't split mid-flight.
+                        </p>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                                <Label className="text-xs font-mono">Interaction Threshold</Label>
+                                <Input
+                                    type="number"
+                                    min={0}
+                                    max={500}
+                                    value={settings.memory_threshold !== undefined ? settings.memory_threshold : 0}
+                                    onChange={(e) =>
+                                        onUpdateSettings("memory_threshold", parseInt(e.target.value) || 0)
+                                    }
+                                />
+                                <p className="text-[10px] text-muted-foreground">
+                                    0 = disabled (daily schedule only). Typical: 10–30.
+                                </p>
+                            </div>
+                            <div className="space-y-2">
+                                <Label className="text-xs font-mono">Safe Boundary Types</Label>
+                                <Input
+                                    placeholder="e.g. outgoing_whatsapp_message,outgoing_email"
+                                    className="font-mono text-xs"
+                                    value={Array.isArray(settings.memory_safe_boundary_types)
+                                        ? settings.memory_safe_boundary_types.join(",")
+                                        : (settings.memory_safe_boundary_types || "outgoing_whatsapp_message")}
+                                    onChange={(e) => {
+                                        const arr = (e.target.value || "")
+                                            .split(",")
+                                            .map(s => s.trim())
+                                            .filter(Boolean);
+                                        onUpdateSettings("memory_safe_boundary_types", arr);
+                                    }}
+                                />
+                                <p className="text-[10px] text-muted-foreground">
+                                    Comma-separated interaction_types that may close a memory window.
+                                </p>
+                            </div>
+                        </div>
                     </div>
 
                     {/* Â§ Processing */}

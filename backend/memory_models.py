@@ -204,6 +204,9 @@ class MemorySettingsUpdate(BaseModel):
     # Memory generation schedule
     memory_generation_time: Optional[str] = "02:00"       # HH:MM UTC
     memory_generation_mode: Optional[str] = "ner_and_raw" # 'ner_only' | 'ner_and_raw'
+    # Threshold trigger (in addition to daily schedule)
+    memory_threshold: Optional[int] = 0  # 0 = disabled, only daily; >0 = fire when count reaches it
+    memory_safe_boundary_types: Optional[List[str]] = None  # interaction_types that may end a "memory window"
     # Knowledge settings
     auto_knowledge_enabled: Optional[bool] = True
     auto_knowledge_threshold: Optional[int] = 5
@@ -519,6 +522,23 @@ class ContextStatusResponse(BaseModel):
 # Outbound Webhook Models
 # ============================================
 
+class VisionWebhookCreate(BaseModel):
+    name: str
+    url: str
+    is_active: Optional[bool] = True
+    # Optional allowlist filters. None or [] = include all.
+    doc_type_filter: Optional[List[str]] = None    # e.g. ["application/pdf", "image/png"]
+    source_filter: Optional[List[str]] = None      # e.g. ["chatwoot", "crm"]
+
+
+class VisionWebhookUpdate(BaseModel):
+    name: Optional[str] = None
+    url: Optional[str] = None
+    is_active: Optional[bool] = None
+    doc_type_filter: Optional[List[str]] = None
+    source_filter: Optional[List[str]] = None
+
+
 class OutboundWebhookCreate(BaseModel):
     name: str
     url: str
@@ -526,6 +546,9 @@ class OutboundWebhookCreate(BaseModel):
     conditions: Optional[Dict[str, Any]] = {}
     payload_mode: Optional[str] = "trigger_only" # "trigger_only" or "all_window"
     include_latest_memory: Optional[bool] = True
+    # Payload-level interaction-type filter applied AFTER the trigger has fired.
+    # None or [] = include all types (backward compatible).
+    payload_interaction_types: Optional[List[str]] = None
     is_active: Optional[bool] = True
 
 class OutboundWebhookUpdate(BaseModel):
@@ -535,6 +558,7 @@ class OutboundWebhookUpdate(BaseModel):
     conditions: Optional[Dict[str, Any]] = None
     payload_mode: Optional[str] = None
     include_latest_memory: Optional[bool] = None
+    payload_interaction_types: Optional[List[str]] = None
     is_active: Optional[bool] = None
 
 class OutboundWebhookResponse(BaseModel):

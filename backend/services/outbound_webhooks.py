@@ -92,11 +92,43 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
     """
     redis = get_redis_client()
     debounce_key = f"outbound_debounce:{webhook_id}:{entity_id}"
-    
+
     # Check if timer has been pushed further back by newer interactions
     last_run_str = redis.get(debounce_key)
     if not last_run_str:
         return # Timer expired natively or doesn't exist, safely ignore.
+
+    # Defer-and-retry while the memory job holds the per-entity lock. We
+    # re-enqueue the SAME fire with a short delay; once the memory job releases
+    # the lock, the next firing reads fresh state (memories included) before
+    # bundling the payload. We need the entity_type to check the lock — fetch
+    # it from the most recent pending interaction.
+    try:
+        from services import memory_lock
+        with get_memory_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT primary_entity_type FROM interactions
+                WHERE primary_entity_id = %s AND status = 'pending'
+                ORDER BY timestamp DESC LIMIT 1
+            """, (entity_id,))
+            row = cursor.fetchone()
+        et = row["primary_entity_type"] if row else None
+        if et and memory_lock.is_locked(et, entity_id):
+            from memory.queue import interactions_queue
+            await interactions_queue.add(
+                "fire_outbound_webhook",
+                {"webhook_id": webhook_id, "entity_id": entity_id},
+                {"delay": 10_000, "priority": 1},
+            )
+            logger.info(
+                f"Outbound webhook {webhook_id} for {et}/{entity_id} deferred "
+                f"(memory lock held). Re-enqueued with 10s delay."
+            )
+            return
+    except Exception as e:
+        # Lock check failure shouldn't block the webhook — log and proceed.
+        logger.warning(f"memory_lock check failed in execute_outbound_webhook: {e}")
         
     last_ts = float(last_run_str)
     now_ts = datetime.now(timezone.utc).timestamp()
@@ -104,7 +136,8 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, name, url, debounce_ms, conditions, payload_mode, include_latest_memory
+            SELECT id, name, url, debounce_ms, conditions, payload_mode, include_latest_memory,
+                   payload_interaction_types
             FROM memory_outbound_webhooks WHERE id = %s
         """, (webhook_id,))
         wh = cursor.fetchone()
@@ -133,6 +166,18 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
             conditions = json.loads(conditions)
         except:
             conditions = {}
+
+    # Payload-level interaction-type allowlist applied to BOTH the interactions
+    # array and the intelligence/memories blocks below. NULL/empty = no filter
+    # (include all types — backward compatible).
+    payload_type_filter = wh.get("payload_interaction_types")
+    if isinstance(payload_type_filter, str):
+        try:
+            payload_type_filter = json.loads(payload_type_filter)
+        except:
+            payload_type_filter = None
+    if not payload_type_filter:
+        payload_type_filter = None
         
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -189,6 +234,13 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
                 else:
                     step2_query += f" AND {key} = %s"
                     step2_params.append(value)
+
+        # Apply payload-level interaction-type allowlist (separate from trigger
+        # conditions). When set, narrows the bundled interactions to the listed
+        # types regardless of payload_mode.
+        if payload_type_filter:
+            step2_query += " AND interaction_type = ANY(%s)"
+            step2_params.append(payload_type_filter)
 
         step2_query += " ORDER BY timestamp ASC"
         cursor.execute(step2_query, step2_params)

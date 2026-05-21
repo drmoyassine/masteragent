@@ -27,7 +27,8 @@ from memory_models import (
     EntityTypeConfig, EntityTypeConfigUpdate,
     InteractionResponse, InteractionUpdate, TimelineEntry,
     SearchRequest, SearchResponse, SearchResult, MemoryUpdate,
-    OutboundWebhookCreate, OutboundWebhookUpdate, OutboundWebhookResponse
+    OutboundWebhookCreate, OutboundWebhookUpdate, OutboundWebhookResponse,
+    VisionWebhookCreate, VisionWebhookUpdate
 )
 from memory_services import (
     generate_embedding, search_memories_by_vector,
@@ -1276,13 +1277,16 @@ async def create_outbound_webhook(body: OutboundWebhookCreate, admin: dict = Dep
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO memory_outbound_webhooks (
-                id, name, url, debounce_ms, conditions, payload_mode, include_latest_memory, is_active, created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                id, name, url, debounce_ms, conditions, payload_mode, include_latest_memory,
+                payload_interaction_types, is_active, created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             webhook_id, body.name, body.url, body.debounce_ms, json.dumps(body.conditions or {}), body.payload_mode,
-            body.include_latest_memory, body.is_active, now, now
+            body.include_latest_memory,
+            json.dumps(body.payload_interaction_types) if body.payload_interaction_types else None,
+            body.is_active, now, now
         ))
-        
+
     return {"id": webhook_id, "created_at": now}
 
 @router.patch("/outbound-webhooks/{webhook_id}")
@@ -1303,6 +1307,11 @@ async def update_outbound_webhook(webhook_id: str, body: OutboundWebhookUpdate, 
         fields.append("payload_mode = %s"); values.append(body.payload_mode)
     if body.include_latest_memory is not None:
         fields.append("include_latest_memory = %s"); values.append(body.include_latest_memory)
+    if body.payload_interaction_types is not None:
+        # Empty list is a sentinel for "no filter" — store as NULL so it round-trips
+        # the same way as the default backward-compatible state.
+        fields.append("payload_interaction_types = %s")
+        values.append(json.dumps(body.payload_interaction_types) if body.payload_interaction_types else None)
     if body.is_active is not None:
         fields.append("is_active = %s"); values.append(body.is_active)
 
@@ -1326,6 +1335,78 @@ async def delete_outbound_webhook(webhook_id: str, admin: dict = Depends(require
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM memory_outbound_webhooks WHERE id = %s", (webhook_id,))
+
+
+# ============================================================
+# VISION COMPLETION WEBHOOKS
+# ============================================================
+
+@router.get("/vision-webhooks")
+async def list_vision_webhooks(admin: dict = Depends(require_admin_auth)):
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM vision_completion_webhooks ORDER BY created_at DESC")
+        rows = cursor.fetchall()
+    return {"vision_webhooks": [dict(r) for r in rows]}
+
+
+@router.post("/vision-webhooks")
+async def create_vision_webhook(body: VisionWebhookCreate, admin: dict = Depends(require_admin_auth)):
+    webhook_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO vision_completion_webhooks (
+                id, name, url, is_active, doc_type_filter, source_filter, created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            webhook_id, body.name, body.url, body.is_active,
+            json.dumps(body.doc_type_filter) if body.doc_type_filter else None,
+            json.dumps(body.source_filter) if body.source_filter else None,
+            now, now,
+        ))
+    return {"id": webhook_id, "created_at": now}
+
+
+@router.patch("/vision-webhooks/{webhook_id}")
+async def update_vision_webhook(webhook_id: str, body: VisionWebhookUpdate, admin: dict = Depends(require_admin_auth)):
+    now = datetime.now(timezone.utc).isoformat()
+    fields, values = [], []
+
+    if body.name is not None:
+        fields.append("name = %s"); values.append(body.name)
+    if body.url is not None:
+        fields.append("url = %s"); values.append(body.url)
+    if body.is_active is not None:
+        fields.append("is_active = %s"); values.append(body.is_active)
+    if body.doc_type_filter is not None:
+        fields.append("doc_type_filter = %s")
+        values.append(json.dumps(body.doc_type_filter) if body.doc_type_filter else None)
+    if body.source_filter is not None:
+        fields.append("source_filter = %s")
+        values.append(json.dumps(body.source_filter) if body.source_filter else None)
+
+    if not fields:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    fields.append("updated_at = %s"); values.append(now)
+    values.append(webhook_id)
+
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"UPDATE vision_completion_webhooks SET {', '.join(fields)} WHERE id = %s",
+            values
+        )
+    return {"id": webhook_id, "updated_at": now}
+
+
+@router.delete("/vision-webhooks/{webhook_id}", status_code=204)
+async def delete_vision_webhook(webhook_id: str, admin: dict = Depends(require_admin_auth)):
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM vision_completion_webhooks WHERE id = %s", (webhook_id,))
 
 
 

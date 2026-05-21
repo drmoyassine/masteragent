@@ -294,21 +294,42 @@ async def get_has_context(
 async def get_context(
     entity_type: str = Query(...),
     entity_id: str = Query(...),
+    interaction_types: Optional[str] = Query(
+        None,
+        description=(
+            "Optional comma-separated allowlist of interaction_type values. "
+            "When set, only matching interactions are returned. Empty/null = all."
+        ),
+    ),
     agent: dict = Depends(verify_agent_key)
 ):
     """Return full context for an entity: pending+enriched interactions
     (unprocessed), all memories, and all intelligence. Payload shape matches
-    the outbound webhook so agents can request the same context on demand."""
+    the outbound webhook so agents can request the same context on demand.
+
+    Optional ?interaction_types=a,b filters the interactions list (memories
+    and intelligence are unaffected — they're already condensed)."""
+    type_filter: Optional[List[str]] = None
+    if interaction_types:
+        type_filter = [t.strip() for t in interaction_types.split(",") if t.strip()]
+        if not type_filter:
+            type_filter = None
+
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
 
-        cursor.execute("""
+        interactions_query = """
             SELECT id, interaction_type, content, metadata, timestamp, source
             FROM interactions
             WHERE primary_entity_type = %s AND primary_entity_id = %s
               AND status = 'pending' AND is_enriched = TRUE
-            ORDER BY timestamp ASC
-        """, (entity_type, entity_id))
+        """
+        interactions_params: list = [entity_type, entity_id]
+        if type_filter:
+            interactions_query += " AND interaction_type = ANY(%s)"
+            interactions_params.append(type_filter)
+        interactions_query += " ORDER BY timestamp ASC"
+        cursor.execute(interactions_query, interactions_params)
         interactions = [{
             "id": r["id"],
             "interaction_type": r["interaction_type"],
