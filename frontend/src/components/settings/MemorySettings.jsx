@@ -283,7 +283,6 @@ import {
 import { InlineTaskConfigAccordion } from "./InlineTaskConfigAccordion";
 import { DraggablePipeline } from "./DraggablePipeline";
 import { OutboundWebhooksSettings } from "./OutboundWebhooksSettings";
-import { VisionWebhooksSettings } from "./VisionWebhooksSettings";
 
 // â”€â”€â”€ Prompt Structure Preview â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function PromptStructurePreview({ sections }) {
@@ -418,9 +417,6 @@ function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProvide
 
             {/* Outbound Webhooks */}
             <OutboundWebhooksSettings />
-
-            {/* Vision Completion Webhooks */}
-            <VisionWebhooksSettings />
         </div>
     );
 }

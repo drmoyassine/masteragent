@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/select";
 import { getPrompts } from "@/lib/api";
 import { TASK_TYPE_LABELS } from "@/components/settings/LLMProviderSettings";
+import { VisionWebhooksSettings } from "@/components/settings/VisionWebhooksSettings";
 
 function ModelCombobox({ value, onChange, models = [], loading, error, onFetch, canFetch }) {
     if (!canFetch) return null;
@@ -360,6 +361,13 @@ export function InlineTaskConfigAccordion({
                                     </p>
                                 </div>
                             )}
+                        </div>
+                    )}
+
+                    {/* Vision-specific: completion webhooks. Only shown on the vision node. */}
+                    {config.task_type === "vision" && (
+                        <div className="pt-4 border-t">
+                            <VisionWebhooksSettings />
                         </div>
                     )}
 
