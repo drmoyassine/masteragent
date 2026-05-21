@@ -318,11 +318,14 @@ async def get_context(
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
 
+        # Matches the outbound webhook's step-2 SELECT exactly: all pending
+        # interactions regardless of is_enriched status. The is_enriched flag
+        # rides on each row so callers can detect attachments still being parsed.
         interactions_query = """
-            SELECT id, interaction_type, content, metadata, timestamp, source
+            SELECT id, interaction_type, content, metadata, timestamp, source, is_enriched
             FROM interactions
             WHERE primary_entity_type = %s AND primary_entity_id = %s
-              AND status = 'pending' AND is_enriched = TRUE
+              AND status = 'pending'
         """
         interactions_params: list = [entity_type, entity_id]
         if type_filter:
@@ -337,6 +340,7 @@ async def get_context(
             "metadata": r["metadata"],
             "timestamp": str(r["timestamp"]),
             "source": r["source"],
+            "is_enriched": r["is_enriched"],
         } for r in cursor.fetchall()]
 
         cursor.execute("""

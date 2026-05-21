@@ -98,13 +98,24 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
     if not last_run_str:
         return # Timer expired natively or doesn't exist, safely ignore.
 
-    # Defer-and-retry while the memory job holds the per-entity lock. We
-    # re-enqueue the SAME fire with a short delay; once the memory job releases
-    # the lock, the next firing reads fresh state (memories included) before
-    # bundling the payload. We need the entity_type to check the lock — fetch
-    # it from the most recent pending interaction.
+    # Defer-and-retry pre-flight checks:
+    #   (a) memory job holds the per-entity lock — wait for it to release, then
+    #       the next firing reads fresh state (including the just-generated memory).
+    #   (b) any pending interaction for this entity is still un-enriched (vision/
+    #       embedding pipeline hasn't completed) — wait so the payload ships
+    #       with parsed attachment text included.
+    # We re-enqueue the same fire with a short delay. A Redis counter caps the
+    # number of consecutive defers so a stuck interaction can't spin forever;
+    # after the cap, we fire with whatever's enriched.
+    WAIT_DELAY_MS = 10_000
+    MAX_WAIT_RETRIES = 30  # ~5 minutes of cumulative waiting
+    wait_counter_key = f"outbound_wait:{webhook_id}:{entity_id}"
+
     try:
         from services import memory_lock
+
+        # Resolve entity_type from the most recent pending interaction (needed
+        # for both the lock check and clarity in logs).
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
             cursor.execute("""
@@ -113,22 +124,63 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
                 ORDER BY timestamp DESC LIMIT 1
             """, (entity_id,))
             row = cursor.fetchone()
-        et = row["primary_entity_type"] if row else None
-        if et and memory_lock.is_locked(et, entity_id):
-            from memory.queue import interactions_queue
-            await interactions_queue.add(
-                "fire_outbound_webhook",
-                {"webhook_id": webhook_id, "entity_id": entity_id},
-                {"delay": 10_000, "priority": 1},
+            et = row["primary_entity_type"] if row else None
+
+            # Count un-enriched pending interactions for this entity.
+            cursor.execute("""
+                SELECT COUNT(*) AS cnt FROM interactions
+                WHERE primary_entity_id = %s AND status = 'pending' AND is_enriched = FALSE
+            """, (entity_id,))
+            row2 = cursor.fetchone()
+            unenriched = (row2["cnt"] if row2 else 0) or 0
+
+        memory_locked = bool(et and memory_lock.is_locked(et, entity_id))
+
+        if memory_locked or unenriched > 0:
+            # Check how many times we've already deferred this fire.
+            try:
+                current = int(redis.get(wait_counter_key) or 0)
+            except Exception:
+                current = 0
+
+            if current < MAX_WAIT_RETRIES:
+                # Increment counter with a generous TTL (well beyond the max wait).
+                try:
+                    redis.set(wait_counter_key, str(current + 1), ex=900)
+                except Exception as e:
+                    logger.warning(f"outbound_wait counter set failed: {e}")
+
+                from memory.queue import interactions_queue
+                await interactions_queue.add(
+                    "fire_outbound_webhook",
+                    {"webhook_id": webhook_id, "entity_id": entity_id},
+                    {"delay": WAIT_DELAY_MS, "priority": 1},
+                )
+                reasons = []
+                if memory_locked:
+                    reasons.append("memory lock held")
+                if unenriched > 0:
+                    reasons.append(f"{unenriched} unenriched interaction(s)")
+                logger.info(
+                    f"Outbound webhook {webhook_id} for {et}/{entity_id} deferred "
+                    f"({', '.join(reasons)}). Retry {current + 1}/{MAX_WAIT_RETRIES} "
+                    f"in {WAIT_DELAY_MS}ms."
+                )
+                return
+
+            # Cap reached — log and proceed with whatever is enriched.
+            logger.warning(
+                f"Outbound webhook {webhook_id} for {et}/{entity_id} reached "
+                f"MAX_WAIT_RETRIES ({MAX_WAIT_RETRIES}); firing with current state."
             )
-            logger.info(
-                f"Outbound webhook {webhook_id} for {et}/{entity_id} deferred "
-                f"(memory lock held). Re-enqueued with 10s delay."
-            )
-            return
+        # Clear counter on successful pass-through.
+        try:
+            redis.delete(wait_counter_key)
+        except Exception:
+            pass
     except Exception as e:
-        # Lock check failure shouldn't block the webhook — log and proceed.
-        logger.warning(f"memory_lock check failed in execute_outbound_webhook: {e}")
+        # Pre-flight failure shouldn't block the webhook — log and proceed.
+        logger.warning(f"outbound webhook pre-flight check failed: {e}")
         
     last_ts = float(last_run_str)
     now_ts = datetime.now(timezone.utc).timestamp()
@@ -219,7 +271,7 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
         #   - payload_mode == "trigger_only": only the interactions matching the
         #     webhook's trigger conditions.
         step2_query = """
-            SELECT id, interaction_type, content, metadata, timestamp, source
+            SELECT id, interaction_type, content, metadata, timestamp, source, is_enriched
             FROM interactions
             WHERE primary_entity_type = %s AND primary_entity_id = %s
               AND status = 'pending'
@@ -253,7 +305,8 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
                 "content": i["content"],
                 "metadata": i["metadata"],
                 "timestamp": str(i["timestamp"]),
-                "source": i["source"]
+                "source": i["source"],
+                "is_enriched": i["is_enriched"],
             })
 
         # ── Entity context: the "uncondensed frontier" ──────────────────
