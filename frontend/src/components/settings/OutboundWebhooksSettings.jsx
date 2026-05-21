@@ -28,6 +28,7 @@ export function OutboundWebhooksSettings() {
         debounce_ms: 60000,
         payload_mode: "trigger_only",
         include_latest_memory: true,
+        payload_interaction_types: "", // comma-separated string in UI; empty = no filter
         conditions: [] // [{key: "", value: ""}] internally for UI
     });
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -76,6 +77,7 @@ export function OutboundWebhooksSettings() {
             debounce_ms: 60000,
             payload_mode: "trigger_only",
             include_latest_memory: true,
+            payload_interaction_types: "",
             conditions: [{ key: "interaction_type", value: "whatsapp_incoming" }]
         });
         setIsDialogOpen(true);
@@ -101,6 +103,9 @@ export function OutboundWebhooksSettings() {
             debounce_ms: wh.debounce_ms || 60000,
             payload_mode: wh.payload_mode || "trigger_only",
             include_latest_memory: wh.include_latest_memory,
+            payload_interaction_types: Array.isArray(wh.payload_interaction_types)
+                ? wh.payload_interaction_types.join(",")
+                : "",
             conditions: condsArr
         });
         setIsDialogOpen(true);
@@ -147,12 +152,18 @@ export function OutboundWebhooksSettings() {
             }
         });
 
+        const payloadTypes = (formData.payload_interaction_types || "")
+            .split(",")
+            .map(s => s.trim())
+            .filter(Boolean);
+
         const payload = {
             name: formData.name,
             url: formData.url,
             debounce_ms: formData.debounce_ms,
             payload_mode: formData.payload_mode,
             include_latest_memory: formData.include_latest_memory,
+            payload_interaction_types: payloadTypes.length > 0 ? payloadTypes : null,
             conditions: finalConditions
         };
 
@@ -308,10 +319,23 @@ export function OutboundWebhooksSettings() {
                                 <Label>Include Latest Memory</Label>
                                 <p className="text-[10px] text-muted-foreground">Attach the Entity's latest compacted knowledge base.</p>
                             </div>
-                            <Switch 
-                                checked={formData.include_latest_memory} 
+                            <Switch
+                                checked={formData.include_latest_memory}
                                 onCheckedChange={v => setFormData({...formData, include_latest_memory: v})}
                             />
+                        </div>
+
+                        <div className="space-y-2">
+                            <Label>Payload Interaction-Type Filter</Label>
+                            <Input
+                                placeholder="e.g. incoming_whatsapp_message,outgoing_whatsapp_message"
+                                className="font-mono text-xs"
+                                value={formData.payload_interaction_types}
+                                onChange={e => setFormData({...formData, payload_interaction_types: e.target.value})}
+                            />
+                            <p className="text-[10px] text-muted-foreground">
+                                Comma-separated list of interaction_type values to include in the bundled interactions array. Leave empty to include all types. Applied AFTER the trigger fires — independent of Trigger Conditions below.
+                            </p>
                         </div>
 
                         <div className="space-y-3">

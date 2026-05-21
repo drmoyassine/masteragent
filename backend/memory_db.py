@@ -324,6 +324,22 @@ def _create_memory_tier_tables(cursor):
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_webhook_sources_active ON memory_webhook_sources (is_active)")
 
+    # Vision/Doc parsing completion webhooks. Fired once per successfully-parsed
+    # attachment with the extracted text. Best-effort fire-once delivery.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS vision_completion_webhooks (
+            id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            name            TEXT NOT NULL,
+            url             TEXT NOT NULL,
+            is_active       BOOLEAN DEFAULT TRUE,
+            doc_type_filter JSONB DEFAULT NULL,
+            source_filter   JSONB DEFAULT NULL,
+            created_at      TIMESTAMPTZ DEFAULT NOW(),
+            updated_at      TIMESTAMPTZ DEFAULT NOW()
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_vision_webhooks_active ON vision_completion_webhooks (is_active)")
+
     # Outbound webhook rules
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS memory_outbound_webhooks (
@@ -334,6 +350,7 @@ def _create_memory_tier_tables(cursor):
             conditions                  JSONB DEFAULT '{}',
             payload_mode                TEXT DEFAULT 'trigger_only',
             include_latest_memory       BOOLEAN DEFAULT TRUE,
+            payload_interaction_types   JSONB DEFAULT NULL,
             is_active                   BOOLEAN DEFAULT TRUE,
             created_at                  TIMESTAMPTZ DEFAULT NOW(),
             updated_at                  TIMESTAMPTZ DEFAULT NOW()
@@ -620,6 +637,28 @@ def _run_migrations(cursor):
             cursor.execute(f"ALTER TABLE interactions ADD COLUMN IF NOT EXISTS {col} {col_def}")
         except Exception as e:
             logger.error(f"Failed to add {col} to interactions: {e}")
+
+    # Outbound webhook: payload-level interaction-type filter.
+    # NULL or empty array = include all types (backward compatible).
+    try:
+        cursor.execute(
+            "ALTER TABLE memory_outbound_webhooks ADD COLUMN IF NOT EXISTS payload_interaction_types JSONB DEFAULT NULL"
+        )
+    except Exception as e:
+        logger.error(f"Failed to add payload_interaction_types to memory_outbound_webhooks: {e}")
+
+    # Memory threshold trigger: generate a memory every N qualifying interactions
+    # in addition to the daily schedule (whichever comes first). The safe
+    # boundary types list gates *when* the threshold-triggered job may fire so
+    # we never split mid-conversation.
+    for col, col_def in [
+        ("memory_threshold", "INT DEFAULT 0"),  # 0 = threshold disabled; daily-only
+        ("memory_safe_boundary_types", "JSONB DEFAULT '[\"outgoing_whatsapp_message\"]'::jsonb"),
+    ]:
+        try:
+            cursor.execute(f"ALTER TABLE memory_settings ADD COLUMN IF NOT EXISTS {col} {col_def}")
+        except Exception as e:
+            logger.error(f"Failed to add {col} to memory_settings: {e}")
 
 
 def init_memory_db():

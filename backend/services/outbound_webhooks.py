@@ -92,11 +92,95 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
     """
     redis = get_redis_client()
     debounce_key = f"outbound_debounce:{webhook_id}:{entity_id}"
-    
+
     # Check if timer has been pushed further back by newer interactions
     last_run_str = redis.get(debounce_key)
     if not last_run_str:
         return # Timer expired natively or doesn't exist, safely ignore.
+
+    # Defer-and-retry pre-flight checks:
+    #   (a) memory job holds the per-entity lock — wait for it to release, then
+    #       the next firing reads fresh state (including the just-generated memory).
+    #   (b) any pending interaction for this entity is still un-enriched (vision/
+    #       embedding pipeline hasn't completed) — wait so the payload ships
+    #       with parsed attachment text included.
+    # We re-enqueue the same fire with a short delay. A Redis counter caps the
+    # number of consecutive defers so a stuck interaction can't spin forever;
+    # after the cap, we fire with whatever's enriched.
+    WAIT_DELAY_MS = 10_000
+    MAX_WAIT_RETRIES = 30  # ~5 minutes of cumulative waiting
+    wait_counter_key = f"outbound_wait:{webhook_id}:{entity_id}"
+
+    try:
+        from services import memory_lock
+
+        # Resolve entity_type from the most recent pending interaction (needed
+        # for both the lock check and clarity in logs).
+        with get_memory_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT primary_entity_type FROM interactions
+                WHERE primary_entity_id = %s AND status = 'pending'
+                ORDER BY timestamp DESC LIMIT 1
+            """, (entity_id,))
+            row = cursor.fetchone()
+            et = row["primary_entity_type"] if row else None
+
+            # Count un-enriched pending interactions for this entity.
+            cursor.execute("""
+                SELECT COUNT(*) AS cnt FROM interactions
+                WHERE primary_entity_id = %s AND status = 'pending' AND is_enriched = FALSE
+            """, (entity_id,))
+            row2 = cursor.fetchone()
+            unenriched = (row2["cnt"] if row2 else 0) or 0
+
+        memory_locked = bool(et and memory_lock.is_locked(et, entity_id))
+
+        if memory_locked or unenriched > 0:
+            # Check how many times we've already deferred this fire.
+            try:
+                current = int(redis.get(wait_counter_key) or 0)
+            except Exception:
+                current = 0
+
+            if current < MAX_WAIT_RETRIES:
+                # Increment counter with a generous TTL (well beyond the max wait).
+                try:
+                    redis.set(wait_counter_key, str(current + 1), ex=900)
+                except Exception as e:
+                    logger.warning(f"outbound_wait counter set failed: {e}")
+
+                from memory.queue import interactions_queue
+                await interactions_queue.add(
+                    "fire_outbound_webhook",
+                    {"webhook_id": webhook_id, "entity_id": entity_id},
+                    {"delay": WAIT_DELAY_MS, "priority": 1},
+                )
+                reasons = []
+                if memory_locked:
+                    reasons.append("memory lock held")
+                if unenriched > 0:
+                    reasons.append(f"{unenriched} unenriched interaction(s)")
+                logger.info(
+                    f"Outbound webhook {webhook_id} for {et}/{entity_id} deferred "
+                    f"({', '.join(reasons)}). Retry {current + 1}/{MAX_WAIT_RETRIES} "
+                    f"in {WAIT_DELAY_MS}ms."
+                )
+                return
+
+            # Cap reached — log and proceed with whatever is enriched.
+            logger.warning(
+                f"Outbound webhook {webhook_id} for {et}/{entity_id} reached "
+                f"MAX_WAIT_RETRIES ({MAX_WAIT_RETRIES}); firing with current state."
+            )
+        # Clear counter on successful pass-through.
+        try:
+            redis.delete(wait_counter_key)
+        except Exception:
+            pass
+    except Exception as e:
+        # Pre-flight failure shouldn't block the webhook — log and proceed.
+        logger.warning(f"outbound webhook pre-flight check failed: {e}")
         
     last_ts = float(last_run_str)
     now_ts = datetime.now(timezone.utc).timestamp()
@@ -104,7 +188,8 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, name, url, debounce_ms, conditions, payload_mode, include_latest_memory
+            SELECT id, name, url, debounce_ms, conditions, payload_mode, include_latest_memory,
+                   payload_interaction_types
             FROM memory_outbound_webhooks WHERE id = %s
         """, (webhook_id,))
         wh = cursor.fetchone()
@@ -133,6 +218,18 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
             conditions = json.loads(conditions)
         except:
             conditions = {}
+
+    # Payload-level interaction-type allowlist applied to BOTH the interactions
+    # array and the intelligence/memories blocks below. NULL/empty = no filter
+    # (include all types — backward compatible).
+    payload_type_filter = wh.get("payload_interaction_types")
+    if isinstance(payload_type_filter, str):
+        try:
+            payload_type_filter = json.loads(payload_type_filter)
+        except:
+            payload_type_filter = None
+    if not payload_type_filter:
+        payload_type_filter = None
         
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -174,7 +271,7 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
         #   - payload_mode == "trigger_only": only the interactions matching the
         #     webhook's trigger conditions.
         step2_query = """
-            SELECT id, interaction_type, content, metadata, timestamp, source
+            SELECT id, interaction_type, content, metadata, timestamp, source, is_enriched
             FROM interactions
             WHERE primary_entity_type = %s AND primary_entity_id = %s
               AND status = 'pending'
@@ -190,6 +287,13 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
                     step2_query += f" AND {key} = %s"
                     step2_params.append(value)
 
+        # Apply payload-level interaction-type allowlist (separate from trigger
+        # conditions). When set, narrows the bundled interactions to the listed
+        # types regardless of payload_mode.
+        if payload_type_filter:
+            step2_query += " AND interaction_type = ANY(%s)"
+            step2_params.append(payload_type_filter)
+
         step2_query += " ORDER BY timestamp ASC"
         cursor.execute(step2_query, step2_params)
 
@@ -201,20 +305,20 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
                 "content": i["content"],
                 "metadata": i["metadata"],
                 "timestamp": str(i["timestamp"]),
-                "source": i["source"]
+                "source": i["source"],
+                "is_enriched": i["is_enriched"],
             })
 
-        # ── Entity context: the "uncondensed frontier" ──────────────────
+        # ── Entity context: full memory tiers for the entity ──────────────────
         intelligence_payload = []
-        uncompacted_memories = []
+        memories_payload = []
 
         if wh["include_latest_memory"]:
-            # All confirmed intelligence for this entity (condensed from older memories)
+            # All intelligence for this entity
             cursor.execute("""
-                SELECT id, knowledge_type, name, content, summary, created_at
+                SELECT id, knowledge_type, name, content, summary, status, created_at
                 FROM intelligence
                 WHERE primary_entity_type = %s AND primary_entity_id = %s
-                  AND status = 'confirmed'
                 ORDER BY created_at ASC
             """, (entity_type, entity_id))
             for row in cursor.fetchall():
@@ -224,24 +328,26 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
                     "name": row["name"],
                     "content": row["content"],
                     "summary": row["summary"],
+                    "status": row["status"],
                     "created_at": str(row["created_at"])
                 })
 
-            # Uncompacted memories (not yet condensed into intelligence)
+            # All memories for this entity (compacted flag included so consumers
+            # can distinguish frontier from rolled-up daily summaries).
             cursor.execute("""
-                SELECT id, date, content_summary, related_entities, intents
+                SELECT id, date, content_summary, related_entities, intents, compacted
                 FROM memories
                 WHERE primary_entity_type = %s AND primary_entity_id = %s
-                  AND compacted = FALSE
                 ORDER BY date ASC
             """, (entity_type, entity_id))
             for row in cursor.fetchall():
-                uncompacted_memories.append({
+                memories_payload.append({
                     "id": row["id"],
                     "date": str(row["date"]),
                     "content_summary": row["content_summary"],
                     "related_entities": row["related_entities"],
-                    "intents": row["intents"]
+                    "intents": row["intents"],
+                    "compacted": row["compacted"]
                 })
 
     # NOTE: outbound_webhooks_fired is set only AFTER a successful POST, below.
@@ -257,7 +363,7 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
         "entity_id": entity_id,
         "interactions": interaction_payload,
         "intelligence": intelligence_payload,
-        "uncompacted_memories": uncompacted_memories,
+        "memories": memories_payload,
     }
 
     # Duplicate-interaction watch: log a WARNING if the assembled payload
@@ -274,7 +380,7 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
                 logger.warning(f"Outbound webhook returned status: {resp.status_code} ({resp.text})")
             else:
                 post_succeeded = True
-                logger.info(f"Successfully posted {len(interaction_payload)} interactions + {len(intelligence_payload)} intelligence + {len(uncompacted_memories)} memories to {wh['url']}")
+                logger.info(f"Successfully posted {len(interaction_payload)} interactions + {len(intelligence_payload)} intelligence + {len(memories_payload)} memories to {wh['url']}")
     except Exception as e:
         logger.error(f"Failed to post to outbound webhook {wh['name']}: {e}")
 

@@ -644,12 +644,20 @@ async def get_settings_endpoint(user: dict = Depends(require_admin_auth)):
 
 @router.put("/config/settings", response_model=MemorySettingsResponse)
 async def update_settings_endpoint(data: MemorySettingsUpdate, user: dict = Depends(require_admin_auth)):
+    import json as _json
     now = utcnow()
+    # Fields backed by JSONB columns need explicit JSON serialization before
+    # binding through psycopg (which would otherwise coerce list → PG array).
+    JSONB_FIELDS = {"memory_safe_boundary_types"}
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         updates, params = [], []
         for field, value in data.dict(exclude_unset=True).items():
-            if value is not None:
+            if value is None:
+                continue
+            if field in JSONB_FIELDS:
+                updates.append(f"{field} = %s"); params.append(_json.dumps(value))
+            else:
                 updates.append(f"{field} = %s"); params.append(value)
         if updates:
             updates.append("updated_at = %s"); params.append(now)

@@ -294,21 +294,45 @@ async def get_has_context(
 async def get_context(
     entity_type: str = Query(...),
     entity_id: str = Query(...),
+    interaction_types: Optional[str] = Query(
+        None,
+        description=(
+            "Optional comma-separated allowlist of interaction_type values. "
+            "When set, only matching interactions are returned. Empty/null = all."
+        ),
+    ),
     agent: dict = Depends(verify_agent_key)
 ):
-    """Return the uncondensed frontier for an entity: pending+enriched interactions,
-    confirmed intelligence, and uncompacted memories. Payload mirrors the outbound
-    webhook so agents can request the same context on demand."""
+    """Return full context for an entity: pending+enriched interactions
+    (unprocessed), all memories, and all intelligence. Payload shape matches
+    the outbound webhook so agents can request the same context on demand.
+
+    Optional ?interaction_types=a,b filters the interactions list (memories
+    and intelligence are unaffected — they're already condensed)."""
+    type_filter: Optional[List[str]] = None
+    if interaction_types:
+        type_filter = [t.strip() for t in interaction_types.split(",") if t.strip()]
+        if not type_filter:
+            type_filter = None
+
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
 
-        cursor.execute("""
-            SELECT id, interaction_type, content, metadata, timestamp, source
+        # Matches the outbound webhook's step-2 SELECT exactly: all pending
+        # interactions regardless of is_enriched status. The is_enriched flag
+        # rides on each row so callers can detect attachments still being parsed.
+        interactions_query = """
+            SELECT id, interaction_type, content, metadata, timestamp, source, is_enriched
             FROM interactions
             WHERE primary_entity_type = %s AND primary_entity_id = %s
-              AND status = 'pending' AND is_enriched = TRUE
-            ORDER BY timestamp ASC
-        """, (entity_type, entity_id))
+              AND status = 'pending'
+        """
+        interactions_params: list = [entity_type, entity_id]
+        if type_filter:
+            interactions_query += " AND interaction_type = ANY(%s)"
+            interactions_params.append(type_filter)
+        interactions_query += " ORDER BY timestamp ASC"
+        cursor.execute(interactions_query, interactions_params)
         interactions = [{
             "id": r["id"],
             "interaction_type": r["interaction_type"],
@@ -316,13 +340,13 @@ async def get_context(
             "metadata": r["metadata"],
             "timestamp": str(r["timestamp"]),
             "source": r["source"],
+            "is_enriched": r["is_enriched"],
         } for r in cursor.fetchall()]
 
         cursor.execute("""
-            SELECT id, knowledge_type, name, content, summary, created_at
+            SELECT id, knowledge_type, name, content, summary, status, created_at
             FROM intelligence
             WHERE primary_entity_type = %s AND primary_entity_id = %s
-              AND status = 'confirmed'
             ORDER BY created_at ASC
         """, (entity_type, entity_id))
         intelligence = [{
@@ -331,22 +355,23 @@ async def get_context(
             "name": r["name"],
             "content": r["content"],
             "summary": r["summary"],
+            "status": r["status"],
             "created_at": str(r["created_at"]),
         } for r in cursor.fetchall()]
 
         cursor.execute("""
-            SELECT id, date, content_summary, related_entities, intents
+            SELECT id, date, content_summary, related_entities, intents, compacted
             FROM memories
             WHERE primary_entity_type = %s AND primary_entity_id = %s
-              AND compacted = FALSE
             ORDER BY date ASC
         """, (entity_type, entity_id))
-        uncompacted_memories = [{
+        memories = [{
             "id": r["id"],
             "date": str(r["date"]),
             "content_summary": r["content_summary"],
             "related_entities": r["related_entities"],
             "intents": r["intents"],
+            "compacted": r["compacted"],
         } for r in cursor.fetchall()]
 
     return {
@@ -354,7 +379,7 @@ async def get_context(
         "entity_id": entity_id,
         "interactions": interactions,
         "intelligence": intelligence,
-        "uncompacted_memories": uncompacted_memories,
+        "memories": memories,
     }
 
 

@@ -94,6 +94,25 @@ async def process_interaction(interaction_id: str):
         if parsed.get("text"):
             content += f"\n\n---\n[Attachment ({mime_type}): {filename}]{url_context}{pages_context}\n{parsed['text']}"
             attachment["parsed_content"] = parsed["text"]
+
+            # Fire optional vision completion webhooks (best-effort, no retry).
+            # Done inline so consumers can rely on the post-parse timestamp.
+            try:
+                from datetime import datetime, timezone
+                from services.vision_webhooks import fire_vision_completion_webhooks
+                await fire_vision_completion_webhooks(
+                    entity_type=interaction["primary_entity_type"],
+                    entity_id=interaction["primary_entity_id"],
+                    interaction_id=interaction_id,
+                    doc_url=url,
+                    filename=filename,
+                    mime_type=mime_type,
+                    parsed_text=parsed["text"],
+                    source=interaction.get("source"),
+                    parsed_at=datetime.now(timezone.utc).isoformat(),
+                )
+            except Exception as e:
+                logger.warning(f"vision completion webhooks failed for {interaction_id}: {e}")
         else:
             err_msg = processing_errors.get("vision", "Parsing Failed or Document is Empty")
             content += f"\n\n---\n[Attachment ({mime_type}): {filename}]{url_context}{pages_context}\n[Error: {err_msg}]"
@@ -151,6 +170,16 @@ async def process_interaction(interaction_id: str):
     except Exception as e:
         logger.warning(f"Cache update failed for interaction {interaction_id}: {e}")
 
+    # Threshold-triggered memory generation: if the count of pending interactions
+    # for this entity has hit the configured threshold AND the latest interaction
+    # is on a "safe boundary" type (e.g. outgoing_whatsapp_message), enqueue a
+    # memory job now rather than waiting for the daily run. The job acquires the
+    # per-entity memory lock so outbound webhooks defer until it completes.
+    try:
+        await _maybe_trigger_threshold_memory(interaction)
+    except Exception as e:
+        logger.error(f"Threshold memory trigger failed for {interaction_id}: {e}")
+
     # Trigger Outbound Webhooks logic
     try:
         from services.outbound_webhooks import evaluate_outbound_webhooks
@@ -163,6 +192,80 @@ async def process_interaction(interaction_id: str):
         _sync_entity_profile(interaction)
     except Exception as e:
         logger.warning(f"Entity profile sync failed for {interaction_id}: {e}")
+
+
+async def _maybe_trigger_threshold_memory(interaction: dict) -> None:
+    """Threshold-based memory enqueue. Fires only when:
+      1. memory_threshold > 0 (feature enabled in settings)
+      2. latest interaction's type ∈ memory_safe_boundary_types (don't split
+         mid-conversation)
+      3. count of pending interactions for this entity ≥ threshold
+      4. no memory lock currently held for this entity
+    The memory worker is responsible for acquiring the lock at job start.
+    """
+    from memory_services import get_memory_settings
+    from services import memory_lock
+    from datetime import date
+
+    settings = get_memory_settings() or {}
+    threshold = int(settings.get("memory_threshold") or 0)
+    if threshold <= 0:
+        return
+
+    safe_types = settings.get("memory_safe_boundary_types")
+    if isinstance(safe_types, str):
+        try:
+            safe_types = json.loads(safe_types)
+        except Exception:
+            safe_types = None
+    if not safe_types or not isinstance(safe_types, list):
+        safe_types = ["outgoing_whatsapp_message"]
+
+    if interaction["interaction_type"] not in safe_types:
+        return
+
+    entity_type = interaction["primary_entity_type"]
+    entity_id = interaction["primary_entity_id"]
+
+    if memory_lock.is_locked(entity_type, entity_id):
+        # Another threshold job is already in flight for this entity; skip.
+        return
+
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT COUNT(*) AS cnt FROM interactions
+            WHERE primary_entity_type = %s AND primary_entity_id = %s
+              AND status = 'pending' AND is_enriched = TRUE
+        """, (entity_type, entity_id))
+        row = cursor.fetchone()
+        pending_count = (row["cnt"] if row else 0) or 0
+
+    if pending_count < threshold:
+        return
+
+    # Enqueue the memory job for today's bucket. The worker will acquire the
+    # per-entity lock at start; outbound webhooks defer while it runs.
+    try:
+        from memory.queue import memory_queue
+        retries = int(settings.get("memory_queue_retries", 3))
+        delay = int(settings.get("memory_queue_retry_delay", 2000))
+        await memory_queue.add(
+            "generate_memory",
+            {
+                "entity_type": entity_type,
+                "entity_id": entity_id,
+                "interaction_date": date.today().isoformat(),
+                "trigger": "threshold",
+            },
+            {"priority": 4, "attempts": retries, "backoff": {"type": "exponential", "delay": delay}}
+        )
+        logger.info(
+            f"Threshold memory enqueued for {entity_type}/{entity_id} "
+            f"(pending={pending_count}, threshold={threshold})"
+        )
+    except Exception as e:
+        logger.error(f"Failed to enqueue threshold memory for {entity_type}/{entity_id}: {e}")
 
 
 def _sync_entity_profile(interaction: dict):
