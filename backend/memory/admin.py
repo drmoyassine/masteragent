@@ -259,6 +259,7 @@ async def list_knowledge(
     category: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     visibility: Optional[str] = Query(None),
+    tags: Optional[str] = Query(None),
     limit: int = Query(30, le=100),
     offset: int = Query(0),
     admin: dict = Depends(require_admin_auth)
@@ -277,6 +278,11 @@ async def list_knowledge(
             conditions.append("status = %s"); params.append(status)
         if visibility:
             conditions.append("visibility = %s"); params.append(visibility)
+        if tags:
+            tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+            if tag_list:
+                conditions.append("tags && %s")
+                params.append(tag_list)
 
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
         params_count = list(params)
@@ -322,12 +328,16 @@ async def create_knowledge(body: KnowledgeCreate, admin: dict = Depends(require_
         cursor.execute("""
             INSERT INTO knowledge (
                 id, source_intelligence_ids, knowledge_type, name, content, summary,
-                visibility, tags, created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                visibility, tags, category, metadata, status, created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             lesson_id, body.source_intelligence_ids or [],
             body.knowledge_type, body.name, body.content, body.summary,
-            body.visibility, body.tags or [], now, now
+            body.visibility, body.tags or [],
+            body.category or "trade_knowledge",
+            json.dumps(body.metadata) if body.metadata else None,
+            body.status or "draft",
+            now, now
         ))
 
     return {"id": lesson_id, "created_at": now}
@@ -356,6 +366,12 @@ async def update_knowledge(
         fields.append("visibility = %s"); values.append(body.visibility)
     if body.tags is not None:
         fields.append("tags = %s"); values.append(body.tags)
+    if body.category is not None:
+        fields.append("category = %s"); values.append(body.category)
+    if body.metadata is not None:
+        fields.append("metadata = %s"); values.append(json.dumps(body.metadata))
+    if body.status is not None:
+        fields.append("status = %s"); values.append(body.status)
 
     if not fields:
         raise HTTPException(status_code=400, detail="No fields to update")
@@ -458,6 +474,22 @@ async def update_entity_type_config(
     if "discovered_schema" in body.model_fields_set:
         fields.append("discovered_schema = %s")
         values.append(json.dumps(body.discovered_schema) if body.discovered_schema is not None else None)
+
+    # ── Knowledge quality gauges (per-entity-type) ──────────────────────────
+    if body.extraction_min_entities is not None:
+        fields.append("extraction_min_entities = %s"); values.append(body.extraction_min_entities)
+    if body.outcome_positive_threshold is not None:
+        fields.append("outcome_positive_threshold = %s"); values.append(body.outcome_positive_threshold)
+    if "auto_activate_score_threshold" in body.model_fields_set:
+        fields.append("auto_activate_score_threshold = %s"); values.append(body.auto_activate_score_threshold)
+    if body.decay_max_inactive_days is not None:
+        fields.append("decay_max_inactive_days = %s"); values.append(body.decay_max_inactive_days)
+    if body.decay_min_interactions_since_trigger is not None:
+        fields.append("decay_min_interactions_since_trigger = %s"); values.append(body.decay_min_interactions_since_trigger)
+    if body.playbook_auto_activate is not None:
+        fields.append("playbook_auto_activate = %s"); values.append(body.playbook_auto_activate)
+    if body.skill_auto_activate is not None:
+        fields.append("skill_auto_activate = %s"); values.append(body.skill_auto_activate)
 
     if not fields:
         raise HTTPException(status_code=400, detail="No fields to update")

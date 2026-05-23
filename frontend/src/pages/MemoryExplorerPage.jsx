@@ -30,6 +30,7 @@ import {
   bulkApproveIntelligenceAdmin,
   reprocessIntelligence,
   bulkDeleteKnowledgeAdmin,
+  submitKnowledgeFeedback,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -55,7 +56,8 @@ import KnowledgeTab from "@/components/memory/KnowledgeTab";
 import InteractionInspector from "@/components/memory/InteractionInspector";
 import MemoryInspector from "@/components/memory/MemoryInspector";
 import IntelligenceInspector from "@/components/memory/IntelligenceInspector";
-import { NewKnowledgeDialog, EditKnowledgeDialog } from "@/components/memory/KnowledgeDialogs";
+import KnowledgeInspector from "@/components/memory/KnowledgeInspector";
+import { NewKnowledgeDialog } from "@/components/memory/KnowledgeDialogs";
 import FilterBar from "@/components/memory/FilterBar";
 
 export default function MemoryExplorerPage() {
@@ -91,8 +93,10 @@ export default function MemoryExplorerPage() {
 
   // Additional knowledge state
   const [lessonStatusFilter, setLessonStatusFilter] = useState("all");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [tagSearch, setTagSearch] = useState("");
   const [editingLesson, setEditingLesson] = useState(null);
-  const [newLesson, setNewLesson] = useState({ name: "", type: "", body: "", status: "draft" });
+  const [newLesson, setNewLesson] = useState({ name: "", category: "trade_knowledge", content: "", summary: "", tags: [], status: "draft" });
   const [showNewLessonDialog, setShowNewLessonDialog] = useState(false);
 
   // Inspector state
@@ -166,9 +170,12 @@ export default function MemoryExplorerPage() {
     knowledge: [
       { key: "select", label: "", fixed: true },
       { key: "seq_id", label: "ID" },
-      { key: "type", label: "Type" },
+      { key: "category", label: "Category" },
       { key: "name", label: "Name" },
       { key: "content", label: "Content" },
+      { key: "quality_score", label: "Quality" },
+      { key: "merge_count", label: "Merges" },
+      { key: "source_pathway", label: "Source" },
       { key: "status", label: "Status" },
       { key: "actions", label: "Actions", fixed: true },
     ],
@@ -356,6 +363,8 @@ export default function MemoryExplorerPage() {
     try {
       const params = getFetchParams();
       if (lessonStatusFilter !== "all") params.status = lessonStatusFilter;
+      if (categoryFilter !== "all") params.category = categoryFilter;
+      if (tagSearch.trim()) params.tags = tagSearch.trim();
       const res = await getLessonsAdmin(params);
       setLessons(res.data?.knowledge || []);
     } catch (error) {
@@ -364,7 +373,7 @@ export default function MemoryExplorerPage() {
     } finally {
       setLoading(false);
     }
-  }, [getFetchParams, lessonStatusFilter]);
+  }, [getFetchParams, lessonStatusFilter, categoryFilter, tagSearch]);
 
   useEffect(() => {
     loadFilterOptions();
@@ -376,15 +385,15 @@ export default function MemoryExplorerPage() {
 
   // ─── Knowledge Handlers ─────────────────────────────────────
   const handleCreateLesson = async () => {
-    if (!newLesson.name || !newLesson.type || !newLesson.body) {
-      toast.error("Please fill all fields");
+    if (!newLesson.name || !newLesson.content) {
+      toast.error("Please fill name and content");
       return;
     }
     try {
       await createLessonAdmin(newLesson);
       toast.success("Knowledge created");
       setShowNewLessonDialog(false);
-      setNewLesson({ name: "", type: "", body: "", status: "draft" });
+      setNewLesson({ name: "", category: "trade_knowledge", content: "", summary: "", tags: [], status: "draft" });
       loadLessons();
     } catch (error) {
       toast.error("Failed to create knowledge");
@@ -396,8 +405,11 @@ export default function MemoryExplorerPage() {
     try {
       await updateLessonAdmin(editingLesson.id, {
         name: editingLesson.name,
-        type: editingLesson.type,
-        body: editingLesson.body,
+        content: editingLesson.content,
+        summary: editingLesson.summary,
+        category: editingLesson.category,
+        tags: editingLesson.tags,
+        metadata: editingLesson.metadata,
         status: editingLesson.status,
       });
       toast.success("Knowledge updated");
@@ -410,11 +422,11 @@ export default function MemoryExplorerPage() {
 
   const handleApproveLesson = async (lessonId) => {
     try {
-      await updateLessonAdmin(lessonId, { status: "approved" });
-      toast.success("Knowledge approved");
+      await updateLessonAdmin(lessonId, { status: "active" });
+      toast.success("Knowledge activated");
       loadLessons();
     } catch (error) {
-      toast.error("Failed to approve knowledge");
+      toast.error("Failed to activate knowledge");
     }
   };
 
@@ -757,6 +769,10 @@ export default function MemoryExplorerPage() {
             onBulkDelete={handleBulkDeleteKnowledge}
             lessonStatusFilter={lessonStatusFilter}
             setLessonStatusFilter={setLessonStatusFilter}
+            categoryFilter={categoryFilter}
+            setCategoryFilter={setCategoryFilter}
+            tagSearch={tagSearch}
+            setTagSearch={setTagSearch}
             onShowNewDialog={() => setShowNewLessonDialog(true)}
             lessonTypes={lessonTypes}
             getLessonTypeColor={getLessonTypeColor}
@@ -796,11 +812,21 @@ export default function MemoryExplorerPage() {
         lessonTypes={lessonTypes}
         onCreate={handleCreateLesson}
       />
-      <EditKnowledgeDialog
-        editingLesson={editingLesson}
-        setEditingLesson={setEditingLesson}
-        lessonTypes={lessonTypes}
+      <KnowledgeInspector
+        editingKnowledge={editingLesson}
+        setEditingKnowledge={setEditingLesson}
         onUpdate={handleUpdateLesson}
+        onApprove={handleApproveLesson}
+        onDelete={(id) => { handleDeleteLesson(id); setEditingLesson(null); }}
+        onFeedback={async (id, outcome) => {
+          try {
+            await submitKnowledgeFeedback(id, { outcome });
+            loadLessons();
+            toast.success("Feedback recorded");
+          } catch (e) {
+            toast.error("Failed to record feedback");
+          }
+        }}
       />
     </div>
   );

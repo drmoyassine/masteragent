@@ -395,17 +395,26 @@ class KnowledgeCreate(BaseModel):
     source_Intelligence_ids: Optional[List[str]] = []
     visibility: str = "shared"           # shared | team | private
     tags: Optional[List[str]] = []
+    category: Optional[str] = "trade_knowledge"
+    metadata: Optional[dict] = None
+    status: Optional[str] = "draft"
 
 class KnowledgeResponse(BaseModel):
     id: str
     seq_id: Optional[int] = None
-    source_Intelligence_ids: List[str]
+    source_intelligence_ids: List[str]
     knowledge_type: Optional[str]
     name: str
     content: str
     summary: Optional[str]
     visibility: str
     tags: List[str]
+    category: Optional[str] = "trade_knowledge"
+    metadata: Optional[dict] = None
+    status: Optional[str] = "active"
+    quality_score: Optional[float] = None
+    merge_count: Optional[int] = 0
+    source_pathway: Optional[str] = None
     created_at: str
     updated_at: str
 
@@ -416,6 +425,9 @@ class KnowledgeUpdate(BaseModel):
     knowledge_type: Optional[str] = None
     visibility: Optional[str] = None
     tags: Optional[List[str]] = None
+    category: Optional[str] = None
+    metadata: Optional[dict] = None
+    status: Optional[str] = None
 
 # ============================================
 # Per Entity Type Configuration

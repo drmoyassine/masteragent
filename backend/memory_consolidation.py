@@ -6,6 +6,7 @@ Runs periodically (configurable interval) to:
 3. Retire stale records based on decay gauges
 4. Recompute quality scores for all active records
 """
+import json
 import logging
 from datetime import datetime, timezone
 
@@ -72,9 +73,65 @@ async def _consolidate_duplicates(threshold: float):
             cursor.execute("""
                 UPDATE knowledge SET status = 'retired', updated_at = %s WHERE id = %s
             """, (now, retire_id))
+            # Refine playbook if the kept record is a playbook
+            cursor.execute("SELECT category FROM knowledge WHERE id = %s", (keep_id,))
+            cat_row = cursor.fetchone()
+        if cat_row and dict(cat_row).get("category") == "playbook":
+            await _refine_playbook(keep_id)
         merged += 1
 
     logger.info(f"Consolidated {merged} duplicate pairs")
+
+
+async def _refine_playbook(keep_id: str):
+    """Re-run LLM to update a playbook's steps and trigger_conditions after a merge event."""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT name, content, metadata, merge_count FROM knowledge WHERE id = %s",
+            (keep_id,),
+        )
+        row = cursor.fetchone()
+    if not row or row.get("category") != "playbook":
+        return
+
+    metadata = row["metadata"] or {}
+    existing_steps = metadata.get("steps", [])
+
+    system_prompt = (
+        "You are refining an existing playbook based on accumulated evidence. "
+        "Review the current playbook and update steps and trigger conditions if the new evidence "
+        "warrants changes. Keep existing structure unless clearly superseded.\n\n"
+        'Return JSON: {"steps": [{"order": N, "action": "..."}], '
+        '"trigger_conditions": [...], "confidence": 0.0-1.0}'
+    )
+
+    try:
+        from memory_services import call_llm
+        result_text = await call_llm(
+            f"Current playbook: {row['content']}\n"
+            f"Existing steps: {json.dumps(existing_steps)}\n"
+            f"Merge count (evidence accumulations): {row['merge_count']}",
+            system_prompt=system_prompt,
+            max_tokens=600,
+            task_type="knowledge_generation",
+        )
+        result = json.loads(result_text)
+        metadata["steps"] = result.get("steps", existing_steps)
+        metadata["trigger_conditions"] = result.get(
+            "trigger_conditions", metadata.get("trigger_conditions", [])
+        )
+
+        now = datetime.now(timezone.utc).isoformat()
+        with get_memory_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE knowledge SET metadata = %s, updated_at = %s WHERE id = %s",
+                (json.dumps(metadata), now, keep_id),
+            )
+        logger.info(f"Refined playbook {keep_id} after merge")
+    except Exception as e:
+        logger.warning(f"Playbook refinement failed for {keep_id}: {e}")
 
 
 def _apply_decay():
