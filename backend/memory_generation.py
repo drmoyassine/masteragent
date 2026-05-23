@@ -183,24 +183,26 @@ async def _generate_memory_for_entity_impl(entity_type: str, entity_id: str, int
 
     config = _get_entity_type_config(entity_type)
 
-    # Read interaction types to EXCLUDE from memory generation (e.g. AI thoughts/tool calls)
+    # Read interaction types filter for memory generation (e.g. AI thoughts/tool calls)
     settings = get_memory_settings()
     excluded_types = settings.get("memory_generation_interaction_types")
     if isinstance(excluded_types, str):
         import json as _json
         excluded_types = _json.loads(excluded_types)
+    mode = settings.get("memory_generation_interaction_types_mode", "exclude")
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         if excluded_types:
-            cursor.execute("""
+            op = "= ANY(%s)" if mode == "include" else "!= ALL(%s)"
+            cursor.execute(f"""
                 SELECT id, content, metadata, metadata_field_map, interaction_type
                 FROM interactions
                 WHERE primary_entity_type = %s
                   AND primary_entity_id = %s
                   AND DATE(timestamp) = %s
                   AND status IN ('pending', 'failed')
-                  AND interaction_type != ALL(%s)
+                  AND interaction_type {op}
                 ORDER BY timestamp
             """, (entity_type, entity_id, interaction_date, excluded_types))
         else:

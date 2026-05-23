@@ -222,7 +222,8 @@ class MemorySettingsUpdate(BaseModel):
     extraction_confidence_threshold: Optional[float] = 0.6
     consolidation_similarity_threshold: Optional[float] = 0.80
     consolidation_run_interval_days: Optional[int] = 7
-    memory_generation_interaction_types: Optional[List[str]] = None  # types to EXCLUDE from memory gen
+    memory_generation_interaction_types: Optional[List[str]] = None
+    memory_generation_interaction_types_mode: Optional[str] = "exclude"
     playbook_extraction_interval_days: Optional[int] = 7
     playbook_extraction_evidence_threshold: Optional[int] = 20
 
@@ -244,6 +245,7 @@ class MemorySettingsResponse(BaseModel):
     consolidation_similarity_threshold: float = 0.80
     consolidation_run_interval_days: int = 7
     memory_generation_interaction_types: Optional[List[str]] = None
+    memory_generation_interaction_types_mode: Optional[str] = "exclude"
     playbook_extraction_interval_days: int = 7
     playbook_extraction_evidence_threshold: int = 20
 
@@ -597,6 +599,7 @@ class OutboundWebhookCreate(BaseModel):
     # Payload-level interaction-type filter applied AFTER the trigger has fired.
     # None or [] = include all types (backward compatible).
     payload_interaction_types: Optional[List[str]] = None
+    payload_interaction_types_mode: Optional[str] = "include"
     is_active: Optional[bool] = True
 
 class OutboundWebhookUpdate(BaseModel):
@@ -607,6 +610,7 @@ class OutboundWebhookUpdate(BaseModel):
     payload_mode: Optional[str] = None
     include_latest_memory: Optional[bool] = None
     payload_interaction_types: Optional[List[str]] = None
+    payload_interaction_types_mode: Optional[str] = None
     is_active: Optional[bool] = None
 
 class OutboundWebhookResponse(BaseModel):
@@ -617,6 +621,8 @@ class OutboundWebhookResponse(BaseModel):
     conditions: Dict[str, Any]
     payload_mode: str
     include_latest_memory: bool
+    payload_interaction_types: Optional[List[str]] = None
+    payload_interaction_types_mode: str = "include"
     is_active: bool
     created_at: str
     updated_at: str
