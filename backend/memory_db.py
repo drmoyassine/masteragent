@@ -360,6 +360,7 @@ def _create_memory_tier_tables(cursor):
             payload_mode                TEXT DEFAULT 'trigger_only',
             include_latest_memory       BOOLEAN DEFAULT TRUE,
             payload_interaction_types   JSONB DEFAULT NULL,
+            payload_interaction_types_mode TEXT DEFAULT 'include',
             is_active                   BOOLEAN DEFAULT TRUE,
             created_at                  TIMESTAMPTZ DEFAULT NOW(),
             updated_at                  TIMESTAMPTZ DEFAULT NOW()
@@ -655,6 +656,14 @@ def _run_migrations(cursor):
         )
     except Exception as e:
         logger.error(f"Failed to add payload_interaction_types to memory_outbound_webhooks: {e}")
+
+    # Outbound webhook: include/exclude mode for the interaction-type filter.
+    try:
+        cursor.execute(
+            "ALTER TABLE memory_outbound_webhooks ADD COLUMN IF NOT EXISTS payload_interaction_types_mode TEXT DEFAULT 'include'"
+        )
+    except Exception as e:
+        logger.error(f"Failed to add payload_interaction_types_mode to memory_outbound_webhooks: {e}")
 
     # Memory threshold trigger: generate a memory every N qualifying interactions
     # in addition to the daily schedule (whichever comes first). The safe

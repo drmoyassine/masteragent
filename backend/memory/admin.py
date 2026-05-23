@@ -1320,12 +1320,13 @@ async def create_outbound_webhook(body: OutboundWebhookCreate, admin: dict = Dep
         cursor.execute("""
             INSERT INTO memory_outbound_webhooks (
                 id, name, url, debounce_ms, conditions, payload_mode, include_latest_memory,
-                payload_interaction_types, is_active, created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                payload_interaction_types, payload_interaction_types_mode, is_active, created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             webhook_id, body.name, body.url, body.debounce_ms, json.dumps(body.conditions or {}), body.payload_mode,
             body.include_latest_memory,
             json.dumps(body.payload_interaction_types) if body.payload_interaction_types else None,
+            body.payload_interaction_types_mode or "include",
             body.is_active, now, now
         ))
 
@@ -1354,6 +1355,8 @@ async def update_outbound_webhook(webhook_id: str, body: OutboundWebhookUpdate, 
         # the same way as the default backward-compatible state.
         fields.append("payload_interaction_types = %s")
         values.append(json.dumps(body.payload_interaction_types) if body.payload_interaction_types else None)
+    if body.payload_interaction_types_mode is not None:
+        fields.append("payload_interaction_types_mode = %s"); values.append(body.payload_interaction_types_mode)
     if body.is_active is not None:
         fields.append("is_active = %s"); values.append(body.is_active)
 

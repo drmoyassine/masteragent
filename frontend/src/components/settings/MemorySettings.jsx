@@ -9,6 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import api, { triggerMemoryGeneration, triggerIntelligenceCheck, fetchProviderModels } from "@/lib/api";
@@ -1069,16 +1070,31 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                     <div className="border-t pt-4">
                         <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Processing</Label>
                         <div className="space-y-1 mt-2">
-                            <Label className="text-xs font-mono">Memory Generation Excluded Types</Label>
-                            <Input
-                                value={Array.isArray(settings.memory_generation_interaction_types) ? settings.memory_generation_interaction_types.join(", ") : (settings.memory_generation_interaction_types || "")}
-                                onChange={(e) => {
-                                    const val = e.target.value.trim();
-                                    onUpdateSettings("memory_generation_interaction_types", val ? val.split(",").map(s => s.trim()).filter(Boolean) : null);
-                                }}
-                                placeholder="e.g. internal_ai_thought, internal_ai_tool_call"
-                            />
-                            <p className="text-[10px] text-muted-foreground">Interaction types to EXCLUDE from memory generation (comma-separated)</p>
+                            <Label className="text-xs font-mono">Memory Generation Interaction Types</Label>
+                            <div className="flex gap-2">
+                                <Input
+                                    value={Array.isArray(settings.memory_generation_interaction_types) ? settings.memory_generation_interaction_types.join(", ") : (settings.memory_generation_interaction_types || "")}
+                                    onChange={(e) => {
+                                        const val = e.target.value.trim();
+                                        onUpdateSettings("memory_generation_interaction_types", val ? val.split(",").map(s => s.trim()).filter(Boolean) : null);
+                                    }}
+                                    placeholder="e.g. internal_ai_thought, internal_ai_tool_call"
+                                    className="flex-1"
+                                />
+                                <Select
+                                    value={settings.memory_generation_interaction_types_mode || "exclude"}
+                                    onValueChange={(v) => onUpdateSettings("memory_generation_interaction_types_mode", v)}
+                                >
+                                    <SelectTrigger className="w-[130px] h-9 text-xs">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="exclude">Exclude</SelectItem>
+                                        <SelectItem value="include">Include only</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <p className="text-[10px] text-muted-foreground">Comma-separated interaction types. Mode determines whether these are excluded or the only ones included in memory generation.</p>
                         </div>
                     </div>
                 </CardContent>

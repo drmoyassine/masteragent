@@ -287,11 +287,15 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
                     step2_query += f" AND {key} = %s"
                     step2_params.append(value)
 
-        # Apply payload-level interaction-type allowlist (separate from trigger
+        # Apply payload-level interaction-type filter (separate from trigger
         # conditions). When set, narrows the bundled interactions to the listed
-        # types regardless of payload_mode.
+        # types regardless of payload_mode. Mode flips between include/exclude.
         if payload_type_filter:
-            step2_query += " AND interaction_type = ANY(%s)"
+            mode = wh.get("payload_interaction_types_mode", "include")
+            if mode == "exclude":
+                step2_query += " AND interaction_type != ALL(%s)"
+            else:
+                step2_query += " AND interaction_type = ANY(%s)"
             step2_params.append(payload_type_filter)
 
         step2_query += " ORDER BY timestamp ASC"

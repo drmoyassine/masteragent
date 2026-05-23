@@ -29,6 +29,7 @@ export function OutboundWebhooksSettings() {
         payload_mode: "trigger_only",
         include_latest_memory: true,
         payload_interaction_types: "", // comma-separated string in UI; empty = no filter
+        payload_interaction_types_mode: "include",
         conditions: [] // [{key: "", value: ""}] internally for UI
     });
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -78,6 +79,7 @@ export function OutboundWebhooksSettings() {
             payload_mode: "trigger_only",
             include_latest_memory: true,
             payload_interaction_types: "",
+            payload_interaction_types_mode: "include",
             conditions: [{ key: "interaction_type", value: "whatsapp_incoming" }]
         });
         setIsDialogOpen(true);
@@ -106,6 +108,7 @@ export function OutboundWebhooksSettings() {
             payload_interaction_types: Array.isArray(wh.payload_interaction_types)
                 ? wh.payload_interaction_types.join(",")
                 : "",
+            payload_interaction_types_mode: wh.payload_interaction_types_mode || "include",
             conditions: condsArr
         });
         setIsDialogOpen(true);
@@ -164,6 +167,7 @@ export function OutboundWebhooksSettings() {
             payload_mode: formData.payload_mode,
             include_latest_memory: formData.include_latest_memory,
             payload_interaction_types: payloadTypes.length > 0 ? payloadTypes : null,
+            payload_interaction_types_mode: formData.payload_interaction_types_mode || "include",
             conditions: finalConditions
         };
 
@@ -327,14 +331,28 @@ export function OutboundWebhooksSettings() {
 
                         <div className="space-y-2">
                             <Label>Payload Interaction-Type Filter</Label>
-                            <Input
-                                placeholder="e.g. incoming_whatsapp_message,outgoing_whatsapp_message"
-                                className="font-mono text-xs"
-                                value={formData.payload_interaction_types}
-                                onChange={e => setFormData({...formData, payload_interaction_types: e.target.value})}
-                            />
+                            <div className="flex gap-2">
+                                <Input
+                                    placeholder="e.g. incoming_whatsapp_message,outgoing_whatsapp_message"
+                                    className="font-mono text-xs flex-1"
+                                    value={formData.payload_interaction_types}
+                                    onChange={e => setFormData({...formData, payload_interaction_types: e.target.value})}
+                                />
+                                <Select
+                                    value={formData.payload_interaction_types_mode}
+                                    onValueChange={v => setFormData({...formData, payload_interaction_types_mode: v})}
+                                >
+                                    <SelectTrigger className="w-[130px] h-9 text-xs">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="include">Include only</SelectItem>
+                                        <SelectItem value="exclude">Exclude</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
                             <p className="text-[10px] text-muted-foreground">
-                                Comma-separated list of interaction_type values to include in the bundled interactions array. Leave empty to include all types. Applied AFTER the trigger fires — independent of Trigger Conditions below.
+                                Comma-separated interaction_type values. Mode determines whether these types are included or excluded from the payload. Leave empty to include all types.
                             </p>
                         </div>
 

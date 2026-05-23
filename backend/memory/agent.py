@@ -299,8 +299,16 @@ async def get_context(
     interaction_types: Optional[str] = Query(
         None,
         description=(
-            "Optional comma-separated allowlist of interaction_type values. "
-            "When set, only matching interactions are returned. Empty/null = all."
+            "Optional comma-separated list of interaction_type values. "
+            "Behaviour depends on interaction_types_mode. Empty/null = all."
+        ),
+    ),
+    interaction_types_mode: Optional[str] = Query(
+        "include",
+        description=(
+            '"include" = only return listed types; '
+            '"exclude" = return all EXCEPT listed types. '
+            "Only effective when interaction_types is set."
         ),
     ),
     agent: dict = Depends(verify_agent_key)
@@ -309,8 +317,8 @@ async def get_context(
     (unprocessed), all memories, and all intelligence. Payload shape matches
     the outbound webhook so agents can request the same context on demand.
 
-    Optional ?interaction_types=a,b filters the interactions list (memories
-    and intelligence are unaffected — they're already condensed)."""
+    Optional ?interaction_types=a,b&interaction_types_mode=include|exclude
+    filters the interactions list (memories and intelligence are unaffected)."""
     type_filter: Optional[List[str]] = None
     if interaction_types:
         type_filter = [t.strip() for t in interaction_types.split(",") if t.strip()]
@@ -331,7 +339,10 @@ async def get_context(
         """
         interactions_params: list = [entity_type, entity_id]
         if type_filter:
-            interactions_query += " AND interaction_type = ANY(%s)"
+            if interaction_types_mode == "exclude":
+                interactions_query += " AND interaction_type != ALL(%s)"
+            else:
+                interactions_query += " AND interaction_type = ANY(%s)"
             interactions_params.append(type_filter)
         interactions_query += " ORDER BY timestamp ASC"
         cursor.execute(interactions_query, interactions_params)
