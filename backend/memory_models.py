@@ -227,17 +227,17 @@ class MemorySettingsUpdate(BaseModel):
     playbook_extraction_evidence_threshold: Optional[int] = 20
 
 class MemorySettingsResponse(BaseModel):
-    chunk_size: int
-    chunk_overlap: int
+    chunk_size: int = 400
+    chunk_overlap: int = 80
     memory_generation_time: str = "02:00"
     memory_generation_mode: str = "ner_and_raw"
-    auto_knowledge_enabled: bool
-    auto_knowledge_threshold: int
+    auto_knowledge_enabled: bool = True
+    auto_knowledge_threshold: int = 5
     knowledge_threshold: int = 5
     intelligence_extraction_threshold: int = 10
-    rate_limit_enabled: bool
-    rate_limit_per_minute: int
-    default_agent_access: str
+    rate_limit_enabled: bool = False
+    rate_limit_per_minute: int = 60
+    default_agent_access: str = "private"
     # Quality gauges
     dedup_similarity_threshold: float = 0.85
     extraction_confidence_threshold: float = 0.6
