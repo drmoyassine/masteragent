@@ -290,8 +290,7 @@ def _create_memory_tier_tables(cursor):
         )
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_type ON knowledge (knowledge_type)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_category ON knowledge (category)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_status ON knowledge (status)")
+    # category/status indexes created after ALTER TABLE ADD COLUMN below
 
     # Playbook extraction: tracks which AI thought/tool-call interactions have been processed
     cursor.execute("""
@@ -693,6 +692,13 @@ def _run_migrations(cursor):
             cursor.execute(f"ALTER TABLE knowledge ADD COLUMN IF NOT EXISTS {col} {col_def}")
         except Exception as e:
             logger.error(f"Failed to add {col} to knowledge: {e}")
+
+    # Indexes for new columns (must run after ALTER TABLE)
+    try:
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_category ON knowledge (category)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_status ON knowledge (status)")
+    except Exception as e:
+        logger.error(f"Failed to create knowledge indexes: {e}")
 
     # Backfill existing knowledge: set category + status where NULL
     try:
