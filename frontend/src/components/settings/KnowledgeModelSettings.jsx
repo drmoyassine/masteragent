@@ -270,6 +270,7 @@ function EntityDetailPanel({ entityType, entityTypes }) {
         subtypes: false,
         intelligence: false,
         knowledge: false,
+        quality_gauges: false,
     });
 
     const toggleSection = (key) =>
@@ -618,6 +619,81 @@ function EntityDetailPanel({ entityType, entityTypes }) {
                 />
             </AccordionSection>
 
+            {/* ─── Knowledge Quality Gauges ──────────────────── */}
+            <AccordionSection id="quality_gauges" icon={Settings} title="Knowledge Quality Gauges" isOpen={openSections.quality_gauges} onToggle={() => toggleSection("quality_gauges")}>
+                <p className="text-[10px] text-muted-foreground leading-relaxed mb-3">
+                    Per-entity-type controls for knowledge extraction, decay, and auto-activation.
+                </p>
+                <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                        <Label className="text-xs font-mono">Extraction Min Entities</Label>
+                        <Input
+                            type="number" min="1" max="20"
+                            value={config?.extraction_min_entities ?? 3}
+                            onChange={(e) => { setConfig({ ...config, extraction_min_entities: parseInt(e.target.value) || 3 }); }}
+                            onBlur={() => saveField({ extraction_min_entities: config?.extraction_min_entities ?? 3 })}
+                        />
+                        <p className="text-[10px] text-muted-foreground">Min distinct entities for a cluster to qualify</p>
+                    </div>
+                    <div className="space-y-1">
+                        <Label className="text-xs font-mono">Outcome Positive Threshold</Label>
+                        <Input
+                            type="number" step="0.05" min="0.3" max="1.0"
+                            value={config?.outcome_positive_threshold ?? 0.7}
+                            onChange={(e) => { setConfig({ ...config, outcome_positive_threshold: parseFloat(e.target.value) || 0.7 }); }}
+                            onBlur={() => saveField({ outcome_positive_threshold: config?.outcome_positive_threshold ?? 0.7 })}
+                        />
+                        <p className="text-[10px] text-muted-foreground">Signal level for positive outcome (0.3-1.0)</p>
+                    </div>
+                    <div className="space-y-1">
+                        <Label className="text-xs font-mono">Auto-Activate Score Threshold</Label>
+                        <Input
+                            type="number" step="0.05" min="0.3" max="1.0"
+                            value={config?.auto_activate_score_threshold ?? ""}
+                            placeholder="(disabled)"
+                            onChange={(e) => { setConfig({ ...config, auto_activate_score_threshold: e.target.value ? parseFloat(e.target.value) : null }); }}
+                            onBlur={() => saveField({ auto_activate_score_threshold: config?.auto_activate_score_threshold ?? null })}
+                        />
+                        <p className="text-[10px] text-muted-foreground">Quality score to auto-activate drafts (empty = disabled)</p>
+                    </div>
+                    <div className="space-y-1">
+                        <Label className="text-xs font-mono">Decay Max Inactive Days</Label>
+                        <Input
+                            type="number" min="30" max="365"
+                            value={config?.decay_max_inactive_days ?? 90}
+                            onChange={(e) => { setConfig({ ...config, decay_max_inactive_days: parseInt(e.target.value) || 90 }); }}
+                            onBlur={() => saveField({ decay_max_inactive_days: config?.decay_max_inactive_days ?? 90 })}
+                        />
+                        <p className="text-[10px] text-muted-foreground">Days inactive before retirement</p>
+                    </div>
+                    <div className="space-y-1">
+                        <Label className="text-xs font-mono">Decay Min Interactions</Label>
+                        <Input
+                            type="number" min="10" max="500"
+                            value={config?.decay_min_interactions_since_trigger ?? 100}
+                            onChange={(e) => { setConfig({ ...config, decay_min_interactions_since_trigger: parseInt(e.target.value) || 100 }); }}
+                            onBlur={() => saveField({ decay_min_interactions_since_trigger: config?.decay_min_interactions_since_trigger ?? 100 })}
+                        />
+                        <p className="text-[10px] text-muted-foreground">Min interactions since trigger before decay applies</p>
+                    </div>
+                    <div className="flex flex-col gap-3 pt-1">
+                        <div className="flex items-center justify-between">
+                            <Label className="text-xs font-mono">Auto-Activate Playbooks</Label>
+                            <Switch
+                                checked={config?.playbook_auto_activate ?? false}
+                                onCheckedChange={(v) => { setConfig({ ...config, playbook_auto_activate: v }); saveField({ playbook_auto_activate: v }); }}
+                            />
+                        </div>
+                        <div className="flex items-center justify-between">
+                            <Label className="text-xs font-mono">Auto-Activate Skills</Label>
+                            <Switch
+                                checked={config?.skill_auto_activate ?? false}
+                                onCheckedChange={(v) => { setConfig({ ...config, skill_auto_activate: v }); saveField({ skill_auto_activate: v }); }}
+                            />
+                        </div>
+                    </div>
+                </div>
+            </AccordionSection>
 
 
             {/* ─── Save Signals FAB ───────────────────────────── */}

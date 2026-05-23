@@ -217,6 +217,14 @@ class MemorySettingsUpdate(BaseModel):
     rate_limit_per_minute: Optional[int] = 60
     # Agent access
     default_agent_access: Optional[str] = "private"
+    # ── Knowledge / Playbook / Skill quality gauges (global) ───────────
+    dedup_similarity_threshold: Optional[float] = 0.85
+    extraction_confidence_threshold: Optional[float] = 0.6
+    consolidation_similarity_threshold: Optional[float] = 0.80
+    consolidation_run_interval_days: Optional[int] = 7
+    memory_generation_interaction_types: Optional[List[str]] = None  # types to EXCLUDE from memory gen
+    playbook_extraction_interval_days: Optional[int] = 7
+    playbook_extraction_evidence_threshold: Optional[int] = 20
 
 class MemorySettingsResponse(BaseModel):
     chunk_size: int
@@ -230,6 +238,14 @@ class MemorySettingsResponse(BaseModel):
     rate_limit_enabled: bool
     rate_limit_per_minute: int
     default_agent_access: str
+    # Quality gauges
+    dedup_similarity_threshold: float = 0.85
+    extraction_confidence_threshold: float = 0.6
+    consolidation_similarity_threshold: float = 0.80
+    consolidation_run_interval_days: int = 7
+    memory_generation_interaction_types: Optional[List[str]] = None
+    playbook_extraction_interval_days: int = 7
+    playbook_extraction_evidence_threshold: int = 20
 
 # ============================================
 # Tier 0: Interaction Models
@@ -379,17 +395,26 @@ class KnowledgeCreate(BaseModel):
     source_Intelligence_ids: Optional[List[str]] = []
     visibility: str = "shared"           # shared | team | private
     tags: Optional[List[str]] = []
+    category: Optional[str] = "trade_knowledge"
+    metadata: Optional[dict] = None
+    status: Optional[str] = "draft"
 
 class KnowledgeResponse(BaseModel):
     id: str
     seq_id: Optional[int] = None
-    source_Intelligence_ids: List[str]
+    source_intelligence_ids: List[str]
     knowledge_type: Optional[str]
     name: str
     content: str
     summary: Optional[str]
     visibility: str
     tags: List[str]
+    category: Optional[str] = "trade_knowledge"
+    metadata: Optional[dict] = None
+    status: Optional[str] = "active"
+    quality_score: Optional[float] = None
+    merge_count: Optional[int] = 0
+    source_pathway: Optional[str] = None
     created_at: str
     updated_at: str
 
@@ -400,6 +425,9 @@ class KnowledgeUpdate(BaseModel):
     knowledge_type: Optional[str] = None
     visibility: Optional[str] = None
     tags: Optional[List[str]] = None
+    category: Optional[str] = None
+    metadata: Optional[dict] = None
+    status: Optional[str] = None
 
 # ============================================
 # Per Entity Type Configuration
@@ -420,6 +448,14 @@ class EntityTypeConfig(BaseModel):
     intelligence_signals_prompt: Optional[List[Dict[str, str]]] = None
     knowledge_signals_prompt: Optional[List[Dict[str, str]]] = None
     discovered_schema: Optional[List[str]] = None
+    # ── Per-entity-type quality gauges ─────────────────────────────────
+    extraction_min_entities: int = 3
+    outcome_positive_threshold: float = 0.7
+    auto_activate_score_threshold: Optional[float] = None  # null = disabled
+    decay_max_inactive_days: int = 90
+    decay_min_interactions_since_trigger: int = 100
+    playbook_auto_activate: bool = False
+    skill_auto_activate: bool = False
 
 class EntityTypeConfigUpdate(BaseModel):
     intelligence_extraction_threshold: Optional[int] = None
@@ -435,6 +471,14 @@ class EntityTypeConfigUpdate(BaseModel):
     intelligence_signals_prompt: Optional[List[Dict[str, str]]] = None
     knowledge_signals_prompt: Optional[List[Dict[str, str]]] = None
     discovered_schema: Optional[List[str]] = None
+    # Per-entity-type quality gauges
+    extraction_min_entities: Optional[int] = None
+    outcome_positive_threshold: Optional[float] = None
+    auto_activate_score_threshold: Optional[float] = None
+    decay_max_inactive_days: Optional[int] = None
+    decay_min_interactions_since_trigger: Optional[int] = None
+    playbook_auto_activate: Optional[bool] = None
+    skill_auto_activate: Optional[bool] = None
 
 # ============================================
 # Search Models
@@ -502,6 +546,10 @@ class KnowledgeContextItem(BaseModel):
     summary: Optional[str] = None
     visibility: Optional[str] = None
     created_at: str
+    category: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+    quality_score: Optional[float] = None
+    merge_count: int = 0
 
 class ContextStatusResponse(BaseModel):
     has_context: bool
@@ -572,6 +620,38 @@ class OutboundWebhookResponse(BaseModel):
     is_active: bool
     created_at: str
     updated_at: str
+
+
+# ============================================
+# Knowledge Categories, Playbooks & Skills
+# ============================================
+
+class KnowledgeCategory(str, Enum):
+    best_practices = "best_practices"
+    lessons_learned = "lessons_learned"
+    trade_knowledge = "trade_knowledge"
+    skill = "skill"
+    playbook = "playbook"
+
+
+class PlaybookStep(BaseModel):
+    order: int
+    action: str
+    skill_id: Optional[str] = None
+
+
+class PlaybookFeedback(BaseModel):
+    entity_id: str
+    outcome: str  # "success" | "failure" | "partial"
+    notes: Optional[str] = None
+
+
+class AdminInstruction(BaseModel):
+    instruction: str
+    target: str = "auto"  # "knowledge" | "skill" | "playbook" | "auto"
+    category: Optional[str] = None  # for knowledge targets
+    entity_type: Optional[str] = None
+    auto_activate: bool = False
 
 
 

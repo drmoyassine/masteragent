@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from memory_services import get_memory_settings
+from core.storage import get_memory_db_context
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +123,44 @@ async def _background_loop():
 
                     from memory.queue import knowledge_queue
                     await knowledge_queue.add("generate_lesson", {}, {"priority": 3})
+
+                    # ── Playbook extraction: weekly + evidence-threshold override ──
+                    pb_interval = settings.get("playbook_extraction_interval_days", 7)
+                    pb_evidence = settings.get("playbook_extraction_evidence_threshold", 20)
+                    last_pb = get_job_last_date("playbook_extraction")
+                    days_since_pb = (today - last_pb).days if last_pb else pb_interval
+
+                    # Count unlinked intelligence
+                    unlinked_count = 0
+                    try:
+                        with get_memory_db_context() as conn:
+                            cur = conn.cursor()
+                            cur.execute("""
+                                SELECT COUNT(*) as cnt FROM intelligence i
+                                WHERE i.status = 'confirmed' AND i.embedding IS NOT NULL
+                                  AND NOT EXISTS (
+                                      SELECT 1 FROM knowledge k
+                                      WHERE k.category = 'playbook'
+                                        AND i.id = ANY(k.source_intelligence_ids)
+                                  )
+                            """)
+                            unlinked_count = cur.fetchone()["cnt"]
+                    except Exception:
+                        pass
+
+                    if days_since_pb >= pb_interval or unlinked_count >= pb_evidence:
+                        logger.info(f"Triggering playbook extraction (days_since={days_since_pb}, unlinked={unlinked_count})")
+                        set_job_last_date("playbook_extraction", today)
+                        await knowledge_queue.add("extract_playbooks", {}, {"priority": 2})
+
+                    # ── Consolidation: periodic dedup + decay + quality recompute ──
+                    consolidation_interval = settings.get("consolidation_run_interval_days", 7)
+                    last_consol = get_job_last_date("consolidation")
+                    days_since_consol = (today - last_consol).days if last_consol else consolidation_interval
+                    if days_since_consol >= consolidation_interval:
+                        logger.info(f"Triggering consolidation (days_since={days_since_consol})")
+                        set_job_last_date("consolidation", today)
+                        await knowledge_queue.add("run_consolidation", {}, {"priority": 4})
 
         except Exception as e:
             logger.error(f"Background loop error: {e}", exc_info=True)

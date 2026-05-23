@@ -183,17 +183,36 @@ async def _generate_memory_for_entity_impl(entity_type: str, entity_id: str, int
 
     config = _get_entity_type_config(entity_type)
 
+    # Read interaction types to EXCLUDE from memory generation (e.g. AI thoughts/tool calls)
+    settings = get_memory_settings()
+    excluded_types = settings.get("memory_generation_interaction_types")
+    if isinstance(excluded_types, str):
+        import json as _json
+        excluded_types = _json.loads(excluded_types)
+
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT id, content, metadata, metadata_field_map, interaction_type
-            FROM interactions
-            WHERE primary_entity_type = %s
-              AND primary_entity_id = %s
-              AND DATE(timestamp) = %s
-              AND status IN ('pending', 'failed')
-            ORDER BY timestamp
-        """, (entity_type, entity_id, interaction_date))
+        if excluded_types:
+            cursor.execute("""
+                SELECT id, content, metadata, metadata_field_map, interaction_type
+                FROM interactions
+                WHERE primary_entity_type = %s
+                  AND primary_entity_id = %s
+                  AND DATE(timestamp) = %s
+                  AND status IN ('pending', 'failed')
+                  AND interaction_type != ALL(%s)
+                ORDER BY timestamp
+            """, (entity_type, entity_id, interaction_date, excluded_types))
+        else:
+            cursor.execute("""
+                SELECT id, content, metadata, metadata_field_map, interaction_type
+                FROM interactions
+                WHERE primary_entity_type = %s
+                  AND primary_entity_id = %s
+                  AND DATE(timestamp) = %s
+                  AND status IN ('pending', 'failed')
+                ORDER BY timestamp
+            """, (entity_type, entity_id, interaction_date))
         interactions = [dict(r) for r in cursor.fetchall()]
 
     if not interactions:

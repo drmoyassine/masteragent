@@ -290,7 +290,16 @@ def _create_memory_tier_tables(cursor):
         )
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_type ON knowledge (knowledge_type)")
-    # cursor.execute("CREATE INDEX IF NOT EXISTS idx_lessons_embedding ON public_knowledge USING hnsw (embedding vector_cosine_ops)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_category ON knowledge (category)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_status ON knowledge (status)")
+
+    # Playbook extraction: tracks which AI thought/tool-call interactions have been processed
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS playbook_processed_interactions (
+            interaction_id TEXT PRIMARY KEY,
+            processed_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    """)
 
     # Audit log
     cursor.execute("""
@@ -660,6 +669,70 @@ def _run_migrations(cursor):
         except Exception as e:
             logger.error(f"Failed to add {col} to memory_settings: {e}")
 
+    # ── Knowledge unified table: category + metadata + quality gauges ──────
+    knowledge_cols = [
+        ("category", "TEXT DEFAULT 'trade_knowledge'"),
+        ("metadata", "JSONB DEFAULT '{}'"),
+        ("merge_count", "INT DEFAULT 0"),
+        ("last_merged_at", "TIMESTAMPTZ"),
+        ("quality_score", "FLOAT"),
+        ("evidence_breadth", "INT DEFAULT 1"),
+        ("outcome_signal", "FLOAT DEFAULT 0.0"),
+        ("extraction_confidence", "FLOAT DEFAULT 0.5"),
+        ("source_pathway", "TEXT DEFAULT 'experiential'"),
+        ("source_ai_interaction_ids", "TEXT[] DEFAULT '{}'"),
+        ("success_count", "INT DEFAULT 0"),
+        ("failure_count", "INT DEFAULT 0"),
+        ("feedback_notes", "JSONB DEFAULT '[]'"),
+        ("version", "INT DEFAULT 1"),
+        ("parent_id", "TEXT"),
+        ("status", "TEXT DEFAULT 'confirmed'"),
+    ]
+    for col, col_def in knowledge_cols:
+        try:
+            cursor.execute(f"ALTER TABLE knowledge ADD COLUMN IF NOT EXISTS {col} {col_def}")
+        except Exception as e:
+            logger.error(f"Failed to add {col} to knowledge: {e}")
+
+    # Backfill existing knowledge: set category + status where NULL
+    try:
+        cursor.execute("UPDATE knowledge SET category = 'trade_knowledge' WHERE category IS NULL")
+        cursor.execute("UPDATE knowledge SET status = 'active' WHERE status = 'confirmed' AND category IS NOT NULL")
+    except Exception as e:
+        logger.error(f"Failed to backfill knowledge category/status: {e}")
+
+    # ── Global gauges (memory_settings) ────────────────────────────────────
+    settings_gauge_cols = [
+        ("dedup_similarity_threshold", "FLOAT DEFAULT 0.85"),
+        ("extraction_confidence_threshold", "FLOAT DEFAULT 0.6"),
+        ("consolidation_similarity_threshold", "FLOAT DEFAULT 0.80"),
+        ("consolidation_run_interval_days", "INT DEFAULT 7"),
+        ("memory_generation_interaction_types", "JSONB DEFAULT '[\"internal_ai_thought\", \"internal_ai_tool_call\"]'::jsonb"),
+        ("playbook_extraction_interval_days", "INT DEFAULT 7"),
+        ("playbook_extraction_evidence_threshold", "INT DEFAULT 20"),
+    ]
+    for col, col_def in settings_gauge_cols:
+        try:
+            cursor.execute(f"ALTER TABLE memory_settings ADD COLUMN IF NOT EXISTS {col} {col_def}")
+        except Exception as e:
+            logger.error(f"Failed to add {col} to memory_settings: {e}")
+
+    # ── Per-entity-type gauges (memory_entity_type_config) ─────────────────
+    entity_gauge_cols = [
+        ("extraction_min_entities", "INT DEFAULT 3"),
+        ("outcome_positive_threshold", "FLOAT DEFAULT 0.7"),
+        ("auto_activate_score_threshold", "FLOAT"),
+        ("decay_max_inactive_days", "INT DEFAULT 90"),
+        ("decay_min_interactions_since_trigger", "INT DEFAULT 100"),
+        ("playbook_auto_activate", "BOOLEAN DEFAULT FALSE"),
+        ("skill_auto_activate", "BOOLEAN DEFAULT FALSE"),
+    ]
+    for col, col_def in entity_gauge_cols:
+        try:
+            cursor.execute(f"ALTER TABLE memory_entity_type_config ADD COLUMN IF NOT EXISTS {col} {col_def}")
+        except Exception as e:
+            logger.error(f"Failed to add {col} to memory_entity_type_config: {e}")
+
 
 def init_memory_db():
     """Initialize all memory system tables in PostgreSQL. Idempotent."""
@@ -791,14 +864,14 @@ def _seed_defaults():
                  ""),
                 ("embedding", "openai", "text-embedding-3-small", "memories", 1, "", ""),
                 ("memory_generation", "openai", "gpt-4o-mini", "memories", 2,
-                 "You are an AI memory system. Based on the provided interaction data, write a concise factual memory record.\n\nPRIOR CONTEXT RULES:\n- Previous memories for this entity are provided under 'Prior Context'.\n- These represent ESTABLISHED facts. Do NOT repeat them.\n- Focus EXCLUSIVELY on NEW information from today's interactions.\n- Note any progressions, status changes, or contradictions with prior records.\n- If today's interactions contain no new information beyond prior context, write a brief note stating the interaction occurred with no significant new details.\n\nOUTPUT RULES:\n- Return only the summary text, 2-5 sentences.\n- Focus on key facts, decisions, named entities, and action items.",
+                 "You are an AI memory system. Based on the provided interaction data, write a concise factual memory record.\n\nINTERACTION TYPES (voice attribution):\n- incoming_whatsapp_message — the contact's own words\n- outgoing_whatsapp_message — the AI's reply (not the contact)\n- internal_note / crm_note_inserted — a human counselor's note about the contact\n- internal_ai_thought / internal_ai_tool_call — agent telemetry, NOT the contact's words\n\nPRIOR CONTEXT RULES:\n- Previous memories for this entity are provided under 'Prior Context'.\n- These represent ESTABLISHED facts. Do NOT repeat them.\n- Focus EXCLUSIVELY on NEW information from today's interactions.\n- Note any progressions, status changes, or contradictions with prior records.\n- If today's interactions contain no new information beyond prior context, write a brief note stating the interaction occurred with no significant new details.\n\nOUTPUT RULES:\n- Return only the summary text, 2-5 sentences.\n- Focus on key facts, decisions, named entities, and action items.",
                  ""),
                 ("intelligence_generation", "openai", "gpt-4o-mini", "intelligence", 0,
                  "You are a deal intelligence analyst reviewing interaction history for {{ entity.type }} / {{ entity.id }}.\n\nYour job is not to summarize — surface what the memories reveal beneath the surface.\n\nProbe the memories against these intelligence signals:\n\n{{ intelligence_signals }}\n\nFor each signal with evidence, note the evidence and its strength. Return JSON: {\"name\": \"...\", \"knowledge_type\": \"...\", \"content\": \"...\", \"summary\": \"...\"}. knowledge_type must be one of: behavior_pattern, risk_signal, opportunity, relationship_shift, preference, milestone.",
                  ""),
                 ("pii_scrubbing", "zendata", "", "knowledge", 0, "", ""),
                 ("knowledge_generation", "openai", "gpt-4o-mini", "knowledge", 1,
-                 "You are an AI knowledge curator. The following are de-identified intelligence from multiple interactions. Synthesize them into a single generalizable Knowledge item — a durable, reusable piece of knowledge applicable beyond any specific entity. Remove all specific names.\n\nFocus on these knowledge signals:\n\n{{ knowledge_signals }}\n\nReturn JSON: {\"name\": \"...\", \"knowledge_type\": \"...\", \"content\": \"...\", \"summary\": \"...\", \"tags\": [...]}\nknowledge_type must be one of: process, risk, sales, product, support, other",
+                 "You are an AI knowledge curator. The following are de-identified intelligence from multiple interactions. Synthesize them into a single generalizable Knowledge item — a durable, reusable piece of knowledge applicable beyond any specific entity. Remove all specific names.\n\nFocus on these knowledge signals:\n\n{{ knowledge_signals }}\n\nReturn JSON: {\"name\": \"...\", \"category\": \"...\", \"content\": \"...\", \"summary\": \"...\", \"tags\": [...]}\ncategory must be one of:\n- best_practices: Behavioral rules (Dos and Don'ts) proven to work through experience\n- lessons_learned: Specific negative outcomes with root-cause analysis — what went wrong and why\n- trade_knowledge: Domain-specific procedural, regulatory, or technical facts (default)\n\ntags: Freeform domain labels (e.g., \"sales\", \"risk\", \"visa\", \"objection-handling\"). Use 1-3 tags.",
                  ""),
                  ("summarization", "openai", "gpt-4o-mini", "intelligence", -1,
                  "Summarize this in 1-2 sentences:\n\n{{text}}",

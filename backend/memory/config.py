@@ -632,15 +632,12 @@ async def delete_llm_config(config_id: str, user: dict = Depends(require_admin_a
 @router.get("/config/settings", response_model=MemorySettingsResponse)
 async def get_settings_endpoint(user: dict = Depends(require_admin_auth)):
     settings = get_memory_settings()
-    return MemorySettingsResponse(
-        chunk_size=settings.get("chunk_size", 400), chunk_overlap=settings.get("chunk_overlap", 80),
-        memory_generation_time=settings.get("memory_generation_time", "02:00"),
-        memory_generation_mode=settings.get("memory_generation_mode", "ner_and_raw"),
-        auto_knowledge_enabled=bool(settings.get("auto_knowledge_enabled", 1)), auto_knowledge_threshold=settings.get("auto_knowledge_threshold", 5),
-        knowledge_threshold=settings.get("knowledge_threshold", 5), intelligence_extraction_threshold=settings.get("intelligence_extraction_threshold", 10),
-        rate_limit_enabled=bool(settings.get("rate_limit_enabled", 0)),
-        rate_limit_per_minute=settings.get("rate_limit_per_minute", 60), default_agent_access=settings.get("default_agent_access", "private")
-    )
+    fields = {}
+    for k in MemorySettingsResponse.model_fields:
+        v = settings.get(k)
+        if v is not None:
+            fields[k] = v
+    return MemorySettingsResponse(**fields)
 
 @router.put("/config/settings", response_model=MemorySettingsResponse)
 async def update_settings_endpoint(data: MemorySettingsUpdate, user: dict = Depends(require_admin_auth)):
@@ -648,7 +645,7 @@ async def update_settings_endpoint(data: MemorySettingsUpdate, user: dict = Depe
     now = utcnow()
     # Fields backed by JSONB columns need explicit JSON serialization before
     # binding through psycopg (which would otherwise coerce list → PG array).
-    JSONB_FIELDS = {"memory_safe_boundary_types"}
+    JSONB_FIELDS = {"memory_safe_boundary_types", "memory_generation_interaction_types"}
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         updates, params = [], []

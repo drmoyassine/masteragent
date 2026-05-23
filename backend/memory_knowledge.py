@@ -137,6 +137,7 @@ async def generate_knowledge_from_intelligence(intelligence: list):
 
     name = result.get("name", "Unnamed Knowledge")
     knowledge_type = result.get("knowledge_type", "other")
+    category = result.get("category", "trade_knowledge")
     content = result.get("content", "")
     summary = result.get("summary", "")
     tags = result.get("tags", [])
@@ -155,6 +156,7 @@ async def generate_knowledge_from_intelligence(intelligence: list):
         knowledge_id=knowledge_id,
         intelligence_ids=intelligence_ids,
         knowledge_type=knowledge_type,
+        category=category,
         name=name,
         content=content,
         summary=summary,

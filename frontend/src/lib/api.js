@@ -187,6 +187,8 @@ export const createLessonAdmin = (data) => api.post('/memory/knowledge', data);
 export const updateLessonAdmin = (id, data) => api.put(`/memory/knowledge/\$\{id\}`, data);
 export const deleteLessonAdmin = (id) => api.delete(`/memory/knowledge/\$\{id\}`);
 export const bulkDeleteKnowledgeAdmin = (data) => api.post('/memory/knowledge/bulk-delete', data);
+export const getKnowledgeDetail = (id) => api.get(`/memory/knowledge/${id}`);
+export const submitKnowledgeFeedback = (id, data) => api.post(`/memory/admin/knowledge/${id}/feedback`, data);
 
 // Outbound Webhooks - Admin UI
 export const getOutboundWebhooks = () => api.get('/memory/outbound-webhooks');

@@ -1,6 +1,6 @@
 ﻿import React, { useState, useCallback } from "react";
 import {
-    Clock, Play, ShieldAlert, Zap, GraduationCap, Brain,
+    Clock, Play, ShieldAlert, Shield, Zap, GraduationCap, Brain,
     Layers, Scissors, FileText, Eye, AlertCircle, CheckCircle2,
     Edit2, Cpu, Sparkles, BarChart3, Image as ImageIcon, ChevronDown, Settings,
     Plus, X
@@ -978,6 +978,112 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                         <p className="text-[10px] text-muted-foreground">
                             Existing knowledge items injected via pgvector cosine search to prevent duplicates. Set to 0 to disable.
                         </p>
+                    </div>
+                </CardContent>
+            </Card>
+
+            {/* Quality Gauges */}
+            <Card>
+                <CardHeader className="pb-3">
+                    <div className="flex items-center gap-2">
+                        <Shield className="w-5 h-5 text-indigo-500" />
+                        <CardTitle className="text-lg">Quality Gauges</CardTitle>
+                    </div>
+                    <CardDescription className="text-xs mt-1.5">
+                        Controls for deduplication, quality scoring, consolidation, and playbook extraction.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                    {/* Dedup & Quality */}
+                    <div>
+                        <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Dedup & Quality</Label>
+                        <div className="grid grid-cols-2 gap-4 mt-2">
+                            <div className="space-y-1">
+                                <Label className="text-xs font-mono">Dedup Similarity Threshold</Label>
+                                <Input
+                                    type="number" step="0.05" min="0.5" max="1.0"
+                                    value={settings.dedup_similarity_threshold ?? 0.85}
+                                    onChange={(e) => onUpdateSettings("dedup_similarity_threshold", parseFloat(e.target.value) || 0.85)}
+                                />
+                                <p className="text-[10px] text-muted-foreground">Cosine similarity threshold for deduplication (0.5-1.0)</p>
+                            </div>
+                            <div className="space-y-1">
+                                <Label className="text-xs font-mono">Extraction Confidence Threshold</Label>
+                                <Input
+                                    type="number" step="0.05" min="0.3" max="1.0"
+                                    value={settings.extraction_confidence_threshold ?? 0.6}
+                                    onChange={(e) => onUpdateSettings("extraction_confidence_threshold", parseFloat(e.target.value) || 0.6)}
+                                />
+                                <p className="text-[10px] text-muted-foreground">Minimum confidence to accept an extraction (0.3-1.0)</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Consolidation */}
+                    <div className="border-t pt-4">
+                        <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Consolidation</Label>
+                        <div className="grid grid-cols-2 gap-4 mt-2">
+                            <div className="space-y-1">
+                                <Label className="text-xs font-mono">Consolidation Similarity Threshold</Label>
+                                <Input
+                                    type="number" step="0.05" min="0.5" max="1.0"
+                                    value={settings.consolidation_similarity_threshold ?? 0.80}
+                                    onChange={(e) => onUpdateSettings("consolidation_similarity_threshold", parseFloat(e.target.value) || 0.80)}
+                                />
+                                <p className="text-[10px] text-muted-foreground">Similarity for merging during consolidation (0.5-1.0)</p>
+                            </div>
+                            <div className="space-y-1">
+                                <Label className="text-xs font-mono">Consolidation Interval (days)</Label>
+                                <Input
+                                    type="number" min="1" max="30"
+                                    value={settings.consolidation_run_interval_days ?? 7}
+                                    onChange={(e) => onUpdateSettings("consolidation_run_interval_days", parseInt(e.target.value) || 7)}
+                                />
+                                <p className="text-[10px] text-muted-foreground">How often to run consolidation</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Playbook Extraction */}
+                    <div className="border-t pt-4">
+                        <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Playbook Extraction</Label>
+                        <div className="grid grid-cols-2 gap-4 mt-2">
+                            <div className="space-y-1">
+                                <Label className="text-xs font-mono">Playbook Interval (days)</Label>
+                                <Input
+                                    type="number" min="1" max="30"
+                                    value={settings.playbook_extraction_interval_days ?? 7}
+                                    onChange={(e) => onUpdateSettings("playbook_extraction_interval_days", parseInt(e.target.value) || 7)}
+                                />
+                                <p className="text-[10px] text-muted-foreground">How often to attempt playbook extraction</p>
+                            </div>
+                            <div className="space-y-1">
+                                <Label className="text-xs font-mono">Evidence Threshold</Label>
+                                <Input
+                                    type="number" min="5" max="100"
+                                    value={settings.playbook_extraction_evidence_threshold ?? 20}
+                                    onChange={(e) => onUpdateSettings("playbook_extraction_evidence_threshold", parseInt(e.target.value) || 20)}
+                                />
+                                <p className="text-[10px] text-muted-foreground">Unlinked intelligence needed to trigger early extraction</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Processing */}
+                    <div className="border-t pt-4">
+                        <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Processing</Label>
+                        <div className="space-y-1 mt-2">
+                            <Label className="text-xs font-mono">Memory Generation Excluded Types</Label>
+                            <Input
+                                value={Array.isArray(settings.memory_generation_interaction_types) ? settings.memory_generation_interaction_types.join(", ") : (settings.memory_generation_interaction_types || "")}
+                                onChange={(e) => {
+                                    const val = e.target.value.trim();
+                                    onUpdateSettings("memory_generation_interaction_types", val ? val.split(",").map(s => s.trim()).filter(Boolean) : null);
+                                }}
+                                placeholder="e.g. internal_ai_thought, internal_ai_tool_call"
+                            />
+                            <p className="text-[10px] text-muted-foreground">Interaction types to EXCLUDE from memory generation (comma-separated)</p>
+                        </div>
                     </div>
                 </CardContent>
             </Card>

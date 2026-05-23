@@ -97,17 +97,70 @@ def insert_knowledge(
     embedding: Optional[list],
     tags: list,
     visibility: str = "shared",
+    # ── Unified knowledge fields ──────────────────────────────────────
+    category: str = "trade_knowledge",
+    metadata: Optional[dict] = None,
+    source_pathway: str = "experiential",
+    source_ai_interaction_ids: Optional[list] = None,
+    extraction_confidence: float = 0.5,
+    evidence_breadth: int = 1,
+    outcome_signal: float = 0.0,
+    quality_score: Optional[float] = None,
+    status: str = "active",
+    version: int = 1,
 ) -> None:
-    """INSERT a row into knowledge."""
+    """INSERT a row into knowledge (unified table for all categories)."""
+    import json as _json
     now = datetime.now(timezone.utc).isoformat()
+    md = _json.dumps(metadata) if metadata else "{}"
+    ai_ids = source_ai_interaction_ids or []
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO knowledge (
                 id, source_intelligence_ids, knowledge_type, name, content, summary,
-                embedding, visibility, tags, created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                embedding, visibility, tags, created_at, updated_at,
+                category, metadata, source_pathway, source_ai_interaction_ids,
+                extraction_confidence, evidence_breadth, outcome_signal,
+                quality_score, status, version
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s,
+                %s, %s, %s, %s,
+                %s, %s, %s,
+                %s, %s, %s
+            )
         """, (
             knowledge_id, intelligence_ids, knowledge_type, name, content, summary,
             embedding, visibility, tags, now, now,
+            category, md, source_pathway, ai_ids,
+            extraction_confidence, evidence_breadth, outcome_signal,
+            quality_score, status, version,
         ))
+
+
+def update_knowledge_quality(knowledge_id: str, quality_score: float) -> None:
+    """Recompute and persist quality_score for a knowledge record."""
+    now = datetime.now(timezone.utc).isoformat()
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE knowledge SET quality_score = %s, updated_at = %s WHERE id = %s
+        """, (quality_score, now, knowledge_id))
+
+
+def append_knowledge_feedback(knowledge_id: str, outcome: str, notes: Optional[str] = None) -> None:
+    """Append a feedback entry and increment success/failure counter."""
+    import json as _json
+    now = datetime.now(timezone.utc).isoformat()
+    entry = _json.dumps({"outcome": outcome, "notes": notes, "timestamp": now})
+    counter_col = "success_count" if outcome == "success" else "failure_count"
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            UPDATE knowledge
+            SET feedback_notes = feedback_notes || %s::jsonb,
+                {counter_col} = {counter_col} + 1,
+                updated_at = %s
+            WHERE id = %s
+        """, (entry, now, knowledge_id))
