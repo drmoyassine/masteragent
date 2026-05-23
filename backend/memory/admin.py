@@ -28,7 +28,8 @@ from memory_models import (
     InteractionResponse, InteractionUpdate, TimelineEntry,
     SearchRequest, SearchResponse, SearchResult, MemoryUpdate,
     OutboundWebhookCreate, OutboundWebhookUpdate, OutboundWebhookResponse,
-    VisionWebhookCreate, VisionWebhookUpdate
+    VisionWebhookCreate, VisionWebhookUpdate,
+    AdminInstruction, PlaybookFeedback,
 )
 from memory_services import (
     generate_embedding, search_memories_by_vector,
@@ -255,6 +256,8 @@ async def promote_insight_to_lesson(
 @router.get("/knowledge")
 async def list_knowledge(
     knowledge_type: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
     visibility: Optional[str] = Query(None),
     limit: int = Query(30, le=100),
     offset: int = Query(0),
@@ -268,6 +271,10 @@ async def list_knowledge(
 
         if knowledge_type:
             conditions.append("knowledge_type = %s"); params.append(knowledge_type)
+        if category:
+            conditions.append("category = %s"); params.append(category)
+        if status:
+            conditions.append("status = %s"); params.append(status)
         if visibility:
             conditions.append("visibility = %s"); params.append(visibility)
 
@@ -278,10 +285,13 @@ async def list_knowledge(
 
         params += [limit, offset]
         cursor.execute(f"""
-            SELECT id, seq_id, source_intelligence_ids, knowledge_type, name, content,
-                   summary, visibility, tags, created_at, updated_at
+            SELECT id, seq_id, source_intelligence_ids, knowledge_type, category, name, content,
+                   summary, visibility, tags, status, metadata, quality_score, merge_count,
+                   source_pathway, evidence_breadth, outcome_signal, extraction_confidence,
+                   success_count, failure_count, feedback_notes, version, parent_id,
+                   created_at, updated_at
             FROM knowledge {where}
-            ORDER BY created_at DESC
+            ORDER BY quality_score DESC NULLS LAST, created_at DESC
             LIMIT %s OFFSET %s
         """, params)
         rows = cursor.fetchall()
@@ -1409,4 +1419,38 @@ async def delete_vision_webhook(webhook_id: str, admin: dict = Depends(require_a
         cursor.execute("DELETE FROM vision_completion_webhooks WHERE id = %s", (webhook_id,))
 
 
+# ============================================
+# Hermes Admin Instruction + Knowledge Feedback
+# ============================================
 
+@router.post("/instruct")
+async def admin_instruct(body: AdminInstruction, admin: dict = Depends(require_admin_auth)):
+    """Parse a natural language instruction via Hermes and create a knowledge/skill/playbook record."""
+    from memory_hermes import process_admin_instruction
+    result = await process_admin_instruction(
+        instruction=body.instruction,
+        target=body.target,
+        category=body.category,
+        entity_type=body.entity_type,
+        auto_activate=body.auto_activate,
+    )
+    return result
+
+
+@router.post("/knowledge/{knowledge_id}/feedback")
+async def submit_knowledge_feedback(
+    knowledge_id: str,
+    body: PlaybookFeedback,
+    admin: dict = Depends(require_admin_auth),
+):
+    """Append feedback to a knowledge record (success/failure outcome)."""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, category FROM knowledge WHERE id = %s", (knowledge_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Knowledge not found")
+
+    from memory_db_writes import append_knowledge_feedback
+    append_knowledge_feedback(knowledge_id, body.outcome, body.notes)
+    return {"status": "ok", "knowledge_id": knowledge_id, "outcome": body.outcome}

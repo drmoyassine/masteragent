@@ -261,7 +261,7 @@ async def get_has_context(
             (entity_type, entity_id)
         )
         ins_rows = cursor.fetchall()
-        cursor.execute("SELECT id, name, summary, visibility, created_at FROM knowledge ORDER BY created_at DESC LIMIT 30")
+        cursor.execute("SELECT id, name, summary, visibility, created_at, category, metadata, quality_score, merge_count FROM knowledge WHERE status = 'active' AND (visibility = 'shared' OR visibility IS NULL) ORDER BY quality_score DESC NULLS LAST, created_at DESC LIMIT 30")
         k_rows = cursor.fetchall()
 
     i_ids = [r["id"] for r in i_rows]
@@ -277,7 +277,9 @@ async def get_has_context(
     knowledge_items = [
         KnowledgeContextItem(
             id=r["id"], name=r["name"] or "", summary=r.get("summary"),
-            visibility=r.get("visibility"), created_at=str(r["created_at"])
+            visibility=r.get("visibility"), created_at=str(r["created_at"]),
+            category=r.get("category"), metadata=r.get("metadata"),
+            quality_score=r.get("quality_score"), merge_count=r.get("merge_count", 0),
         ) for r in k_rows
     ]
     return ContextStatusResponse(
@@ -374,12 +376,34 @@ async def get_context(
             "compacted": r["compacted"],
         } for r in cursor.fetchall()]
 
+        # Knowledge (all categories including playbooks and skills)
+        cursor.execute("""
+            SELECT id, name, category, content, summary, tags, metadata, quality_score, merge_count
+            FROM knowledge
+            WHERE status = 'active'
+              AND (visibility = 'shared' OR visibility IS NULL)
+            ORDER BY quality_score DESC NULLS LAST, created_at DESC
+            LIMIT 30
+        """)
+        knowledge = [{
+            "id": r["id"],
+            "name": r["name"],
+            "category": r["category"],
+            "content": r["content"],
+            "summary": r["summary"],
+            "tags": r["tags"],
+            "metadata": r["metadata"],
+            "quality_score": r["quality_score"],
+            "merge_count": r["merge_count"],
+        } for r in cursor.fetchall()]
+
     return {
         "entity_type": entity_type,
         "entity_id": entity_id,
         "interactions": interactions,
         "intelligence": intelligence,
         "memories": memories,
+        "knowledge": knowledge,
     }
 
 

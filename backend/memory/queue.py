@@ -97,7 +97,15 @@ async def _process_bulk_job(job: Job, token: str):
             p_conf = get_llm_config("knowledge_generation")
             if p_conf and "rate_limit_rpm" in p_conf:
                 rpm = p_conf.get("rate_limit_rpm", 60)
-                
+
+        elif job.name == "extract_playbooks":
+            from memory_playbooks import run_playbook_check
+            await run_playbook_check()
+
+        elif job.name == "run_consolidation":
+            from memory_consolidation import run_consolidation
+            await run_consolidation()
+
         else:
             logger.warning(f"Unknown job name: {job.name}")
 
