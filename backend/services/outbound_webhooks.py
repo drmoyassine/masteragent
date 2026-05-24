@@ -190,7 +190,7 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
         cursor = conn.cursor()
         cursor.execute("""
             SELECT id, name, url, debounce_ms, conditions, payload_mode, include_latest_memory,
-                   payload_interaction_types
+                   payload_interaction_types, payload_interaction_types_mode
             FROM memory_outbound_webhooks WHERE id = %s
         """, (webhook_id,))
         wh = cursor.fetchone()
