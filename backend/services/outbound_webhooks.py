@@ -303,6 +303,8 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
             step2_params.append(payload_type_filter)
 
         step2_query += " ORDER BY timestamp ASC"
+        logger.info(f"[WEBHOOK_DEBUG] step2 query: {step2_query}")
+        logger.info(f"[WEBHOOK_DEBUG] step2 params: entity_type={entity_type}, entity_id={entity_id}, payload_type_filter={payload_type_filter}")
         cursor.execute(step2_query, step2_params)
 
         interaction_payload = []
