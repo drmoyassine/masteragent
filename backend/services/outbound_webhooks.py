@@ -274,13 +274,13 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
         #   - payload_mode == "trigger_only": only the interactions matching the
         #     webhook's trigger conditions.
         debounce_window_s = debounce_s * 2 + 60  # generous buffer
-        step2_query = """
+        step2_query = f"""
             SELECT id, interaction_type, content, metadata, timestamp, source, is_enriched
             FROM interactions
             WHERE primary_entity_type = %s AND primary_entity_id = %s
-              AND (status = 'pending' OR timestamp > NOW() - INTERVAL '%s seconds')
+              AND (status = 'pending' OR timestamp > NOW() - INTERVAL '{int(debounce_window_s)} seconds')
         """
-        step2_params: list = [entity_type, entity_id, int(debounce_window_s)]
+        step2_params: list = [entity_type, entity_id]
 
         if payload_mode == "trigger_only" and conditions:
             for key, value in conditions.items():

@@ -334,13 +334,13 @@ async def get_context(
         # stale historical data. The is_enriched flag rides on each row so callers
         # can detect attachments still being parsed.
         lookback_seconds = 120  # 2-minute window to catch race conditions
-        interactions_query = """
+        interactions_query = f"""
             SELECT id, interaction_type, content, metadata, timestamp, source, is_enriched
             FROM interactions
             WHERE primary_entity_type = %s AND primary_entity_id = %s
-              AND (status = 'pending' OR timestamp > NOW() - INTERVAL '%s seconds')
+              AND (status = 'pending' OR timestamp > NOW() - INTERVAL '{lookback_seconds}'::interval)
         """
-        interactions_params: list = [entity_type, entity_id, lookback_seconds]
+        interactions_params: list = [entity_type, entity_id]
         if type_filter:
             if interaction_types_mode == "exclude":
                 interactions_query += " AND interaction_type != ALL(%s)"
