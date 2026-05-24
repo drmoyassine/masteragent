@@ -267,18 +267,16 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
 
         # Step 2: Fetch the payload's interactions.
         #   - payload_mode == "all_window": all pending interactions for this entity
-        #     (full conversation timeline including outgoing/non-matching messages),
-        #     PLUS the triggering interactions even if memory generation marked them
-        #     'done' during the debounce period.
+        #     (full conversation timeline including outgoing/non-matching messages).
         #   - payload_mode == "trigger_only": only the interactions matching the
         #     webhook's trigger conditions.
         step2_query = """
             SELECT id, interaction_type, content, metadata, timestamp, source, is_enriched
             FROM interactions
             WHERE primary_entity_type = %s AND primary_entity_id = %s
-              AND (status = 'pending' OR id = ANY(%s))
+              AND status = 'pending'
         """
-        step2_params: list = [entity_type, entity_id, trigger_ids]
+        step2_params: list = [entity_type, entity_id]
 
         if payload_mode == "trigger_only" and conditions:
             for key, value in conditions.items():
