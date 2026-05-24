@@ -114,13 +114,14 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
     try:
         from services import memory_lock
 
-        # Resolve entity_type from the most recent pending interaction (needed
-        # for both the lock check and clarity in logs).
+        # Resolve entity_type from the most recent interaction (any status).
+        # This ensures the memory lock check works even after memory generation
+        # marks all interactions as 'done'.
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT primary_entity_type FROM interactions
-                WHERE primary_entity_id = %s AND status = 'pending'
+                WHERE primary_entity_id = %s
                 ORDER BY timestamp DESC LIMIT 1
             """, (entity_id,))
             row = cursor.fetchone()

@@ -328,16 +328,19 @@ async def get_context(
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
 
-        # Matches the outbound webhook's step-2 SELECT: all pending interactions
-        # for the entity. The is_enriched flag rides on each row so callers can
-        # detect attachments still being parsed.
+        # Matches the outbound webhook's step-2 SELECT: all interactions for the
+        # entity that are either still pending OR were recently processed. This
+        # catches interactions marked 'done' by memory generation while avoiding
+        # stale historical data. The is_enriched flag rides on each row so callers
+        # can detect attachments still being parsed.
+        lookback_seconds = 120  # 2-minute window to catch race conditions
         interactions_query = """
             SELECT id, interaction_type, content, metadata, timestamp, source, is_enriched
             FROM interactions
             WHERE primary_entity_type = %s AND primary_entity_id = %s
-              AND status = 'pending'
+              AND (status = 'pending' OR timestamp > NOW() - INTERVAL '%s seconds')
         """
-        interactions_params: list = [entity_type, entity_id]
+        interactions_params: list = [entity_type, entity_id, lookback_seconds]
         if type_filter:
             if interaction_types_mode == "exclude":
                 interactions_query += " AND interaction_type != ALL(%s)"
