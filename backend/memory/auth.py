@@ -72,5 +72,20 @@ def log_audit(agent_id: str, action: str, resource_type: str = None, resource_id
         ))
 
 
+async def require_admin_or_agent(
+    x_api_key: str = Header(None, alias="X-API-Key"),
+    authorization: str = Header(None),
+) -> dict:
+    """Accept EITHER an agent API key (X-API-Key) OR an admin JWT (Authorization).
+
+    Used by read endpoints that the admin dashboard and the agents both need
+    (e.g. GET /interactions). Prefers the agent key when an X-API-Key header is
+    present; otherwise falls back to admin JWT auth. Raises 401 if neither is valid.
+    """
+    if x_api_key:
+        return await verify_agent_key(x_api_key=x_api_key)
+    return require_admin_auth(authorization=authorization)
+
+
 # Alias: workspace.py and future modules can use either name
 require_agent_auth = verify_agent_key

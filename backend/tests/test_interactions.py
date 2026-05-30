@@ -138,6 +138,18 @@ class TestInteractionRetrieval:
         assert resp.status_code == 401
         print("✓ Interactions list requires admin auth")
 
+    def test_agent_can_list_interactions(self, agent, base_url):
+        # GET /interactions accepts an agent API key as well as admin JWT
+        # (the CRM/tasks n8n agents read a contact's timeline here).
+        resp = agent.get(
+            f"{base_url}/api/memory/interactions",
+            params={"entity_type": "contact", "entity_id": "test-contact-001"},
+        )
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert "interactions" in data, "Unexpected response shape"
+        print(f"✓ Agent list interactions: {len(data['interactions'])} records")
+
     def test_list_memories(self, agent, base_url):
         resp = agent.get(f"{base_url}/api/memory/memories",
                          params={"entity_type": "contact", "entity_id": "test-contact-001"})

@@ -36,7 +36,7 @@ from memory_services import (
     search_intelligence_by_vector, search_knowledge_by_vector,
     get_memory_settings
 )
-from memory.auth import require_admin_auth
+from memory.auth import require_admin_auth, require_admin_or_agent
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -707,9 +707,14 @@ async def list_interactions(
     until: Optional[str] = Query(None),
     limit: int = Query(50, le=200),
     offset: int = Query(0),
-    admin: dict = Depends(require_admin_auth)
+    caller: dict = Depends(require_admin_or_agent)
 ):
-    """List raw interactions with filters."""
+    """List raw interactions with filters.
+
+    Auth: admin JWT OR agent API key (X-API-Key). Agents (e.g. the CRM/tasks
+    n8n agents) read a contact's interaction timeline here; the admin dashboard
+    uses the same endpoint via JWT.
+    """
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         conditions = []
