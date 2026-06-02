@@ -100,10 +100,26 @@ async def summarize_text(text: str) -> str:
 
 # ── Document Parsing ───────────────────────────────────────────────────────────
 
-async def parse_document(file_content: bytes, filename: str, mime_type: str) -> Dict[str, Any]:
+DEFAULT_VISION_PROMPT = (
+    "Extract all text content from this document/image. "
+    "Include all readable text, table contents (as markdown tables), "
+    "and important visual information in [brackets]. Preserve structure with headings.\n\n"
+    "Output as clean markdown:"
+)
+
+
+async def parse_document(
+    file_content: bytes,
+    filename: str,
+    mime_type: str,
+    prompt: Optional[str] = None,
+) -> Dict[str, Any]:
     """
     Parse a document (text, PDF, image, DOCX) into text + metadata.
     Uses LLM vision for PDFs/images.
+
+    `prompt` overrides the default vision extraction prompt (PDF/image branch only).
+    Falls back to DEFAULT_VISION_PROMPT when not supplied.
     """
     result: Dict[str, Any] = {"text": "", "pages": 0, "has_images": False, "metadata": {}}
 
@@ -116,13 +132,8 @@ async def parse_document(file_content: bytes, filename: str, mime_type: str) -> 
 
     if mime_type in ("application/pdf", "image/png", "image/jpeg", "image/webp", "image/gif"):
         file_b64 = base64.b64encode(file_content).decode()
-        prompt = (
-            "Extract all text content from this document/image. "
-            "Include all readable text, table contents (as markdown tables), "
-            "and important visual information in [brackets]. Preserve structure with headings.\n\n"
-            "Output as clean markdown:"
-        )
-        extracted = await call_llm_vision(prompt, file_b64, mime_type)
+        vision_prompt = (prompt or "").strip() or DEFAULT_VISION_PROMPT
+        extracted = await call_llm_vision(vision_prompt, file_b64, mime_type)
         if extracted:
             result["text"] = extracted
             result["has_images"] = True

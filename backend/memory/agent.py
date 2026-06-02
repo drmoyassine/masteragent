@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import List, Optional, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from pydantic import BaseModel
 
 from core.storage import get_memory_db_context, cache_interaction, flush_interaction_cache
 from memory_models import (
@@ -156,6 +157,91 @@ async def ingest_interactions_bulk(
 
     response.status_code = 202
     return BulkInteractionResponse(ids=ids, count=len(ids), status="pending")
+
+
+# ============================================
+# 📄 Synchronous Document Parsing
+# ============================================
+
+class ParseDocumentRequest(BaseModel):
+    """Parse a single document synchronously (vision OCR for PDFs/images).
+
+    Provide either `url` (fetched server-side) or `data` (base64 bytes).
+    `prompt` overrides the default vision extraction prompt.
+    """
+    url: Optional[str] = None
+    data: Optional[str] = None  # base64-encoded file bytes (alternative to url)
+    filename: Optional[str] = None
+    mime_type: Optional[str] = None
+    prompt: Optional[str] = None
+
+
+@router.post("/parse-document", tags=["🔄 Interactions"])
+async def parse_document_sync(
+    body: ParseDocumentRequest,
+    agent: dict = Depends(verify_agent_key),
+):
+    """Fetch a document by URL (or decode inline base64) and extract its text via
+    the same vision pipeline used during interaction ingestion. Returns the parsed
+    text synchronously so callers (e.g. n8n) don't have to wait on the async worker.
+    """
+    if not check_rate_limit(agent["id"]):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+    if not body.url and not body.data:
+        raise HTTPException(status_code=422, detail="Provide either 'url' or 'data'.")
+
+    # 1. Resolve raw bytes
+    raw_blob: Optional[bytes] = None
+    if body.data:
+        import base64
+        try:
+            raw_blob = base64.b64decode(body.data)
+        except Exception:
+            raise HTTPException(status_code=422, detail="Invalid base64 in 'data'.")
+    else:
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                resp = await client.get(body.url)
+                resp.raise_for_status()
+                raw_blob = resp.content
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Failed to fetch document URL: {e}")
+
+    if not raw_blob:
+        raise HTTPException(status_code=422, detail="Document is empty.")
+
+    # 2. Infer mime/filename (mirror the ingestion worker)
+    import filetype
+    inferred_mime = None
+    kind = filetype.guess(raw_blob)
+    if kind:
+        inferred_mime = kind.mime
+    mime_type = inferred_mime or body.mime_type or "application/octet-stream"
+    filename = body.filename or (body.url.split("/")[-1] if body.url else "attachment")
+
+    # 3. Parse
+    try:
+        parsed = await parse_document(raw_blob, filename, mime_type, prompt=body.prompt)
+    except Exception as e:
+        logger.error(f"parse-document failed for {filename} ({mime_type}): {e}")
+        raise HTTPException(status_code=500, detail=f"Parsing failed: {e}")
+
+    text = parsed.get("text") or ""
+    log_audit(agent["id"], "parse_document", "document", filename, {
+        "mime_type": mime_type,
+        "chars": len(text),
+        "via": "url" if body.url else "data",
+    })
+
+    return {
+        "text": text,
+        "pages": parsed.get("pages", 0),
+        "has_images": parsed.get("has_images", False),
+        "mime_type": mime_type,
+        "filename": filename,
+    }
 
 
 @router.get("/interactions", tags=["🔄 Interactions"])
