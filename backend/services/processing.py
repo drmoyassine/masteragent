@@ -4,7 +4,7 @@ import json
 import logging
 import os
 import uuid
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import httpx
 
@@ -104,9 +104,15 @@ async def summarize_text(text: str) -> str:
 
 # ── Document Parsing ───────────────────────────────────────────────────────────
 
-async def parse_document(file_content: bytes, filename: str, mime_type: str) -> Dict[str, Any]:
-    """Parse a document (text, PDF, image, DOCX) into text + metadata."""
+async def parse_document(file_content: bytes, filename: str, mime_type: str, prompt: Optional[str] = None) -> Dict[str, Any]:
+    """Parse a document (text, PDF, image, DOCX) into text + metadata.
+
+    `prompt` (optional) overrides the prompt-manager 'vision' prompt used for
+    PDF/image OCR. When omitted, the configured 'vision' system prompt (or a
+    hardcoded fallback) is used.
+    """
     result: Dict[str, Any] = {"text": "", "pages": 0, "has_images": False, "metadata": {}}
+    prompt_override = (prompt or "").strip() or None
 
     if mime_type in ("text/plain", "text/markdown", "text/csv"):
         try:
@@ -136,11 +142,11 @@ async def parse_document(file_content: bytes, filename: str, mime_type: str) -> 
                 png_bytes = pix.tobytes("jpeg", 85) # Use compressed JPEG internally to cut down 90% of base64 JSON weight!
                 png_b64 = base64.b64encode(png_bytes).decode("utf-8")
                 
-                prompt_template = await get_system_prompt("vision")
+                prompt_template = prompt_override or await get_system_prompt("vision")
                 if not prompt_template:
                     prompt_template = "Extract all text from page {{page}}. Output clean markdown without conversational filler:"
-                prompt = prompt_template.replace("{{page}}", str(page_num + 1))
-                extracted = await call_llm_vision(prompt, png_b64, "image/jpeg")
+                page_prompt = prompt_template.replace("{{page}}", str(page_num + 1))
+                extracted = await call_llm_vision(page_prompt, png_b64, "image/jpeg")
                 if extracted:
                     text_parts.append(extracted)
                     result["has_images"] = True
@@ -152,10 +158,10 @@ async def parse_document(file_content: bytes, filename: str, mime_type: str) -> 
 
     if mime_type in ("image/png", "image/jpeg", "image/webp", "image/gif"):
         file_b64 = base64.b64encode(file_content).decode("utf-8")
-        prompt = await get_system_prompt("vision")
-        if not prompt:
-            prompt = "Extract all text content from this image. Output clean markdown:"
-        extracted = await call_llm_vision(prompt, file_b64, mime_type)
+        img_prompt = prompt_override or await get_system_prompt("vision")
+        if not img_prompt:
+            img_prompt = "Extract all text content from this image. Output clean markdown:"
+        extracted = await call_llm_vision(img_prompt, file_b64, mime_type)
         if extracted:
             result["text"] = extracted
             result["has_images"] = True
