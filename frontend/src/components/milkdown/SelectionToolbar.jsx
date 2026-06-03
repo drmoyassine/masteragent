@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Bold, Italic, Code, Strikethrough, Braces, Link } from 'lucide-react';
+import { Bold, Italic, Code, Strikethrough, Braces, Link, Heading1, Heading2, Heading3, Pilcrow } from 'lucide-react';
 import { $prose } from '@milkdown/kit/utils';
 import { Plugin, PluginKey } from '@milkdown/prose/state';
-import { toggleMark } from '@milkdown/prose/commands';
+import { toggleMark, setBlockType } from '@milkdown/prose/commands';
 
 // ---------------------------------------------------------------------------
 // Module-level selection state — bridges ProseMirror → React
@@ -75,7 +75,11 @@ const TOOLBAR_BUTTONS = [
   { key: 'italic', icon: Italic, title: 'Italic', markType: 'emphasis' },
   { key: 'code', icon: Code, title: 'Inline Code', markType: 'inlineCode' },
   { key: 'strikethrough', icon: Strikethrough, title: 'Strikethrough', markType: 'strikethrough' },
-  { key: 'variable', icon: Braces, title: 'Wrap as Variable', action: 'wrapVariable' },
+  { key: 'h1', icon: Heading1, title: 'Heading 1', action: 'setHeading', level: 1, dividerBefore: true },
+  { key: 'h2', icon: Heading2, title: 'Heading 2', action: 'setHeading', level: 2 },
+  { key: 'h3', icon: Heading3, title: 'Heading 3', action: 'setHeading', level: 3 },
+  { key: 'paragraph', icon: Pilcrow, title: 'Paragraph', action: 'setParagraph' },
+  { key: 'variable', icon: Braces, title: 'Wrap as Variable', action: 'wrapVariable', dividerBefore: true },
 ];
 
 // ---------------------------------------------------------------------------
@@ -111,6 +115,36 @@ export function SelectionToolbar() {
       dispatch(tr);
       view.focus();
       selectionState.reset();
+      return;
+    }
+
+    if (button.action === 'setHeading') {
+      const { state: editorState } = view;
+      const headingType = editorState.schema.nodes.heading;
+      const paragraphType = editorState.schema.nodes.paragraph;
+      if (!headingType) return;
+
+      // Toggle: if the current block is already a heading at this level,
+      // revert it to a paragraph; otherwise convert it to the heading.
+      const { $from } = editorState.selection;
+      const block = $from.node($from.depth);
+      const isSameHeading =
+        block?.type?.name === 'heading' && block.attrs.level === button.level;
+      const command = isSameHeading && paragraphType
+        ? setBlockType(paragraphType)
+        : setBlockType(headingType, { level: button.level });
+
+      command(editorState, view.dispatch);
+      view.focus();
+      return;
+    }
+
+    if (button.action === 'setParagraph') {
+      const { state: editorState } = view;
+      const paragraphType = editorState.schema.nodes.paragraph;
+      if (!paragraphType) return;
+      setBlockType(paragraphType)(editorState, view.dispatch);
+      view.focus();
       return;
     }
 
@@ -152,11 +186,11 @@ export function SelectionToolbar() {
       onMouseDown={(e) => e.preventDefault()}
     >
       <div className="flex items-center gap-0.5 px-1.5 py-1 rounded-lg border border-border/60 bg-popover shadow-lg backdrop-blur-sm">
-        {TOOLBAR_BUTTONS.map((button, index) => {
+        {TOOLBAR_BUTTONS.map((button) => {
           const Icon = button.icon;
           return (
             <React.Fragment key={button.key}>
-              {index === TOOLBAR_BUTTONS.length - 1 && (
+              {button.dividerBefore && (
                 <div className="w-px h-5 bg-border/50 mx-0.5" />
               )}
               <button
