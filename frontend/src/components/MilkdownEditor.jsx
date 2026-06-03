@@ -4,6 +4,7 @@ import { Editor, rootCtx, defaultValueCtx } from '@milkdown/kit/core';
 import { commonmark } from '@milkdown/kit/preset/commonmark';
 import { gfm } from '@milkdown/kit/preset/gfm';
 import { listener, listenerCtx } from '@milkdown/kit/plugin/listener';
+import { history } from '@milkdown/kit/plugin/history';
 import { insert } from '@milkdown/kit/utils';
 import { tableBlock, tableBlockConfig } from '@milkdown/kit/component/table-block';
 import { mentionPlugin, MentionPopover } from './milkdown/VariableMentionPlugin';
@@ -52,6 +53,7 @@ const MilkdownInner = forwardRef(({ value, onChange, variables, onCreateVariable
       })
       .use(commonmark)
       .use(gfm)
+      .use(history)
       .use(tableBlock)
       .use(listener)
       .use(mentionPlugin)

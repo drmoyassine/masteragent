@@ -91,15 +91,16 @@ def get_system_prompt_by_config_id(config_id: str) -> Optional[str]:
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT task_type, prompt_id, inline_system_prompt FROM memory_llm_configs
+            SELECT task_type, prompt_id, prompt_version, inline_system_prompt FROM memory_llm_configs
             WHERE id = %s
         """, (config_id,))
         row = cursor.fetchone()
         if not row:
             return None
-        
+
         inline_prompt = row.get("inline_system_prompt")
         prompt_id = row.get("prompt_id")
+        prompt_version = row.get("prompt_version") or "v1"
         task_type = row.get("task_type")
     
     # Priority 1: inline prompt on the config row
@@ -113,7 +114,7 @@ def get_system_prompt_by_config_id(config_id: str) -> Optional[str]:
             storage = get_storage_service("default")
             import asyncio
             prompt_data = asyncio.get_event_loop().run_until_complete(
-                storage.get_prompt_content(f"prompts/{prompt_id}", "v1")
+                storage.get_prompt_content(f"prompts/{prompt_id}", prompt_version)
             )
             if prompt_data:
                 return "\n\n".join(s.get("content", "") for s in prompt_data.get("sections", []))
@@ -149,10 +150,11 @@ async def get_system_prompt(task_type: str, user_id: str = "default") -> Optiona
     # 2. Extract values
     prompt_id = None
     inline_prompt = None
+    prompt_version = "v1"
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT prompt_id, inline_system_prompt FROM memory_llm_configs
+            SELECT prompt_id, prompt_version, inline_system_prompt FROM memory_llm_configs
             WHERE task_type = %s AND is_active = TRUE
             ORDER BY updated_at DESC LIMIT 1
         """, (task_type,))
@@ -160,6 +162,7 @@ async def get_system_prompt(task_type: str, user_id: str = "default") -> Optiona
         if row:
             prompt_id = row.get("prompt_id")
             inline_prompt = row.get("inline_system_prompt")
+            prompt_version = row.get("prompt_version") or "v1"
             
     # 3. If a PromptManager template is NOT linked, return the inline one or fallback.
     if not prompt_id:
@@ -186,7 +189,7 @@ async def get_system_prompt(task_type: str, user_id: str = "default") -> Optiona
         
         # We don't render variables here; we just want the raw template
         # The variables will be injected by the pipeline using prompt_renderer logic
-        prompt_data = await storage.get_prompt_content(folder_path, "v1")
+        prompt_data = await storage.get_prompt_content(folder_path, prompt_version)
         if not prompt_data:
             return None
             

@@ -79,6 +79,7 @@ class LLMConfigResponse(BaseModel):
     provider_id: Optional[str] = None
     model_name: Optional[str] = None
     prompt_id: Optional[str] = None
+    prompt_version: Optional[str] = "v1"
     inline_system_prompt: Optional[str] = None
     inline_schema: Optional[str] = None
     is_active: bool = True
@@ -92,6 +93,7 @@ class LLMConfigUpdate(BaseModel):
     provider_id: Optional[str] = None
     model_name: Optional[str] = None
     prompt_id: Optional[str] = None
+    prompt_version: Optional[str] = None
     inline_system_prompt: Optional[str] = None
     inline_schema: Optional[str] = None
     is_active: Optional[bool] = None
@@ -226,6 +228,9 @@ class MemorySettingsUpdate(BaseModel):
     memory_generation_interaction_types_mode: Optional[str] = "exclude"
     playbook_extraction_interval_days: Optional[int] = 7
     playbook_extraction_evidence_threshold: Optional[int] = 20
+    # Max output tokens for generation LLM calls
+    memory_generation_max_tokens: Optional[int] = 1200
+    intelligence_max_tokens: Optional[int] = 1200
 
 class MemorySettingsResponse(BaseModel):
     chunk_size: int = 400

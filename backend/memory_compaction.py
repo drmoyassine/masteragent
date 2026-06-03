@@ -132,8 +132,14 @@ async def compact_entity(entity_type: str, entity_id: str):
             "[{\"name\": \"...\", \"knowledge_type\": \"...\", \"content\": \"...\", \"summary\": \"...\"}]"
         )
     intel_signals = config.get("intelligence_signals_prompt") or []
+    # Pass entity_type/entity_id as TOP-LEVEL keys (not a nested "entity" dict) so
+    # inject_variables' built-in entity-profile resolver fires (see prompt_renderer
+    # lines ~62-76). This exposes {{ entity.name }}, {{ entity.subtype }},
+    # {{ entity.status }} and profile properties to the intelligence prompt — without
+    # it the LLM has no name and falls back to "the contact".
     system_prompt = inject_variables(system_prompt, {
-        "entity": {"type": entity_type, "id": entity_id},
+        "entity_type": entity_type,
+        "entity_id": entity_id,
         "intelligence_signals": _format_signal_definitions(intel_signals),
     })
 
@@ -154,7 +160,7 @@ async def compact_entity(entity_type: str, entity_id: str):
         result_text = await call_llm(
             user_msg,
             system_prompt=system_prompt,
-            max_tokens=1200,
+            max_tokens=settings.get("intelligence_max_tokens") or 1200,
             config_id=node_id,
             task_type="intelligence_generation"
         )

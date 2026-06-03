@@ -358,7 +358,7 @@ export function TaskConfigDialog({
     error,
     onFetchModels
 }) {
-    const [formData, setFormData] = useState({ provider_id: "", model_name: "", prompt_id: "" });
+    const [formData, setFormData] = useState({ provider_id: "", model_name: "", prompt_id: "", prompt_version: "v1" });
     const [chunkSize, setChunkSize] = useState("");
     const [chunkOverlap, setChunkOverlap] = useState("");
     const [availablePrompts, setAvailablePrompts] = useState([]);
@@ -368,7 +368,8 @@ export function TaskConfigDialog({
             setFormData({
                 provider_id: config.provider_id || "",
                 model_name: config.model_name || "",
-                prompt_id: config.prompt_id || ""
+                prompt_id: config.prompt_id || "",
+                prompt_version: config.prompt_version || "v1"
             });
             if (config.task_type === "embedding" && memorySettings) {
                 setChunkSize(memorySettings.chunk_size || 400);
@@ -395,7 +396,8 @@ export function TaskConfigDialog({
         const payload = {
             provider_id: formData.provider_id,
             model_name: formData.model_name,
-            prompt_id: formData.prompt_id || null
+            prompt_id: formData.prompt_id || null,
+            prompt_version: formData.prompt_id ? (formData.prompt_version || "v1") : "v1"
         };
         onSaveConfig(config.id, payload);
         
@@ -471,7 +473,15 @@ export function TaskConfigDialog({
                      {config.task_type !== 'embedding' && config.task_type !== 'vision' && (
                          <div className="space-y-2 mt-4 pt-4 border-t">
                              <Label>Linked Prompt Template</Label>
-                             <Select value={formData.prompt_id || "default"} onValueChange={(v) => setFormData(f => ({ ...f, prompt_id: v === "default" ? "" : v }))}>
+                             <Select value={formData.prompt_id || "default"} onValueChange={(v) => {
+                                 if (v === "default") {
+                                     setFormData(f => ({ ...f, prompt_id: "", prompt_version: "v1" }));
+                                     return;
+                                 }
+                                 const sel = availablePrompts.find(p => p.id === v);
+                                 const def = sel?.versions?.find(ver => ver.is_default) || sel?.versions?.[0];
+                                 setFormData(f => ({ ...f, prompt_id: v, prompt_version: def?.branch_name || "v1" }));
+                             }}>
                                  <SelectTrigger><SelectValue placeholder="Select a prompt" /></SelectTrigger>
                                  <SelectContent>
                                      <SelectItem value="default">-- Default Prompt --</SelectItem>
@@ -481,6 +491,28 @@ export function TaskConfigDialog({
                                  </SelectContent>
                              </Select>
                              <p className="text-xs text-muted-foreground">Override the default system prompt for this task using a template from the Prompt Manager.</p>
+
+                             {formData.prompt_id && (() => {
+                                 const sel = availablePrompts.find(p => p.id === formData.prompt_id);
+                                 const versions = sel?.versions || [];
+                                 if (versions.length === 0) return null;
+                                 return (
+                                     <div className="space-y-2 pt-2">
+                                         <Label>Version</Label>
+                                         <Select value={formData.prompt_version || "v1"} onValueChange={(v) => setFormData(f => ({ ...f, prompt_version: v }))}>
+                                             <SelectTrigger><SelectValue placeholder="Select a version" /></SelectTrigger>
+                                             <SelectContent>
+                                                 {versions.map(ver => (
+                                                     <SelectItem key={ver.branch_name} value={ver.branch_name}>
+                                                         {ver.version_name}{ver.is_default ? " (default)" : ""}
+                                                     </SelectItem>
+                                                 ))}
+                                             </SelectContent>
+                                         </Select>
+                                         <p className="text-xs text-muted-foreground">Which saved version of this prompt to use for generation.</p>
+                                     </div>
+                                 );
+                             })()}
                          </div>
                      )}
 

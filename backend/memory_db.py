@@ -115,6 +115,7 @@ def _create_config_tables(cursor):
             provider_id         TEXT REFERENCES memory_llm_providers(id) ON DELETE SET NULL,
             model_name          TEXT,
             prompt_id           TEXT,
+            prompt_version      TEXT DEFAULT 'v1',
             inline_system_prompt TEXT,
             inline_schema       TEXT,
             extra_config_json   TEXT DEFAULT '{}',
@@ -473,6 +474,7 @@ def _run_migrations(cursor):
         cursor.execute("ALTER TABLE memory_llm_configs ADD COLUMN IF NOT EXISTS provider_id TEXT REFERENCES memory_llm_providers(id) ON DELETE SET NULL")
         cursor.execute("ALTER TABLE memory_llm_configs ADD COLUMN IF NOT EXISTS extra_config_json TEXT DEFAULT '{}'")
         cursor.execute("ALTER TABLE memory_llm_configs ADD COLUMN IF NOT EXISTS prompt_id TEXT")
+        cursor.execute("ALTER TABLE memory_llm_configs ADD COLUMN IF NOT EXISTS prompt_version TEXT DEFAULT 'v1'")
         cursor.execute("ALTER TABLE memory_llm_configs ADD COLUMN IF NOT EXISTS inline_system_prompt TEXT")
         cursor.execute("ALTER TABLE memory_llm_configs ADD COLUMN IF NOT EXISTS inline_schema TEXT")
         for col in ["provider", "name", "api_base_url", "api_key_encrypted", "api_key_preview"]:
@@ -531,6 +533,9 @@ def _run_migrations(cursor):
         ("prior_intelligence_semantic_count", "INT DEFAULT 2"),
         ("prior_knowledge_semantic_count", "INT DEFAULT 3"),
         ("prior_knowledge_in_intelligence_count", "INT DEFAULT 2"),
+        # Max output tokens for the memory- and intelligence-generation LLM calls
+        ("memory_generation_max_tokens", "INT DEFAULT 1200"),
+        ("intelligence_max_tokens", "INT DEFAULT 1200"),
     ]:
         cursor.execute(f"ALTER TABLE memory_settings ADD COLUMN IF NOT EXISTS {col} {col_def}")
 
