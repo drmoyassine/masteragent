@@ -492,27 +492,81 @@ async def get_prompt_versions(prompt_id: str):
 
 
 @router.post("/prompts/{prompt_id}/versions")
-async def create_version(prompt_id: str, version_data: VersionCreate):
-    import uuid
-    from routes.render import github_api_request
+async def create_version(
+    prompt_id: str,
+    version_data: VersionCreate,
+    user: dict = Depends(require_auth),
+):
+    """Create a new prompt version.
+
+    Works in both storage modes:
+      - github: creates a git branch from the source branch (original behaviour).
+      - local:  copies the source version's sections into a new version directory.
+    Previously this endpoint always hit the GitHub API, so version creation was
+    impossible without a connected GitHub repo.
+    """
+    from storage_service import get_storage_mode, get_storage_service
+
+    branch_name = slugify(version_data.version_name)
+    source_branch = version_data.source_version or "v1"
+
+    if not branch_name:
+        raise HTTPException(status_code=400, detail="Invalid version name")
 
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM prompts WHERE id = %s", (prompt_id,))
-        if not cursor.fetchone():
+        cursor.execute(
+            "SELECT folder_path FROM prompts WHERE id = %s AND user_id = %s",
+            (prompt_id, user["id"]),
+        )
+        row = cursor.fetchone()
+        if not row:
             raise HTTPException(status_code=404, detail="Prompt not found")
+        folder_path = row["folder_path"]
 
-    branch_name = slugify(version_data.version_name)
-    source_branch = version_data.source_version or "main"
+        cursor.execute(
+            "SELECT 1 FROM prompt_versions WHERE prompt_id = %s AND branch_name = %s",
+            (prompt_id, branch_name),
+        )
+        if cursor.fetchone():
+            raise HTTPException(status_code=400, detail=f"Version '{branch_name}' already exists")
 
-    ref_data = await github_api_request("GET", f"/git/refs/heads/{source_branch}")
-    if not ref_data:
-        raise HTTPException(status_code=400, detail=f"Source branch '{source_branch}' not found")
+    storage_mode = get_storage_mode(user["id"])
+    github_settings = get_github_settings(user["id"])
+    use_github = (
+        storage_mode == "github"
+        and github_settings
+        and github_settings.get("github_token")
+    )
 
-    await github_api_request("POST", "/git/refs", {
-        "ref": f"refs/heads/{branch_name}",
-        "sha": ref_data["object"]["sha"],
-    })
+    if use_github:
+        from routes.render import github_api_request
+
+        ref_data = await github_api_request("GET", f"/git/refs/heads/{source_branch}")
+        if not ref_data:
+            raise HTTPException(status_code=400, detail=f"Source branch '{source_branch}' not found")
+        await github_api_request("POST", "/git/refs", {
+            "ref": f"refs/heads/{branch_name}",
+            "sha": ref_data["object"]["sha"],
+        })
+    else:
+        # Local/database storage: copy the source version's content into the new version.
+        storage = get_storage_service(user["id"])
+        content = await storage.get_prompt_content(folder_path, source_branch)
+        if content:
+            for section in content.get("sections", []):
+                await storage.create_section(
+                    folder_path,
+                    section.get("filename"),
+                    section.get("content", ""),
+                    branch_name,
+                )
+            manifest = dict(content.get("manifest") or {})
+            manifest["version"] = branch_name
+            try:
+                await storage.update_manifest(folder_path, manifest, branch_name)
+            except Exception as e:
+                logger.warning(f"Could not write manifest for new version {branch_name}: {e}")
 
     version_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()

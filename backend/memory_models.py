@@ -79,6 +79,7 @@ class LLMConfigResponse(BaseModel):
     provider_id: Optional[str] = None
     model_name: Optional[str] = None
     prompt_id: Optional[str] = None
+    prompt_version: Optional[str] = "v1"
     inline_system_prompt: Optional[str] = None
     inline_schema: Optional[str] = None
     is_active: bool = True
@@ -92,6 +93,7 @@ class LLMConfigUpdate(BaseModel):
     provider_id: Optional[str] = None
     model_name: Optional[str] = None
     prompt_id: Optional[str] = None
+    prompt_version: Optional[str] = None
     inline_system_prompt: Optional[str] = None
     inline_schema: Optional[str] = None
     is_active: Optional[bool] = None

@@ -402,6 +402,7 @@ async def list_llm_configs(user: dict = Depends(require_admin_auth)):
                 pipeline_stage=config.get("pipeline_stage"), execution_order=config.get("execution_order", 0),
                 provider_id=config.get("provider_id"),
                 model_name=config.get("model_name", ""), prompt_id=config.get("prompt_id"),
+                prompt_version=config.get("prompt_version") or "v1",
                 inline_system_prompt=config.get("inline_system_prompt"), inline_schema=config.get("inline_schema"),
                 is_active=bool(config.get("is_active", 0)),
                 extra_config=json.loads(config.get("extra_config_json", "{}")),
@@ -423,6 +424,7 @@ async def get_llm_config_by_task(task_type: str, user: dict = Depends(require_ad
             pipeline_stage=config.get("pipeline_stage"), execution_order=config.get("execution_order", 0),
             provider_id=config.get("provider_id"),
             model_name=config.get("model_name", ""), prompt_id=config.get("prompt_id"),
+            prompt_version=config.get("prompt_version") or "v1",
             inline_system_prompt=config.get("inline_system_prompt"), inline_schema=config.get("inline_schema"),
             is_active=bool(config.get("is_active", 0)),
             extra_config=json.loads(config.get("extra_config_json", "{}")),
@@ -470,6 +472,9 @@ async def update_llm_config(config_id: str, data: LLMConfigUpdate, user: dict = 
             # If changing from linked to inline or vice-versa, handle nulling empty strings
             val = data.prompt_id if data.prompt_id.strip() else None
             updates.append("prompt_id = %s"); params.append(val)
+        if data.prompt_version is not None:
+            updates.append("prompt_version = %s")
+            params.append(data.prompt_version if data.prompt_version.strip() else "v1")
         if data.inline_system_prompt is not None:
             updates.append("inline_system_prompt = %s"); params.append(data.inline_system_prompt)
         if data.inline_schema is not None:
@@ -488,6 +493,7 @@ async def update_llm_config(config_id: str, data: LLMConfigUpdate, user: dict = 
             pipeline_stage=updated.get("pipeline_stage"), execution_order=updated.get("execution_order", 0),
             provider_id=updated.get("provider_id"),
             model_name=updated.get("model_name", ""), prompt_id=updated.get("prompt_id"),
+            prompt_version=updated.get("prompt_version") or "v1",
             inline_system_prompt=updated.get("inline_system_prompt"), inline_schema=updated.get("inline_schema"),
             is_active=bool(updated.get("is_active", 0)),
             extra_config=json.loads(updated.get("extra_config_json", "{}")),
