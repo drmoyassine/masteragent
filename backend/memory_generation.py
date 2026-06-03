@@ -353,9 +353,12 @@ async def _execute_pipeline_node(node: dict, ctx: dict):
         system_prompt = get_system_prompt_by_config_id(node_id)
         if not system_prompt:
             system_prompt = "You are an AI memory system. Extract new factual information."
+        # entity_type/entity_id passed top-level so inject_variables' profile
+        # resolver fires and exposes {{ entity.name }}/{{ entity.subtype }} etc.
         system_prompt = inject_variables(system_prompt, {
-            "entity": {"type": ctx["entity_type"], "id": ctx["entity_id"]},
-            "date": ctx["interaction_date"]
+            "entity_type": ctx["entity_type"],
+            "entity_id": ctx["entity_id"],
+            "date": ctx["interaction_date"],
         })
         llm_fn, llm_kwargs = _llm_call(node)
         ctx["derived_text"] = await llm_fn(
@@ -395,7 +398,8 @@ async def _execute_pipeline_node(node: dict, ctx: dict):
         system_prompt = get_system_prompt_by_config_id(node_id)
         if not system_prompt:
             system_prompt = "You are an AI analyst. Identify a meaningful pattern or insight. Return JSON."
-        signal_vars = {"entity": {"type": ctx.get("entity_type", ""), "id": ctx.get("entity_id", "")}}
+        # top-level keys so inject_variables' profile resolver fires (entity.name etc.)
+        signal_vars = {"entity_type": ctx.get("entity_type", ""), "entity_id": ctx.get("entity_id", "")}
         entity_config = ctx.get("config") or _get_entity_type_config(ctx.get("entity_type", ""))
         if task_type == "intelligence_generation":
             signals = entity_config.get("intelligence_signals_prompt") or []
