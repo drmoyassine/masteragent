@@ -239,6 +239,7 @@ async def _generate_memory_for_entity_impl(entity_type: str, entity_id: str, int
         "prior_context": prior_context,
         "processing_errors": {},
         "config": config,
+        "settings": settings,
     }
 
     pipeline_nodes = get_pipeline_configs("memories")
@@ -364,7 +365,7 @@ async def _execute_pipeline_node(node: dict, ctx: dict):
         ctx["derived_text"] = await llm_fn(
             llm_context[:10000],
             system_prompt=system_prompt,
-            max_tokens=1200,
+            max_tokens=(ctx.get("settings") or {}).get("memory_generation_max_tokens") or 1200,
             config_id=node_id,
             **llm_kwargs,
         )

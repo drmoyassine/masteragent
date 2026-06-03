@@ -547,6 +547,23 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
                         </p>
                     </div>
 
+                    <div className="space-y-2">
+                        <Label className="text-xs font-mono">Max Output Tokens</Label>
+                        <Input
+                            type="number"
+                            min={256}
+                            max={8000}
+                            step={100}
+                            value={settings.memory_generation_max_tokens !== undefined ? settings.memory_generation_max_tokens : 1200}
+                            onChange={(e) =>
+                                onUpdateSettings("memory_generation_max_tokens", parseInt(e.target.value) || 1200)
+                            }
+                        />
+                        <p className="text-[10px] text-muted-foreground">
+                            Caps the length of each generated memory summary. Higher = more detail retained, higher token cost.
+                        </p>
+                    </div>
+
                     {/* Â§ Threshold Trigger */}
                     <div className="space-y-4 pt-2">
                         <h4 className="text-sm font-semibold flex items-center gap-1.5 border-b pb-1">
@@ -820,6 +837,23 @@ function IntelligenceTab({ settings, onUpdateSettings, llmConfigs, llmProviders,
                         <p className="text-[10px] text-muted-foreground border-t pt-2">
                             All prior context is injected as labeled sections in the LLM prompt to prevent redundant generation.
                         </p>
+                        <div className="space-y-2 border-t pt-3">
+                            <Label className="text-xs font-mono">Max Output Tokens</Label>
+                            <Input
+                                type="number"
+                                min={256}
+                                max={8000}
+                                step={100}
+                                value={settings.intelligence_max_tokens !== undefined ? settings.intelligence_max_tokens : 1200}
+                                onChange={(e) =>
+                                    onUpdateSettings("intelligence_max_tokens", parseInt(e.target.value) || 1200)
+                                }
+                            />
+                            <p className="text-[10px] text-muted-foreground">
+                                Caps the combined length of generated intelligence (the prompt emits up to 3 insights).
+                                Raise if detailed multi-signal output is being truncated; lower to reduce token cost.
+                            </p>
+                        </div>
                     </div>
 
                     {/* Â§ Mining Triggers */}

@@ -160,7 +160,7 @@ async def compact_entity(entity_type: str, entity_id: str):
         result_text = await call_llm(
             user_msg,
             system_prompt=system_prompt,
-            max_tokens=1200,
+            max_tokens=settings.get("intelligence_max_tokens") or 1200,
             config_id=node_id,
             task_type="intelligence_generation"
         )

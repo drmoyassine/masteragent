@@ -226,6 +226,9 @@ class MemorySettingsUpdate(BaseModel):
     memory_generation_interaction_types_mode: Optional[str] = "exclude"
     playbook_extraction_interval_days: Optional[int] = 7
     playbook_extraction_evidence_threshold: Optional[int] = 20
+    # Max output tokens for generation LLM calls
+    memory_generation_max_tokens: Optional[int] = 1200
+    intelligence_max_tokens: Optional[int] = 1200
 
 class MemorySettingsResponse(BaseModel):
     chunk_size: int = 400
