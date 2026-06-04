@@ -126,12 +126,18 @@ async def compact_entity(entity_type: str, entity_id: str):
     if not system_prompt:
         system_prompt = (
             "You are an AI analyst. Based on the provided memory summaries, identify 1 to 3 distinct, meaningful "
-            "patterns, risks, opportunities, or behavioral signals. Only include what is genuinely supported by the data "
+            "signals. Only include what is genuinely supported by the data "
             "— do not force multiple signals if only one is meaningful. "
+            "Set \"signals\" to one or more of the defined signal names provided below for this entity type. "
             "Return a JSON array only (even for a single result): "
-            "[{\"name\": \"...\", \"knowledge_type\": \"...\", \"content\": \"...\", \"summary\": \"...\"}]"
+            "[{\"name\": \"...\", \"signals\": [\"...\"], \"content\": \"...\", \"summary\": \"...\"}]"
         )
     intel_signals = config.get("intelligence_signals_prompt") or []
+    # Map of lowercased defined signal name → canonical name, for validating LLM output
+    valid_signals = {
+        (s.get("name") or "").strip().lower(): (s.get("name") or "").strip()
+        for s in intel_signals if (s.get("name") or "").strip()
+    }
     # Pass entity_type/entity_id as TOP-LEVEL keys (not a nested "entity" dict) so
     # inject_variables' built-in entity-profile resolver fires (see prompt_renderer
     # lines ~62-76). This exposes {{ entity.name }}, {{ entity.subtype }},
@@ -177,9 +183,27 @@ async def compact_entity(entity_type: str, entity_id: str):
 
     for result in results[:3]:
         name = result.get("name", "Unnamed Intelligence")
-        knowledge_type = result.get("knowledge_type", "other")
         content = result.get("content", "")
         summary = result.get("summary", "")
+
+        # Normalize signals: accept array or legacy comma-string; validate against
+        # the entity type's defined signals. Unknown signals are dropped (or kept
+        # verbatim if no signals are defined for this entity type yet).
+        raw_signals = result.get("signals", result.get("knowledge_type", []))
+        if isinstance(raw_signals, str):
+            raw_signals = [s.strip() for s in raw_signals.split(",")]
+        signals = []
+        for s in (raw_signals or []):
+            s = (s or "").strip()
+            if not s or s.lower() == "other":
+                continue
+            canonical = valid_signals.get(s.lower())
+            if canonical:
+                signals.append(canonical)
+            elif not valid_signals:
+                signals.append(s)
+        # De-duplicate while preserving order
+        signals = list(dict.fromkeys(signals))
 
         if not content:
             continue
@@ -196,7 +220,7 @@ async def compact_entity(entity_type: str, entity_id: str):
             entity_type=entity_type,
             entity_id=entity_id,
             memory_ids=memory_ids,
-            knowledge_type=knowledge_type,
+            signals=signals,
             name=name,
             content=content,
             summary=summary,

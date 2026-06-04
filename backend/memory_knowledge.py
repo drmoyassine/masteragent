@@ -49,7 +49,7 @@ async def run_lesson_check():
 
             if count >= threshold:
                 cursor.execute("""
-                    SELECT i.id, i.name, i.content, i.summary, i.knowledge_type, i.created_at
+                    SELECT i.id, i.name, i.content, i.summary, i.signals, i.created_at
                     FROM intelligence i
                     WHERE i.status = 'confirmed'
                       AND primary_entity_type = %s
@@ -81,7 +81,7 @@ async def generate_knowledge_from_intelligence(intelligence: list):
         except Exception as e:
             logger.warning(f"PII scrub failed for Intelligence {ins['id']}: {e}")
         scrubbed_parts.append(
-            f"[{ins.get('knowledge_type', 'other')}] {ins.get('name', '')}\n{content}"
+            f"[{', '.join(ins.get('signals') or []) or 'signal'}] {ins.get('name', '')}\n{content}"
         )
 
     context = "\n\n---\n\n".join(scrubbed_parts)
@@ -173,7 +173,7 @@ async def promote_to_knowledge(insight_id: str):
         cursor = conn.cursor()
         cursor.execute("""
             SELECT id, primary_entity_type, primary_entity_id, source_memory_ids,
-                   knowledge_type, name, content, summary
+                   signals, name, content, summary
             FROM intelligence WHERE id = %s
         """, (insight_id,))
         Intelligence = cursor.fetchone()
@@ -216,7 +216,7 @@ async def promote_to_knowledge(insight_id: str):
     insert_knowledge(
         knowledge_id=knowledge_id,
         intelligence_ids=[insight_id],
-        knowledge_type=Intelligence["knowledge_type"],
+        knowledge_type=", ".join(Intelligence.get("signals") or []) or None,
         name=Intelligence["name"],
         content=content,
         summary=summary,

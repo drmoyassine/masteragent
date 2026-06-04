@@ -513,7 +513,7 @@ export default function MemoryExplorerPage() {
     try {
       await updateInsightAdmin(editingIntelligence.id, {
         name: editingIntelligence.name,
-        knowledge_type: editingIntelligence.knowledge_type,
+        signals: editingIntelligence.signals,
         content: editingIntelligence.content,
         summary: editingIntelligence.summary,
       });

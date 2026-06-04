@@ -86,7 +86,7 @@ async def fetch_prior_intelligence(
 
             if chrono_n > 0:
                 cursor.execute("""
-                    SELECT id, name, knowledge_type, content, summary, created_at
+                    SELECT id, name, signals, content, summary, created_at
                     FROM intelligence
                     WHERE primary_entity_type = %s AND primary_entity_id = %s
                       AND content IS NOT NULL AND LENGTH(TRIM(content)) > 10
@@ -100,7 +100,7 @@ async def fetch_prior_intelligence(
                     search_emb = await generate_embedding(query_text[:2000])
                     if search_emb:
                         cursor.execute("""
-                            SELECT id, name, knowledge_type, content, summary, created_at
+                            SELECT id, name, signals, content, summary, created_at
                             FROM intelligence
                             WHERE primary_entity_type = %s AND primary_entity_id = %s
                               AND embedding IS NOT NULL
@@ -116,7 +116,7 @@ async def fetch_prior_intelligence(
             if prior:
                 sorted_intel = sorted(prior.values(), key=lambda x: str(x.get("created_at", "")))
                 lines = [
-                    f"[{i.get('knowledge_type', 'other')}] {i.get('name', '')}: "
+                    f"[{', '.join(i.get('signals') or []) or 'signal'}] {i.get('name', '')}: "
                     f"{i.get('summary') or i.get('content', '')[:200]}"
                     for i in sorted_intel
                 ]

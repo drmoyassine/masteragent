@@ -165,7 +165,7 @@ async def _run_chat(
 
     if intelligence:
         ins_bullets = "\n".join(
-            f"  • [{i.get('knowledge_type', 'Intelligence')}] {i.get('name', '')}: "
+            f"  • [{', '.join(i.get('signals') or []) or 'Intelligence'}] {i.get('name', '')}: "
             f"{i.get('summary') or i.get('content', '')[:200]}"
             for i in intelligence
         )
@@ -209,7 +209,7 @@ async def _run_chat(
             "---\n"
             "To create or update an Intelligence, include a JSON block in your reply:\n"
             "```action\n"
-            '{"type": "create_intelligence", "name": "...", "knowledge_type": "...", "content": "..."}\n'
+            '{"type": "create_intelligence", "name": "...", "signals": ["..."], "content": "..."}\n'
             "```"
         )
 
@@ -316,7 +316,7 @@ async def _execute_actions(
     Parse ```action {...}``` blocks from LLM response and execute them.
 
     Supported actions:
-      - create_intelligence  → {type, name, knowledge_type, content, summary?}
+      - create_intelligence  → {type, name, signals, content, summary?}
       - update_intelligence  → {type, id, content?, summary?, status?}
     """
     actions_taken = []
@@ -332,15 +332,18 @@ async def _execute_actions(
                 now = datetime.now(timezone.utc).isoformat()
                 with get_memory_db_context() as conn:
                     cursor = conn.cursor()
+                    signals_val = action.get("signals", [])
+                    if isinstance(signals_val, str):
+                        signals_val = [s.strip() for s in signals_val.split(",") if s.strip()]
                     cursor.execute("""
                         INSERT INTO intelligence (
                             id, primary_entity_type, primary_entity_id,
-                            knowledge_type, name, content, summary,
+                            signals, name, content, summary,
                             status, created_by, created_at, updated_at
                         ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """, (
                         insight_id, entity_type, entity_id,
-                        action.get("knowledge_type", "other"),
+                        signals_val or [],
                         action.get("name", "Workspace Intelligence"),
                         action.get("content", ""),
                         action.get("summary"),

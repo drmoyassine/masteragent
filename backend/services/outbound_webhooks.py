@@ -327,7 +327,7 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
         if wh["include_latest_memory"]:
             # All intelligence for this entity
             cursor.execute("""
-                SELECT id, knowledge_type, name, content, summary, status, created_at
+                SELECT id, signals, name, content, summary, status, created_at
                 FROM intelligence
                 WHERE primary_entity_type = %s AND primary_entity_id = %s
                 ORDER BY created_at ASC
@@ -335,7 +335,7 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
             for row in cursor.fetchall():
                 intelligence_payload.append({
                     "id": row["id"],
-                    "knowledge_type": row["knowledge_type"],
+                    "signals": row["signals"] or [],
                     "name": row["name"],
                     "content": row["content"],
                     "summary": row["summary"],

@@ -55,7 +55,7 @@ def insert_intelligence(
     entity_type: str,
     entity_id: str,
     memory_ids: list,
-    knowledge_type: str,
+    signals: list,
     name: str,
     content: str,
     summary: str,
@@ -71,12 +71,12 @@ def insert_intelligence(
         cursor.execute("""
             INSERT INTO intelligence (
                 id, primary_entity_type, primary_entity_id, source_memory_ids,
-                knowledge_type, name, content, summary, embedding,
+                signals, name, content, summary, embedding,
                 status, created_by, confirmed_at, created_at, updated_at
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             insight_id, entity_type, entity_id, memory_ids,
-            knowledge_type, name, content, summary, embedding,
+            signals or [], name, content, summary, embedding,
             status, "auto", now if auto_approve else None, now, now,
         ))
 
