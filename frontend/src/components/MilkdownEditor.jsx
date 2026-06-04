@@ -10,6 +10,7 @@ import { tableBlock, tableBlockConfig } from '@milkdown/kit/component/table-bloc
 import { mentionPlugin, MentionPopover } from './milkdown/VariableMentionPlugin';
 import { slashPlugin, SlashMenu } from './milkdown/SlashMenu';
 import { selectionToolbarPlugin, SelectionToolbar } from './milkdown/SelectionToolbar';
+import { variableHighlightPlugin } from './milkdown/VariableHighlightPlugin';
 
 // SVG icons for table controls (small, monochrome, 16x16)
 const icons = {
@@ -58,7 +59,8 @@ const MilkdownInner = forwardRef(({ value, onChange, variables, onCreateVariable
       .use(listener)
       .use(mentionPlugin)
       .use(slashPlugin)
-      .use(selectionToolbarPlugin);
+      .use(selectionToolbarPlugin)
+      .use(variableHighlightPlugin);
   }, []); // Empty deps: key={section.filename} handles section switching.
 
   // Expose imperative insertText() to the parent via ref.
