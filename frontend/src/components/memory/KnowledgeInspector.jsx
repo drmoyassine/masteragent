@@ -142,6 +142,17 @@ export default function KnowledgeInspector({ editingKnowledge, setEditingKnowled
               />
             </div>
 
+            {/* Signals (domain topics, separate from category) */}
+            <div>
+              <Label>Signals</Label>
+              <Input
+                value={(editingKnowledge.signals || []).join(", ")}
+                onChange={(e) => setEditingKnowledge({ ...editingKnowledge, signals: e.target.value.split(",").map(s => s.trim()).filter(Boolean) })}
+                className="mt-1 font-mono text-sm"
+                placeholder="Comma-separated defined signal names"
+              />
+            </div>
+
             {/* Tags */}
             <div>
               <Label>Tags</Label>

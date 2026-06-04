@@ -255,7 +255,7 @@ async def promote_insight_to_lesson(
 
 @router.get("/knowledge")
 async def list_knowledge(
-    knowledge_type: Optional[str] = Query(None),
+    signal: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     visibility: Optional[str] = Query(None),
@@ -270,8 +270,8 @@ async def list_knowledge(
         conditions = []
         params = []
 
-        if knowledge_type:
-            conditions.append("knowledge_type = %s"); params.append(knowledge_type)
+        if signal:
+            conditions.append("%s = ANY(signals)"); params.append(signal)
         if category:
             conditions.append("category = %s"); params.append(category)
         if status:
@@ -291,7 +291,7 @@ async def list_knowledge(
 
         params += [limit, offset]
         cursor.execute(f"""
-            SELECT id, seq_id, source_intelligence_ids, knowledge_type, category, name, content,
+            SELECT id, seq_id, source_intelligence_ids, signals, category, name, content,
                    summary, visibility, tags, status, metadata, quality_score, merge_count,
                    source_pathway, evidence_breadth, outcome_signal, extraction_confidence,
                    success_count, failure_count, feedback_notes, version, parent_id,
@@ -327,12 +327,12 @@ async def create_knowledge(body: KnowledgeCreate, admin: dict = Depends(require_
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO knowledge (
-                id, source_intelligence_ids, knowledge_type, name, content, summary,
+                id, source_intelligence_ids, signals, name, content, summary,
                 visibility, tags, category, metadata, status, created_at, updated_at
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             lesson_id, body.source_intelligence_ids or [],
-            body.knowledge_type, body.name, body.content, body.summary,
+            body.signals or [], body.name, body.content, body.summary,
             body.visibility, body.tags or [],
             body.category or "trade_knowledge",
             json.dumps(body.metadata) if body.metadata else None,
@@ -360,8 +360,8 @@ async def update_knowledge(
         fields.append("content = %s"); values.append(body.content)
     if body.summary is not None:
         fields.append("summary = %s"); values.append(body.summary)
-    if body.knowledge_type is not None:
-        fields.append("knowledge_type = %s"); values.append(body.knowledge_type)
+    if body.signals is not None:
+        fields.append("signals = %s"); values.append(body.signals or [])
     if body.visibility is not None:
         fields.append("visibility = %s"); values.append(body.visibility)
     if body.tags is not None:

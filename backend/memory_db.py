@@ -279,7 +279,7 @@ def _create_memory_tier_tables(cursor):
             id                  TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
             seq_id              BIGSERIAL,
             source_intelligence_ids  TEXT[] NOT NULL DEFAULT '{}',
-            knowledge_type         TEXT,
+            signals             TEXT[] NOT NULL DEFAULT '{}',
             name                TEXT NOT NULL,
             content             TEXT NOT NULL,
             summary             TEXT,
@@ -290,8 +290,7 @@ def _create_memory_tier_tables(cursor):
             updated_at          TIMESTAMPTZ DEFAULT NOW()
         )
     """)
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_type ON knowledge (knowledge_type)")
-    # category/status indexes created after ALTER TABLE ADD COLUMN below
+    # category/status/signals indexes created after ALTER TABLE ADD COLUMN below
 
     # Playbook extraction: tracks which AI thought/tool-call interactions have been processed
     cursor.execute("""
@@ -710,6 +709,7 @@ def _run_migrations(cursor):
     # ── Knowledge unified table: category + metadata + quality gauges ──────
     knowledge_cols = [
         ("category", "TEXT DEFAULT 'trade_knowledge'"),
+        ("signals", "TEXT[] NOT NULL DEFAULT '{}'"),
         ("metadata", "JSONB DEFAULT '{}'"),
         ("merge_count", "INT DEFAULT 0"),
         ("last_merged_at", "TIMESTAMPTZ"),
@@ -736,6 +736,7 @@ def _run_migrations(cursor):
     try:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_category ON knowledge (category)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_status ON knowledge (status)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_signals ON knowledge USING GIN (signals)")
     except Exception as e:
         logger.error(f"Failed to create knowledge indexes: {e}")
 
@@ -745,6 +746,33 @@ def _run_migrations(cursor):
         cursor.execute("UPDATE knowledge SET status = 'active' WHERE status = 'confirmed' AND category IS NOT NULL")
     except Exception as e:
         logger.error(f"Failed to backfill knowledge category/status: {e}")
+
+    # Knowledge: migrate legacy scalar `knowledge_type` → `signals` TEXT[] array.
+    # Knowledge records carry the domain signals defined per entity type
+    # (memory_entity_type_config.knowledge_signals_prompt). `category` (the
+    # structural kind: best_practices/lessons_learned/trade_knowledge/skill/playbook)
+    # is a separate axis and is kept. The old knowledge_type was either a duplicate
+    # of category (skill/playbook/hermes) or a free-text "other" — both discarded.
+    try:
+        cursor.execute("""
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'knowledge' AND column_name = 'knowledge_type'
+        """)
+        if cursor.fetchone():
+            cursor.execute("""
+                UPDATE knowledge
+                SET signals = ARRAY(
+                    SELECT trim(s) FROM unnest(string_to_array(knowledge_type, ',')) AS s
+                    WHERE trim(s) <> ''
+                      AND lower(trim(s)) NOT IN ('other', 'skill', 'playbook',
+                          'best_practices', 'lessons_learned', 'trade_knowledge')
+                      AND trim(s) <> coalesce(category, '')
+                )
+                WHERE knowledge_type IS NOT NULL AND signals = '{}'
+            """)
+            cursor.execute("ALTER TABLE knowledge DROP COLUMN knowledge_type")
+    except Exception as e:
+        logger.error(f"Failed to migrate knowledge knowledge_type → signals: {e}")
 
     # ── Global gauges (memory_settings) ────────────────────────────────────
     settings_gauge_cols = [

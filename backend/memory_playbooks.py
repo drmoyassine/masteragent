@@ -253,6 +253,13 @@ async def _process_cluster(
     if auto_activate and (auto_score is None or quality >= auto_score):
         status = "active"
 
+    # Derive the playbook's domain signals from the union of its source
+    # intelligence signals, so skills decomposed from it can inherit them.
+    pb_signals = list(dict.fromkeys(
+        s for r in intel_records for s in (r.get("signals") or [])
+    ))
+    playbook_data["signals"] = pb_signals
+
     # Insert playbook as knowledge record
     playbook_id = str(uuid.uuid4())
     metadata = {
@@ -265,7 +272,7 @@ async def _process_cluster(
     insert_knowledge(
         knowledge_id=playbook_id,
         intelligence_ids=intel_ids,
-        knowledge_type="playbook",
+        signals=pb_signals,
         category="playbook",
         name=playbook_data.get("name", "Unnamed Playbook"),
         content=playbook_data.get("description", ""),
@@ -391,7 +398,7 @@ async def _generate_skills_from_playbook(
         insert_knowledge(
             knowledge_id=skill_id,
             intelligence_ids=[],
-            knowledge_type="skill",
+            signals=playbook_data.get("signals", []),
             category="skill",
             name=skill_data.get("name", "Unnamed Skill"),
             content=skill_data.get("procedure", ""),
