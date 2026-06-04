@@ -51,7 +51,7 @@ async def list_intelligence(
     entity_type: Optional[str] = Query(None),
     entity_id: Optional[str] = Query(None),
     status: Optional[str] = Query(None),      # draft | confirmed | archived
-    knowledge_type: Optional[str] = Query(None),
+    signal: Optional[str] = Query(None),      # filter by one defined signal name
     limit: int = Query(30, le=100),
     offset: int = Query(0),
     admin: dict = Depends(require_admin_auth)
@@ -71,9 +71,9 @@ async def list_intelligence(
         if status:
             conditions.append("status = %s")
             params.append(status)
-        if knowledge_type:
-            conditions.append("knowledge_type = %s")
-            params.append(knowledge_type)
+        if signal:
+            conditions.append("%s = ANY(signals)")
+            params.append(signal)
 
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
         params_count = list(params)
@@ -83,7 +83,7 @@ async def list_intelligence(
         params += [limit, offset]
         cursor.execute(f"""
             SELECT i.id, i.seq_id, i.primary_entity_type, i.primary_entity_id, i.source_memory_ids,
-                   i.knowledge_type, i.name, i.content, i.summary, i.status,
+                   i.signals, i.name, i.content, i.summary, i.status,
                    i.created_by, i.confirmed_by, i.confirmed_at, i.created_at, i.updated_at,
                    ep.display_name as entity_display_name,
                    ep.subtype as entity_subtype_resolved,
@@ -125,13 +125,13 @@ async def create_intelligence(body: IntelligenceCreate, admin: dict = Depends(re
         cursor.execute("""
             INSERT INTO intelligence (
                 id, primary_entity_type, primary_entity_id, source_memory_ids,
-                knowledge_type, name, content, summary,
+                signals, name, content, summary,
                 status, created_by, created_at, updated_at
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             insight_id, body.primary_entity_type, body.primary_entity_id,
             body.source_memory_ids or [],
-            body.knowledge_type, body.name, body.content, body.summary,
+            body.signals or [], body.name, body.content, body.summary,
             "draft", "admin", now, now
         ))
 
@@ -163,8 +163,8 @@ async def update_intelligence(
         fields.append("content = %s"); values.append(body.content)
     if body.summary is not None:
         fields.append("summary = %s"); values.append(body.summary)
-    if body.knowledge_type is not None:
-        fields.append("knowledge_type = %s"); values.append(body.knowledge_type)
+    if body.signals is not None:
+        fields.append("signals = %s"); values.append(body.signals or [])
     if body.status is not None:
         fields.append("status = %s"); values.append(body.status)
         if body.status == "confirmed":

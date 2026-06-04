@@ -343,7 +343,7 @@ async def get_has_context(
         cursor.execute("SELECT id, date FROM memories WHERE primary_entity_type = %s AND primary_entity_id = %s ORDER BY date DESC", (entity_type, entity_id))
         m_rows = cursor.fetchall()
         cursor.execute(
-            "SELECT id, name, summary, status, knowledge_type, created_at FROM intelligence WHERE primary_entity_type = %s AND primary_entity_id = %s ORDER BY created_at DESC",
+            "SELECT id, name, summary, status, signals, created_at FROM intelligence WHERE primary_entity_type = %s AND primary_entity_id = %s ORDER BY created_at DESC",
             (entity_type, entity_id)
         )
         ins_rows = cursor.fetchall()
@@ -356,7 +356,7 @@ async def get_has_context(
     intelligences = [
         IntelligenceContextItem(
             id=r["id"], name=r["name"] or "", summary=r.get("summary"),
-            status=r["status"], knowledge_type=r.get("knowledge_type"),
+            status=r["status"], signals=r.get("signals") or [],
             created_at=str(r["created_at"])
         ) for r in ins_rows
     ]
@@ -446,14 +446,14 @@ async def get_context(
         } for r in cursor.fetchall()]
 
         cursor.execute("""
-            SELECT id, knowledge_type, name, content, summary, status, created_at
+            SELECT id, signals, name, content, summary, status, created_at
             FROM intelligence
             WHERE primary_entity_type = %s AND primary_entity_id = %s
             ORDER BY created_at ASC
         """, (entity_type, entity_id))
         intelligence = [{
             "id": r["id"],
-            "knowledge_type": r["knowledge_type"],
+            "signals": r["signals"] or [],
             "name": r["name"],
             "content": r["content"],
             "summary": r["summary"],
@@ -630,9 +630,9 @@ async def create_intelligence(body: IntelligenceCreate, agent: dict = Depends(ve
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cols = "id, primary_entity_type, primary_entity_id, source_memory_ids, knowledge_type, name, content, summary, status, created_by, created_at, updated_at"
+        cols = "id, primary_entity_type, primary_entity_id, source_memory_ids, signals, name, content, summary, status, created_by, created_at, updated_at"
         vals = "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-        params = [in_id, body.primary_entity_type, body.primary_entity_id, body.source_memory_ids, body.knowledge_type, body.name, body.content, body.summary, "confirmed", agent["id"], now, now]
+        params = [in_id, body.primary_entity_type, body.primary_entity_id, body.source_memory_ids, body.signals or [], body.name, body.content, body.summary, "confirmed", agent["id"], now, now]
         if embedding:
             cols += ", embedding"
             vals = "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
@@ -667,7 +667,7 @@ async def list_intelligence(
 
         cursor.execute(f"""
             SELECT id, seq_id, primary_entity_type, primary_entity_id, source_memory_ids,
-                   knowledge_type, name, content, summary, status, created_by, confirmed_by, confirmed_at, created_at, updated_at
+                   signals, name, content, summary, status, created_by, confirmed_by, confirmed_at, created_at, updated_at
             FROM intelligence WHERE {where} ORDER BY created_at DESC LIMIT %s OFFSET %s
         """, params + [limit, offset])
         rows = []

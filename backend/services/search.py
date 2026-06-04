@@ -212,7 +212,7 @@ async def search_intelligence_by_vector(
             
             cursor.execute(f"""
                 SELECT id, primary_entity_type, primary_entity_id,
-                       knowledge_type, name, summary, status, created_at,
+                       signals, name, summary, status, created_at,
                        GREATEST(0, (1 - (embedding <=> %s::vector)) - {decay_sql}) AS score
                 FROM intelligence WHERE {where}
                 ORDER BY score DESC LIMIT %s
@@ -254,7 +254,7 @@ async def search_intelligence_by_fulltext(
             where = " AND ".join(conditions)
             cursor.execute(f"""
                 SELECT id, primary_entity_type, primary_entity_id,
-                       knowledge_type, name, summary, status, created_at,
+                       signals, name, summary, status, created_at,
                        ts_rank(to_tsvector('simple', coalesce(name, '') || ' ' || coalesce(summary, '') || ' ' || coalesce(content, '')), websearch_to_tsquery('simple', %s)) AS score
                 FROM intelligence WHERE {where}
                 ORDER BY score DESC LIMIT %s

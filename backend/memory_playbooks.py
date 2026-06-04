@@ -168,7 +168,7 @@ async def _process_cluster(
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, name, content, summary, knowledge_type, created_at, embedding, primary_entity_id
+            SELECT id, name, content, summary, signals, created_at, embedding, primary_entity_id
             FROM intelligence WHERE id = ANY(%s)
         """, (intel_ids,))
         intel_records = [dict(r) for r in cursor.fetchall()]
@@ -202,7 +202,7 @@ async def _process_cluster(
 
     # Build context for LLM
     intel_context = "\n\n".join(
-        f"[{r.get('knowledge_type', 'other')}] {r.get('name', '')}\n{r.get('content', '')}"
+        f"[{', '.join(r.get('signals') or []) or 'signal'}] {r.get('name', '')}\n{r.get('content', '')}"
         for r in intel_records
     )
     ai_context = ""

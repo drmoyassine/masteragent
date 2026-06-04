@@ -256,7 +256,7 @@ def _create_memory_tier_tables(cursor):
             primary_entity_type TEXT NOT NULL,
             primary_entity_id   TEXT NOT NULL,
             source_memory_ids   TEXT[] NOT NULL DEFAULT '{}',
-            knowledge_type        TEXT,
+            signals             TEXT[] NOT NULL DEFAULT '{}',
             name                TEXT NOT NULL,
             content             TEXT NOT NULL,
             summary             TEXT,
@@ -454,6 +454,31 @@ def _run_migrations(cursor):
         cursor.execute("ALTER TABLE interactions ADD COLUMN IF NOT EXISTS processing_errors JSONB DEFAULT '{}'")
     except Exception as e:
         logger.error(f"Failed to add columns to interactions: {e}")
+
+    # Intelligence: migrate legacy scalar `knowledge_type` → `signals` TEXT[] array.
+    # Intelligence records are tagged with the signals defined per entity type
+    # (memory_entity_type_config.intelligence_signals_prompt), not a generic taxonomy.
+    try:
+        cursor.execute("ALTER TABLE intelligence ADD COLUMN IF NOT EXISTS signals TEXT[] NOT NULL DEFAULT '{}'")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_intelligence_signals ON intelligence USING GIN (signals)")
+        # Only backfill/drop if the legacy column still exists (skips fresh installs)
+        cursor.execute("""
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'intelligence' AND column_name = 'knowledge_type'
+        """)
+        if cursor.fetchone():
+            # Backfill from the old comma-separated knowledge_type, trimming blanks/"other"
+            cursor.execute("""
+                UPDATE intelligence
+                SET signals = ARRAY(
+                    SELECT trim(s) FROM unnest(string_to_array(knowledge_type, ',')) AS s
+                    WHERE trim(s) <> '' AND lower(trim(s)) <> 'other'
+                )
+                WHERE knowledge_type IS NOT NULL AND signals = '{}'
+            """)
+            cursor.execute("ALTER TABLE intelligence DROP COLUMN knowledge_type")
+    except Exception as e:
+        logger.error(f"Failed to migrate intelligence knowledge_type → signals: {e}")
 
     # Agent columns that were added iteratively
     for col, col_def in [
@@ -932,10 +957,11 @@ def _seed_defaults():
              "focusing on key facts, decisions, and action items. Be factual and brief."),
             ("intelligence_generation", "Default Insight Generator",
              "You are an AI analyst reviewing interaction history for a specific entity. "
-             "Based on the provided memory summaries, identify a meaningful pattern, risk, opportunity, "
-             "or behavioral insight. Return JSON: {\"name\": \"...\", \"knowledge_type\": \"...\", "
-             "\"content\": \"...\", \"summary\": \"...\"}. "
-             "knowledge_type must be one of: behavior_pattern, risk_signal, opportunity, relationship_shift, preference, milestone."),
+             "Based on the provided memory summaries, identify 1 to 3 distinct, meaningful signals. "
+             "Return a JSON array only (even for a single result): "
+             "[{\"name\": \"...\", \"signals\": [\"...\"], \"content\": \"...\", \"summary\": \"...\"}]. "
+             "Set \"signals\" to one or more of the defined signal names provided to you for this entity type. "
+             "Only include signals genuinely supported by the data."),
             ("entity_extraction", "Default Entity Extractor",
              "Extract named entities from the following text. Return a JSON array of objects: "
              "[{\"entity_id\": \"unique-id\", \"entity_type\": \"contact|institution|program|supplier|product\", "
@@ -974,10 +1000,10 @@ def _seed_defaults():
 
         # Add intelligence default schema
         cursor.execute("""
-            UPDATE memory_llm_configs 
-            SET inline_schema = %s 
+            UPDATE memory_llm_configs
+            SET inline_schema = %s
             WHERE task_type = 'intelligence_generation' AND inline_schema IS NULL
-        """, ('{\n  "name": "...",\n  "knowledge_type": "...",\n  "content": "...",\n  "summary": "..."\n}',))
+        """, ('[\n  {\n    "name": "...",\n    "signals": ["..."],\n    "content": "...",\n    "summary": "..."\n  }\n]',))
 
         # Default entity type configs
         for entity_type in ["contact", "institution", "program", "supplier", "product"]:

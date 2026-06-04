@@ -56,12 +56,12 @@ export default function IntelligenceInspector({ editingIntelligence, setEditingI
                   />
                 </div>
                 <div>
-                  <Label>Signal Type</Label>
+                  <Label>Signals</Label>
                   <Input
-                    value={editingIntelligence.knowledge_type || ""}
-                    onChange={(e) => setEditingIntelligence({ ...editingIntelligence, knowledge_type: e.target.value })}
+                    value={(editingIntelligence.signals || []).join(", ")}
+                    onChange={(e) => setEditingIntelligence({ ...editingIntelligence, signals: e.target.value.split(",").map(s => s.trim()).filter(Boolean) })}
                     className="mt-1 font-mono text-sm"
-                    placeholder="e.g. risk, budget, objection"
+                    placeholder="Comma-separated defined signal names"
                   />
                 </div>
               </div>
