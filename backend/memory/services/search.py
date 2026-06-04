@@ -67,7 +67,7 @@ async def search_intelligence_by_vector(
             where = " AND ".join(conditions)
             cursor.execute(f"""
                 SELECT id, primary_entity_type, primary_entity_id,
-                       knowledge_type, name, summary, status, created_at,
+                       signals, name, summary, status, created_at,
                        1 - (embedding <=> %s::vector) AS score
                 FROM intelligence WHERE {where}
                 ORDER BY embedding <=> %s::vector LIMIT %s
@@ -80,7 +80,7 @@ async def search_intelligence_by_vector(
 
 async def search_knowledge_by_vector(
     query_vector: List[float],
-    knowledge_type: str = None,
+    signal: str = None,
     limit: int = 10,
 ) -> List[Dict[str, Any]]:
     """Semantic search over the knowledge table."""
@@ -90,11 +90,11 @@ async def search_knowledge_by_vector(
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
             conditions, params = ["embedding IS NOT NULL", "visibility = 'shared'"], []
-            if knowledge_type:
-                conditions.append("knowledge_type = %s"); params.append(knowledge_type)
+            if signal:
+                conditions.append("%s = ANY(signals)"); params.append(signal)
             where = " AND ".join(conditions)
             cursor.execute(f"""
-                SELECT id, knowledge_type, name, summary, visibility, tags, created_at,
+                SELECT id, signals, category, name, summary, visibility, tags, created_at,
                        1 - (embedding <=> %s::vector) AS score
                 FROM knowledge WHERE {where}
                 ORDER BY embedding <=> %s::vector LIMIT %s

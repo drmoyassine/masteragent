@@ -143,7 +143,7 @@ async def fetch_prior_knowledge_semantic(
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT id, name, knowledge_type, content, summary
+                SELECT id, name, signals, category, content, summary
                 FROM knowledge
                 WHERE embedding IS NOT NULL
                   AND content IS NOT NULL AND LENGTH(TRIM(content)) > 10
@@ -153,7 +153,7 @@ async def fetch_prior_knowledge_semantic(
 
         if rows:
             lines = [
-                f"[{k.get('knowledge_type', 'other')}] {k.get('name', '')}: "
+                f"[{', '.join(k.get('signals') or []) or k.get('category') or 'knowledge'}] {k.get('name', '')}: "
                 f"{k.get('summary') or k.get('content', '')[:200]}"
                 for k in rows
             ]

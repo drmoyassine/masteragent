@@ -408,6 +408,7 @@ export default function MemoryExplorerPage() {
         content: editingLesson.content,
         summary: editingLesson.summary,
         category: editingLesson.category,
+        signals: editingLesson.signals,
         tags: editingLesson.tags,
         metadata: editingLesson.metadata,
         status: editingLesson.status,

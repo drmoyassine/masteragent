@@ -173,7 +173,7 @@ async def _run_chat(
 
     if knowledge:
         les_bullets = "\n".join(
-            f"  • [{l.get('knowledge_type', 'Knowledge')}] {l.get('name', '')}: "
+            f"  • [{', '.join(l.get('signals') or []) or 'Knowledge'}] {l.get('name', '')}: "
             f"{l.get('summary') or l.get('content', '')[:200]}"
             for l in knowledge
         )

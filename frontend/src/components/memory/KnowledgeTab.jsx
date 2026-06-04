@@ -117,7 +117,7 @@ export default function KnowledgeTab({
                             case "select": return <TableCell key={col.key} onClick={(e) => e.stopPropagation()}><Checkbox checked={selectedIds.includes(k.id)} onCheckedChange={() => toggleOne(k.id)} /></TableCell>;
                             case "seq_id": return <TableCell key={col.key} className="font-mono text-muted-foreground">#{k.seq_id}</TableCell>;
                             case "category": {
-                              const cat = k.category || k.knowledge_type || "trade_knowledge";
+                              const cat = k.category || "trade_knowledge";
                               return (<TableCell key={col.key}>
                                 <Badge className={CATEGORY_COLORS[cat] || "bg-gray-100 text-gray-800"}>{cat.replace(/_/g, " ")}</Badge>
                               </TableCell>);

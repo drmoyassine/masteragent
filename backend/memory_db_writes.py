@@ -90,7 +90,6 @@ def insert_knowledge(
     *,
     knowledge_id: str,
     intelligence_ids: list,
-    knowledge_type: str,
     name: str,
     content: str,
     summary: str,
@@ -98,6 +97,7 @@ def insert_knowledge(
     tags: list,
     visibility: str = "shared",
     # ── Unified knowledge fields ──────────────────────────────────────
+    signals: Optional[list] = None,
     category: str = "trade_knowledge",
     metadata: Optional[dict] = None,
     source_pathway: str = "experiential",
@@ -118,7 +118,7 @@ def insert_knowledge(
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO knowledge (
-                id, source_intelligence_ids, knowledge_type, name, content, summary,
+                id, source_intelligence_ids, signals, name, content, summary,
                 embedding, visibility, tags, created_at, updated_at,
                 category, metadata, source_pathway, source_ai_interaction_ids,
                 extraction_confidence, evidence_breadth, outcome_signal,
@@ -131,7 +131,7 @@ def insert_knowledge(
                 %s, %s, %s
             )
         """, (
-            knowledge_id, intelligence_ids, knowledge_type, name, content, summary,
+            knowledge_id, intelligence_ids, signals or [], name, content, summary,
             embedding, visibility, tags, now, now,
             category, md, source_pathway, ai_ids,
             extraction_confidence, evidence_breadth, outcome_signal,

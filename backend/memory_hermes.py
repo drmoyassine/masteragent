@@ -36,10 +36,11 @@ async def process_admin_instruction(
         "- skill: A discrete, composable capability (specify skill_type: soft or hard)\n"
         "- playbook: An ordered procedure with trigger conditions\n\n"
         'Return JSON: {"category": "...", "name": "...", "content": "...", '
-        '"summary": "...", "tags": [...], "confidence": 0.0-1.0, '
+        '"summary": "...", "tags": [...], "signals": [...], "confidence": 0.0-1.0, '
         '"skill_type": "soft|hard" (only for skill), '
         '"trigger_conditions": [...] (only for playbook), '
-        '"steps": [{"order": 1, "action": "..."}] (only for playbook)}'
+        '"steps": [{"order": 1, "action": "..."}] (only for playbook)}. '
+        '"signals" are the domain topics this record relates to.'
     )
 
     try:
@@ -60,6 +61,9 @@ async def process_admin_instruction(
     content = result.get("content", instruction)
     summary = result.get("summary", "")
     tags = result.get("tags", [])
+    signals = result.get("signals", [])
+    if isinstance(signals, str):
+        signals = [s.strip() for s in signals.split(",") if s.strip()]
 
     # Build metadata for skill/playbook categories
     metadata = {}
@@ -103,7 +107,7 @@ async def process_admin_instruction(
     insert_knowledge(
         knowledge_id=knowledge_id,
         intelligence_ids=[],
-        knowledge_type=determined_category,
+        signals=signals,
         category=determined_category,
         name=name,
         content=content,

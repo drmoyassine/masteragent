@@ -271,7 +271,7 @@ async def search_intelligence_by_fulltext(
 
 async def search_knowledge_by_vector(
     query_vector: List[float],
-    knowledge_type: str = None,
+    signal: str = None,
     entity_type: str = None,
     entity_subtype: str = None,
     since: str = None,
@@ -283,21 +283,21 @@ async def search_knowledge_by_vector(
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
             conditions, params = ["embedding IS NOT NULL", "visibility = 'shared'"], []
-            if knowledge_type:
-                conditions.append("knowledge_type = %s"); params.append(knowledge_type)
+            if signal:
+                conditions.append("%s = ANY(signals)"); params.append(signal)
             if since:
                 conditions.append("created_at >= %s"); params.append(since)
             if until:
                 conditions.append("created_at <= %s"); params.append(until)
-                
-            # Note: knowledge implicitly ignore entity_id per schema, but 
+
+            # Note: knowledge implicitly ignore entity_id per schema, but
             # tags or metadata could eventually store entity_type natively if we wanted.
-            
+
             where = " AND ".join(conditions)
             decay_sql = f"(EXTRACT(EPOCH FROM (NOW() - created_at))/86400) * {DECAY_RATE}"
-            
+
             cursor.execute(f"""
-                SELECT id, knowledge_type, name, summary, visibility, tags, created_at,
+                SELECT id, signals, category, name, summary, visibility, tags, created_at,
                        GREATEST(0, (1 - (embedding <=> %s::vector)) - {decay_sql}) AS score
                 FROM knowledge WHERE {where}
                 ORDER BY score DESC LIMIT %s
@@ -309,7 +309,7 @@ async def search_knowledge_by_vector(
 
 async def search_knowledge_by_fulltext(
     query: str,
-    knowledge_type: str = None,
+    signal: str = None,
     entity_type: str = None,
     entity_subtype: str = None,
     since: str = None,
@@ -321,19 +321,19 @@ async def search_knowledge_by_fulltext(
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
             conditions, params = ["visibility = 'shared'"], []
-            if knowledge_type:
-                conditions.append("knowledge_type = %s"); params.append(knowledge_type)
+            if signal:
+                conditions.append("%s = ANY(signals)"); params.append(signal)
             if since:
                 conditions.append("created_at >= %s"); params.append(since)
             if until:
                 conditions.append("created_at <= %s"); params.append(until)
-                
+
             conditions.append("to_tsvector('simple', coalesce(name, '') || ' ' || coalesce(summary, '') || ' ' || coalesce(content, '')) @@ websearch_to_tsquery('simple', %s)")
             params.append(query)
-            
+
             where = " AND ".join(conditions)
             cursor.execute(f"""
-                SELECT id, knowledge_type, name, summary, visibility, tags, created_at,
+                SELECT id, signals, category, name, summary, visibility, tags, created_at,
                        ts_rank(to_tsvector('simple', coalesce(name, '') || ' ' || coalesce(summary, '') || ' ' || coalesce(content, '')), websearch_to_tsquery('simple', %s)) AS score
                 FROM knowledge WHERE {where}
                 ORDER BY score DESC LIMIT %s

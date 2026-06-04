@@ -478,7 +478,7 @@ async def get_context(
 
         # Knowledge (all categories including playbooks and skills)
         cursor.execute("""
-            SELECT id, name, category, content, summary, tags, metadata, quality_score, merge_count
+            SELECT id, name, category, signals, content, summary, tags, metadata, quality_score, merge_count
             FROM knowledge
             WHERE status = 'active'
               AND (visibility = 'shared' OR visibility IS NULL)
@@ -489,6 +489,7 @@ async def get_context(
             "id": r["id"],
             "name": r["name"],
             "category": r["category"],
+            "signals": r["signals"] or [],
             "content": r["content"],
             "summary": r["summary"],
             "tags": r["tags"],
@@ -723,9 +724,9 @@ async def create_knowledge(body: KnowledgeCreate, agent: dict = Depends(verify_a
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cols = "id, source_intelligence_ids, knowledge_type, name, content, summary, visibility, tags, created_at, updated_at"
+        cols = "id, source_intelligence_ids, signals, name, content, summary, visibility, tags, created_at, updated_at"
         vals = "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-        params = [les_id, body.source_intelligence_ids, body.knowledge_type, body.name, body.content, body.summary, body.visibility, body.tags, now, now]
+        params = [les_id, body.source_intelligence_ids, body.signals or [], body.name, body.content, body.summary, body.visibility, body.tags, now, now]
         if embedding:
             cols += ", embedding"
             vals = "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
@@ -742,7 +743,7 @@ async def list_knowledge(
     entity_subtype: Optional[str] = Query(None),
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
-    knowledge_type: Optional[str] = Query(None),
+    signal: Optional[str] = Query(None),
     limit: int = Query(20, le=100),
     offset: int = Query(0),
     agent: dict = Depends(verify_agent_key)
@@ -750,7 +751,7 @@ async def list_knowledge(
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         conditions, params = [], []
-        if knowledge_type: conditions.append("knowledge_type = %s"); params.append(knowledge_type)
+        if signal: conditions.append("%s = ANY(signals)"); params.append(signal)
         if start_date: conditions.append("created_at >= %s"); params.append(start_date)
         if end_date: conditions.append("created_at <= %s"); params.append(end_date)
         # knowledge are globally abstracted away from IDs, but if tags contained entity_type we could filter it here.
@@ -761,7 +762,7 @@ async def list_knowledge(
         total = cursor.fetchone()["total"]
 
         cursor.execute(f"""
-            SELECT id, seq_id, source_intelligence_ids, knowledge_type, name, content, summary, visibility, tags, created_at, updated_at
+            SELECT id, seq_id, source_intelligence_ids, signals, name, content, summary, visibility, tags, created_at, updated_at
             FROM knowledge WHERE {where} ORDER BY created_at DESC LIMIT %s OFFSET %s
         """, params + [limit, offset])
         rows = []

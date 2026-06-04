@@ -104,14 +104,25 @@ async def generate_knowledge_from_intelligence(intelligence: list):
         system_prompt = await get_system_prompt("knowledge_generation")
 
     if not system_prompt:
-        system_prompt = "You are an AI knowledge curator. Synthesize into generalizable Knowledge. Return JSON: {\"name\": \"...\", \"knowledge_type\": \"...\", \"content\": \"...\", \"summary\": \"...\", \"tags\": [...]}"
+        system_prompt = (
+            "You are an AI knowledge curator. Synthesize into generalizable Knowledge. "
+            "Return JSON: {\"name\": \"...\", \"category\": \"...\", \"signals\": [\"...\"], "
+            "\"content\": \"...\", \"summary\": \"...\", \"tags\": [...]}. "
+            "\"category\" must be one of: best_practices, lessons_learned, trade_knowledge. "
+            "Set \"signals\" to one or more of the defined signal names provided below."
+        )
 
     entity_type = intelligence[0].get("primary_entity_type", "") if intelligence else ""
     know_signals_text = ""
+    valid_signals = {}
     if entity_type:
         know_config = _get_entity_type_config(entity_type)
         know_signals = know_config.get("knowledge_signals_prompt") or []
         know_signals_text = _format_signal_definitions(know_signals)
+        valid_signals = {
+            (s.get("name") or "").strip().lower(): (s.get("name") or "").strip()
+            for s in know_signals if (s.get("name") or "").strip()
+        }
     system_prompt = inject_variables(system_prompt, {
         "knowledge_signals": know_signals_text,
     })
@@ -136,11 +147,28 @@ async def generate_knowledge_from_intelligence(intelligence: list):
         return
 
     name = result.get("name", "Unnamed Knowledge")
-    knowledge_type = result.get("knowledge_type", "other")
     category = result.get("category", "trade_knowledge")
     content = result.get("content", "")
     summary = result.get("summary", "")
     tags = result.get("tags", [])
+
+    # Normalize signals: accept array or legacy comma-string; validate against
+    # the entity type's defined knowledge signals (unknown values dropped; kept
+    # verbatim only if no signals are defined for this entity type yet).
+    raw_signals = result.get("signals", result.get("knowledge_type", []))
+    if isinstance(raw_signals, str):
+        raw_signals = [s.strip() for s in raw_signals.split(",")]
+    signals = []
+    for s in (raw_signals or []):
+        s = (s or "").strip()
+        if not s or s.lower() == "other":
+            continue
+        canonical = valid_signals.get(s.lower())
+        if canonical:
+            signals.append(canonical)
+        elif not valid_signals:
+            signals.append(s)
+    signals = list(dict.fromkeys(signals))
 
     if not content:
         return
@@ -155,7 +183,7 @@ async def generate_knowledge_from_intelligence(intelligence: list):
     insert_knowledge(
         knowledge_id=knowledge_id,
         intelligence_ids=intelligence_ids,
-        knowledge_type=knowledge_type,
+        signals=signals,
         category=category,
         name=name,
         content=content,
@@ -216,7 +244,7 @@ async def promote_to_knowledge(insight_id: str):
     insert_knowledge(
         knowledge_id=knowledge_id,
         intelligence_ids=[insight_id],
-        knowledge_type=", ".join(Intelligence.get("signals") or []) or None,
+        signals=Intelligence.get("signals") or [],
         name=Intelligence["name"],
         content=content,
         summary=summary,

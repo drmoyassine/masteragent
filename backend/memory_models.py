@@ -394,7 +394,7 @@ class IntelligenceUpdate(BaseModel):
 # ============================================
 
 class KnowledgeCreate(BaseModel):
-    knowledge_type: Optional[str] = None
+    signals: List[str] = []
     name: str
     content: str                         # PII-stripped Markdown
     summary: Optional[str] = None
@@ -409,7 +409,7 @@ class KnowledgeResponse(BaseModel):
     id: str
     seq_id: Optional[int] = None
     source_intelligence_ids: List[str]
-    knowledge_type: Optional[str]
+    signals: List[str] = []
     name: str
     content: str
     summary: Optional[str]
@@ -428,7 +428,7 @@ class KnowledgeUpdate(BaseModel):
     name: Optional[str] = None
     content: Optional[str] = None
     summary: Optional[str] = None
-    knowledge_type: Optional[str] = None
+    signals: Optional[List[str]] = None
     visibility: Optional[str] = None
     tags: Optional[List[str]] = None
     category: Optional[str] = None
