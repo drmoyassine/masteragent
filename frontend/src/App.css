@@ -167,6 +167,17 @@
     border-radius: 2px;
     font-size: 0.9em;
 }
+/* {{ variable }} tokens auto-highlighted as translucent green pills */
+.milkdown-editor .ProseMirror .milkdown-variable-pill {
+    color: hsl(142 71% 55%);
+    background: hsl(142 71% 45% / 0.15);
+    border: 1px solid hsl(142 71% 45% / 0.3);
+    border-radius: 4px;
+    padding: 0.05em 0.3em;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.9em;
+    white-space: nowrap;
+}
 .milkdown-editor .ProseMirror blockquote {
     border-left: 3px solid hsl(142 71% 45% / 0.4);
     padding-left: 1em;
