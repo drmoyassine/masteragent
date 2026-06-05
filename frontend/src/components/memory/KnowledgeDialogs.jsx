@@ -54,7 +54,7 @@ function TagInput({ tags, onChange }) {
   );
 }
 
-export function NewKnowledgeDialog({ open, onOpenChange, newLesson, setNewLesson, onCreate }) {
+export function NewKnowledgeDialog({ open, onOpenChange, newKnowledge, setNewKnowledge, onCreate }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
@@ -65,12 +65,12 @@ export function NewKnowledgeDialog({ open, onOpenChange, newLesson, setNewLesson
         <div className="space-y-4 py-4">
           <div>
             <Label>Name</Label>
-            <Input value={newLesson.name} onChange={(e) => setNewLesson({ ...newLesson, name: e.target.value })} placeholder="Knowledge title" />
+            <Input value={newKnowledge.name} onChange={(e) => setNewKnowledge({ ...newKnowledge, name: e.target.value })} placeholder="Knowledge title" />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label>Category</Label>
-              <Select value={newLesson.category || "trade_knowledge"} onValueChange={(v) => setNewLesson({ ...newLesson, category: v })}>
+              <Select value={newKnowledge.category || "trade_knowledge"} onValueChange={(v) => setNewKnowledge({ ...newKnowledge, category: v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {CATEGORIES.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
@@ -79,7 +79,7 @@ export function NewKnowledgeDialog({ open, onOpenChange, newLesson, setNewLesson
             </div>
             <div>
               <Label>Status</Label>
-              <Select value={newLesson.status || "draft"} onValueChange={(v) => setNewLesson({ ...newLesson, status: v })}>
+              <Select value={newKnowledge.status || "draft"} onValueChange={(v) => setNewKnowledge({ ...newKnowledge, status: v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="draft">Draft</SelectItem>
@@ -90,15 +90,15 @@ export function NewKnowledgeDialog({ open, onOpenChange, newLesson, setNewLesson
           </div>
           <div>
             <Label>Content</Label>
-            <Textarea value={newLesson.content || ""} onChange={(e) => setNewLesson({ ...newLesson, content: e.target.value })} placeholder="Knowledge content" rows={5} />
+            <Textarea value={newKnowledge.content || ""} onChange={(e) => setNewKnowledge({ ...newKnowledge, content: e.target.value })} placeholder="Knowledge content" rows={5} />
           </div>
           <div>
             <Label>Summary</Label>
-            <Textarea value={newLesson.summary || ""} onChange={(e) => setNewLesson({ ...newLesson, summary: e.target.value })} placeholder="One-line summary (optional)" rows={2} />
+            <Textarea value={newKnowledge.summary || ""} onChange={(e) => setNewKnowledge({ ...newKnowledge, summary: e.target.value })} placeholder="One-line summary (optional)" rows={2} />
           </div>
           <div>
             <Label>Tags</Label>
-            <TagInput tags={newLesson.tags || []} onChange={(tags) => setNewLesson({ ...newLesson, tags })} />
+            <TagInput tags={newKnowledge.tags || []} onChange={(tags) => setNewKnowledge({ ...newKnowledge, tags })} />
           </div>
         </div>
         <DialogFooter>

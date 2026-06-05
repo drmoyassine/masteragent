@@ -28,7 +28,7 @@ const CATEGORY_OPTIONS = [
 export default function KnowledgeTab({
   knowledge, selectedIds, toggleAll, toggleOne,
   onEdit, onApprove, onDelete, onBulkDelete,
-  lessonStatusFilter, setLessonStatusFilter,
+  knowledgeStatusFilter, setKnowledgeStatusFilter,
   categoryFilter = "all", setCategoryFilter,
   tagSearch = "", setTagSearch,
   onShowNewDialog,
@@ -70,7 +70,7 @@ export default function KnowledgeTab({
               className="w-[140px] pl-8 h-9"
             />
           </div>
-          <Select value={lessonStatusFilter} onValueChange={setLessonStatusFilter}>
+          <Select value={knowledgeStatusFilter} onValueChange={setKnowledgeStatusFilter}>
             <SelectTrigger className="w-32">
               <SelectValue />
             </SelectTrigger>

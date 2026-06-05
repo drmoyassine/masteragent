@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 _MAX_CONTEXT_MEMORIES = 5
 _MAX_CONTEXT_INSIGHTS = 3
-_MAX_CONTEXT_LESSONS = 3
+_MAX_CONTEXT_KNOWLEDGE = 3
 _MAX_HISTORY_TURNS = 10
 
 
@@ -61,7 +61,7 @@ class ChatRequest(BaseModel):
     message: str
     history: Optional[List[ChatMessage]] = []
     skill_name: Optional[str] = None    # Prompt Manager skill to use as system prompt
-    include_lessons: bool = True        # Include generalised knowledge in context
+    include_knowledge: bool = True        # Include generalised knowledge in context
     stream: bool = False                # Reserved for future streaming support
 
 class ActionResult(BaseModel):
@@ -145,10 +145,10 @@ async def _run_chat(
         except Exception as e:
             logger.warning(f"Intelligence search failed: {e}")
 
-        if body.include_lessons:
+        if body.include_knowledge:
             try:
                 knowledge = await search_knowledge_by_vector(
-                    query_embedding, limit=_MAX_CONTEXT_LESSONS
+                    query_embedding, limit=_MAX_CONTEXT_KNOWLEDGE
                 )
             except Exception as e:
                 logger.warning(f"Knowledge search failed: {e}")

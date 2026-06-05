@@ -10,16 +10,16 @@ import {
   getInsightsAdmin,
   updateInsightAdmin,
   deleteInsightAdmin,
-  getLessonsAdmin,
+  getKnowledgeAdmin,
   updateMemoryAdmin,
   deleteMemoryAdmin,
   bulkDeleteMemoriesAdmin,
   bulkReprocessMemoriesAdmin,
   updateInteractionAdmin,
   deleteInteractionAdmin,
-  createLessonAdmin,
-  updateLessonAdmin,
-  deleteLessonAdmin,
+  createKnowledgeAdmin,
+  updateKnowledgeAdmin,
+  deleteKnowledgeAdmin,
   bulkDeleteInteractionsAdmin,
   bulkReprocessInteractionsAdmin,
   getInteractionFilterOptionsAdmin,
@@ -87,15 +87,15 @@ export default function MemoryExplorerPage() {
   const [interactions, setInteractions] = useState([]);
   const [memories, setMemories] = useState([]);
   const [intelligence, setInsights] = useState([]);
-  const [knowledge, setLessons] = useState([]);
+  const [knowledge, setKnowledge] = useState([]);
 
   // Additional knowledge state
-  const [lessonStatusFilter, setLessonStatusFilter] = useState("all");
+  const [knowledgeStatusFilter, setKnowledgeStatusFilter] = useState("all");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [tagSearch, setTagSearch] = useState("");
-  const [editingLesson, setEditingLesson] = useState(null);
-  const [newLesson, setNewLesson] = useState({ name: "", category: "trade_knowledge", content: "", summary: "", tags: [], status: "draft" });
-  const [showNewLessonDialog, setShowNewLessonDialog] = useState(false);
+  const [editingKnowledge, setEditingKnowledge] = useState(null);
+  const [newKnowledge, setNewKnowledge] = useState({ name: "", category: "trade_knowledge", content: "", summary: "", tags: [], status: "draft" });
+  const [showNewKnowledgeDialog, setShowNewKnowledgeDialog] = useState(false);
 
   // Inspector state
   const [editingInteraction, setEditingInteraction] = useState(null);
@@ -354,85 +354,85 @@ export default function MemoryExplorerPage() {
     }
   }, [getFetchParams]);
 
-  const loadLessons = useCallback(async () => {
+  const loadKnowledge = useCallback(async () => {
     setLoading(true);
     try {
       const params = getFetchParams();
-      if (lessonStatusFilter !== "all") params.status = lessonStatusFilter;
+      if (knowledgeStatusFilter !== "all") params.status = knowledgeStatusFilter;
       if (categoryFilter !== "all") params.category = categoryFilter;
       if (tagSearch.trim()) params.tags = tagSearch.trim();
-      const res = await getLessonsAdmin(params);
-      setLessons(res.data?.knowledge || []);
+      const res = await getKnowledgeAdmin(params);
+      setKnowledge(res.data?.knowledge || []);
     } catch (error) {
       console.error("Failed to load knowledge:", error);
-      setLessons([]);
+      setKnowledge([]);
     } finally {
       setLoading(false);
     }
-  }, [getFetchParams, lessonStatusFilter, categoryFilter, tagSearch]);
+  }, [getFetchParams, knowledgeStatusFilter, categoryFilter, tagSearch]);
 
   useEffect(() => {
     loadFilterOptions();
     if (activeTab === "interactions") loadInteractions();
     else if (activeTab === "memories") loadMemories();
     else if (activeTab === "intelligence") loadInsights();
-    else if (activeTab === "knowledge") loadLessons();
-  }, [activeTab, loadInteractions, loadMemories, loadInsights, loadLessons, loadFilterOptions]);
+    else if (activeTab === "knowledge") loadKnowledge();
+  }, [activeTab, loadInteractions, loadMemories, loadInsights, loadKnowledge, loadFilterOptions]);
 
   // ─── Knowledge Handlers ─────────────────────────────────────
-  const handleCreateLesson = async () => {
-    if (!newLesson.name || !newLesson.content) {
+  const handleCreateKnowledge = async () => {
+    if (!newKnowledge.name || !newKnowledge.content) {
       toast.error("Please fill name and content");
       return;
     }
     try {
-      await createLessonAdmin(newLesson);
+      await createKnowledgeAdmin(newKnowledge);
       toast.success("Knowledge created");
-      setShowNewLessonDialog(false);
-      setNewLesson({ name: "", category: "trade_knowledge", content: "", summary: "", tags: [], status: "draft" });
-      loadLessons();
+      setShowNewKnowledgeDialog(false);
+      setNewKnowledge({ name: "", category: "trade_knowledge", content: "", summary: "", tags: [], status: "draft" });
+      loadKnowledge();
     } catch (error) {
       toast.error("Failed to create knowledge");
     }
   };
 
-  const handleUpdateLesson = async () => {
-    if (!editingLesson) return;
+  const handleUpdateKnowledge = async () => {
+    if (!editingKnowledge) return;
     try {
-      await updateLessonAdmin(editingLesson.id, {
-        name: editingLesson.name,
-        content: editingLesson.content,
-        summary: editingLesson.summary,
-        category: editingLesson.category,
-        signals: editingLesson.signals,
-        tags: editingLesson.tags,
-        metadata: editingLesson.metadata,
-        status: editingLesson.status,
+      await updateKnowledgeAdmin(editingKnowledge.id, {
+        name: editingKnowledge.name,
+        content: editingKnowledge.content,
+        summary: editingKnowledge.summary,
+        category: editingKnowledge.category,
+        signals: editingKnowledge.signals,
+        tags: editingKnowledge.tags,
+        metadata: editingKnowledge.metadata,
+        status: editingKnowledge.status,
       });
       toast.success("Knowledge updated");
-      setEditingLesson(null);
-      loadLessons();
+      setEditingKnowledge(null);
+      loadKnowledge();
     } catch (error) {
       toast.error("Failed to update knowledge");
     }
   };
 
-  const handleApproveLesson = async (lessonId) => {
+  const handleApproveKnowledge = async (knowledgeId) => {
     try {
-      await updateLessonAdmin(lessonId, { status: "active" });
+      await updateKnowledgeAdmin(knowledgeId, { status: "active" });
       toast.success("Knowledge activated");
-      loadLessons();
+      loadKnowledge();
     } catch (error) {
       toast.error("Failed to activate knowledge");
     }
   };
 
-  const handleDeleteLesson = async (lessonId) => {
+  const handleDeleteKnowledge = async (knowledgeId) => {
     if (!window.confirm("Delete this knowledge?")) return;
     try {
-      await deleteLessonAdmin(lessonId);
+      await deleteKnowledgeAdmin(knowledgeId);
       toast.success("Knowledge deleted");
-      loadLessons();
+      loadKnowledge();
     } catch (error) {
       toast.error("Failed to delete knowledge");
     }
@@ -652,7 +652,7 @@ export default function MemoryExplorerPage() {
       const res = await bulkDeleteKnowledgeAdmin({ knowledge_ids: selectedKnowledgeIds });
       toast.success(`Deleted ${res.data.deleted} knowledge records`);
       clearKnowledgeSelection();
-      loadLessons();
+      loadKnowledge();
     } catch (error) {
       toast.error("Failed to delete knowledge");
     } finally {
@@ -756,17 +756,17 @@ export default function MemoryExplorerPage() {
             selectedIds={selectedKnowledgeIds}
             toggleAll={toggleSelectAllKnowledge}
             toggleOne={toggleKnowledgeItem}
-            onEdit={setEditingLesson}
-            onApprove={handleApproveLesson}
-            onDelete={handleDeleteLesson}
+            onEdit={setEditingKnowledge}
+            onApprove={handleApproveKnowledge}
+            onDelete={handleDeleteKnowledge}
             onBulkDelete={handleBulkDeleteKnowledge}
-            lessonStatusFilter={lessonStatusFilter}
-            setLessonStatusFilter={setLessonStatusFilter}
+            knowledgeStatusFilter={knowledgeStatusFilter}
+            setKnowledgeStatusFilter={setKnowledgeStatusFilter}
             categoryFilter={categoryFilter}
             setCategoryFilter={setCategoryFilter}
             tagSearch={tagSearch}
             setTagSearch={setTagSearch}
-            onShowNewDialog={() => setShowNewLessonDialog(true)}
+            onShowNewDialog={() => setShowNewKnowledgeDialog(true)}
             loading={loading}
             visCols={visCols}
             renderColumnToggle={renderColumnToggle}
@@ -796,22 +796,22 @@ export default function MemoryExplorerPage() {
         onDelete={handleDeleteIntelligence}
       />
       <NewKnowledgeDialog
-        open={showNewLessonDialog}
-        onOpenChange={setShowNewLessonDialog}
-        newLesson={newLesson}
-        setNewLesson={setNewLesson}
-        onCreate={handleCreateLesson}
+        open={showNewKnowledgeDialog}
+        onOpenChange={setShowNewKnowledgeDialog}
+        newKnowledge={newKnowledge}
+        setNewKnowledge={setNewKnowledge}
+        onCreate={handleCreateKnowledge}
       />
       <KnowledgeInspector
-        editingKnowledge={editingLesson}
-        setEditingKnowledge={setEditingLesson}
-        onUpdate={handleUpdateLesson}
-        onApprove={handleApproveLesson}
-        onDelete={(id) => { handleDeleteLesson(id); setEditingLesson(null); }}
+        editingKnowledge={editingKnowledge}
+        setEditingKnowledge={setEditingKnowledge}
+        onUpdate={handleUpdateKnowledge}
+        onApprove={handleApproveKnowledge}
+        onDelete={(id) => { handleDeleteKnowledge(id); setEditingKnowledge(null); }}
         onFeedback={async (id, outcome) => {
           try {
             await submitKnowledgeFeedback(id, { outcome });
-            loadLessons();
+            loadKnowledge();
             toast.success("Feedback recorded");
           } catch (e) {
             toast.error("Failed to record feedback");

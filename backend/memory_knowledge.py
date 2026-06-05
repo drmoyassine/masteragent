@@ -20,7 +20,7 @@ from memory_helpers import _get_entity_type_config, _format_signal_definitions
 logger = logging.getLogger(__name__)
 
 
-async def run_lesson_check():
+async def run_knowledge_check():
     """Check if enough confirmed intelligence have accumulated to generate a Knowledge."""
     settings = get_memory_settings()
     global_knowledge_threshold = settings.get("knowledge_threshold", 5)

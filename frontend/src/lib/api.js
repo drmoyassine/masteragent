@@ -177,10 +177,10 @@ export const reprocessIntelligence = (intelligenceIds) => api.post('/memory/trig
 export const triggerBackfillProfiles = () => api.post('/memory/trigger/backfill-profiles');
 
 // Public Knowledge - Admin UI
-export const getLessonsAdmin = (params) => api.get('/memory/knowledge', { params });
-export const createLessonAdmin = (data) => api.post('/memory/knowledge', data);
-export const updateLessonAdmin = (id, data) => api.put(`/memory/knowledge/\$\{id\}`, data);
-export const deleteLessonAdmin = (id) => api.delete(`/memory/knowledge/\$\{id\}`);
+export const getKnowledgeAdmin = (params) => api.get('/memory/knowledge', { params });
+export const createKnowledgeAdmin = (data) => api.post('/memory/knowledge', data);
+export const updateKnowledgeAdmin = (id, data) => api.put(`/memory/knowledge/\$\{id\}`, data);
+export const deleteKnowledgeAdmin = (id) => api.delete(`/memory/knowledge/\$\{id\}`);
 export const bulkDeleteKnowledgeAdmin = (data) => api.post('/memory/knowledge/bulk-delete', data);
 export const getKnowledgeDetail = (id) => api.get(`/memory/knowledge/${id}`);
 export const submitKnowledgeFeedback = (id, data) => api.post(`/memory/admin/knowledge/${id}/feedback`, data);

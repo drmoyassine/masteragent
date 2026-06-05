@@ -58,7 +58,7 @@ from memory_compaction import (  # noqa: E402, F401
 
 # ── Knowledge ─────────────────────────────────────────────────────────────────
 from memory_knowledge import (  # noqa: E402, F401
-    run_lesson_check,
+    run_knowledge_check,
     generate_knowledge_from_intelligence,
     promote_to_knowledge,
 )
@@ -122,7 +122,7 @@ async def _background_loop():
                     await run_compaction_check()
 
                     from memory.queue import knowledge_queue
-                    await knowledge_queue.add("generate_lesson", {}, {"priority": 3})
+                    await knowledge_queue.add("generate_knowledge", {}, {"priority": 3})
 
                     # ── Playbook extraction: weekly + evidence-threshold override ──
                     pb_interval = settings.get("playbook_extraction_interval_days", 7)
