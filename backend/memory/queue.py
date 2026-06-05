@@ -21,7 +21,7 @@ class BasicEntityPayload(TypedDict):
     entity_type: str
     entity_id: str
 
-class PromoteLessonPayload(TypedDict):
+class PromoteKnowledgePayload(TypedDict):
     insight_id: str
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379")
@@ -42,7 +42,7 @@ async def _process_bulk_job(job: Job, token: str):
             process_interaction, 
             _generate_memory_for_entity,
             compact_entity,
-            run_lesson_check,
+            run_knowledge_check,
             promote_to_knowledge
         )
         from services.config_helpers import get_llm_config
@@ -84,13 +84,13 @@ async def _process_bulk_job(job: Job, token: str):
             if p_conf and "rate_limit_rpm" in p_conf:
                 rpm = p_conf.get("rate_limit_rpm", 60)
 
-        elif job.name == "generate_lesson":
-            await run_lesson_check()
+        elif job.name == "generate_knowledge":
+            await run_knowledge_check()
             p_conf = get_llm_config("knowledge_generation")
             if p_conf and "rate_limit_rpm" in p_conf:
                 rpm = p_conf.get("rate_limit_rpm", 60)
 
-        elif job.name == "promote_to_lesson":
+        elif job.name == "promote_to_knowledge":
             i_id = job.data.get("insight_id")
             if i_id:
                 await promote_to_knowledge(i_id)

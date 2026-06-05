@@ -230,7 +230,7 @@ async def bulk_approve_intelligence(body: BulkIntelligenceApprove, admin: dict =
 
 
 @router.post("/intelligence/{insight_id}/promote")
-async def promote_insight_to_lesson(
+async def promote_insight_to_knowledge(
     insight_id: str,
     admin: dict = Depends(require_admin_auth)
 ):
@@ -245,7 +245,7 @@ async def promote_insight_to_lesson(
 
     # Enqueue promotion job directly to orchestrator
     from memory.queue import knowledge_queue
-    await knowledge_queue.add("promote_to_lesson", {"insight_id": insight_id})
+    await knowledge_queue.add("promote_to_knowledge", {"insight_id": insight_id})
     return {"message": "Promotion queued", "insight_id": insight_id}
 
 
@@ -305,11 +305,11 @@ async def list_knowledge(
     return {"knowledge": [dict(r) for r in rows], "total": total}
 
 
-@router.get("/knowledge/{lesson_id}")
-async def get_lesson(lesson_id: str, admin: dict = Depends(require_admin_auth)):
+@router.get("/knowledge/{knowledge_id}")
+async def get_knowledge(knowledge_id: str, admin: dict = Depends(require_admin_auth)):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM knowledge WHERE id = %s", (lesson_id,))
+        cursor.execute("SELECT * FROM knowledge WHERE id = %s", (knowledge_id,))
         row = cursor.fetchone()
 
     if not row:
@@ -320,7 +320,7 @@ async def get_lesson(lesson_id: str, admin: dict = Depends(require_admin_auth)):
 @router.post("/knowledge")
 async def create_knowledge(body: KnowledgeCreate, admin: dict = Depends(require_admin_auth)):
     """Manually create a Knowledge."""
-    lesson_id = str(uuid.uuid4())
+    knowledge_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
 
     with get_memory_db_context() as conn:
@@ -331,7 +331,7 @@ async def create_knowledge(body: KnowledgeCreate, admin: dict = Depends(require_
                 visibility, tags, category, metadata, status, created_at, updated_at
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
-            lesson_id, body.source_intelligence_ids or [],
+            knowledge_id, body.source_intelligence_ids or [],
             body.signals or [], body.name, body.content, body.summary,
             body.visibility, body.tags or [],
             body.category or "trade_knowledge",
@@ -340,12 +340,12 @@ async def create_knowledge(body: KnowledgeCreate, admin: dict = Depends(require_
             now, now
         ))
 
-    return {"id": lesson_id, "created_at": now}
+    return {"id": knowledge_id, "created_at": now}
 
 
-@router.patch("/knowledge/{lesson_id}")
+@router.patch("/knowledge/{knowledge_id}")
 async def update_knowledge(
-    lesson_id: str,
+    knowledge_id: str,
     body: KnowledgeUpdate,
     admin: dict = Depends(require_admin_auth)
 ):
@@ -377,7 +377,7 @@ async def update_knowledge(
         raise HTTPException(status_code=400, detail="No fields to update")
 
     fields.append("updated_at = %s"); values.append(now)
-    values.append(lesson_id)
+    values.append(knowledge_id)
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -386,14 +386,14 @@ async def update_knowledge(
             values
         )
 
-    return {"id": lesson_id, "updated_at": now}
+    return {"id": knowledge_id, "updated_at": now}
 
 
-@router.delete("/knowledge/{lesson_id}", status_code=204)
-async def delete_knowledge(lesson_id: str, admin: dict = Depends(require_admin_auth)):
+@router.delete("/knowledge/{knowledge_id}", status_code=204)
+async def delete_knowledge(knowledge_id: str, admin: dict = Depends(require_admin_auth)):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM knowledge WHERE id = %s", (lesson_id,))
+        cursor.execute("DELETE FROM knowledge WHERE id = %s", (knowledge_id,))
 
 
 class BulkKnowledgeDelete(BaseModel):
@@ -567,10 +567,10 @@ async def trigger_reprocess_intelligence(body: dict, admin: dict = Depends(requi
 
 
 @router.post("/trigger/run-Knowledge-check")
-async def trigger_lesson_check(admin: dict = Depends(require_admin_auth)):
+async def trigger_knowledge_check(admin: dict = Depends(require_admin_auth)):
     """Manually trigger the Knowledge accumulation check via queue drop."""
     from memory.queue import knowledge_queue
-    await knowledge_queue.add("generate_lesson", {}, {"priority": 1})
+    await knowledge_queue.add("generate_knowledge", {}, {"priority": 1})
     return {"message": "Knowledge check queued"}
 
 
@@ -984,7 +984,7 @@ async def get_stats(admin: dict = Depends(require_admin_auth)):
         confirmed_insights = cursor.fetchone()["total"]
 
         cursor.execute("SELECT COUNT(*) as total FROM knowledge")
-        total_lessons = cursor.fetchone()["total"]
+        total_knowledge = cursor.fetchone()["total"]
 
         cursor.execute("SELECT COUNT(*) as total FROM memory_agents WHERE is_active = TRUE")
         active_agents = cursor.fetchone()["total"]
@@ -1014,7 +1014,7 @@ async def get_stats(admin: dict = Depends(require_admin_auth)):
         },
         "memories": {"total": total_memories},
         "intelligence": {"total": total_insights, "confirmed": confirmed_insights},
-        "knowledge": {"total": total_lessons},
+        "knowledge": {"total": total_knowledge},
         "agents": {"total": total_agents, "active": active_agents},
     }
 
