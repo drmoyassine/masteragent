@@ -36,7 +36,7 @@ def test_lesson(admin, base_url):
     """Create a test lesson and delete it after the test."""
     resp = admin.post(f"{base_url}/api/memory/lessons", json={
         "name": "TEST Lesson",
-        "lesson_type": "process",
+        "signals": ["process"],
         "content": "Always follow up within 48h of initial contact — test lesson.",
         "summary": "48h follow-up rule",
         "tags": ["follow-up", "test"],
@@ -149,7 +149,7 @@ class TestLessonsCRUD:
     def test_create_knowledge(self, admin, base_url):
         resp = admin.post(f"{base_url}/api/memory/lessons", json={
             "name": "TEST Create Lesson",
-            "lesson_type": "sales",
+            "signals": ["sales"],
             "content": "Lesson content for create test",
             "tags": ["test"],
         })
@@ -179,7 +179,7 @@ class TestLessonsCRUD:
     def test_delete_knowledge(self, admin, base_url):
         resp = admin.post(f"{base_url}/api/memory/lessons", json={
             "name": "TEST Delete Lesson",
-            "lesson_type": "other",
+            "signals": ["other"],
             "content": "Will be deleted",
         })
         assert resp.status_code in (200, 201), resp.text

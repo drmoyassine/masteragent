@@ -31,7 +31,7 @@ export default function KnowledgeTab({
   lessonStatusFilter, setLessonStatusFilter,
   categoryFilter = "all", setCategoryFilter,
   tagSearch = "", setTagSearch,
-  onShowNewDialog, lessonTypes, getLessonTypeColor,
+  onShowNewDialog,
   loading, visCols, renderColumnToggle,
 }) {
   return (

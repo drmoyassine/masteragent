@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__n8n-mcp__n8n_get_workflow",
+      "mcp__n8n-mcp__get_node",
+      "mcp__n8n-mcp__n8n_validate_workflow",
+      "mcp__n8n-mcp__search_nodes",
+      "mcp__n8n-mcp__n8n_list_workflows",
+      "mcp__n8n-mcp__tools_documentation",
+      "mcp__92ca1515-7740-4b0d-bea1-74892e2e929a__list_projects",
+      "mcp__92ca1515-7740-4b0d-bea1-74892e2e929a__get_edge_function"
+    ]
+  }
+}
