@@ -7,7 +7,7 @@ Uses:
   - gen_random_uuid() for UUIDs (requires pgcrypto)
 
 Tables:
-  Config:     memory_entity_types, memory_entity_subtypes, memory_knowledge_types,
+  Config:     memory_entity_types, memory_entity_subtypes,
               memory_channel_types, memory_agents, memory_system_prompts,
               memory_llm_configs, memory_settings, memory_entity_type_config
   Tier 0:     interactions
@@ -50,14 +50,9 @@ def _create_config_tables(cursor):
             UNIQUE (entity_type_id, name)
         )
     """)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS memory_knowledge_types (
-            id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
-            name        TEXT NOT NULL UNIQUE,
-            color       TEXT DEFAULT '#6B7280',
-            created_at  TIMESTAMPTZ DEFAULT NOW()
-        )
-    """)
+    # memory_knowledge_types retired — knowledge is classified by `category`
+    # (structural) + `signals` (domain), not a user-defined type list.
+    # Table is dropped further below after legacy migrations run.
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS memory_channel_types (
             id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
@@ -437,8 +432,16 @@ def _run_migrations(cursor):
         
     # Add description column to all config-type lookup tables
     for tbl in ["memory_entity_types", "memory_entity_subtypes",
-                "memory_knowledge_types", "memory_channel_types"]:
+                "memory_channel_types"]:
         cursor.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS description TEXT")
+
+    # Retire the orphaned memory_knowledge_types config table (ran after the
+    # legacy memory_lesson_types→memory_knowledge_types rename above, so this
+    # drops whatever that produced too).
+    try:
+        cursor.execute("DROP TABLE IF EXISTS memory_knowledge_types")
+    except Exception as e:
+        logger.error(f"Failed to drop memory_knowledge_types: {e}")
 
     # Add seq_id to all core memory tier tables
     for tbl in ["interactions", "memories", "intelligence", "knowledge"]:
@@ -885,16 +888,6 @@ def _seed_defaults():
                     "INSERT INTO memory_entity_subtypes (entity_type_id, name) VALUES (%s, %s) ON CONFLICT DO NOTHING",
                     (entity_type_map["institution"], subtype)
                 )
-
-        # Knowledge types
-        for name, color in [
-            ("process", "#22C55E"), ("risk", "#EF4444"), ("sales", "#3B82F6"),
-            ("product", "#8B5CF6"), ("support", "#F59E0B"), ("other", "#6B7280")
-        ]:
-            cursor.execute(
-                "INSERT INTO memory_knowledge_types (name, color) VALUES (%s, %s) ON CONFLICT (name) DO NOTHING",
-                (name, color)
-            )
 
         # Channel types (kept for backwards compat with interaction_type display)
         for name, icon in [

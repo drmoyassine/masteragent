@@ -24,7 +24,6 @@ from memory_models import (
     EntitySubtypeCreate, EntitySubtypeResponse,
     EntityTypeCreate, EntityTypeResponse,
     FetchModelsRequest, FetchModelsResponse,
-    KnowledgeTypeCreate, KnowledgeTypeResponse,
     LLMConfigCreate, LLMConfigResponse, LLMConfigUpdate,
     MemorySettingsResponse, MemorySettingsUpdate,
     SystemPromptCreate, SystemPromptResponse,
@@ -129,38 +128,6 @@ async def delete_entity_subtype(subtype_id: str, user: dict = Depends(require_ad
         cursor.execute("DELETE FROM memory_entity_subtypes WHERE id = %s", (subtype_id,))
     return {"message": "Deleted"}
 
-
-# ============================================
-# Admin Config Endpoints - Knowledge Types
-# ============================================
-
-@router.get("/config/knowledge_types", response_model=List[KnowledgeTypeResponse])
-async def list_knowledge_types(user: dict = Depends(require_admin_auth)):
-    return _list_config_table("memory_knowledge_types")
-
-@router.post("/config/knowledge_types", response_model=KnowledgeTypeResponse)
-async def create_knowledge_type(data: KnowledgeTypeCreate, user: dict = Depends(require_admin_auth)):
-    now = utcnow()
-    type_id = str(uuid.uuid4())
-    with get_memory_db_context() as conn:
-        cursor = conn.cursor()
-        try:
-            cursor.execute(
-                "INSERT INTO memory_knowledge_types (id, name, description, color, created_at) VALUES (%s, %s, %s, %s, %s)",
-                (type_id, data.name, data.description, data.color, now)
-            )
-        except Exception as e:
-            logger.error(f"Failed to create knowledge type: {e}")
-            raise HTTPException(status_code=400, detail="Knowledge type already exists")
-        cursor.execute("SELECT * FROM memory_knowledge_types WHERE id = %s", (type_id,))
-        return dict(cursor.fetchone())
-
-@router.delete("/config/knowledge_types/{type_id}")
-async def delete_knowledge_type(type_id: str, user: dict = Depends(require_admin_auth)):
-    with get_memory_db_context() as conn:
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM memory_knowledge_types WHERE id = %s", (type_id,))
-    return {"message": "Deleted"}
 
 
 

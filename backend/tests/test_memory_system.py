@@ -199,44 +199,6 @@ class TestEntitySubtypes:
         print(f"✓ Found {len(subtypes)} subtypes for Contact: {subtype_names}")
 
 
-class TestLessonTypes:
-    """Lesson Types API Tests"""
-    
-    def test_list_lesson_types(self, authenticated_client):
-        """Test GET /api/memory/config/lesson-types"""
-        response = authenticated_client.get(f"{BASE_URL}/api/memory/config/lesson-types")
-        assert response.status_code == 200
-        data = response.json()
-        assert isinstance(data, list)
-        assert len(data) >= 5  # Should have default lesson types
-        
-        names = [t["name"] for t in data]
-        expected = ["process", "risk", "sales", "product", "support"]
-        for name in expected:
-            assert name in names, f"Missing lesson type: {name}"
-        
-        print(f"✓ Found {len(data)} lesson types: {names}")
-    
-    def test_create_and_delete_knowledge_type(self, authenticated_client):
-        """Test POST and DELETE /api/memory/config/lesson-types"""
-        new_type = {
-            "name": "TEST_Compliance",
-            "description": "Test compliance lessons",
-            "color": "#FF5733"
-        }
-        response = authenticated_client.post(f"{BASE_URL}/api/memory/config/lesson-types", json=new_type)
-        assert response.status_code == 200
-        
-        created = response.json()
-        assert created["name"] == "TEST_Compliance"
-        type_id = created["id"]
-        
-        # Delete it
-        response = authenticated_client.delete(f"{BASE_URL}/api/memory/config/lesson-types/{type_id}")
-        assert response.status_code == 200
-        
-        print(f"✓ Lesson type CRUD operations successful")
-
 
 class TestChannelTypes:
     """Channel Types API Tests"""
@@ -416,7 +378,6 @@ class TestAuthenticationRequired:
         endpoints = [
             "/api/memory/config/llm-configs",
             "/api/memory/config/entity-types",
-            "/api/memory/config/lesson-types",
             "/api/memory/config/channel-types",
             "/api/memory/config/agents",
             "/api/memory/config/settings",

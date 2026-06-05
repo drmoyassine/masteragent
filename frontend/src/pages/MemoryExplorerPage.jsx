@@ -24,7 +24,6 @@ import {
   bulkReprocessInteractionsAdmin,
   getInteractionFilterOptionsAdmin,
   getEntityTypes,
-  getLessonTypes,
   getEntityTypeConfig,
   bulkDeleteIntelligenceAdmin,
   bulkApproveIntelligenceAdmin,
@@ -83,7 +82,6 @@ export default function MemoryExplorerPage() {
   // Config meta & Dynamic Options
   const [entityTypes, setEntityTypes] = useState([]);
   const [filterOptions, setFilterOptions] = useState({ entity_types: [], interaction_types: [] });
-  const [lessonTypes, setLessonTypes] = useState([]);
 
   // Datasets
   const [interactions, setInteractions] = useState([]);
@@ -224,12 +222,10 @@ export default function MemoryExplorerPage() {
 
   const loadInitialData = async () => {
     try {
-      const [entityRes, lessonTypeRes] = await Promise.all([
+      const [entityRes] = await Promise.all([
         getEntityTypes(),
-        getLessonTypes(),
       ]);
       setEntityTypes(entityRes.data);
-      setLessonTypes(lessonTypeRes.data);
 
       const dynamicColKeys = new Set();
       for (const et of entityRes.data) {
@@ -442,10 +438,6 @@ export default function MemoryExplorerPage() {
     }
   };
 
-  const getLessonTypeColor = (typeName) => {
-    const type = lessonTypes.find(t => t.name === typeName);
-    return type?.color || "#6B7280";
-  };
 
   // ─── Interaction Handlers ─────────────────────────────────────
   const handleUpdateInteraction = async () => {
@@ -775,8 +767,6 @@ export default function MemoryExplorerPage() {
             tagSearch={tagSearch}
             setTagSearch={setTagSearch}
             onShowNewDialog={() => setShowNewLessonDialog(true)}
-            lessonTypes={lessonTypes}
-            getLessonTypeColor={getLessonTypeColor}
             loading={loading}
             visCols={visCols}
             renderColumnToggle={renderColumnToggle}
@@ -810,7 +800,6 @@ export default function MemoryExplorerPage() {
         onOpenChange={setShowNewLessonDialog}
         newLesson={newLesson}
         setNewLesson={setNewLesson}
-        lessonTypes={lessonTypes}
         onCreate={handleCreateLesson}
       />
       <KnowledgeInspector

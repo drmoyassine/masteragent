@@ -112,11 +112,6 @@ export const getEntitySubtypes = (typeId) => api.get(`/memory/config/entity-type
 export const createEntitySubtype = (data) => api.post('/memory/config/entity-subtypes', data);
 export const deleteEntitySubtype = (id) => api.delete(`/memory/config/entity-subtypes/${id}`);
 
-// Public Knowledge Types
-export const getLessonTypes = () => api.get('/memory/config/knowledge_types');
-export const createLessonType = (data) => api.post('/memory/config/knowledge_types', data);
-export const deleteLessonType = (id) => api.delete(`/memory/config/knowledge_types/${id}`);
-
 
 // Agents
 export const getAgents = () => api.get('/memory/config/agents');

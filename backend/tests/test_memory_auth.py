@@ -68,13 +68,6 @@ class TestConfigEndpointsRequireAuth:
         assert "Authentication required" in data["detail"] or "authenticat" in data["detail"].lower()
         print(f"✓ Entity types endpoint requires auth: {data}")
     
-    def test_lesson_types_requires_auth(self, api_client):
-        """GET /api/memory/config/lesson-types should return 401 without auth"""
-        api_client.headers.pop("Authorization", None)
-        response = api_client.get(f"{BASE_URL}/api/memory/config/lesson-types")
-        assert response.status_code == 401
-        print(f"✓ Lesson types endpoint requires auth")
-    
     def test_channel_types_requires_auth(self, api_client):
         """GET /api/memory/config/channel-types should return 401 without auth"""
         api_client.headers.pop("Authorization", None)
@@ -121,14 +114,6 @@ class TestConfigEndpointsWithValidJWT:
         data = response.json()
         assert isinstance(data, list)
         print(f"✓ Entity types accessible with JWT: {len(data)} types found")
-    
-    def test_lesson_types_with_jwt(self, authenticated_client):
-        """GET /api/memory/config/lesson-types should work with valid JWT"""
-        response = authenticated_client.get(f"{BASE_URL}/api/memory/config/lesson-types")
-        assert response.status_code == 200
-        data = response.json()
-        assert isinstance(data, list)
-        print(f"✓ Lesson types accessible with JWT: {len(data)} types found")
     
     def test_channel_types_with_jwt(self, authenticated_client):
         """GET /api/memory/config/channel-types should work with valid JWT"""

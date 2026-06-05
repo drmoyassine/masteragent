@@ -142,18 +142,6 @@ class EntitySubtypeResponse(BaseModel):
     description: Optional[str] = None
     created_at: Timestamp
 
-class KnowledgeTypeCreate(BaseModel):
-    name: str
-    description: Optional[str] = ""
-    color: Optional[str] = "#22C55E"
-
-class KnowledgeTypeResponse(BaseModel):
-    id: str
-    name: str
-    description: Optional[str] = None
-    color: Optional[str] = None
-    created_at: Timestamp
-
 class ChannelTypeCreate(BaseModel):
     name: str
     description: Optional[str] = ""
