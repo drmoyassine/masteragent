@@ -15,14 +15,11 @@ import { Progress } from "@/components/ui/progress";
 import {
   Activity,
   Database,
-  Brain,
   Users,
   FileText,
   GraduationCap,
   Clock,
   RefreshCw,
-  Play,
-  Zap,
   TrendingUp,
 } from "lucide-react";
 
@@ -30,8 +27,6 @@ export default function MemoryMonitorPage() {
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState(null);
   const [agentStats, setAgentStats] = useState([]);
-  const [syncRunning, setSyncRunning] = useState(false);
-  const [miningRunning, setMiningRunning] = useState(false);
 
   useEffect(() => {
     loadStats();
@@ -50,42 +45,6 @@ export default function MemoryMonitorPage() {
       toast.error("Failed to load stats");
     } finally {
       setLoading(false);
-    }
-  };
-
-  const triggerSync = async () => {
-    setSyncRunning(true);
-    try {
-      const res = await api.post("/memory/admin/sync/openclaw");
-      if (res.data.status === "success") {
-        toast.success(`Sync complete: ${res.data.memories_synced} days, ${res.data.lessons_synced} lessons`);
-      } else if (res.data.status === "disabled") {
-        toast.info("OpenClaw sync is disabled in settings");
-      } else {
-        toast.error(res.data.message || "Sync failed");
-      }
-    } catch (error) {
-      toast.error("Sync failed");
-    } finally {
-      setSyncRunning(false);
-    }
-  };
-
-  const triggerMining = async () => {
-    setMiningRunning(true);
-    try {
-      const res = await api.post("/memory/admin/tasks/mine-lessons");
-      if (res.data.status === "success") {
-        toast.success(`Mining complete: ${res.data.lessons_created} lessons created`);
-      } else if (res.data.status === "disabled") {
-        toast.info("Auto lesson mining is disabled in settings");
-      } else {
-        toast.error(res.data.message || "Mining failed");
-      }
-    } catch (error) {
-      toast.error("Mining failed");
-    } finally {
-      setMiningRunning(false);
     }
   };
 
@@ -162,65 +121,6 @@ export default function MemoryMonitorPage() {
             <p className="text-xs text-muted-foreground">
               {stats?.actions_24h || 0} actions today
             </p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Background Tasks */}
-      <div className="grid gap-4 md:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Zap className="w-5 h-5" />
-              OpenClaw Sync
-            </CardTitle>
-            <CardDescription>Export memories and lessons to Markdown format</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Sync your memories and lessons to a local or Git repository in OpenClaw-compatible Markdown format.
-            </p>
-            <Button onClick={triggerSync} disabled={syncRunning}>
-              {syncRunning ? (
-                <>
-                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                  Syncing...
-                </>
-              ) : (
-                <>
-                  <Play className="w-4 h-4 mr-2" />
-                  Run Sync Now
-                </>
-              )}
-            </Button>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Brain className="w-5 h-5" />
-              Lesson Mining
-            </CardTitle>
-            <CardDescription>Auto-extract lessons from recent interactions</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Analyze interaction patterns and automatically create draft lessons for review.
-            </p>
-            <Button onClick={triggerMining} disabled={miningRunning}>
-              {miningRunning ? (
-                <>
-                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                  Mining...
-                </>
-              ) : (
-                <>
-                  <Play className="w-4 h-4 mr-2" />
-                  Run Mining Now
-                </>
-              )}
-            </Button>
           </CardContent>
         </Card>
       </div>
