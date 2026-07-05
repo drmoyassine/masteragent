@@ -123,3 +123,13 @@ Skills and playbooks follow the **Anthropic agent-skills standard**. No new colu
 - **Import / install**: `POST /api/memory/skills/import` `{skill_md, category, status, signals?, tags?}` — validates frontmatter, stores the document verbatim, dedups against existing records (merge instead of duplicate), `source_pathway='imported'`.
 - **Why**: marketplace interop — install publicly available skills into agent context, and publish hard-earned experiential ones.
 - Remaining (Sprint 2): UI export/download button + import dialog in the Knowledge tab; bundle export (zip with directory layout) when skills grow supporting files.
+
+## 8b. Declarative knowledge + memory-file standards (reflection, 2026-07-05)
+
+**Knowledge ("KNOWLEDGE.md")**: no marketplace standard exists for declarative knowledge; the skills standard's transferable core is frontmatter discovery header + on-demand body + progressive disclosure. Decision: apply the **same renderer/format to all knowledge categories** but **render-on-export only** (unlike skills/playbooks, declarative content has no import round-trip requirement, and its `content` feeds LLM prompts where frontmatter is token noise; all fields are relational so export rendering is lossless).
+
+**Memory (MEMORY.md pattern — Claude Code auto-memory et al.)**: index line → frontmattered fact-file, typed memories, Why/How-to-apply bodies, update-in-place discipline, curated smallness. Comparison verdict: MEMORY.md-style systems are **serving formats without a factory**; MasterAgent is a **factory without a standard serving format** — complementary. MasterAgent is ahead on generation, consolidation/decay automation, and semantic search; behind on two-level disclosure (→ Sprint 2 item 6) and update-in-place (→ Sprint 2 item 5b), both now validated by a proven reference model.
+
+Sprint 2 additions from this reflection:
+- **5c — Universal export**: extend per-record SKILL.md-style rendering to all categories + **knowledge-pack bundle** endpoint (`INDEX.md` one-line-per-record + one frontmattered markdown file each) — drops directly into Claude Code memory dirs / AGENTS.md-style docs folders / git repos.
+- **5d — Prompt borrows** (config-only, pipeline untouched): Why/How-to-apply body structure in intelligence/knowledge prompts; summary/description discipline (what + when it matters, self-contained, ≤1024 chars); absolute-dates rule in memory generation prompt.
