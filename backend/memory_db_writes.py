@@ -109,9 +109,27 @@ def insert_knowledge(
     status: str = "active",
     version: int = 1,
 ) -> None:
-    """INSERT a row into knowledge (unified table for all categories)."""
+    """INSERT a row into knowledge (unified table for all categories).
+
+    For category 'skill'/'playbook' the content column stores the full
+    agent-skills-standard SKILL.md document. If the caller passed plain text
+    (LLM output or admin input), it is rendered into SKILL.md here; content
+    that already carries frontmatter (e.g. marketplace imports) is stored
+    verbatim."""
     import json as _json
+    from memory_skill_md import SKILL_MD_CATEGORIES, is_skill_md, render_skill_md
     now = datetime.now(timezone.utc).isoformat()
+    if category in SKILL_MD_CATEGORIES and not is_skill_md(content):
+        content = render_skill_md(
+            name=name,
+            category=category,
+            description=summary or content,
+            body=content,
+            metadata=metadata,
+            signals=signals,
+            tags=tags,
+            version=version,
+        )
     md = _json.dumps(metadata) if metadata else "{}"
     ai_ids = source_ai_interaction_ids or []
     with get_memory_db_context() as conn:

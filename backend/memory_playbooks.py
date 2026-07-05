@@ -281,9 +281,10 @@ async def _process_cluster(
         category="playbook",
         name=playbook_data.get("name", "Unnamed Playbook"),
         content=playbook_data.get("description", ""),
-        summary=playbook_data.get("description", "")[:200],
+        summary=playbook_data.get("description", "")[:1024],
         embedding=centroid,
         tags=playbook_data.get("tags", []),
+        metadata=metadata,
         source_pathway="experiential",
         source_ai_interaction_ids=processed_ids,
         extraction_confidence=confidence,
@@ -350,9 +351,11 @@ async def _generate_skills_from_playbook(
         "Given a playbook's ordered steps, identify 1-3 distinct reusable capabilities (skills) "
         "that the agent needs to execute these steps. Each skill should be a discrete, composable ability.\n\n"
         "For each skill return:\n"
-        '- "name": short descriptive name\n'
+        '- "name": short descriptive name (will be slugified to lowercase-hyphens)\n'
         '- "skill_type": "soft" (behavioral) or "hard" (technical)\n'
-        '- "trigger_desc": when to activate this skill\n'
+        '- "trigger_desc": 1-2 sentences stating BOTH what this skill does AND when to use it '
+        "(this becomes the skill's discovery description that an agent reads to decide whether "
+        "to activate it — make it self-contained, max 1024 characters)\n"
         '- "procedure": how to execute (natural language)\n\n'
         'Return JSON array: [{"name": "...", "skill_type": "...", "trigger_desc": "...", "procedure": "..."}]'
     )
