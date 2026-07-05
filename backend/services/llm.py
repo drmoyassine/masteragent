@@ -31,6 +31,28 @@ _THINK_TOOL = {
 }
 
 
+def parse_llm_json(result_text: str, context: str = ""):
+    """Parse JSON from an LLM response, tolerating markdown code fences.
+
+    Generation pipelines treat a parse failure as a failed run; without the
+    raw output in the log there is no way to diagnose why. Raises ValueError
+    so existing except-blocks handle it like any other LLM failure.
+    """
+    text = (result_text or "").strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else ""
+        text = text.rstrip()
+        if text.endswith("```"):
+            text = text[:-3]
+        text = text.strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        label = f" ({context})" if context else ""
+        logger.error(f"LLM JSON parse failed{label}: {e}. Raw output: {result_text[:2000]!r}")
+        raise ValueError(f"LLM returned unparseable JSON: {e}")
+
+
 def _build_llm_headers(api_key: str) -> dict:
     headers = {"Content-Type": "application/json"}
     if api_key:

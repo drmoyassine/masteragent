@@ -566,7 +566,8 @@ async def trigger_reprocess_intelligence(body: dict, admin: dict = Depends(requi
     return {"message": f"Reprocess queued for {len(entities)} entity/entities", "queued": len(entities)}
 
 
-@router.post("/trigger/run-Knowledge-check")
+@router.post("/trigger/run-knowledge-check")
+@router.post("/trigger/run-Knowledge-check", include_in_schema=False)  # legacy capitalized alias
 async def trigger_knowledge_check(admin: dict = Depends(require_admin_auth)):
     """Manually trigger the Knowledge accumulation check via queue drop."""
     from memory.queue import knowledge_queue

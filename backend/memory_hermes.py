@@ -3,12 +3,12 @@
 Parses natural language admin instructions and creates knowledge,
 skill, or playbook records in the unified knowledge table.
 """
-import json
 import logging
 import uuid
 from typing import Optional
 
 from memory_services import call_llm, generate_embedding, get_memory_settings
+from services.llm import parse_llm_json
 from memory_dedup import find_similar_existing, increment_merge, compute_quality_score
 from memory_db_writes import insert_knowledge
 
@@ -50,7 +50,7 @@ async def process_admin_instruction(
             max_tokens=800,
             task_type="admin_instruct",
         )
-        result = json.loads(result_text)
+        result = parse_llm_json(result_text, context="admin_instruct")
     except Exception as e:
         logger.error(f"Hermes instruction parsing failed: {e}")
         return {"status": "error", "message": str(e)}

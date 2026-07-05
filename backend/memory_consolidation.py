@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from core.storage import get_memory_db_context
 from memory_services import get_memory_settings
 from memory_dedup import compute_quality_score
+from services.llm import parse_llm_json
 from memory_db_writes import update_knowledge_quality
 from memory_helpers import _get_entity_type_config
 
@@ -116,7 +117,7 @@ async def _refine_playbook(keep_id: str):
             max_tokens=600,
             task_type="knowledge_generation",
         )
-        result = json.loads(result_text)
+        result = parse_llm_json(result_text, context="playbook_refinement")
         metadata["steps"] = result.get("steps", existing_steps)
         metadata["trigger_conditions"] = result.get(
             "trigger_conditions", metadata.get("trigger_conditions", [])

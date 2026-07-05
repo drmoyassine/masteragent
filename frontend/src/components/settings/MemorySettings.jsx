@@ -1013,6 +1013,23 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                             Existing knowledge items injected via pgvector cosine search to prevent duplicates. Set to 0 to disable.
                         </p>
                     </div>
+                    <div className="space-y-2 border-t pt-4">
+                        <Label className="text-xs font-mono">Max Output Tokens</Label>
+                        <Input
+                            type="number"
+                            min={256}
+                            max={8000}
+                            step={100}
+                            value={settings.knowledge_max_tokens !== undefined ? settings.knowledge_max_tokens : 1200}
+                            onChange={(e) =>
+                                onUpdateSettings("knowledge_max_tokens", parseInt(e.target.value) || 1200)
+                            }
+                        />
+                        <p className="text-[10px] text-muted-foreground">
+                            Caps the generated knowledge JSON. A response truncated mid-JSON fails to parse and the run
+                            is skipped — raise this if storytelling content gets cut off; lower it to reduce token cost.
+                        </p>
+                    </div>
                 </CardContent>
             </Card>
 
