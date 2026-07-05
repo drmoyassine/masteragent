@@ -12,6 +12,7 @@ from memory_services import (
     get_system_prompt,
 )
 from services.config_helpers import get_pipeline_configs, get_system_prompt_by_config_id
+from services.llm import parse_llm_json
 from services.prompt_renderer import inject_variables
 from memory_db_writes import insert_intelligence
 from memory_prior_context import fetch_prior_intelligence, fetch_prior_knowledge_semantic
@@ -170,7 +171,7 @@ async def compact_entity(entity_type: str, entity_id: str):
             config_id=node_id,
             task_type="intelligence_generation"
         )
-        parsed = json.loads(result_text)
+        parsed = parse_llm_json(result_text, context="intelligence_generation")
         # Support both array (1-3 signals) and legacy single-object responses
         results = parsed if isinstance(parsed, list) else [parsed]
     except Exception as e:

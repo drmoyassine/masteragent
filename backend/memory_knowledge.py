@@ -1,5 +1,4 @@
 """Knowledge generation: intelligence → knowledge via PII scrub + LLM synthesis."""
-import json
 import logging
 import uuid
 
@@ -12,6 +11,7 @@ from memory_services import (
     scrub_pii,
 )
 from services.config_helpers import get_pipeline_configs, get_system_prompt_by_config_id
+from services.llm import parse_llm_json
 from services.prompt_renderer import inject_variables
 from memory_db_writes import insert_knowledge
 from memory_prior_context import fetch_prior_knowledge_semantic
@@ -137,11 +137,11 @@ async def generate_knowledge_from_intelligence(intelligence: list):
         result_text = await call_llm(
             user_msg[:8000],
             system_prompt=system_prompt,
-            max_tokens=600,
+            max_tokens=settings.get("knowledge_max_tokens") or 1200,
             config_id=node_id,
             task_type="knowledge_generation",
         )
-        result = json.loads(result_text)
+        result = parse_llm_json(result_text, context="knowledge_generation")
     except Exception as e:
         logger.error(f"Knowledge generation LLM call failed: {e}")
         return
@@ -228,7 +228,7 @@ async def promote_to_knowledge(insight_id: str):
         content = await call_llm(
             content,
             system_prompt=generalize_prompt,
-            max_tokens=600,
+            max_tokens=get_memory_settings().get("knowledge_max_tokens") or 1200,
             task_type="knowledge_generation"
         )
     except Exception as e:

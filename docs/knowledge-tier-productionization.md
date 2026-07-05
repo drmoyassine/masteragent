@@ -46,11 +46,11 @@ The agent is not learning by doing. The plumbing for Tier 3 exists (~80%) but is
 
 All Tier 2/3 LLM calls do a bare `json.loads(result_text)`: no code-fence stripping, no `response_format: json_object`. The intelligence prompts happen to produce clean JSON in prod; the knowledge default prompt has no such battle-testing. One markdown fence kills the run silently.
 
-### Gate 5 — PII scrubbing is a double no-op (discovered 2026-07-05)
+### Gate 5 — PII scrubbing is a no-op when unconfigured (discovered 2026-07-05)
 
 - `scrub_pii` ([backend/services/processing.py](../backend/services/processing.py) ~line 69) returns the **original text** when no `pii_scrubbing` config exists (warning logged, non-fatal).
-- Even when configured, the endpoint URL is built as `f"{config['api_base_url']}\redact"` — the `\r` is a **carriage return**, not a slash, so the request URL is malformed and the call always fails → original text returned. One-character fix: `/redact`.
-- Consequence: knowledge content will contain real client/partner names unless the knowledge-generation **prompt** explicitly generalizes them. Knowledge is served globally to every conversation via get-context, so this is a PII-leak vector, not a cosmetic issue.
+- ~~Endpoint URL typo (`\redact`)~~ — **retracted**: the source is correct (`/redact`); the earlier finding was a grep rendering artifact.
+- Consequence: with no PII service configured, knowledge content will contain real client/partner names unless the knowledge-generation **prompt** explicitly generalizes them. Knowledge is served globally to every conversation via get-context, so this is a PII-leak vector, not a cosmetic issue.
 
 ### Related bug (already chipped): orphan sweeper re-processing
 
@@ -63,7 +63,7 @@ All Tier 2/3 LLM calls do a bare `json.loads(result_text)`: no code-fence stripp
 | Daily trigger enqueues `generate_knowledge` (memory_tasks.py background loop) | ✅ present, same queue that successfully runs intelligence |
 | Thresholds (global `knowledge_threshold`, per-entity-type `knowledge_extraction_threshold`) | ✅ present |
 | PII scrub → synthesize → dedup vs prior knowledge → embed → insert | ✅ complete code path |
-| Manual trigger endpoint | ✅ `POST /api/memory/trigger/run-Knowledge-check` — **note the capital K**; the README's lowercase route 404s |
+| Manual trigger endpoint | ✅ `POST /api/memory/trigger/run-knowledge-check` (lowercase alias added 2026-07-05; legacy capital-K route still works) |
 | Consumption: `GET /api/memory/get-context` returns active shared knowledge (top 30 by quality) | ✅ zero further wiring needed once rows exist |
 | Signal validation against entity-type-defined knowledge signals | ✅ present |
 
@@ -120,20 +120,18 @@ Later (for the playbook/skill pathway, after its bug fixes land):
 - [ ] `task_type = 'playbook_generation'` config row
 - [ ] `task_type = 'skill_generation'` config row
 
-### Step 4b — Fix the PII endpoint typo (Gate 5)
+### Step 4b — PII endpoint typo — ✅ RETRACTED (false positive; source is correct)
 
-- [ ] [backend/services/processing.py](../backend/services/processing.py) `scrub_pii`: `f"{config['api_base_url']}\redact"` → `f"{config['api_base_url']}/redact"` (the `\r` is a carriage return — the call can never succeed as written)
+### Step 5 — Harden JSON parsing ✅ DONE (2026-07-05)
 
-### Step 5 — Harden JSON parsing
-
-One shared helper used by all Tier 2/3 LLM call sites:
-- Strip markdown code fences before `json.loads`
-- Send `response_format: {"type": "json_object"}` when the provider supports it
-- On parse failure, log the **raw LLM output** (currently lost)
+- [x] Shared `parse_llm_json` helper in [backend/services/llm.py](../backend/services/llm.py): strips markdown code fences, logs the **raw LLM output** on parse failure. Adopted by all Tier 2/3 call sites (knowledge, intelligence, playbook, skill, Hermes, playbook refinement).
+- [x] `knowledge_max_tokens` setting added (default 1200, was hardcoded 600 — truncated JSON = parse failure): `memory_settings` column + `MemorySettingsUpdate` field + Knowledge settings UI input. Same pattern as `intelligence_max_tokens`.
+- [x] Lowercase route alias `POST /trigger/run-knowledge-check` added (capitalized route kept as hidden legacy alias).
+- [ ] Deferred: `response_format: {"type": "json_object"}` — would need a per-call opt-in flag in `call_llm` and provider-compatibility care; fence-stripping addresses the observed failure mode.
 
 ### Step 6 — Fire and verify end-to-end
 
-1. `POST /api/memory/trigger/run-Knowledge-check` (capital K)
+1. `POST /api/memory/trigger/run-knowledge-check`
 2. Verify knowledge rows created (`SELECT * FROM knowledge ORDER BY created_at DESC`)
 3. Verify they appear in `get-context` payloads
 4. **Last mile**: confirm the n8n counselor workflow actually renders the `knowledge` array from the get-context payload into the agent's system prompt. The API returns it; consumption must be verified in the workflow.

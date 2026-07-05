@@ -219,6 +219,7 @@ class MemorySettingsUpdate(BaseModel):
     # Max output tokens for generation LLM calls
     memory_generation_max_tokens: Optional[int] = 1200
     intelligence_max_tokens: Optional[int] = 1200
+    knowledge_max_tokens: Optional[int] = 1200
 
 class MemorySettingsResponse(BaseModel):
     chunk_size: int = 400

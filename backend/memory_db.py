@@ -560,9 +560,10 @@ def _run_migrations(cursor):
         ("prior_intelligence_semantic_count", "INT DEFAULT 2"),
         ("prior_knowledge_semantic_count", "INT DEFAULT 3"),
         ("prior_knowledge_in_intelligence_count", "INT DEFAULT 2"),
-        # Max output tokens for the memory- and intelligence-generation LLM calls
+        # Max output tokens for the memory-, intelligence- and knowledge-generation LLM calls
         ("memory_generation_max_tokens", "INT DEFAULT 1200"),
         ("intelligence_max_tokens", "INT DEFAULT 1200"),
+        ("knowledge_max_tokens", "INT DEFAULT 1200"),
     ]:
         cursor.execute(f"ALTER TABLE memory_settings ADD COLUMN IF NOT EXISTS {col} {col_def}")
 
