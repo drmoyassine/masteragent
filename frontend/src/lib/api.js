@@ -179,11 +179,11 @@ export const triggerBackfillProfiles = () => api.post('/memory/trigger/backfill-
 // Public Knowledge - Admin UI
 export const getKnowledgeAdmin = (params) => api.get('/memory/knowledge', { params });
 export const createKnowledgeAdmin = (data) => api.post('/memory/knowledge', data);
-export const updateKnowledgeAdmin = (id, data) => api.put(`/memory/knowledge/\$\{id\}`, data);
-export const deleteKnowledgeAdmin = (id) => api.delete(`/memory/knowledge/\$\{id\}`);
+export const updateKnowledgeAdmin = (id, data) => api.patch(`/memory/knowledge/${id}`, data);
+export const deleteKnowledgeAdmin = (id) => api.delete(`/memory/knowledge/${id}`);
 export const bulkDeleteKnowledgeAdmin = (data) => api.post('/memory/knowledge/bulk-delete', data);
 export const getKnowledgeDetail = (id) => api.get(`/memory/knowledge/${id}`);
-export const submitKnowledgeFeedback = (id, data) => api.post(`/memory/admin/knowledge/${id}/feedback`, data);
+export const submitKnowledgeFeedback = (id, data) => api.post(`/memory/knowledge/${id}/feedback`, data);
 
 // Outbound Webhooks - Admin UI
 export const getOutboundWebhooks = () => api.get('/memory/outbound-webhooks');
