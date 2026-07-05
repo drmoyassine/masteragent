@@ -319,9 +319,25 @@ async def get_knowledge(knowledge_id: str, admin: dict = Depends(require_admin_a
 
 @router.post("/knowledge")
 async def create_knowledge(body: KnowledgeCreate, admin: dict = Depends(require_admin_auth)):
-    """Manually create a Knowledge."""
+    """Manually create a Knowledge. Skill/playbook content is stored in
+    agent-skills-standard SKILL.md format (rendered here if plain text)."""
     knowledge_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
+
+    from memory_skill_md import SKILL_MD_CATEGORIES, is_skill_md, render_skill_md
+    category = body.category or "trade_knowledge"
+    content = body.content
+    if category in SKILL_MD_CATEGORIES and not is_skill_md(content):
+        content = render_skill_md(
+            name=body.name,
+            category=category,
+            description=body.summary or content,
+            body=content,
+            metadata=body.metadata,
+            signals=body.signals or [],
+            tags=body.tags or [],
+        )
+    body.content = content
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -1515,3 +1531,110 @@ async def submit_knowledge_feedback(
     from memory_db_writes import append_knowledge_feedback
     append_knowledge_feedback(knowledge_id, body.outcome, body.notes)
     return {"status": "ok", "knowledge_id": knowledge_id, "outcome": body.outcome}
+
+
+# ============================================
+# Agent-Skills Standard (SKILL.md) Export / Import
+# ============================================
+
+@router.get("/knowledge/{knowledge_id}/skill.md")
+async def export_skill_md(knowledge_id: str, auth: dict = Depends(require_admin_or_agent)):
+    """Export a skill/playbook record as an agent-skills-standard SKILL.md document.
+
+    Content for these categories is stored in SKILL.md format; legacy records
+    (created before the standard was adopted) are rendered on the fly."""
+    from fastapi.responses import PlainTextResponse
+    from memory_skill_md import SKILL_MD_CATEGORIES, is_skill_md, render_skill_md, slugify
+
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT name, category, content, summary, metadata, signals, tags, version
+            FROM knowledge WHERE id = %s
+        """, (knowledge_id,))
+        row = cursor.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Knowledge not found")
+    row = dict(row)
+    if row["category"] not in SKILL_MD_CATEGORIES:
+        raise HTTPException(status_code=400, detail=f"Category '{row['category']}' has no SKILL.md representation (skill/playbook only)")
+
+    content = row["content"] or ""
+    if not is_skill_md(content):
+        metadata = row.get("metadata") or {}
+        if isinstance(metadata, str):
+            metadata = json.loads(metadata)
+        content = render_skill_md(
+            name=row["name"],
+            category=row["category"],
+            description=row.get("summary") or content,
+            body=content,
+            metadata=metadata,
+            signals=row.get("signals") or [],
+            tags=row.get("tags") or [],
+            version=row.get("version") or 1,
+        )
+
+    filename = f"{slugify(row['name'])}-SKILL.md"
+    return PlainTextResponse(
+        content,
+        media_type="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+class SkillImportBody(BaseModel):
+    skill_md: str
+    category: str = "skill"          # skill | playbook
+    status: str = "draft"            # draft | active
+    signals: Optional[list] = None
+    tags: Optional[list] = None
+
+
+@router.post("/skills/import")
+async def import_skill_md(body: SkillImportBody, admin: dict = Depends(require_admin_auth)):
+    """Import an agent-skills-standard SKILL.md document (e.g. from a public
+    marketplace) as a knowledge record. The document is stored verbatim in the
+    content column; frontmatter name/description populate name/summary.
+    Dedup: merges into an existing similar record instead of duplicating."""
+    from memory_skill_md import SKILL_MD_CATEGORIES, parse_skill_md
+    from memory_services import generate_embedding, get_memory_settings
+    from memory_dedup import find_similar_existing, increment_merge
+    from memory_db_writes import insert_knowledge
+
+    if body.category not in SKILL_MD_CATEGORIES:
+        raise HTTPException(status_code=400, detail="category must be 'skill' or 'playbook'")
+    try:
+        parsed = parse_skill_md(body.skill_md)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    embedding = None
+    try:
+        embedding = await generate_embedding(f"{parsed['name']}. {parsed['description']}")
+    except Exception as e:
+        logger.warning(f"Skill import embedding failed: {e}")
+
+    if embedding:
+        threshold = (get_memory_settings() or {}).get("dedup_similarity_threshold", 0.85)
+        existing = await find_similar_existing(embedding, threshold, category=body.category)
+        if existing:
+            increment_merge(existing)
+            return {"status": "merged", "id": existing, "category": body.category}
+
+    knowledge_id = str(uuid.uuid4())
+    insert_knowledge(
+        knowledge_id=knowledge_id,
+        intelligence_ids=[],
+        signals=body.signals or [],
+        category=body.category,
+        name=parsed["name"],
+        content=body.skill_md,   # verbatim — already SKILL.md format
+        summary=parsed["description"],
+        embedding=embedding,
+        tags=body.tags or [],
+        source_pathway="imported",
+        status=body.status,
+    )
+    return {"status": "created", "id": knowledge_id, "name": parsed["name"], "category": body.category}

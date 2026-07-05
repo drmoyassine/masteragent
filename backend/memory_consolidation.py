@@ -89,7 +89,7 @@ async def _refine_playbook(keep_id: str):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT name, content, metadata, merge_count, category FROM knowledge WHERE id = %s",
+            "SELECT name, content, metadata, merge_count, category, version FROM knowledge WHERE id = %s",
             (keep_id,),
         )
         row = cursor.fetchone()
@@ -123,12 +123,33 @@ async def _refine_playbook(keep_id: str):
             "trigger_conditions", metadata.get("trigger_conditions", [])
         )
 
+        # Re-render the SKILL.md document so the content column stays the
+        # canonical standard-format representation after refinement.
+        from memory_skill_md import parse_skill_md, render_skill_md, is_skill_md
+        body = row["content"] or ""
+        description = ""
+        if is_skill_md(body):
+            try:
+                parsed = parse_skill_md(body)
+                description = parsed["description"]
+                body = parsed["body"]
+            except ValueError:
+                pass
+        new_content = render_skill_md(
+            name=row["name"],
+            category="playbook",
+            description=description or (body or "")[:1024],
+            body="",  # steps/triggers carry the procedure; keep body from description sections
+            metadata=metadata,
+            version=(row.get("version") or 1) + 1,
+        )
+
         now = datetime.now(timezone.utc).isoformat()
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "UPDATE knowledge SET metadata = %s, updated_at = %s WHERE id = %s",
-                (json.dumps(metadata), now, keep_id),
+                "UPDATE knowledge SET metadata = %s, content = %s, version = version + 1, updated_at = %s WHERE id = %s",
+                (json.dumps(metadata), new_content, now, keep_id),
             )
         logger.info(f"Refined playbook {keep_id} after merge")
     except Exception as e:

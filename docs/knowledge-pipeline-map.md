@@ -114,4 +114,12 @@ At get-context time, match the conversation vector against **playbook embeddings
 | 9 | Orphan sweeper idempotency (duplicate-webhook root cause) | S | Sprint 3 (chip pending) |
 | 10 | Layer-3 proactive playbook push (trigger_conditions matching at serve time) | M | Sprint 3 |
 
-**Format note (from sprint planning Q&A)**: the system's "skills" are DB records (`knowledge.category='skill'`), *not* the open agent-skills SKILL.md standard; adopting SKILL.md as an export/interchange format is earmarked for the MasterMemory npm framework (see [mastermemory-npm-migration.md](mastermemory-npm-migration.md) open questions).
+## 8. Agent-Skills Standard (SKILL.md) — adopted 2026-07-05
+
+Skills and playbooks follow the **Anthropic agent-skills standard**. No new column: for `category IN ('skill','playbook')` the **`content` column stores the full SKILL.md document** (YAML frontmatter: `name` lowercase-hyphen slug ≤64 chars, `description` ≤1024 chars stating what + when, `metadata:` with source/category/version/signals/tags; markdown body with When-to-use / Procedure or Trigger-conditions / Steps). `summary` keeps the description for compact Layer-1 injection; `metadata` JSONB keeps structured steps/trigger_conditions for programmatic access. Playbooks render in the same SKILL.md format — the standard has no separate playbook type; a playbook is a procedural skill.
+
+- **Rendering** ([backend/memory_skill_md.py](../backend/memory_skill_md.py)): auto-rendered in `insert_knowledge` for every creation path (extraction, decomposition, Hermes, admin manual create); re-rendered with `version++` on playbook refinement.
+- **Export / publish**: `GET /api/memory/knowledge/{id}/skill.md` (admin JWT or agent key) → downloadable spec-compliant document; legacy records rendered on the fly.
+- **Import / install**: `POST /api/memory/skills/import` `{skill_md, category, status, signals?, tags?}` — validates frontmatter, stores the document verbatim, dedups against existing records (merge instead of duplicate), `source_pathway='imported'`.
+- **Why**: marketplace interop — install publicly available skills into agent context, and publish hard-earned experiential ones.
+- Remaining (Sprint 2): UI export/download button + import dialog in the Knowledge tab; bundle export (zip with directory layout) when skills grow supporting files.
