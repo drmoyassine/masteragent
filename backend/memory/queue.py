@@ -85,7 +85,7 @@ async def _process_bulk_job(job: Job, token: str):
                 rpm = p_conf.get("rate_limit_rpm", 60)
 
         elif job.name == "generate_knowledge":
-            await run_knowledge_check()
+            await run_knowledge_check(drain=bool(job.data.get("drain")))
             p_conf = get_llm_config("knowledge_generation")
             if p_conf and "rate_limit_rpm" in p_conf:
                 rpm = p_conf.get("rate_limit_rpm", 60)

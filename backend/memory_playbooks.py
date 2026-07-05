@@ -173,12 +173,17 @@ async def _process_cluster(
         """, (intel_ids,))
         intel_records = [dict(r) for r in cursor.fetchall()]
 
-    # Fetch AI thoughts + tool calls for the same entities in the same time window
-    min_ts = min(r["created_at"] for r in intel_records)
-    max_ts = max(r["created_at"] for r in intel_records)
+    # Fetch AI thoughts + tool calls for the same entities in the same time window.
+    # created_at is TIMESTAMPTZ — psycopg returns datetime objects, but tolerate
+    # ISO strings too (e.g. test fixtures).
+    def _as_dt(v):
+        return v if isinstance(v, datetime) else datetime.fromisoformat(str(v))
+
+    min_ts = min(_as_dt(r["created_at"]) for r in intel_records)
+    max_ts = max(_as_dt(r["created_at"]) for r in intel_records)
     # Widen window by 1 hour on each side
-    window_start = (datetime.fromisoformat(min_ts) - timedelta(hours=1)).isoformat()
-    window_end = (datetime.fromisoformat(max_ts) + timedelta(hours=1)).isoformat()
+    window_start = (min_ts - timedelta(hours=1)).isoformat()
+    window_end = (max_ts + timedelta(hours=1)).isoformat()
 
     ai_interactions = []
     processed_ids = []

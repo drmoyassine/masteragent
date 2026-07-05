@@ -93,17 +93,25 @@ At get-context time, match the conversation vector against **playbook embeddings
 
 **Where**: write helper in `memory_db_writes`, called from the 4–5 pipeline entry points; `GET /api/memory/admin/pipeline-runs` (filter by job/outcome, last N); System Monitor page table with reason-code badges.
 
-## 7. Consolidated Fix List (supersedes earlier "what's left")
+## 7. Sprint Plan & Fix List
+
+**Sprint 1** ✅ (shipped 2026-07-05): items 2, 3, 4 + manual triggers/backfill
+**Sprint 2**: items 5, 5b, 6, 7 · **Sprint 3**: items 8, 9, 10
 
 | # | Item | Size | Status |
 |---|---|---|---|
-| 1 | Feedback + knowledge admin API URL bugs (`/admin/knowledge/...` → `/knowledge/...`; escaped `${id}`; PUT→PATCH) in `frontend/src/lib/api.js` | XS | ✅ fixed this session |
-| 2 | PII config: identify + deactivate/fix the active `pii_scrubbing` row calling CF worker `/redact` (seeded "Zendata PII" provider whose base URL points at the CF gateway); make `scrub_pii` provider-aware (LLM-scrub when provider isn't a redact API) | S | open |
-| 3 | Playbook crash + refine no-op | S | chip pending |
-| 4 | `playbook_generation` + `skill_generation` LLM config rows | XS (SQL) | open |
-| 5 | Knowledge search: `status='active'` filter + category/signals params | S | open |
-| 6 | Layer-1 relevance-ranked get-context injection (conversation vector + similarity floor + compact form + `context_knowledge_count` setting) | M | open |
-| 7 | `memory_pipeline_runs` observability table + admin endpoint + System Monitor section | M | open |
-| 8 | n8n last mile: verify counselor renders `knowledge` array; optionally add knowledge-search as agent tool | S (workflow) | open |
-| 9 | Orphan sweeper idempotency (duplicate-webhook root cause) | S | chip pending |
-| 10 | Layer-3 proactive playbook push | M | deferred until playbooks generate |
+| 1 | Feedback + knowledge admin API URL bugs (`/admin/knowledge/...` → `/knowledge/...`; escaped `${id}`; PUT→PATCH) in `frontend/src/lib/api.js` | XS | ✅ done |
+| 2 | `scrub_pii` made provider-aware: `zendata` → REST `/redact`; any LLM provider → prompt-based redaction via the config's model; unconfigured → passthrough. **Prod action**: reassign the PII Scrubbing node's provider account to a real LLM provider (redaction then actually works), or toggle the node off to stop the 404 spam | S | ✅ done (code); prod config action pending |
+| 3 | Playbook `fromisoformat` crash + `_refine_playbook` missing-category no-op | S | ✅ done |
+| 4 | `playbook_generation` + `skill_generation` config rows — seeded idempotently at startup for existing installs (inherit knowledge_generation's provider/model), visible as Knowledge Pipeline nodes, labels added to pipeline UI | XS | ✅ done |
+| 4b | Manual triggers + backfill: `POST /trigger/extract-playbooks`, `POST /trigger/run-consolidation`, `?drain=true` on knowledge check (loops batches until backlog exhausted, cap 50); UI buttons on Knowledge tab (Run Now / Drain Backlog / Extract Playbooks / Consolidate) | S | ✅ done |
+| 4c | Fixed latent ImportError in `/trigger/backfill-profiles` (`_sync_entity_profile` imported from wrong module) | XS | ✅ done |
+| 5 | Knowledge search: `status='active'` filter + category/signals params | S | Sprint 2 |
+| 5b | **Refine-on-merge**: when a new precursor dedup-matches an existing knowledge/skill/playbook (≥0.85), LLM-merge the new evidence into the existing record (`content` update + `version++`) instead of only bumping `merge_count` — closes the "same record should be updated, not just counted" gap | M | Sprint 2 |
+| 6 | Layer-1 relevance-ranked get-context injection (conversation vector + similarity floor + compact form + `context_knowledge_count` setting) | M | Sprint 2 |
+| 7 | `memory_pipeline_runs` observability table + admin endpoint + System Monitor section | M | Sprint 2 |
+| 8 | n8n last mile: verify counselor renders `knowledge` array; add knowledge-search as agent tool | S (workflow) | Sprint 3 |
+| 9 | Orphan sweeper idempotency (duplicate-webhook root cause) | S | Sprint 3 (chip pending) |
+| 10 | Layer-3 proactive playbook push (trigger_conditions matching at serve time) | M | Sprint 3 |
+
+**Format note (from sprint planning Q&A)**: the system's "skills" are DB records (`knowledge.category='skill'`), *not* the open agent-skills SKILL.md standard; adopting SKILL.md as an export/interchange format is earmarked for the MasterMemory npm framework (see [mastermemory-npm-migration.md](mastermemory-npm-migration.md) open questions).

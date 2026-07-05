@@ -66,27 +66,67 @@ def chunk_text(text: str, chunk_size: int = 400, chunk_overlap: int = 80) -> Lis
 
 # ── PII Scrubbing ──────────────────────────────────────────────────────────────
 
+_DEFAULT_PII_PROMPT = (
+    "You are a PII redaction engine. Remove all personally identifiable information "
+    "from the following text: replace person names with generic roles (e.g. 'the student', "
+    "'the parent', 'the counselor'), organization names with generic descriptors (e.g. "
+    "'the partner institution'), and redact phone numbers, email addresses, ID/passport "
+    "numbers, and street addresses. Preserve the meaning and all non-identifying facts. "
+    "Return ONLY the redacted text with no commentary."
+)
+
+
 async def scrub_pii(text: str) -> str:
-    """Scrub PII from text using admin-configured service. Returns original text on failure."""
+    """Scrub PII from text using the admin-configured pii_scrubbing config.
+
+    Provider-aware (mirrors the memories-pipeline PII node):
+      - provider 'zendata': dedicated redact REST API (POST {base_url}/redact)
+      - any LLM provider: prompt-based redaction via call_llm
+    Returns the original text when unconfigured or on failure.
+    """
+    if not text:
+        return text
     config = get_llm_config("pii_scrubbing")
-    if not config or not config.get("api_base_url") or not config.get("api_key_encrypted"):
+    if not config:
         logger.warning("PII scrubbing not configured, returning original text")
         return text
-    headers = {
-        "Authorization": f"Bearer {config['api_key_encrypted']}",
-        "Content-Type": "application/json",
-    }
+
+    provider = (config.get("provider") or "").lower()
+
+    if provider == "zendata":
+        if not config.get("api_base_url") or not config.get("api_key_encrypted"):
+            logger.warning("Zendata PII scrubbing missing base URL or key, returning original text")
+            return text
+        headers = {
+            "Authorization": f"Bearer {config['api_key_encrypted']}",
+            "Content-Type": "application/json",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"{config['api_base_url']}/redact", headers=headers, json={"text": text}
+                )
+                if response.status_code == 200:
+                    return response.json().get("redacted_text", text)
+                logger.error(f"PII scrubbing API error: {response.status_code}")
+        except Exception as e:
+            logger.error(f"PII scrubbing error: {e}")
+        return text
+
+    # LLM-based redaction via the config's assigned provider/model
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                f"{config['api_base_url']}/redact", headers=headers, json={"text": text}
-            )
-            if response.status_code == 200:
-                return response.json().get("redacted_text", text)
-            logger.error(f"PII scrubbing API error: {response.status_code}")
+        from services.config_helpers import get_system_prompt_by_config_id
+        system_prompt = get_system_prompt_by_config_id(config["id"]) or _DEFAULT_PII_PROMPT
+        scrubbed = await call_llm(
+            text[:8000],
+            system_prompt=system_prompt,
+            max_tokens=2000,
+            config_id=config["id"],
+        )
+        return scrubbed or text
     except Exception as e:
-        logger.error(f"PII scrubbing error: {e}")
-    return text
+        logger.error(f"LLM PII scrubbing error: {e}")
+        return text
 
 
 # ── Summarization ──────────────────────────────────────────────────────────────

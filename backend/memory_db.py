@@ -962,10 +962,33 @@ def _seed_defaults():
         # Hotfix: Ensure summarization is properly mapped to intelligence for migrating existing users
         # Only move it if it's still on 'interactions' (one-time migration)
         cursor.execute("""
-            UPDATE memory_llm_configs 
-            SET pipeline_stage = 'intelligence' 
+            UPDATE memory_llm_configs
+            SET pipeline_stage = 'intelligence'
             WHERE task_type = 'summarization' AND pipeline_stage = 'interactions'
         """)
+
+        # Playbook/skill extraction configs — seeded for EXISTING installs too
+        # (these task types resolve by task_type only; without an active row the
+        # LLM call returns empty and the playbook pathway silently no-ops).
+        # Attached to the same provider as knowledge_generation when available.
+        for pb_task, pb_order in [("playbook_generation", 2), ("skill_generation", 3)]:
+            cursor.execute("""
+                INSERT INTO memory_llm_configs
+                    (task_type, provider_id, model_name, is_active, pipeline_stage, execution_order, inline_system_prompt, inline_schema)
+                SELECT %s,
+                       COALESCE(
+                           (SELECT provider_id FROM memory_llm_configs WHERE task_type = 'knowledge_generation' AND is_active = TRUE LIMIT 1),
+                           (SELECT id FROM memory_llm_providers WHERE provider = 'openai' LIMIT 1)
+                       ),
+                       COALESCE(
+                           (SELECT model_name FROM memory_llm_configs WHERE task_type = 'knowledge_generation' AND is_active = TRUE LIMIT 1),
+                           'gpt-4o-mini'
+                       ),
+                       TRUE, 'knowledge', %s, '', ''
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM memory_llm_configs WHERE task_type = %s
+                )
+            """, (pb_task, pb_order, pb_task))
 
 
         # Default system prompts

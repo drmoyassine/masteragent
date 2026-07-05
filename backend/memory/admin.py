@@ -568,11 +568,31 @@ async def trigger_reprocess_intelligence(body: dict, admin: dict = Depends(requi
 
 @router.post("/trigger/run-knowledge-check")
 @router.post("/trigger/run-Knowledge-check", include_in_schema=False)  # legacy capitalized alias
-async def trigger_knowledge_check(admin: dict = Depends(require_admin_auth)):
-    """Manually trigger the Knowledge accumulation check via queue drop."""
+async def trigger_knowledge_check(
+    drain: bool = Query(False, description="Repeat until the confirmed-intelligence backlog is consumed (backfill mode)"),
+    admin: dict = Depends(require_admin_auth),
+):
+    """Manually trigger the Knowledge accumulation check via queue drop.
+    With drain=true the worker loops threshold-sized batches until the backlog is exhausted."""
     from memory.queue import knowledge_queue
-    await knowledge_queue.add("generate_knowledge", {}, {"priority": 1})
-    return {"message": "Knowledge check queued"}
+    await knowledge_queue.add("generate_knowledge", {"drain": drain}, {"priority": 1})
+    return {"message": "Knowledge check queued", "drain": drain}
+
+
+@router.post("/trigger/extract-playbooks")
+async def trigger_playbook_extraction(admin: dict = Depends(require_admin_auth)):
+    """Manually trigger playbook + skill extraction (normally weekly) via queue drop."""
+    from memory.queue import knowledge_queue
+    await knowledge_queue.add("extract_playbooks", {}, {"priority": 1})
+    return {"message": "Playbook extraction queued"}
+
+
+@router.post("/trigger/run-consolidation")
+async def trigger_consolidation(admin: dict = Depends(require_admin_auth)):
+    """Manually trigger knowledge consolidation (dedup merge + decay + quality recompute) via queue drop."""
+    from memory.queue import knowledge_queue
+    await knowledge_queue.add("run_consolidation", {}, {"priority": 1})
+    return {"message": "Consolidation queued"}
 
 
 @router.post("/trigger/backfill-profiles")
@@ -582,7 +602,7 @@ async def trigger_backfill_profiles(admin: dict = Depends(require_admin_auth)):
     Scans all entity types, finds interactions matching profile_sync_triggers,
     and extracts entity profile data using the configured metadata_field_map.
     """
-    from memory_tasks import _sync_entity_profile
+    from memory_ingestion import _sync_entity_profile
     backfilled = 0
     skipped = 0
     errors = []
