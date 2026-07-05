@@ -19,9 +19,9 @@ The agent is not learning by doing. The plumbing for Tier 3 exists (~80%) but is
 
 ## 2. Root-Cause Diagnosis
 
-Ranked by likelihood. Gates 1 and 2 are independent — production is probably blocked on **both**.
+> **Prod findings (2026-07-05)**: Gate 1 is **cleared** — intelligence records are being created with `status='confirmed'` (auto-approve is already enabled for the production entity type). Gate 2 is **confirmed as the blocker** — the Knowledge Pipeline in the admin UI (Memory Settings → Knowledge Pipeline) has zero nodes, so no LLM config exists for the knowledge stage and every daily knowledge check dies silently at `json.loads("")`.
 
-### Gate 1 — The confirmation bottleneck (structural)
+### Gate 1 — The confirmation bottleneck (structural) — ✅ CLEARED IN PROD
 
 - `run_knowledge_check` ([backend/memory_knowledge.py](../backend/memory_knowledge.py)) only consumes intelligence with `status = 'confirmed'`, needing ≥ `knowledge_threshold` (default 5) unused items per entity type.
 - `insert_intelligence` ([backend/memory_db_writes.py](../backend/memory_db_writes.py)) writes `status = 'draft'` unless the entity type has `intelligence_auto_approve = TRUE`.
@@ -30,7 +30,7 @@ Ranked by likelihood. Gates 1 and 2 are independent — production is probably b
 
 → The pipeline is structurally dead above Tier 2: drafts accumulate forever, the threshold is never crossed, the knowledge check runs daily and finds nothing.
 
-### Gate 2 — Missing LLM config = silent no-op
+### Gate 2 — Missing LLM config = silent no-op — ❌ CONFIRMED BLOCKER
 
 - `call_llm` ([backend/services/llm.py](../backend/services/llm.py)) returns `""` (empty string) when no active config matches the task type.
 - `generate_knowledge_from_intelligence` then hits `json.loads("")`, which raises, is caught, logged, and swallowed. **No error surfaces anywhere.**
@@ -45,6 +45,12 @@ Ranked by likelihood. Gates 1 and 2 are independent — production is probably b
 ### Gate 4 — JSON parsing fragility (not a blocker, but a landmine)
 
 All Tier 2/3 LLM calls do a bare `json.loads(result_text)`: no code-fence stripping, no `response_format: json_object`. The intelligence prompts happen to produce clean JSON in prod; the knowledge default prompt has no such battle-testing. One markdown fence kills the run silently.
+
+### Gate 5 — PII scrubbing is a double no-op (discovered 2026-07-05)
+
+- `scrub_pii` ([backend/services/processing.py](../backend/services/processing.py) ~line 69) returns the **original text** when no `pii_scrubbing` config exists (warning logged, non-fatal).
+- Even when configured, the endpoint URL is built as `f"{config['api_base_url']}\redact"` — the `\r` is a **carriage return**, not a slash, so the request URL is malformed and the call always fails → original text returned. One-character fix: `/redact`.
+- Consequence: knowledge content will contain real client/partner names unless the knowledge-generation **prompt** explicitly generalizes them. Knowledge is served globally to every conversation via get-context, so this is a PII-leak vector, not a cosmetic issue.
 
 ### Related bug (already chipped): orphan sweeper re-processing
 
@@ -72,19 +78,17 @@ All Tier 2/3 LLM calls do a bare `json.loads(result_text)`: no code-fence stripp
 
 Order matters. Steps 1–2 are diagnosis/fixes; 3–4 open the gates; 5–7 verify and harden.
 
-### Step 1 — Diagnose prod (run these first)
+### Step 1 — Diagnose prod ✅ DONE (2026-07-05)
+
+**Findings**: intelligence is auto-confirmed in prod (Gate 1 clear); the Knowledge Pipeline has zero nodes in the admin UI (Gate 2 confirmed as the blocker). Remaining pre-flight check — confirm there's enough fuel above the threshold:
 
 ```sql
--- Gate 1: are we drowning in drafts?
-SELECT status, COUNT(*) FROM intelligence GROUP BY status;
-
-SELECT entity_type, intelligence_auto_approve, knowledge_extraction_threshold
-FROM memory_entity_type_config;
-
--- Gate 2: do the LLM config rows even exist?
-SELECT task_type, pipeline_stage, is_active FROM memory_llm_configs
-WHERE task_type IN ('knowledge_generation','playbook_generation','skill_generation')
-   OR pipeline_stage = 'knowledge';
+-- unused confirmed intelligence per entity type (needs ≥ threshold, default 5)
+SELECT primary_entity_type, COUNT(*) AS unused_confirmed
+FROM intelligence i
+WHERE i.status = 'confirmed'
+  AND NOT EXISTS (SELECT 1 FROM knowledge k WHERE i.id = ANY(k.source_intelligence_ids))
+GROUP BY primary_entity_type;
 ```
 
 ### Step 2 — Land the bug fixes
@@ -93,18 +97,32 @@ WHERE task_type IN ('knowledge_generation','playbook_generation','skill_generati
 - [ ] Playbook `fromisoformat` crash (handle `datetime` objects)
 - [ ] `_refine_playbook` missing `category` column in SELECT
 
-### Step 3 — Set the approval policy
+### Step 3 — Set the approval policy ✅ ALREADY IN PLACE
 
-**Recommendation**: set `intelligence_auto_approve = TRUE` for the contact entity type. Intelligence quality is already passively reviewed through daily use; a human gate that nobody operates is worse than no gate. Keep draft mode as the default for *new* entity types.
+Auto-approve is already enabled in prod — intelligence lands as `confirmed`. Keep draft mode as the default for *new* entity types.
 
-- [ ] Enable auto-approve for the production entity type(s)
-- [ ] Bulk-confirm the existing draft backlog (admin bulk endpoints exist)
+### Step 4 — Create the Knowledge Generation pipeline node ← **CURRENT STEP**
 
-### Step 4 — Create the missing LLM configs
+The code path ([memory_knowledge.py](../backend/memory_knowledge.py) `generate_knowledge_from_intelligence`) only reads **one** node type from the knowledge pipeline: `knowledge_generation`. Other node types added to this pipeline (PII Scrubbing, Embeddings, Summarization) are **ignored** — PII scrub is invoked directly via the global `pii_scrubbing` task config, and embedding happens inline. So the pipeline needs exactly one node:
 
-- [ ] Pipeline node for stage `knowledge` with an inline prompt (mirror how the working intelligence stage is configured)
-- [ ] `task_type = 'playbook_generation'` row
-- [ ] `task_type = 'skill_generation'` row
+1. Memory Settings → Knowledge Pipeline → **Add Pipeline Step → Knowledge Generation**; pick provider + model.
+2. Write the **inline system prompt**. Output contract the code parses (single raw JSON object):
+   - `name` — short title
+   - `category` — must be one of `best_practices` | `lessons_learned` | `trade_knowledge` (anything else is stored verbatim but off-vocabulary)
+   - `signals` — array, validated case-insensitively against the entity type's defined knowledge signals; unknown values are dropped. `{{knowledge_signals}}` is available as a template variable (injected with the signal definitions).
+   - `content`, `summary` — storytelling style, no artificial length caps
+   - `tags` — array
+3. Prompt must include: **"Return ONLY raw JSON — no markdown fences, no commentary"** (Gate 4: `call_llm` sets no `response_format`; one ``` fence kills the run silently).
+4. Prompt must include generalization instructions: **replace all person/organization names with generic roles** ("the student", "the partner institution"). Until Gate 5 is fixed, the prompt is the only PII defense at this tier, and knowledge is injected into every conversation's context.
+5. **Enable the node** — it is created disabled, and `get_pipeline_configs` filters `is_active = TRUE`; a disabled node is identical to no node.
+
+Later (for the playbook/skill pathway, after its bug fixes land):
+- [ ] `task_type = 'playbook_generation'` config row
+- [ ] `task_type = 'skill_generation'` config row
+
+### Step 4b — Fix the PII endpoint typo (Gate 5)
+
+- [ ] [backend/services/processing.py](../backend/services/processing.py) `scrub_pii`: `f"{config['api_base_url']}\redact"` → `f"{config['api_base_url']}/redact"` (the `\r` is a carriage return — the call can never succeed as written)
 
 ### Step 5 — Harden JSON parsing
 
