@@ -129,12 +129,14 @@ Later (for the playbook/skill pathway, after its bug fixes land):
 - [x] Lowercase route alias `POST /trigger/run-knowledge-check` added (capitalized route kept as hidden legacy alias).
 - [ ] Deferred: `response_format: {"type": "json_object"}` — would need a per-call opt-in flag in `call_llm` and provider-compatibility care; fence-stripping addresses the observed failure mode.
 
-### Step 6 — Fire and verify end-to-end
+### Step 6 — Fire and verify end-to-end 🟡 IN PROGRESS
 
-1. `POST /api/memory/trigger/run-knowledge-check`
-2. Verify knowledge rows created (`SELECT * FROM knowledge ORDER BY created_at DESC`)
-3. Verify they appear in `get-context` payloads
-4. **Last mile**: confirm the n8n counselor workflow actually renders the `knowledge` array from the get-context payload into the agent's system prompt. The API returns it; consumption must be verified in the workflow.
+1. [x] `POST /api/memory/trigger/run-knowledge-check` — **first production knowledge record created 2026-07-05** (`Generated Knowledge 4766c026… from 5 intelligence`, category `best_practices`, properly generalized, status `active`). UI gotcha discovered: a node's green "Ready" badge only means config is complete — the **on/off toggle must also be enabled**, otherwise both config lookups (`pipeline_stage` and `task_type`, each filtering `is_active = TRUE`) silently find nothing.
+2. [x] Knowledge row visible in admin UI Knowledge tab.
+3. [ ] Verify it appears in `get-context` payloads (agent key: `GET /api/memory/get-context?entity_type=contact&entity_id=…` → `knowledge` array).
+4. [ ] **Last mile**: confirm the n8n counselor workflow actually renders the `knowledge` array from the get-context payload into the agent's system prompt. The API returns it; consumption must be verified in the workflow.
+
+**New follow-up found during verification**: the configured PII service endpoint 404s — `POST https://cf-prod-frontbase-edge.studygram-inc.workers.dev/api/agents/v1/redact` returns 404 on every call (10 calls per knowledge run: content+summary × 5 items). Non-fatal (falls back to original text) but the scrub is NOT happening and each run wastes ~4s. Fix the Cloudflare worker route (`POST /redact` relative to the configured base URL, `{"text": …}` → `{"redacted_text": …}`), correct the base URL, or deactivate the `pii_scrubbing` config. Until then the node prompt's name-generalization rules are the only PII layer (they worked on record #1).
 
 ### Step 7 — Add pipeline observability
 
