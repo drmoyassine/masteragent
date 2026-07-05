@@ -138,3 +138,4 @@ Prompts: which DB · pgvector on/off · schema name (default `mastermemory`) · 
 - **Multi-tenancy**: single-tenant per schema (current model) vs tenant column — single-tenant per schema recommended for v1 (matches "roll your own schema" story)
 - **Prompt Manager relationship**: the Prompt Manager module stays a separate product; the framework's prompt config accepts plain strings/templates, with an optional integration to fetch from a Prompt Manager instance later
 - **License** (current repo is MIT) and whether the reference Python implementation stays public
+- **Agent-skills interchange**: adopt the open SKILL.md format (Anthropic agent-skills spec) as an **export format** for `knowledge.category='skill'` (and playbooks-as-procedural-skills) so extracted skills are directly consumable by Claude Code and other SKILL.md-compatible agents — internal storage stays relational

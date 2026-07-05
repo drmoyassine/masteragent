@@ -89,7 +89,7 @@ async def _refine_playbook(keep_id: str):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT name, content, metadata, merge_count FROM knowledge WHERE id = %s",
+            "SELECT name, content, metadata, merge_count, category FROM knowledge WHERE id = %s",
             (keep_id,),
         )
         row = cursor.fetchone()

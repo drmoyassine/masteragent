@@ -20,10 +20,31 @@ from memory_helpers import _get_entity_type_config, _format_signal_definitions
 logger = logging.getLogger(__name__)
 
 
-async def run_knowledge_check():
-    """Check if enough confirmed intelligence have accumulated to generate a Knowledge."""
+async def run_knowledge_check(drain: bool = False):
+    """Check if enough confirmed intelligence have accumulated to generate a Knowledge.
+
+    Each pass consumes at most one threshold-sized batch per entity type. With
+    drain=True the check repeats until the backlog no longer yields a batch
+    (safety-capped) — used for backfilling a long-accumulated backlog."""
+    max_rounds = 50 if drain else 1
+    total_created = 0
+    for round_no in range(max_rounds):
+        created = await _run_knowledge_check_once()
+        total_created += created
+        if not created:
+            break
+        if drain:
+            logger.info(f"Knowledge drain round {round_no + 1}: created {created} record(s), continuing")
+    if drain:
+        logger.info(f"Knowledge drain complete: {total_created} record(s) created")
+    return total_created
+
+
+async def _run_knowledge_check_once() -> int:
+    """Single knowledge-check pass. Returns the number of knowledge records created."""
     settings = get_memory_settings()
     global_knowledge_threshold = settings.get("knowledge_threshold", 5)
+    created = 0
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -63,13 +84,15 @@ async def run_knowledge_check():
 
                 batch = [dict(r) for r in cursor.fetchall()]
                 logger.info(f"Knowledge extraction trigger (count) for {entity_type}: {len(batch)} unused intelligence items")
-                await generate_knowledge_from_intelligence(batch)
+                created += await generate_knowledge_from_intelligence(batch)
+    return created
 
 
-async def generate_knowledge_from_intelligence(intelligence: list):
-    """Generate a Knowledge from a batch of confirmed intelligence."""
+async def generate_knowledge_from_intelligence(intelligence: list) -> int:
+    """Generate a Knowledge from a batch of confirmed intelligence.
+    Returns 1 if a knowledge record was created, else 0."""
     if not intelligence:
-        return
+        return 0
 
     scrubbed_parts = []
     for ins in intelligence:
@@ -144,7 +167,7 @@ async def generate_knowledge_from_intelligence(intelligence: list):
         result = parse_llm_json(result_text, context="knowledge_generation")
     except Exception as e:
         logger.error(f"Knowledge generation LLM call failed: {e}")
-        return
+        return 0
 
     name = result.get("name", "Unnamed Knowledge")
     category = result.get("category", "trade_knowledge")
@@ -171,7 +194,7 @@ async def generate_knowledge_from_intelligence(intelligence: list):
     signals = list(dict.fromkeys(signals))
 
     if not content:
-        return
+        return 0
 
     embedding = None
     try:
@@ -192,6 +215,7 @@ async def generate_knowledge_from_intelligence(intelligence: list):
         tags=tags,
     )
     logger.info(f"Generated Knowledge {knowledge_id} from {len(intelligence_ids)} intelligence")
+    return 1
 
 
 async def promote_to_knowledge(insight_id: str):

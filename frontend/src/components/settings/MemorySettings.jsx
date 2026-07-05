@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import api, { triggerMemoryGeneration, triggerIntelligenceCheck, fetchProviderModels } from "@/lib/api";
+import api, { triggerMemoryGeneration, triggerIntelligenceCheck, triggerKnowledgeCheck, triggerPlaybookExtraction, triggerConsolidation, fetchProviderModels } from "@/lib/api";
 import { useEffect } from "react";
 
 // â”€â”€â”€ Threshold Overrides Table â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -943,17 +943,61 @@ function IntelligenceTab({ settings, onUpdateSettings, llmConfigs, llmProviders,
 // â”€â”€â”€ Knowledge Tab â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, onDeleteConfig, onAddConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline, entityTypes }) {
     const publicPipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "knowledge").sort((a,b) => a.execution_order - b.execution_order);
+    const [triggering, setTriggering] = useState(null); // 'check' | 'drain' | 'playbooks' | 'consolidation'
+
+    const runTrigger = async (kind, fn, successMsg) => {
+        setTriggering(kind);
+        try {
+            await fn();
+            toast.success(successMsg);
+        } catch (error) {
+            toast.error(error?.response?.data?.detail || "Failed to queue trigger");
+        } finally {
+            setTriggering(null);
+        }
+    };
 
     return (
         <div className="space-y-6">
-            <div className="mb-2">
-                <h3 className="text-lg font-semibold flex items-center gap-2">
-                    <GraduationCap className="w-5 h-5 text-indigo-500" />
-                    Knowledge Generation
-                </h3>
-                <p className="text-sm text-muted-foreground mt-1">
-                    Generates agnostic, PII-scrubbed, reusable Knowledge items.
-                </p>
+            <div className="mb-2 flex items-start justify-between gap-4 flex-wrap">
+                <div>
+                    <h3 className="text-lg font-semibold flex items-center gap-2">
+                        <GraduationCap className="w-5 h-5 text-indigo-500" />
+                        Knowledge Generation
+                    </h3>
+                    <p className="text-sm text-muted-foreground mt-1">
+                        Generates agnostic, PII-scrubbed, reusable Knowledge items.
+                    </p>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                    <Button size="sm" variant="outline" className="gap-1.5"
+                        onClick={() => runTrigger('check', () => triggerKnowledgeCheck(false), "Knowledge check queued")}
+                        disabled={!!triggering}>
+                        <Play className="w-3.5 h-3.5" />
+                        Run Now
+                    </Button>
+                    <Button size="sm" variant="outline" className="gap-1.5"
+                        title="Loops threshold-sized batches until the confirmed-intelligence backlog is fully consumed"
+                        onClick={() => runTrigger('drain', () => triggerKnowledgeCheck(true), "Backlog drain queued — batches run until exhausted")}
+                        disabled={!!triggering}>
+                        <Zap className="w-3.5 h-3.5" />
+                        Drain Backlog
+                    </Button>
+                    <Button size="sm" variant="outline" className="gap-1.5"
+                        title="Cluster confirmed intelligence across entities and extract playbooks + skills (normally weekly)"
+                        onClick={() => runTrigger('playbooks', triggerPlaybookExtraction, "Playbook extraction queued")}
+                        disabled={!!triggering}>
+                        <Brain className="w-3.5 h-3.5" />
+                        Extract Playbooks
+                    </Button>
+                    <Button size="sm" variant="outline" className="gap-1.5"
+                        title="Merge near-duplicate knowledge, apply decay, recompute quality scores (normally weekly)"
+                        onClick={() => runTrigger('consolidation', triggerConsolidation, "Consolidation queued")}
+                        disabled={!!triggering}>
+                        <Layers className="w-3.5 h-3.5" />
+                        Consolidate
+                    </Button>
+                </div>
             </div>
 
             {/* Knowledge Configuration — flat, no sub-section headers */}
