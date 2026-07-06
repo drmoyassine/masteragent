@@ -115,6 +115,19 @@
 
 ---
 
+## 6b. Post-merge review fixes (2026-07-06)
+
+A detailed review flagged and fixed the following in `feat/sprint2.5-review-fixes`:
+
+1. **🔴 Facet false-negative (casing mismatch)** — `metadata @>` is an exact match, but profile-derived facet values used the raw CRM value (`str(v)`). A CRM `country="malaysia"` would hard-filter to **zero** records stored as `"Malaysia"` — the precise false-negative the facet design exists to prevent. **Fix**: `canonicalize_facets()` maps values to the stored spelling case-insensitively before filtering; profile-derived values that match nothing in the corpus are **dropped** (rather than filtering to zero).
+2. **🔴 Governance skill was agent-mutable** — agents have `PATCH`/`DELETE /knowledge/{id}`; a single key could delete or de-flag the always-on management skill, removing governance for every agent. **Fix**: `_assert_agent_mutable()` returns 403 for `source_pathway='system'` or `always_inject=true` records on the agent PATCH/DELETE paths (admin endpoints unaffected).
+3. **🟠 `extract_facets` value coercion** — LLM could return non-scalar values that never match a scalar `@>` filter. **Fix**: coerce to trimmed strings, drop list/dict/empty values.
+4. **🟠 Backfill skipped empty-facet records** — matched only `facets IS NULL`, but disabled-extraction records have `facets={}`. **Fix**: match `COALESCE(metadata->'facets','{}') = '{}'`.
+5. **🟠 Agent `POST /knowledge` deviation** — ignored `category`/`metadata`/`status` and never rendered SKILL.md or extracted facets. **Fix**: routed through `insert_knowledge` + `enrich_metadata_with_facets` (also fixes a latent `source_Intelligence_ids` attribute-name bug and JSONB metadata serialization on the agent PATCH).
+6. **🟡 Management-skill wording** — said items are index-only; corrected to "may be index or full; treat absence of `content` as an index entry."
+
+**Tenant isolation**: reviewed — single-org-per-deployment by design; knowledge is intentionally global/org-wide (a locked decision). `visibility='shared'` filtering correctly excludes `private`/`team`. No cross-tenant leak vector; the actionable item was governance-record protection (#2).
+
 ## 7. Known follow-ups (small, additive — not blocking)
 
 - **System Monitor UI panel** for `/pipeline-runs` (data + endpoint exist from Sprint 2; no UI yet).
