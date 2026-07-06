@@ -432,6 +432,7 @@ class KnowledgeUpdate(BaseModel):
     category: Optional[str] = None
     metadata: Optional[dict] = None
     status: Optional[str] = None
+    always_inject: Optional[bool] = None   # toggle metadata.always_inject without replacing whole metadata
 
 # ============================================
 # Per Entity Type Configuration

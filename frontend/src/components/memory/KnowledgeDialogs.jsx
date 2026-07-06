@@ -109,3 +109,42 @@ export function NewKnowledgeDialog({ open, onOpenChange, newKnowledge, setNewKno
     </Dialog>
   );
 }
+
+export function ImportSkillDialog({ open, onOpenChange, importText, setImportText, importCategory, setImportCategory, importing, onImport }) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Install Skill / Playbook (SKILL.md)</DialogTitle>
+          <DialogDescription>
+            Paste an agent-skills-standard SKILL.md document. Stored verbatim, deduplicated against
+            existing records, imported as a draft. Frontmatter name/description become name/summary.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          <div className="flex items-center gap-2">
+            <Label>Category</Label>
+            <Select value={importCategory} onValueChange={setImportCategory}>
+              <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="skill">Skill</SelectItem>
+                <SelectItem value="playbook">Playbook</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <Textarea
+            className="font-mono text-[12px]"
+            rows={14}
+            placeholder={"---\nname: my-skill\ndescription: what it does and when to use it\n---\n\n# My Skill\n..."}
+            value={importText}
+            onChange={(e) => setImportText(e.target.value)}
+          />
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={onImport} disabled={importing}>{importing ? "Importing…" : "Install"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
