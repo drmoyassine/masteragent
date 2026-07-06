@@ -500,7 +500,9 @@ async def get_context(
         k_floor = float(settings.get("context_knowledge_min_similarity") or 0.0)
 
         # Resolve governed facets: explicit param → else derive from CRM profile.
+        from memory_facets import canonicalize_facets
         resolved_facets: dict = {}
+        facets_from_profile = False
         if knowledge_facets:
             try:
                 resolved_facets = json.loads(knowledge_facets) or {}
@@ -523,11 +525,21 @@ async def get_context(
                         v = props.get(prop_key) if isinstance(props, dict) else None
                         if v:
                             resolved_facets[facet_key] = str(v)
+                    facets_from_profile = True
             except Exception as e:
                 logger.warning(f"Facet derivation from profile failed: {e}")
                 resolved_facets = {}
         # Keep only non-empty facet values
         resolved_facets = {k: v for k, v in resolved_facets.items() if v}
+        # Canonicalize to stored casing/spelling so exact JSONB containment does
+        # not silently miss (e.g. CRM 'malaysia' vs stored 'Malaysia'). For
+        # profile-derived facets, drop values that exist nowhere rather than
+        # hard-filtering to zero results on a value the corpus has never seen.
+        if resolved_facets:
+            try:
+                resolved_facets = canonicalize_facets(cursor, resolved_facets, drop_unmatched=facets_from_profile)
+            except Exception as e:
+                logger.warning(f"Facet canonicalization failed: {e}")
         facet_clause = ""
         facet_params: list = []
         if resolved_facets:
@@ -843,21 +855,36 @@ async def delete_intelligence(id: str, agent: dict = Depends(verify_agent_key)):
 
 @router.post("/knowledge", response_model=KnowledgeResponse, tags=["🎓 Knowledge"])
 async def create_knowledge(body: KnowledgeCreate, agent: dict = Depends(verify_agent_key)):
-    les_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc).isoformat()
+    """Create a knowledge record. Routes through insert_knowledge so category,
+    metadata, status, SKILL.md rendering (skill/playbook) and governed facet
+    extraction are applied consistently with every other creation pathway."""
+    from memory_db_writes import insert_knowledge
+    from memory_facets import enrich_metadata_with_facets
+
+    knowledge_id = str(uuid.uuid4())
+    category = body.category or "trade_knowledge"
     embedding = await generate_embedding(f"{body.name}. {body.summary or body.content}")
+    metadata = await enrich_metadata_with_facets(body.metadata, body.name, body.content, body.summary or "")
+
+    insert_knowledge(
+        knowledge_id=knowledge_id,
+        intelligence_ids=body.source_Intelligence_ids or [],
+        signals=body.signals or [],
+        category=category,
+        name=body.name,
+        content=body.content,
+        summary=body.summary,
+        embedding=embedding,
+        tags=body.tags or [],
+        visibility=body.visibility or "shared",
+        metadata=metadata,
+        source_pathway="agent_created",
+        status=body.status or "draft",
+    )
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cols = "id, source_intelligence_ids, signals, name, content, summary, visibility, tags, created_at, updated_at"
-        vals = "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-        params = [les_id, body.source_intelligence_ids, body.signals or [], body.name, body.content, body.summary, body.visibility, body.tags, now, now]
-        if embedding:
-            cols += ", embedding"
-            vals = "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-            params.append(embedding)
-
-        cursor.execute(f"INSERT INTO knowledge ({cols}) VALUES {vals} RETURNING *", params)
+        cursor.execute("SELECT * FROM knowledge WHERE id = %s", (knowledge_id,))
         row = dict(cursor.fetchone())
         row["created_at"] = str(row["created_at"]); row["updated_at"] = str(row["updated_at"])
         return row
@@ -974,16 +1001,35 @@ async def get_knowledge(id: str, agent: dict = Depends(verify_agent_key)):
         d["created_at"] = str(d["created_at"]); d["updated_at"] = str(d["updated_at"])
         return d
 
+def _assert_agent_mutable(cursor, id: str) -> None:
+    """Block agent-key mutations of system-governed knowledge (the always-on
+    management skill and other source_pathway='system' records). These govern
+    every agent globally, so a single agent key must not be able to alter or
+    delete them — that's an admin-only operation."""
+    cursor.execute(
+        "SELECT source_pathway, metadata->>'always_inject' AS ai FROM knowledge WHERE id = %s",
+        (id,),
+    )
+    r = cursor.fetchone()
+    if r and (r.get("source_pathway") == "system" or r.get("ai") == "true"):
+        raise HTTPException(403, "This knowledge record is system-governed and can only be modified by an admin")
+
+
 @router.patch("/knowledge/{id}", response_model=KnowledgeResponse, tags=["🎓 Knowledge"])
 async def update_knowledge(id: str, update: KnowledgeUpdate, agent: dict = Depends(verify_agent_key)):
     updates, params = [], []
     for k, v in update.model_dump(exclude_unset=True).items():
+        # metadata is a JSONB column — serialize dicts so psycopg binds them correctly.
+        if k == "metadata" and v is not None:
+            import json as _json
+            v = _json.dumps(v)
         updates.append(f"{k} = %s")
         params.append(v)
     if not updates: raise HTTPException(400, "No fields to update")
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
+        _assert_agent_mutable(cursor, id)
         cursor.execute(f"UPDATE knowledge SET {', '.join(updates)}, updated_at = NOW() WHERE id = %s RETURNING *", params + [id])
         row = cursor.fetchone()
         if not row: raise HTTPException(404, "Knowledge not found")
@@ -1000,6 +1046,7 @@ async def update_knowledge(id: str, update: KnowledgeUpdate, agent: dict = Depen
 async def delete_knowledge(id: str, agent: dict = Depends(verify_agent_key)):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
+        _assert_agent_mutable(cursor, id)
         cursor.execute("DELETE FROM knowledge WHERE id = %s RETURNING id", (id,))
         if not cursor.fetchone(): raise HTTPException(404, "Knowledge not found")
     return Response(status_code=204)

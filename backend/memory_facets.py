@@ -49,8 +49,10 @@ def _management_skill_body() -> str:
         "can do, not the whole of it.\n\n"
         "## How it was selected\n"
         "The list was filtered to the current conversation's context using governed facets "
-        "(such as country, program, level). In **index mode** each item shows "
-        "`id, name, category, signals, summary, facets` — **not** its full content.\n\n"
+        "(such as country, program, level). Items may arrive as a **lean index** "
+        "(`id, name, category, signals, summary, facets` — no full content) or as full "
+        "records, depending on configuration. When an item has no `content` field, treat "
+        "it as an index entry and pull the full record before acting on it.\n\n"
         "## Critical rule: absence does not mean absence\n"
         "**An empty or sparse knowledge list does NOT mean the knowledge or capability is "
         "absent.** It means only that we have not yet codified experiential knowledge matching "
@@ -144,10 +146,57 @@ async def extract_facets(name: str, content: str, summary: str) -> dict:
         facets = parse_llm_json(result_text, context="facet_extraction")
         if not isinstance(facets, dict):
             return {}
-        return {k: v for k, v in facets.items() if k in valid_keys and v}
+        # Coerce to trimmed scalar strings so JSONB @> containment matches reliably
+        # (a list/number value would never match a scalar hard filter).
+        out: dict = {}
+        for k, v in facets.items():
+            if k not in valid_keys or v in (None, "", [], {}):
+                continue
+            if isinstance(v, (list, dict)):
+                continue
+            sval = str(v).strip()
+            if sval:
+                out[k] = sval
+        return out
     except Exception as e:
         logger.warning(f"extract_facets failed (returning {{}}): {e}")
         return {}
+
+
+def canonicalize_facets(cursor, facets: dict, drop_unmatched: bool = False) -> dict:
+    """Map facet values to their canonical form as actually stored in the DB,
+    case-insensitively. Prevents silent false-negatives when a value's casing
+    differs from what was extracted (e.g. CRM 'malaysia' vs stored 'Malaysia').
+
+    - Matched values are replaced with the stored canonical spelling.
+    - Unmatched values: dropped when drop_unmatched=True (profile-derived — never
+      filter on a value that exists nowhere, which would zero out results), or
+      kept as-is when False (explicit caller intent).
+    """
+    if not facets:
+        return {}
+    result: dict = {}
+    for key, val in facets.items():
+        if val in (None, ""):
+            continue
+        sval = str(val).strip()
+        try:
+            cursor.execute("""
+                SELECT DISTINCT metadata->'facets'->>%s AS v
+                FROM knowledge
+                WHERE status = 'active'
+                  AND (visibility = 'shared' OR visibility IS NULL)
+                  AND metadata->'facets' ? %s
+            """, (key, key))
+            stored = [row["v"] for row in cursor.fetchall() if row["v"]]
+        except Exception:
+            stored = []
+        match = next((s for s in stored if s.lower() == sval.lower()), None)
+        if match:
+            result[key] = match
+        elif not drop_unmatched:
+            result[key] = sval
+    return result
 
 
 async def enrich_metadata_with_facets(
@@ -171,10 +220,12 @@ async def backfill_facets(batch_size: int = 25, max_records: int = 1000) -> dict
     try:
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
+            # Reprocess records with no facets OR empty facets ({}), so records
+            # created while extraction was disabled are not permanently skipped.
             cursor.execute("""
                 SELECT id, name, summary, content FROM knowledge
                 WHERE status = 'active'
-                  AND (metadata IS NULL OR metadata->'facets' IS NULL)
+                  AND COALESCE(metadata->'facets', '{}'::jsonb) = '{}'::jsonb
                 ORDER BY created_at ASC LIMIT %s
             """, (max_records,))
             rows = [dict(r) for r in cursor.fetchall()]
@@ -190,7 +241,7 @@ async def backfill_facets(batch_size: int = 25, max_records: int = 1000) -> dict
                     UPDATE knowledge
                     SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('facets', %s::jsonb),
                         updated_at = NOW()
-                    WHERE id = %s AND (metadata IS NULL OR metadata->'facets' IS NULL)
+                    WHERE id = %s AND COALESCE(metadata->'facets', '{}'::jsonb) = '{}'::jsonb
                 """, (json.dumps(facets), r["id"]))
                 if cursor.rowcount:
                     updated += 1
