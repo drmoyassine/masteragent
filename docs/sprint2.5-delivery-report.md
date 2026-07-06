@@ -128,6 +128,16 @@ A detailed review flagged and fixed the following in `feat/sprint2.5-review-fixe
 
 **Tenant isolation**: reviewed — single-org-per-deployment by design; knowledge is intentionally global/org-wide (a locked decision). `visibility='shared'` filtering correctly excludes `private`/`team`. No cross-tenant leak vector; the actionable item was governance-record protection (#2).
 
+## 6c. WS-3 UI completion — Knowledge browser + always-on toggle + install (2026-07-06)
+
+Closes the WS-3 shortfall flagged in review (skill install + always-on toggle were API-only, no UI). Branch `feat/knowledge-browser-always-on`:
+
+- **Category sub-tabs** on the Knowledge tab (All · Best Practices · Lessons · Trade · Playbooks · Skills) for browsing each record type.
+- **"Always On" toggle column** — flips `metadata.always_inject` per record via a new dedicated field on the admin knowledge PATCH (`always_inject: bool`, merged into JSONB without replacing the blob). Pinned records show a pin icon. **The system-governed management skill's toggle is disabled** (can't be un-pinned from the UI — it's `source_pathway='system'`). This is the mechanism for **transient/time-bound knowledge**: create a "limited-time offer" or "office-closed" record, flip Always On, flip it off when done.
+- **Install dialog** (Skills/Playbooks sub-tabs) — paste a SKILL.md doc → `POST /skills/import` (dedup-merge, imported as draft).
+- **Archive / Restore** actions — soft-archives via `status='retired'` instead of only hard delete; archived records show with a Restore action.
+- **Backend**: `KnowledgeUpdate.always_inject` field + PATCH handler that merges the single key into existing metadata. Also fixed a **latent `source_Intelligence_ids` attribute-name bug** in the admin `create_knowledge` (capital-I field on `KnowledgeCreate`) that would have thrown on manual knowledge creation.
+
 ## 7. Known follow-ups (small, additive — not blocking)
 
 - **System Monitor UI panel** for `/pipeline-runs` (data + endpoint exist from Sprint 2; no UI yet).

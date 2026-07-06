@@ -351,7 +351,7 @@ async def create_knowledge(body: KnowledgeCreate, admin: dict = Depends(require_
                 visibility, tags, category, metadata, status, created_at, updated_at
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
-            knowledge_id, body.source_intelligence_ids or [],
+            knowledge_id, body.source_Intelligence_ids or [],
             body.signals or [], body.name, body.content, body.summary,
             body.visibility, body.tags or [],
             body.category or "trade_knowledge",
@@ -392,6 +392,12 @@ async def update_knowledge(
         fields.append("metadata = %s"); values.append(json.dumps(body.metadata))
     if body.status is not None:
         fields.append("status = %s"); values.append(body.status)
+    # always_inject: merge the single key into existing metadata (jsonb) rather
+    # than requiring the caller to send the whole blob. Skipped if metadata was
+    # already replaced above (that payload is authoritative).
+    if body.always_inject is not None and body.metadata is None:
+        fields.append("metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('always_inject', %s::boolean)")
+        values.append(bool(body.always_inject))
 
     if not fields:
         raise HTTPException(status_code=400, detail="No fields to update")

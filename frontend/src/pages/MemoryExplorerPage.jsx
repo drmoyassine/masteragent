@@ -20,6 +20,7 @@ import {
   createKnowledgeAdmin,
   updateKnowledgeAdmin,
   deleteKnowledgeAdmin,
+  importSkillMd,
   bulkDeleteInteractionsAdmin,
   bulkReprocessInteractionsAdmin,
   getInteractionFilterOptionsAdmin,
@@ -56,7 +57,7 @@ import InteractionInspector from "@/components/memory/InteractionInspector";
 import MemoryInspector from "@/components/memory/MemoryInspector";
 import IntelligenceInspector from "@/components/memory/IntelligenceInspector";
 import KnowledgeInspector from "@/components/memory/KnowledgeInspector";
-import { NewKnowledgeDialog } from "@/components/memory/KnowledgeDialogs";
+import { NewKnowledgeDialog, ImportSkillDialog } from "@/components/memory/KnowledgeDialogs";
 import FilterBar from "@/components/memory/FilterBar";
 
 export default function MemoryExplorerPage() {
@@ -171,6 +172,7 @@ export default function MemoryExplorerPage() {
       { key: "category", label: "Category" },
       { key: "name", label: "Name" },
       { key: "content", label: "Content" },
+      { key: "always_inject", label: "Always On" },
       { key: "quality_score", label: "Quality" },
       { key: "merge_count", label: "Merges" },
       { key: "source_pathway", label: "Source" },
@@ -435,6 +437,46 @@ export default function MemoryExplorerPage() {
       loadKnowledge();
     } catch (error) {
       toast.error("Failed to delete knowledge");
+    }
+  };
+
+  const handleArchiveKnowledge = async (knowledgeId, retire = true) => {
+    try {
+      await updateKnowledgeAdmin(knowledgeId, { status: retire ? "retired" : "active" });
+      toast.success(retire ? "Archived" : "Restored");
+      loadKnowledge();
+    } catch (error) {
+      toast.error("Failed to update status");
+    }
+  };
+
+  const handleToggleAlwaysInject = async (k) => {
+    const next = !(k.metadata && k.metadata.always_inject);
+    try {
+      await updateKnowledgeAdmin(k.id, { always_inject: next });
+      toast.success(next ? "Pinned as always-on" : "Always-on removed");
+      loadKnowledge();
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || "Failed to toggle always-on");
+    }
+  };
+
+  const [showImportDialog, setShowImportDialog] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importCategory, setImportCategory] = useState("skill");
+  const [importing, setImporting] = useState(false);
+  const handleImportSkill = async () => {
+    if (!importText.trim()) { toast.error("Paste a SKILL.md document first"); return; }
+    setImporting(true);
+    try {
+      const res = await importSkillMd({ skill_md: importText, category: importCategory, status: "draft" });
+      toast.success(res.data?.status === "merged" ? "Merged into an existing record" : "Skill imported");
+      setShowImportDialog(false); setImportText("");
+      loadKnowledge();
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || "Import failed");
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -767,12 +809,23 @@ export default function MemoryExplorerPage() {
             tagSearch={tagSearch}
             setTagSearch={setTagSearch}
             onShowNewDialog={() => setShowNewKnowledgeDialog(true)}
+            onShowImportDialog={() => setShowImportDialog(true)}
+            onArchive={handleArchiveKnowledge}
+            onToggleAlwaysInject={handleToggleAlwaysInject}
             loading={loading}
             visCols={visCols}
             renderColumnToggle={renderColumnToggle}
           />
         </TabsContent>
       </Tabs>
+
+      <ImportSkillDialog
+        open={showImportDialog}
+        onOpenChange={setShowImportDialog}
+        importText={importText} setImportText={setImportText}
+        importCategory={importCategory} setImportCategory={setImportCategory}
+        importing={importing} onImport={handleImportSkill}
+      />
 
       {/* Inspector Dialogs */}
       <InteractionInspector

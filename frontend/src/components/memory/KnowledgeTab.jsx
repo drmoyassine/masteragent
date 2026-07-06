@@ -6,7 +6,17 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Trash2, Check, Edit, Plus, Search } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Trash2, Check, Edit, Plus, Search, Download, Archive, ArchiveRestore, Pin } from "lucide-react";
+
+const SUBTABS = [
+  { value: "all", label: "All" },
+  { value: "best_practices", label: "Best Practices" },
+  { value: "lessons_learned", label: "Lessons" },
+  { value: "trade_knowledge", label: "Trade" },
+  { value: "playbook", label: "Playbooks" },
+  { value: "skill", label: "Skills" },
+];
 
 const CATEGORY_COLORS = {
   best_practices: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-300",
@@ -31,62 +41,76 @@ export default function KnowledgeTab({
   knowledgeStatusFilter, setKnowledgeStatusFilter,
   categoryFilter = "all", setCategoryFilter,
   tagSearch = "", setTagSearch,
-  onShowNewDialog,
+  onShowNewDialog, onShowImportDialog, onArchive, onToggleAlwaysInject,
   loading, visCols, renderColumnToggle,
 }) {
+  const showInstall = categoryFilter === "skill" || categoryFilter === "playbook";
   return (
     <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
-        <div>
-          <CardTitle>Knowledge (Tier 4)</CardTitle>
-          <CardDescription>Global system-wide rules extracted from intelligence</CardDescription>
-        </div>
-        <div className="flex items-center gap-2">
-          {selectedIds.length > 0 && (
-            <div className="flex gap-2 bg-accent px-4 py-1.5 rounded-md items-center border shadow-sm animate-in fade-in zoom-in-95 duration-200">
-              <span className="text-sm font-medium mr-2">{selectedIds.length} selected</span>
-              <Button variant="destructive" size="sm" onClick={onBulkDelete}>
-                <Trash2 className="w-4 h-4 mr-2" />
-                Delete
-              </Button>
-            </div>
-          )}
-          <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-            <SelectTrigger className="w-[160px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {CATEGORY_OPTIONS.map(opt => (
-                <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <div className="relative">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-            <Input
-              placeholder="Search tags..."
-              value={tagSearch}
-              onChange={(e) => setTagSearch(e.target.value)}
-              className="w-[140px] pl-8 h-9"
-            />
+      <CardHeader className="space-y-3">
+        <div className="flex flex-row items-center justify-between">
+          <div>
+            <CardTitle>Knowledge Base</CardTitle>
+            <CardDescription>Global experiential knowledge, playbooks & skills. Toggle "Always On" to pin a record into every agent's context (e.g. limited-time offers, announcements).</CardDescription>
           </div>
-          <Select value={knowledgeStatusFilter} onValueChange={setKnowledgeStatusFilter}>
-            <SelectTrigger className="w-32">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Status</SelectItem>
-              <SelectItem value="draft">Drafts</SelectItem>
-              <SelectItem value="active">Active</SelectItem>
-              <SelectItem value="retired">Retired</SelectItem>
-              <SelectItem value="approved">Approved</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button onClick={onShowNewDialog}>
-            <Plus className="w-4 h-4 mr-2" />
-            New Knowledge
-          </Button>
-          {renderColumnToggle("knowledge")}
+          <div className="flex items-center gap-2">
+            {selectedIds.length > 0 && (
+              <div className="flex gap-2 bg-accent px-4 py-1.5 rounded-md items-center border shadow-sm animate-in fade-in zoom-in-95 duration-200">
+                <span className="text-sm font-medium mr-2">{selectedIds.length} selected</span>
+                <Button variant="destructive" size="sm" onClick={onBulkDelete}>
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Delete
+                </Button>
+              </div>
+            )}
+            <div className="relative">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+              <Input
+                placeholder="Search tags..."
+                value={tagSearch}
+                onChange={(e) => setTagSearch(e.target.value)}
+                className="w-[140px] pl-8 h-9"
+              />
+            </div>
+            <Select value={knowledgeStatusFilter} onValueChange={setKnowledgeStatusFilter}>
+              <SelectTrigger className="w-32">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Status</SelectItem>
+                <SelectItem value="draft">Drafts</SelectItem>
+                <SelectItem value="active">Active</SelectItem>
+                <SelectItem value="retired">Archived</SelectItem>
+              </SelectContent>
+            </Select>
+            {showInstall && (
+              <Button variant="outline" onClick={onShowImportDialog}>
+                <Download className="w-4 h-4 mr-2" />
+                Install
+              </Button>
+            )}
+            <Button onClick={onShowNewDialog}>
+              <Plus className="w-4 h-4 mr-2" />
+              New
+            </Button>
+            {renderColumnToggle("knowledge")}
+          </div>
+        </div>
+        {/* Category sub-tabs */}
+        <div className="flex items-center gap-1 border-b -mb-2">
+          {SUBTABS.map(t => (
+            <button
+              key={t.value}
+              onClick={() => setCategoryFilter(t.value)}
+              className={`px-3 py-1.5 text-sm font-medium border-b-2 transition-colors ${
+                categoryFilter === t.value
+                  ? "border-primary text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
         </div>
       </CardHeader>
       <CardContent>
@@ -124,6 +148,16 @@ export default function KnowledgeTab({
                             }
                             case "name": return <TableCell key={col.key} className="font-medium">{k.name}</TableCell>;
                             case "content": return <TableCell key={col.key} className="max-w-[250px] truncate">{k.content}</TableCell>;
+                            case "always_inject": {
+                              const on = !!(k.metadata && k.metadata.always_inject);
+                              const isSystem = k.source_pathway === "system";
+                              return (<TableCell key={col.key} onClick={(e) => e.stopPropagation()}>
+                                <div className="flex items-center gap-1.5">
+                                  <Switch checked={on} disabled={isSystem} onCheckedChange={() => onToggleAlwaysInject && onToggleAlwaysInject(k)} />
+                                  {on && <Pin className="w-3 h-3 text-primary" />}
+                                </div>
+                              </TableCell>);
+                            }
                             case "quality_score": {
                               const qs = k.quality_score;
                               const color = qs == null ? "text-muted-foreground" : qs >= 0.7 ? "text-green-600" : qs >= 0.4 ? "text-amber-600" : "text-red-600";
@@ -132,7 +166,17 @@ export default function KnowledgeTab({
                             case "merge_count": return <TableCell key={col.key} className="text-center">{k.merge_count || 0}</TableCell>;
                             case "source_pathway": return (<TableCell key={col.key}><Badge variant="outline" className="text-xs">{k.source_pathway || "—"}</Badge></TableCell>);
                             case "status": return (<TableCell key={col.key}><Badge variant={k.status === "active" || k.visibility === "approved" ? "default" : "secondary"}>{k.status || k.visibility}</Badge></TableCell>);
-                            case "actions": return (<TableCell key={col.key} onClick={(e) => e.stopPropagation()}><div className="flex gap-1">{(k.status === "draft" || k.visibility === "draft") && (<Button variant="ghost" size="icon" onClick={() => onApprove(k.id)}><Check className="w-4 h-4 text-green-500" /></Button>)}<Button variant="ghost" size="icon" onClick={() => onEdit(k)}><Edit className="w-4 h-4" /></Button><Button variant="ghost" size="icon" onClick={() => onDelete(k.id)}><Trash2 className="w-4 h-4 text-destructive" /></Button></div></TableCell>);
+                            case "actions": {
+                              const isRetired = k.status === "retired";
+                              return (<TableCell key={col.key} onClick={(e) => e.stopPropagation()}><div className="flex gap-1">
+                                {(k.status === "draft" || k.visibility === "draft") && (<Button variant="ghost" size="icon" title="Activate" onClick={() => onApprove(k.id)}><Check className="w-4 h-4 text-green-500" /></Button>)}
+                                <Button variant="ghost" size="icon" title="Edit" onClick={() => onEdit(k)}><Edit className="w-4 h-4" /></Button>
+                                {onArchive && (isRetired
+                                  ? <Button variant="ghost" size="icon" title="Restore" onClick={() => onArchive(k.id, false)}><ArchiveRestore className="w-4 h-4 text-amber-500" /></Button>
+                                  : <Button variant="ghost" size="icon" title="Archive" onClick={() => onArchive(k.id, true)}><Archive className="w-4 h-4 text-muted-foreground" /></Button>)}
+                                <Button variant="ghost" size="icon" title="Delete" onClick={() => onDelete(k.id)}><Trash2 className="w-4 h-4 text-destructive" /></Button>
+                              </div></TableCell>);
+                            }
                             default: return <TableCell key={col.key}>-</TableCell>;
                           }
                         })}
