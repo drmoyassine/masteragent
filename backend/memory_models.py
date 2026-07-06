@@ -224,6 +224,11 @@ class MemorySettingsUpdate(BaseModel):
     context_knowledge_count: Optional[int] = 30
     context_knowledge_min_similarity: Optional[float] = 0.0
     knowledge_refine_on_merge: Optional[bool] = True
+    # Sprint 2.5 — governed facets + lean index injection
+    context_knowledge_mode: Optional[str] = "full"        # full | index
+    facet_extraction_enabled: Optional[bool] = True
+    knowledge_facets_schema: Optional[List[Dict[str, Any]]] = None
+    profile_facet_map: Optional[Dict[str, Any]] = None
 
 class MemorySettingsResponse(BaseModel):
     chunk_size: int = 400
@@ -496,6 +501,8 @@ class SearchRequest(BaseModel):
     # Knowledge-layer filters (ignored by other layers)
     knowledge_category: Optional[str] = None   # skill | playbook | best_practices | lessons_learned | trade_knowledge
     knowledge_signal: Optional[str] = None      # single signal name to require
+    knowledge_facets: Optional[Dict[str, Any]] = None  # governed metadata.facets hard/soft filter
+    strict: Optional[bool] = False                     # True = hard facet filter; False (default) = ignore facets
 
 class SearchResult(BaseModel):
     id: str

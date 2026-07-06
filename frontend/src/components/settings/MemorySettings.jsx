@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import api, { triggerMemoryGeneration, triggerIntelligenceCheck, triggerKnowledgeCheck, triggerPlaybookExtraction, triggerConsolidation, exportKnowledgePack, fetchProviderModels } from "@/lib/api";
+import api, { triggerMemoryGeneration, triggerIntelligenceCheck, triggerKnowledgeCheck, triggerPlaybookExtraction, triggerConsolidation, exportKnowledgePack, triggerBackfillFacets, fetchProviderModels } from "@/lib/api";
 import { useEffect } from "react";
 
 // â”€â”€â”€ Threshold Overrides Table â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -943,7 +943,26 @@ function IntelligenceTab({ settings, onUpdateSettings, llmConfigs, llmProviders,
 // â”€â”€â”€ Knowledge Tab â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, onDeleteConfig, onAddConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline, entityTypes }) {
     const publicPipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "knowledge").sort((a,b) => a.execution_order - b.execution_order);
-    const [triggering, setTriggering] = useState(null); // 'check' | 'drain' | 'playbooks' | 'consolidation'
+    const [triggering, setTriggering] = useState(null); // 'check' | 'drain' | 'playbooks' | 'consolidation' | 'facets' | 'export'
+    const [facetsSchemaText, setFacetsSchemaText] = useState("[]");
+    const [profileMapText, setProfileMapText] = useState("{}");
+
+    // Sync JSON editors from settings whenever settings load/change externally
+    useEffect(() => {
+        try { setFacetsSchemaText(JSON.stringify(settings.knowledge_facets_schema || [], null, 2)); } catch { /* keep */ }
+        try { setProfileMapText(JSON.stringify(settings.profile_facet_map || {}, null, 2)); } catch { /* keep */ }
+    }, [settings.knowledge_facets_schema, settings.profile_facet_map]);
+
+    const commitJsonField = (field, text) => {
+        try {
+            const parsed = JSON.parse(text);
+            onUpdateSettings(field, parsed);
+            return true;
+        } catch {
+            toast.error(`Invalid JSON in ${field}`);
+            return false;
+        }
+    };
 
     const runTrigger = async (kind, fn, successMsg) => {
         setTriggering(kind);
@@ -1010,6 +1029,13 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                         disabled={!!triggering}>
                         <FileText className="w-3.5 h-3.5" />
                         Export Pack
+                    </Button>
+                    <Button size="sm" variant="outline" className="gap-1.5"
+                        title="Extract governed metadata.facets on existing knowledge records that lack them"
+                        onClick={() => runTrigger('facets', triggerBackfillFacets, "Facet backfill queued")}
+                        disabled={!!triggering}>
+                        <Sparkles className="w-3.5 h-3.5" />
+                        Backfill Facets
                     </Button>
                 </div>
             </div>
@@ -1128,6 +1154,81 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                             checked={settings.knowledge_refine_on_merge !== undefined ? settings.knowledge_refine_on_merge : true}
                             onCheckedChange={(v) => onUpdateSettings("knowledge_refine_on_merge", v)}
                         />
+                    </div>
+
+                    {/* Sprint 2.5 — governed facets + lean index injection */}
+                    <div className="grid grid-cols-2 gap-4 border-t pt-4">
+                        <div className="space-y-2">
+                            <Label className="text-xs font-mono">Context Injection Mode</Label>
+                            <select
+                                className="w-full h-9 rounded-md border border-input bg-background px-2 text-sm"
+                                value={settings.context_knowledge_mode || "full"}
+                                onChange={(e) => onUpdateSettings("context_knowledge_mode", e.target.value)}
+                            >
+                                <option value="full">full — inject complete records (prior behavior)</option>
+                                <option value="index">index — lean index, pull full on demand</option>
+                            </select>
+                            <p className="text-[10px] text-muted-foreground">
+                                In <code>index</code> mode each item shows id/name/category/signals/summary/facets only —
+                                the agent retrieves full content via GET /knowledge/&#123;id&#125; when it decides an entry is relevant.
+                                The always-on Knowledge Management skill is injected in full regardless of mode.
+                            </p>
+                        </div>
+                        <div className="flex items-center justify-between">
+                            <div className="space-y-0.5 pr-4">
+                                <Label className="text-xs font-mono">Facet Extraction</Label>
+                                <p className="text-[10px] text-muted-foreground">
+                                    Extract governed metadata.facets on knowledge creation (one extra LLM call, additive only —
+                                    never alters generated content). Disable to skip the call entirely.
+                                </p>
+                            </div>
+                            <Switch
+                                checked={settings.facet_extraction_enabled !== undefined ? settings.facet_extraction_enabled : true}
+                                onCheckedChange={(v) => onUpdateSettings("facet_extraction_enabled", v)}
+                            />
+                        </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4 border-t pt-4">
+                        <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                                <Label className="text-xs font-mono">Knowledge Facets Schema</Label>
+                                <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px]"
+                                    onClick={() => commitJsonField("knowledge_facets_schema", facetsSchemaText)}>
+                                    Save
+                                </Button>
+                            </div>
+                            <textarea
+                                className="w-full h-40 rounded-md border border-input bg-background p-2 text-[11px] font-mono"
+                                value={facetsSchemaText}
+                                onChange={(e) => setFacetsSchemaText(e.target.value)}
+                                onBlur={() => commitJsonField("knowledge_facets_schema", facetsSchemaText)}
+                                spellCheck={false}
+                            />
+                            <p className="text-[10px] text-muted-foreground">
+                                Governed facet keys agents may filter on. JSON array of &#123;key, label, description, examples?&#125;.
+                                Values are normalized at extraction; vocabulary is discoverable via GET /knowledge/facets.
+                            </p>
+                        </div>
+                        <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                                <Label className="text-xs font-mono">Profile → Facet Map</Label>
+                                <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px]"
+                                    onClick={() => commitJsonField("profile_facet_map", profileMapText)}>
+                                    Save
+                                </Button>
+                            </div>
+                            <textarea
+                                className="w-full h-40 rounded-md border border-input bg-background p-2 text-[11px] font-mono"
+                                value={profileMapText}
+                                onChange={(e) => setProfileMapText(e.target.value)}
+                                onBlur={() => commitJsonField("profile_facet_map", profileMapText)}
+                                spellCheck={false}
+                            />
+                            <p className="text-[10px] text-muted-foreground">
+                                Maps facet_key → entity_profiles property name, so get-context auto-derives facets from the
+                                contact's CRM profile when no explicit facets are passed. Leave empty to disable derivation.
+                            </p>
+                        </div>
                     </div>
                 </CardContent>
             </Card>

@@ -214,6 +214,10 @@ async def generate_knowledge_from_intelligence(intelligence: list) -> int:
     except Exception as e:
         logger.warning(f"Knowledge embedding failed: {e}")
 
+    # WS-4: extract governed facets into metadata.facets (best-effort, never blocks)
+    from memory_facets import enrich_metadata_with_facets
+    metadata = await enrich_metadata_with_facets(None, name, content, summary)
+
     knowledge_id = str(uuid.uuid4())
     insert_knowledge(
         knowledge_id=knowledge_id,
@@ -225,6 +229,7 @@ async def generate_knowledge_from_intelligence(intelligence: list) -> int:
         summary=summary,
         embedding=embedding,
         tags=tags,
+        metadata=metadata,
     )
     logger.info(f"Generated Knowledge {knowledge_id} from {len(intelligence_ids)} intelligence")
     return 1

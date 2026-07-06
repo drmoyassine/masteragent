@@ -267,6 +267,8 @@ async def _process_cluster(
 
     # Insert playbook as knowledge record
     playbook_id = str(uuid.uuid4())
+    pb_name = playbook_data.get("name", "Unnamed Playbook")
+    pb_desc = playbook_data.get("description", "")
     metadata = {
         "entity_type": entity_type,
         "signal_type": playbook_data.get("signal_type"),
@@ -274,6 +276,9 @@ async def _process_cluster(
         "steps": playbook_data.get("steps", []),
         "skill_ids": [],
     }
+    # WS-4: extract governed facets (best-effort)
+    from memory_facets import enrich_metadata_with_facets
+    metadata = await enrich_metadata_with_facets(metadata, pb_name, pb_desc, pb_desc)
     insert_knowledge(
         knowledge_id=playbook_id,
         intelligence_ids=intel_ids,
@@ -377,16 +382,22 @@ async def _generate_skills_from_playbook(
         return
 
     auto_activate = config.get("skill_auto_activate", False)
+    from memory_facets import enrich_metadata_with_facets
     for skill_data in skills[:5]:
         skill_id = str(uuid.uuid4())
+        sk_name = skill_data.get("name", "Unnamed Skill")
+        sk_proc = skill_data.get("procedure", "")
+        sk_trigger = skill_data.get("trigger_desc", "")
         metadata = {
             "skill_type": skill_data.get("skill_type", "hard"),
-            "trigger_desc": skill_data.get("trigger_desc", ""),
-            "procedure": skill_data.get("procedure", ""),
+            "trigger_desc": sk_trigger,
+            "procedure": sk_proc,
             "entity_types": [entity_type],
             "playbook_ids": [playbook_id],
         }
-        embedding_text = f"{skill_data.get('name')}. {skill_data.get('trigger_desc', '')}"
+        # WS-4: extract governed facets (best-effort)
+        metadata = await enrich_metadata_with_facets(metadata, sk_name, sk_proc, sk_trigger)
+        embedding_text = f"{sk_name}. {sk_trigger}"
         embedding = None
         try:
             embedding = await generate_embedding(embedding_text)

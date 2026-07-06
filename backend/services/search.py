@@ -279,6 +279,8 @@ async def search_knowledge_by_vector(
     limit: int = 10,
     category: str = None,
     status: str = "active",
+    facets: Dict[str, Any] = None,
+    strict: bool = False,
 ) -> List[Dict[str, Any]]:
     if not query_vector: return []
     try:
@@ -296,9 +298,12 @@ async def search_knowledge_by_vector(
                 conditions.append("created_at >= %s"); params.append(since)
             if until:
                 conditions.append("created_at <= %s"); params.append(until)
-
-            # Note: knowledge implicitly ignore entity_id per schema, but
-            # tags or metadata could eventually store entity_type natively if we wanted.
+            # WS-5: governed facet hard filter (only when strict). strict=false (default)
+            # ignores facets — the agent's "broaden" path.
+            if strict and facets:
+                import json as _json
+                conditions.append("metadata @> %s::jsonb")
+                params.append(_json.dumps({"facets": facets}))
 
             where = " AND ".join(conditions)
             decay_sql = f"(EXTRACT(EPOCH FROM (NOW() - created_at))/86400) * {DECAY_RATE}"
@@ -324,6 +329,8 @@ async def search_knowledge_by_fulltext(
     limit: int = 10,
     category: str = None,
     status: str = "active",
+    facets: Dict[str, Any] = None,
+    strict: bool = False,
 ) -> List[Dict[str, Any]]:
     if not query: return []
     try:
@@ -340,6 +347,10 @@ async def search_knowledge_by_fulltext(
                 conditions.append("created_at >= %s"); params.append(since)
             if until:
                 conditions.append("created_at <= %s"); params.append(until)
+            if strict and facets:
+                import json as _json
+                conditions.append("metadata @> %s::jsonb")
+                params.append(_json.dumps({"facets": facets}))
 
             conditions.append("to_tsvector('simple', coalesce(name, '') || ' ' || coalesce(summary, '') || ' ' || coalesce(content, '')) @@ websearch_to_tsquery('simple', %s)")
             params.append(query)

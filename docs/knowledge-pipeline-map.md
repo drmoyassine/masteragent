@@ -118,6 +118,9 @@ At get-context time, match the conversation vector against **playbook embeddings
 | 9 | Orphan sweeper idempotency (duplicate-webhook root cause) | S | Sprint 3 (chip pending) |
 | 10 | Layer-3 proactive playbook push | M | Sprint 3 |
 
+### Sprint 2.5 — Knowledge pre-context retrieval (planned, ready to build)
+Full implementation spec: **[knowledge-precontext-retrieval-plan.md](knowledge-precontext-retrieval-plan.md)**. Closes the get-context bloat + no-filtering gap. Five workstreams: WS-1 lean index mode, WS-2 on-demand `GET /knowledge/{id}` + `GET /knowledge/facets`, WS-3 pinned always-on UI-editable knowledge-management skill (epistemic contract + fallback ladder), WS-4 facet codification into `metadata.facets` via a separate `facet_extraction` step (generation prompts untouched) + backfill, WS-5 hard facet filter on all knowledge/playbooks/skills with semantic broaden. Governed filtering = `metadata.facets` only (controlled keys, normalized values, discoverable vocabulary); `tags` off the agent surface. Slots ahead of Sprint 3 (WS-2/WS-3 are what the n8n last-mile consumes).
+
 ### Sprint 2 follow-ups (small, deferred)
 - System Monitor UI panel for `/pipeline-runs` (endpoint + data exist; render a table with reason-code badges).
 - Skill/playbook import dialog + per-record export button in the Knowledge tab (endpoints exist; `importSkillMd`/`exportKnowledgeMarkdown` API clients wired).

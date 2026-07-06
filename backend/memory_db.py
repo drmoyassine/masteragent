@@ -572,6 +572,11 @@ def _run_migrations(cursor):
         # LLM-merge the new evidence into it (update-in-place) instead of only
         # bumping merge_count. Falls back to increment on any failure.
         ("knowledge_refine_on_merge", "BOOLEAN DEFAULT TRUE"),
+        # Sprint 2.5 — governed knowledge facets + lean context injection
+        ("context_knowledge_mode", "TEXT DEFAULT 'full'"),       # full | index
+        ("facet_extraction_enabled", "BOOLEAN DEFAULT TRUE"),
+        ("knowledge_facets_schema", "JSONB DEFAULT NULL"),        # global governed facet schema
+        ("profile_facet_map", "JSONB DEFAULT NULL"),              # facet_key -> entity_profiles property key
     ]:
         cursor.execute(f"ALTER TABLE memory_settings ADD COLUMN IF NOT EXISTS {col} {col_def}")
 
@@ -766,6 +771,8 @@ def _run_migrations(cursor):
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_category ON knowledge (category)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_status ON knowledge (status)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_signals ON knowledge USING GIN (signals)")
+        # GIN for JSONB containment filtering on metadata.facets (hard facet filter)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_metadata_gin ON knowledge USING GIN (metadata jsonb_path_ops)")
     except Exception as e:
         logger.error(f"Failed to create knowledge indexes: {e}")
 
@@ -1218,6 +1225,14 @@ def _seed_defaults():
                 WHERE entity_type = %s
                   AND knowledge_signals_prompt IS NULL
             """, (json.dumps(signals), entity_type))
+
+        # Sprint 2.5 — seed global facets schema + always-on Knowledge Management skill
+        try:
+            from memory_facets import seed_default_facets_schema, seed_management_skill
+            seed_default_facets_schema()
+            seed_management_skill()
+        except Exception as e:
+            logger.warning(f"Sprint 2.5 seeding skipped: {e}")
 
         logger.info("Memory system defaults seeded")
 
