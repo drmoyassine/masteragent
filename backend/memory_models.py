@@ -220,6 +220,10 @@ class MemorySettingsUpdate(BaseModel):
     memory_generation_max_tokens: Optional[int] = 1200
     intelligence_max_tokens: Optional[int] = 1200
     knowledge_max_tokens: Optional[int] = 1200
+    # Knowledge context injection (retrieval) + refine-on-merge
+    context_knowledge_count: Optional[int] = 30
+    context_knowledge_min_similarity: Optional[float] = 0.0
+    knowledge_refine_on_merge: Optional[bool] = True
 
 class MemorySettingsResponse(BaseModel):
     chunk_size: int = 400
@@ -489,6 +493,9 @@ class SearchRequest(BaseModel):
     end_date: Optional[str] = None
     limit: int = 20
     offset: int = 0
+    # Knowledge-layer filters (ignored by other layers)
+    knowledge_category: Optional[str] = None   # skill | playbook | best_practices | lessons_learned | trade_knowledge
+    knowledge_signal: Optional[str] = None      # single signal name to require
 
 class SearchResult(BaseModel):
     id: str

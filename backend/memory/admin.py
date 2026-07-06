@@ -611,6 +611,31 @@ async def trigger_consolidation(admin: dict = Depends(require_admin_auth)):
     return {"message": "Consolidation queued"}
 
 
+@router.get("/pipeline-runs")
+async def list_pipeline_runs(
+    job: Optional[str] = Query(None, description="Filter by job name"),
+    outcome: Optional[str] = Query(None, description="created | skipped | failed"),
+    limit: int = Query(50, le=500),
+    admin: dict = Depends(require_admin_auth),
+):
+    """Read the pipeline-run observability log (most recent first). Turns
+    'why is nothing being produced?' into a queryable record."""
+    conditions, params = [], []
+    if job:
+        conditions.append("job = %s"); params.append(job)
+    if outcome:
+        conditions.append("outcome = %s"); params.append(outcome)
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            SELECT id, job, outcome, reason_code, records_created, detail, trigger, created_at
+            FROM memory_pipeline_runs {where}
+            ORDER BY created_at DESC LIMIT %s
+        """, params + [limit])
+        return [dict(r) for r in cursor.fetchall()]
+
+
 @router.post("/trigger/backfill-profiles")
 async def trigger_backfill_profiles(admin: dict = Depends(require_admin_auth)):
     """Backfill entity profiles from existing initial_memory_context interactions.
@@ -1537,50 +1562,87 @@ async def submit_knowledge_feedback(
 # Agent-Skills Standard (SKILL.md) Export / Import
 # ============================================
 
+_KNOWLEDGE_EXPORT_COLS = "name, category, content, summary, metadata, signals, tags, quality_score, version"
+
+
 @router.get("/knowledge/{knowledge_id}/skill.md")
 async def export_skill_md(knowledge_id: str, auth: dict = Depends(require_admin_or_agent)):
-    """Export a skill/playbook record as an agent-skills-standard SKILL.md document.
+    """Export a single knowledge record as a standalone markdown document.
 
-    Content for these categories is stored in SKILL.md format; legacy records
-    (created before the standard was adopted) are rendered on the fly."""
+    skill/playbook render as agent-skills-standard SKILL.md (stored verbatim, or
+    rendered on the fly for legacy records); declarative categories render as a
+    memory-file-style document. All fields are relational so rendering is lossless."""
     from fastapi.responses import PlainTextResponse
-    from memory_skill_md import SKILL_MD_CATEGORIES, is_skill_md, render_skill_md, slugify
+    from memory_skill_md import render_any_knowledge_md, slugify, SKILL_MD_CATEGORIES
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT name, category, content, summary, metadata, signals, tags, version
-            FROM knowledge WHERE id = %s
-        """, (knowledge_id,))
+        cursor.execute(f"SELECT {_KNOWLEDGE_EXPORT_COLS} FROM knowledge WHERE id = %s", (knowledge_id,))
         row = cursor.fetchone()
 
     if not row:
         raise HTTPException(status_code=404, detail="Knowledge not found")
     row = dict(row)
-    if row["category"] not in SKILL_MD_CATEGORIES:
-        raise HTTPException(status_code=400, detail=f"Category '{row['category']}' has no SKILL.md representation (skill/playbook only)")
-
-    content = row["content"] or ""
-    if not is_skill_md(content):
-        metadata = row.get("metadata") or {}
-        if isinstance(metadata, str):
-            metadata = json.loads(metadata)
-        content = render_skill_md(
-            name=row["name"],
-            category=row["category"],
-            description=row.get("summary") or content,
-            body=content,
-            metadata=metadata,
-            signals=row.get("signals") or [],
-            tags=row.get("tags") or [],
-            version=row.get("version") or 1,
-        )
-
-    filename = f"{slugify(row['name'])}-SKILL.md"
+    content = render_any_knowledge_md(row)
+    suffix = "SKILL" if row.get("category") in SKILL_MD_CATEGORIES else "KNOWLEDGE"
+    filename = f"{slugify(row['name'])}-{suffix}.md"
     return PlainTextResponse(
         content,
         media_type="text/markdown",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/knowledge-pack")
+async def export_knowledge_pack(
+    category: Optional[str] = Query(None, description="Filter to one category; omit for all"),
+    status: str = Query("active", description="active | draft | retired | all"),
+    auth: dict = Depends(require_admin_or_agent),
+):
+    """Export the knowledge base as a memory-file 'knowledge pack' zip:
+    an INDEX.md (one line per record) plus one markdown file per record.
+    Drops directly into a Claude Code memory directory, an AGENTS.md-style docs
+    folder, or a git repo. skill/playbook files are SKILL.md-standard."""
+    import io
+    import zipfile
+    from fastapi.responses import StreamingResponse
+    from memory_skill_md import render_any_knowledge_md, slugify, SKILL_MD_CATEGORIES
+
+    conditions, params = ["visibility = 'shared'"], []
+    if status and status != "all":
+        conditions.append("status = %s"); params.append(status)
+    if category:
+        conditions.append("category = %s"); params.append(category)
+    where = " AND ".join(conditions)
+
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"SELECT id, {_KNOWLEDGE_EXPORT_COLS} FROM knowledge WHERE {where} ORDER BY category, quality_score DESC NULLS LAST, created_at DESC",
+            params,
+        )
+        rows = [dict(r) for r in cursor.fetchall()]
+
+    buf = io.BytesIO()
+    index_lines = ["# Knowledge Pack", "", f"Exported {len(rows)} record(s) from MasterAgent.", ""]
+    seen_names: dict = {}
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for row in rows:
+            cat = row.get("category") or "trade_knowledge"
+            base = slugify(row.get("name") or "unnamed")
+            # De-collide filenames within the pack
+            seen_names[base] = seen_names.get(base, 0) + 1
+            fname = f"{cat}/{base}.md" if seen_names[base] == 1 else f"{cat}/{base}-{seen_names[base]}.md"
+            zf.writestr(fname, render_any_knowledge_md(row))
+            hook = (row.get("summary") or "").strip().replace("\n", " ")[:120]
+            index_lines.append(f"- [{row.get('name')}]({fname}) — {hook}")
+        zf.writestr("INDEX.md", "\n".join(index_lines) + "\n")
+
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="knowledge-pack.zip"'},
     )
 
 
@@ -1600,7 +1662,7 @@ async def import_skill_md(body: SkillImportBody, admin: dict = Depends(require_a
     Dedup: merges into an existing similar record instead of duplicating."""
     from memory_skill_md import SKILL_MD_CATEGORIES, parse_skill_md
     from memory_services import generate_embedding, get_memory_settings
-    from memory_dedup import find_similar_existing, increment_merge
+    from memory_dedup import find_similar_existing, refine_or_increment_merge
     from memory_db_writes import insert_knowledge
 
     if body.category not in SKILL_MD_CATEGORIES:
@@ -1620,7 +1682,10 @@ async def import_skill_md(body: SkillImportBody, admin: dict = Depends(require_a
         threshold = (get_memory_settings() or {}).get("dedup_similarity_threshold", 0.85)
         existing = await find_similar_existing(embedding, threshold, category=body.category)
         if existing:
-            increment_merge(existing)
+            await refine_or_increment_merge(
+                existing, new_name=parsed["name"],
+                new_content=parsed["body"], new_summary=parsed["description"],
+            )
             return {"status": "merged", "id": existing, "category": body.category}
 
     knowledge_id = str(uuid.uuid4())

@@ -111,6 +111,96 @@ def render_skill_md(
     return "\n".join(lines).rstrip() + "\n"
 
 
+def render_knowledge_md(
+    *,
+    name: str,
+    category: str,
+    description: str,
+    content: str,
+    signals: Optional[list] = None,
+    tags: Optional[list] = None,
+    quality_score: Optional[float] = None,
+    version: int = 1,
+) -> str:
+    """Render a declarative knowledge record (best_practices / lessons_learned /
+    trade_knowledge) as a memory-file-style markdown document.
+
+    Export-only: unlike skills/playbooks the source `content` is NOT stored in
+    this format (it feeds LLM prompts where frontmatter is noise). All fields are
+    relational, so this rendering is lossless. Follows the same frontmatter
+    discovery-header principle as the agent-skills standard: name + description
+    let a consumer decide relevance before loading the body.
+    """
+    description = (description or "").strip()[:1024] or f"Organizational {category}."
+    lines = [
+        "---",
+        f"name: {slugify(name)}",
+        f"description: {_yaml_escape(description)}",
+        "metadata:",
+        "  source: masteragent",
+        f"  category: {category}",
+        f"  version: {int(version or 1)}",
+    ]
+    if quality_score is not None:
+        lines.append(f"  quality_score: {round(float(quality_score), 3)}")
+    if signals:
+        lines.append(f"  signals: [{', '.join(_yaml_escape(s) for s in signals if s)}]")
+    if tags:
+        lines.append(f"  tags: [{', '.join(_yaml_escape(t) for t in tags if t)}]")
+    lines.append("---")
+    lines.append("")
+    lines.append(f"# {(name or 'Unnamed').strip()}")
+    lines.append("")
+    lines.append((content or "").strip())
+    lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_any_knowledge_md(row: dict) -> str:
+    """Render any knowledge row to markdown, dispatching by category.
+
+    skill/playbook → SKILL.md (verbatim if already frontmatter'd, else rendered);
+    declarative categories → memory-file markdown. `row` is a dict of the
+    knowledge columns.
+    """
+    import json as _json
+    category = row.get("category") or "trade_knowledge"
+    content = row.get("content") or ""
+    metadata = row.get("metadata") or {}
+    if isinstance(metadata, str):
+        try:
+            metadata = _json.loads(metadata)
+        except Exception:
+            metadata = {}
+    signals = row.get("signals") or []
+    tags = row.get("tags") or []
+    version = row.get("version") or 1
+
+    if category in SKILL_MD_CATEGORIES:
+        if is_skill_md(content):
+            return content
+        return render_skill_md(
+            name=row.get("name", ""),
+            category=category,
+            description=row.get("summary") or content,
+            body=content,
+            metadata=metadata,
+            signals=signals,
+            tags=tags,
+            version=version,
+        )
+    return render_knowledge_md(
+        name=row.get("name", ""),
+        category=category,
+        description=row.get("summary") or content,
+        content=content,
+        signals=signals,
+        tags=tags,
+        quality_score=row.get("quality_score"),
+        version=version,
+    )
+
+
 def parse_skill_md(text: str) -> dict:
     """Parse a SKILL.md document into {name, description, body, meta}.
 

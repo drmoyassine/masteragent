@@ -167,6 +167,30 @@ def update_knowledge_quality(knowledge_id: str, quality_score: float) -> None:
         """, (quality_score, now, knowledge_id))
 
 
+def log_pipeline_run(
+    job: str,
+    outcome: str,
+    *,
+    reason_code: Optional[str] = None,
+    records_created: int = 0,
+    detail: Optional[dict] = None,
+    trigger: str = "scheduled",
+) -> None:
+    """Record one pipeline run for observability. Best-effort — never raises, so
+    it can wrap generation code without risking the pipeline."""
+    import json as _json
+    import logging
+    try:
+        with get_memory_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO memory_pipeline_runs (job, outcome, reason_code, records_created, detail, trigger)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (job, outcome, reason_code, records_created, _json.dumps(detail or {}), trigger))
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"log_pipeline_run failed ({job}/{outcome}): {e}")
+
+
 def append_knowledge_feedback(knowledge_id: str, outcome: str, notes: Optional[str] = None) -> None:
     """Append a feedback entry and increment success/failure counter."""
     import json as _json

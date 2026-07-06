@@ -96,23 +96,38 @@ At get-context time, match the conversation vector against **playbook embeddings
 ## 7. Sprint Plan & Fix List
 
 **Sprint 1** ✅ (shipped 2026-07-05): items 2, 3, 4 + manual triggers/backfill
-**Sprint 2**: items 5, 5b, 6, 7 · **Sprint 3**: items 8, 9, 10
+**Sprint 2** ✅ (shipped 2026-07-05): items 5, 5b, 5c, 6, 7 · **Sprint 3**: items 8, 9, 10
+
+**Zero-regression guarantee (Sprint 2)**: no DB-backed generation prompt (memory/intelligence/knowledge `inline_system_prompt`) was changed — those are admin-owned and good. Item 5d (prompt "borrows") was deliberately NOT hardcoded; it remains an optional admin-side enhancement documented below. Every new LLM path (refine-on-merge) and retrieval change (relevance ranking) falls back to prior behavior on any failure.
 
 | # | Item | Size | Status |
 |---|---|---|---|
-| 1 | Feedback + knowledge admin API URL bugs (`/admin/knowledge/...` → `/knowledge/...`; escaped `${id}`; PUT→PATCH) in `frontend/src/lib/api.js` | XS | ✅ done |
-| 2 | `scrub_pii` made provider-aware: `zendata` → REST `/redact`; any LLM provider → prompt-based redaction via the config's model; unconfigured → passthrough. **Prod action**: reassign the PII Scrubbing node's provider account to a real LLM provider (redaction then actually works), or toggle the node off to stop the 404 spam | S | ✅ done (code); prod config action pending |
-| 3 | Playbook `fromisoformat` crash + `_refine_playbook` missing-category no-op | S | ✅ done |
-| 4 | `playbook_generation` + `skill_generation` config rows — seeded idempotently at startup for existing installs (inherit knowledge_generation's provider/model), visible as Knowledge Pipeline nodes, labels added to pipeline UI | XS | ✅ done |
-| 4b | Manual triggers + backfill: `POST /trigger/extract-playbooks`, `POST /trigger/run-consolidation`, `?drain=true` on knowledge check (loops batches until backlog exhausted, cap 50); UI buttons on Knowledge tab (Run Now / Drain Backlog / Extract Playbooks / Consolidate) | S | ✅ done |
-| 4c | Fixed latent ImportError in `/trigger/backfill-profiles` (`_sync_entity_profile` imported from wrong module) | XS | ✅ done |
-| 5 | Knowledge search: `status='active'` filter + category/signals params | S | Sprint 2 |
-| 5b | **Refine-on-merge**: when a new precursor dedup-matches an existing knowledge/skill/playbook (≥0.85), LLM-merge the new evidence into the existing record (`content` update + `version++`) instead of only bumping `merge_count` — closes the "same record should be updated, not just counted" gap | M | Sprint 2 |
-| 6 | Layer-1 relevance-ranked get-context injection (conversation vector + similarity floor + compact form + `context_knowledge_count` setting) | M | Sprint 2 |
-| 7 | `memory_pipeline_runs` observability table + admin endpoint + System Monitor section | M | Sprint 2 |
-| 8 | n8n last mile: verify counselor renders `knowledge` array; add knowledge-search as agent tool | S (workflow) | Sprint 3 |
+| 1 | Feedback + knowledge admin API URL bugs | XS | ✅ done |
+| 2 | Provider-aware `scrub_pii`. **Prod action pending**: reassign PII node to a real LLM provider or toggle it off | S | ✅ done (code) |
+| 3 | Playbook `fromisoformat` crash + `_refine_playbook` no-op | S | ✅ done |
+| 4 | `playbook_generation` + `skill_generation` config rows seeded | XS | ✅ done |
+| 4b | Manual triggers + backfill drain | S | ✅ done |
+| 4c | Latent ImportError in `/trigger/backfill-profiles` | XS | ✅ done |
+| 5 | Knowledge search `status='active'` filter + `knowledge_category`/`knowledge_signal` params on SearchRequest; applied to both semantic + fulltext knowledge search | S | ✅ done |
+| 5b | **Refine-on-merge** (`memory_dedup.refine_or_increment_merge`): on dedup match, conservative preservation-first LLM merge into the existing record (`content`/`summary` update + `version++`), re-rendered to SKILL.md for skill/playbook, re-embedded. Wired into skill decomposition, Hermes, and marketplace import. Gated by `knowledge_refine_on_merge` setting; **falls back to `increment_merge` on any failure** (zero regression). Playbook centroid pre-gen dedup stays as increment (consolidation refines it) | M | ✅ done |
+| 5c | Universal export: `render_knowledge_md` for declarative categories (render-on-export, memory-file style); `GET /knowledge/{id}/skill.md` generalized to all categories; **`GET /knowledge-pack`** zip bundle (`INDEX.md` + one file per record, category subfolders). UI Export Pack button | M | ✅ done |
+| 6 | Relevance-ranked get-context injection: CTE with pgvector `AVG(vector)` over the entity's recent interaction embeddings, blended 0.7 relevance / 0.3 quality; `context_knowledge_count` cap (default 30 = prior) + `context_knowledge_min_similarity` floor (default 0 = reorder-only, drop-nothing); **falls back to prior quality-ordered query on any error**. Settings inputs added | M | ✅ done |
+| 7 | `memory_pipeline_runs` table + `log_pipeline_run` best-effort helper + `GET /pipeline-runs` admin endpoint; knowledge_check instrumented (created/skipped + reason_code). System Monitor UI panel = follow-up | M | ✅ done (UI panel deferred) |
+| 5d | Prompt borrows (Why/How-to-apply, description discipline, absolute dates) — **NOT hardcoded** (zero-regression). Optional: admin may add to node prompts in the UI | — | optional / documented |
+| 8 | n8n last mile: verify counselor renders `knowledge` array; add knowledge-search as agent tool | S | Sprint 3 |
 | 9 | Orphan sweeper idempotency (duplicate-webhook root cause) | S | Sprint 3 (chip pending) |
-| 10 | Layer-3 proactive playbook push (trigger_conditions matching at serve time) | M | Sprint 3 |
+| 10 | Layer-3 proactive playbook push | M | Sprint 3 |
+
+### Sprint 2 follow-ups (small, deferred)
+- System Monitor UI panel for `/pipeline-runs` (endpoint + data exist; render a table with reason-code badges).
+- Skill/playbook import dialog + per-record export button in the Knowledge tab (endpoints exist; `importSkillMd`/`exportKnowledgeMarkdown` API clients wired).
+- Optional 5d prompt enhancements (admin-applied).
+
+### Optional 5d prompt enhancements (apply in UI, not hardcoded)
+For admins who want the memory-file disciplines, these can be pasted into the respective pipeline node prompts without code changes:
+- **Intelligence/Knowledge**: end the body with a `**Why:**` and `**How to apply:**` line.
+- **Summary/description**: "state what this is AND when it applies, self-contained, ≤1024 chars."
+- **Memory generation**: "convert relative dates (today, last week) to absolute dates."
 
 ## 8. Agent-Skills Standard (SKILL.md) — adopted 2026-07-05
 

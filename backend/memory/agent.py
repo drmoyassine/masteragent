@@ -26,6 +26,7 @@ from memory_models import (
 )
 from memory_services import (
     generate_embedding,
+    get_memory_settings,
     parse_document,
     search_interactions_by_vector,
     search_interactions_by_fulltext,
@@ -476,15 +477,58 @@ async def get_context(
             "compacted": r["compacted"],
         } for r in cursor.fetchall()]
 
-        # Knowledge (all categories including playbooks and skills)
-        cursor.execute("""
-            SELECT id, name, category, signals, content, summary, tags, metadata, quality_score, merge_count
-            FROM knowledge
-            WHERE status = 'active'
-              AND (visibility = 'shared' OR visibility IS NULL)
-            ORDER BY quality_score DESC NULLS LAST, created_at DESC
-            LIMIT 30
-        """)
+        # Knowledge (all categories including playbooks and skills).
+        # Relevance-ranked against a conversation vector (AVG of the entity's
+        # recent embedded interactions) blended with quality — reorder only, no
+        # records dropped unless an explicit similarity floor is configured.
+        # Any failure (older pgvector without AVG, no embeddings, etc.) falls
+        # back to the prior quality-ordered query so behavior never regresses.
+        settings = get_memory_settings() or {}
+        k_count = int(settings.get("context_knowledge_count") or 30)
+        k_floor = float(settings.get("context_knowledge_min_similarity") or 0.0)
+        knowledge_rows = None
+        try:
+            cursor.execute("""
+                WITH qv AS (
+                    SELECT AVG(embedding) AS v FROM (
+                        SELECT embedding FROM interactions
+                        WHERE primary_entity_type = %s AND primary_entity_id = %s
+                          AND embedding IS NOT NULL
+                        ORDER BY timestamp DESC LIMIT 10
+                    ) t
+                )
+                SELECT k.id, k.name, k.category, k.signals, k.content, k.summary,
+                       k.tags, k.metadata, k.quality_score, k.merge_count,
+                       CASE WHEN qv.v IS NOT NULL AND k.embedding IS NOT NULL
+                            THEN 1 - (k.embedding <=> qv.v) ELSE NULL END AS relevance
+                FROM knowledge k, qv
+                WHERE k.status = 'active'
+                  AND (k.visibility = 'shared' OR k.visibility IS NULL)
+                  AND (
+                        %s <= 0
+                        OR qv.v IS NULL
+                        OR k.embedding IS NULL
+                        OR (1 - (k.embedding <=> qv.v)) >= %s
+                      )
+                ORDER BY
+                    CASE WHEN qv.v IS NOT NULL AND k.embedding IS NOT NULL
+                         THEN (1 - (k.embedding <=> qv.v)) * 0.7 + COALESCE(k.quality_score, 0) * 0.3
+                         ELSE COALESCE(k.quality_score, 0) END DESC,
+                    k.created_at DESC
+                LIMIT %s
+            """, (entity_type, entity_id, k_floor, k_floor, k_count))
+            knowledge_rows = cursor.fetchall()
+        except Exception as e:
+            logger.warning(f"Relevance-ranked knowledge query failed, falling back to quality order: {e}")
+            cursor.execute("""
+                SELECT id, name, category, signals, content, summary, tags, metadata, quality_score, merge_count
+                FROM knowledge
+                WHERE status = 'active'
+                  AND (visibility = 'shared' OR visibility IS NULL)
+                ORDER BY quality_score DESC NULLS LAST, created_at DESC
+                LIMIT %s
+            """, (k_count,))
+            knowledge_rows = cursor.fetchall()
         knowledge = [{
             "id": r["id"],
             "name": r["name"],
@@ -496,7 +540,7 @@ async def get_context(
             "metadata": r["metadata"],
             "quality_score": r["quality_score"],
             "merge_count": r["merge_count"],
-        } for r in cursor.fetchall()]
+        } for r in knowledge_rows]
 
     return {
         "entity_type": entity_type,
@@ -845,7 +889,10 @@ async def search_memory_semantic(
             ))
 
     if "knowledge" in request.layers:
-        hits = await search_knowledge_by_vector(query_embedding, None, request.entity_type, request.entity_subtype, request.start_date, request.end_date, request.limit)
+        hits = await search_knowledge_by_vector(
+            query_embedding, request.knowledge_signal, request.entity_type, request.entity_subtype,
+            request.start_date, request.end_date, request.limit, category=request.knowledge_category,
+        )
         for hit in hits:
             results.append(SearchResult(
                 id=hit["id"], layer="Knowledge", score=float(hit.get("score", 0)), name=hit.get("name"), snippet=(hit.get("summary") or "")[:200], entity_id=None, entity_type=None, created_at=str(hit.get("created_at", ""))
@@ -890,7 +937,10 @@ async def search_memory_fulltext(
             ))
 
     if "knowledge" in request.layers:
-        hits = await search_knowledge_by_fulltext(request.query, None, request.entity_type, request.entity_subtype, request.start_date, request.end_date, request.limit)
+        hits = await search_knowledge_by_fulltext(
+            request.query, request.knowledge_signal, request.entity_type, request.entity_subtype,
+            request.start_date, request.end_date, request.limit, category=request.knowledge_category,
+        )
         for hit in hits:
             results.append(SearchResult(
                 id=hit["id"], layer="Knowledge", score=float(hit.get("score", 0)), name=hit.get("name"), snippet=(hit.get("summary") or "")[:200], entity_id=None, entity_type=None, created_at=str(hit.get("created_at", ""))

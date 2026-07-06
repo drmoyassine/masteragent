@@ -13,7 +13,7 @@ from typing import Optional
 from core.storage import get_memory_db_context
 from memory_services import call_llm, generate_embedding, get_memory_settings
 from services.llm import parse_llm_json
-from memory_dedup import find_similar_existing, increment_merge, compute_quality_score
+from memory_dedup import find_similar_existing, increment_merge, compute_quality_score, refine_or_increment_merge
 from memory_db_writes import insert_knowledge, update_knowledge_quality
 from memory_helpers import _get_entity_type_config
 
@@ -398,7 +398,12 @@ async def _generate_skills_from_playbook(
         if embedding:
             existing = await find_similar_existing(embedding, 0.85, category="skill")
         if existing:
-            increment_merge(existing)
+            await refine_or_increment_merge(
+                existing,
+                new_name=skill_data.get("name", ""),
+                new_content=skill_data.get("procedure", ""),
+                new_summary=skill_data.get("trigger_desc", ""),
+            )
             continue
 
         status = "active" if auto_activate else "draft"

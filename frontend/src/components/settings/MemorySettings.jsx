@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import api, { triggerMemoryGeneration, triggerIntelligenceCheck, triggerKnowledgeCheck, triggerPlaybookExtraction, triggerConsolidation, fetchProviderModels } from "@/lib/api";
+import api, { triggerMemoryGeneration, triggerIntelligenceCheck, triggerKnowledgeCheck, triggerPlaybookExtraction, triggerConsolidation, exportKnowledgePack, fetchProviderModels } from "@/lib/api";
 import { useEffect } from "react";
 
 // â”€â”€â”€ Threshold Overrides Table â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -997,6 +997,20 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                         <Layers className="w-3.5 h-3.5" />
                         Consolidate
                     </Button>
+                    <Button size="sm" variant="outline" className="gap-1.5"
+                        title="Download the whole knowledge base as a memory-file pack (INDEX.md + one markdown file per record)"
+                        onClick={() => runTrigger('export', async () => {
+                            const res = await exportKnowledgePack({ status: 'active' });
+                            const url = window.URL.createObjectURL(new Blob([res.data]));
+                            const a = document.createElement('a');
+                            a.href = url; a.download = 'knowledge-pack.zip';
+                            document.body.appendChild(a); a.click(); a.remove();
+                            window.URL.revokeObjectURL(url);
+                        }, "Knowledge pack downloaded")}
+                        disabled={!!triggering}>
+                        <FileText className="w-3.5 h-3.5" />
+                        Export Pack
+                    </Button>
                 </div>
             </div>
 
@@ -1073,6 +1087,47 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                             Caps the generated knowledge JSON. A response truncated mid-JSON fails to parse and the run
                             is skipped — raise this if storytelling content gets cut off; lower it to reduce token cost.
                         </p>
+                    </div>
+                    {/* Context injection (retrieval, not generation) */}
+                    <div className="grid grid-cols-2 gap-4 border-t pt-4">
+                        <div className="space-y-2">
+                            <Label className="text-xs font-mono">Context Injection Cap</Label>
+                            <Input
+                                type="number" min={1} max={100}
+                                value={settings.context_knowledge_count !== undefined ? settings.context_knowledge_count : 30}
+                                onChange={(e) => onUpdateSettings("context_knowledge_count", parseInt(e.target.value) || 30)}
+                            />
+                            <p className="text-[10px] text-muted-foreground">
+                                Max knowledge items injected into an entity's get-context payload. Items are ranked by
+                                relevance to the live conversation (blended with quality), not just quality.
+                            </p>
+                        </div>
+                        <div className="space-y-2">
+                            <Label className="text-xs font-mono">Relevance Floor</Label>
+                            <Input
+                                type="number" step="0.05" min={0} max={1}
+                                value={settings.context_knowledge_min_similarity !== undefined ? settings.context_knowledge_min_similarity : 0}
+                                onChange={(e) => onUpdateSettings("context_knowledge_min_similarity", parseFloat(e.target.value) || 0)}
+                            />
+                            <p className="text-[10px] text-muted-foreground">
+                                Drop knowledge below this cosine similarity to the conversation. 0 = never drop
+                                (reorder only). Raise once the corpus is large enough to filter aggressively.
+                            </p>
+                        </div>
+                    </div>
+                    <div className="flex items-center justify-between border-t pt-4">
+                        <div className="space-y-0.5 pr-4">
+                            <Label className="text-xs font-mono">Refine on Merge</Label>
+                            <p className="text-[10px] text-muted-foreground">
+                                When a new precursor matches an existing knowledge/skill/playbook, LLM-merge the new
+                                evidence into it (update-in-place, version bump) instead of only counting the match.
+                                Falls back to a plain count increment on any failure.
+                            </p>
+                        </div>
+                        <Switch
+                            checked={settings.knowledge_refine_on_merge !== undefined ? settings.knowledge_refine_on_merge : true}
+                            onCheckedChange={(v) => onUpdateSettings("knowledge_refine_on_merge", v)}
+                        />
                     </div>
                 </CardContent>
             </Card>

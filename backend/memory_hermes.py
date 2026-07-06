@@ -9,7 +9,7 @@ from typing import Optional
 
 from memory_services import call_llm, generate_embedding, get_memory_settings
 from services.llm import parse_llm_json
-from memory_dedup import find_similar_existing, increment_merge, compute_quality_score
+from memory_dedup import find_similar_existing, increment_merge, compute_quality_score, refine_or_increment_merge
 from memory_db_writes import insert_knowledge
 
 logger = logging.getLogger(__name__)
@@ -97,7 +97,9 @@ async def process_admin_instruction(
     if embedding:
         existing = await find_similar_existing(embedding, threshold, category=determined_category)
         if existing:
-            increment_merge(existing)
+            await refine_or_increment_merge(
+                existing, new_name=name, new_content=content, new_summary=summary,
+            )
             return {"status": "merged", "id": existing, "category": determined_category}
 
     # Insert
