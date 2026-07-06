@@ -106,6 +106,10 @@ async def _process_bulk_job(job: Job, token: str):
             from memory_consolidation import run_consolidation
             await run_consolidation()
 
+        elif job.name == "backfill_facets":
+            from memory_facets import backfill_facets
+            await backfill_facets()
+
         else:
             logger.warning(f"Unknown job name: {job.name}")
 

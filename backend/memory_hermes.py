@@ -106,6 +106,9 @@ async def process_admin_instruction(
     quality = compute_quality_score(0.5, 0.0, confidence, 0, 0.0)
     knowledge_id = str(uuid.uuid4())
     status = "active" if auto_activate else "draft"
+    # WS-4: extract governed facets (best-effort)
+    from memory_facets import enrich_metadata_with_facets
+    metadata = await enrich_metadata_with_facets(metadata, name, content, summary)
     insert_knowledge(
         knowledge_id=knowledge_id,
         intelligence_ids=[],

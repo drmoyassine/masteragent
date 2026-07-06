@@ -339,6 +339,10 @@ async def create_knowledge(body: KnowledgeCreate, admin: dict = Depends(require_
         )
     body.content = content
 
+    # WS-4: extract governed facets (best-effort); merge into any admin-provided metadata
+    from memory_facets import enrich_metadata_with_facets
+    final_metadata = await enrich_metadata_with_facets(body.metadata, body.name, content, body.summary)
+
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -351,7 +355,7 @@ async def create_knowledge(body: KnowledgeCreate, admin: dict = Depends(require_
             body.signals or [], body.name, body.content, body.summary,
             body.visibility, body.tags or [],
             body.category or "trade_knowledge",
-            json.dumps(body.metadata) if body.metadata else None,
+            json.dumps(final_metadata),
             body.status or "draft",
             now, now
         ))
@@ -609,6 +613,14 @@ async def trigger_consolidation(admin: dict = Depends(require_admin_auth)):
     from memory.queue import knowledge_queue
     await knowledge_queue.add("run_consolidation", {}, {"priority": 1})
     return {"message": "Consolidation queued"}
+
+
+@router.post("/trigger/backfill-facets")
+async def trigger_backfill_facets(admin: dict = Depends(require_admin_auth)):
+    """Backfill governed metadata.facets on existing active knowledge records that lack them."""
+    from memory.queue import knowledge_queue
+    await knowledge_queue.add("backfill_facets", {}, {"priority": 2})
+    return {"message": "Facet backfill queued"}
 
 
 @router.get("/pipeline-runs")
@@ -1689,6 +1701,9 @@ async def import_skill_md(body: SkillImportBody, admin: dict = Depends(require_a
             return {"status": "merged", "id": existing, "category": body.category}
 
     knowledge_id = str(uuid.uuid4())
+    # WS-4: extract governed facets from the parsed body (best-effort)
+    from memory_facets import enrich_metadata_with_facets
+    metadata = await enrich_metadata_with_facets(None, parsed["name"], parsed["body"], parsed["description"])
     insert_knowledge(
         knowledge_id=knowledge_id,
         intelligence_ids=[],
@@ -1701,5 +1716,6 @@ async def import_skill_md(body: SkillImportBody, admin: dict = Depends(require_a
         tags=body.tags or [],
         source_pathway="imported",
         status=body.status,
+        metadata=metadata,
     )
     return {"status": "created", "id": knowledge_id, "name": parsed["name"], "category": body.category}

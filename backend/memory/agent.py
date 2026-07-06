@@ -398,6 +398,18 @@ async def get_context(
             "Only effective when interaction_types is set."
         ),
     ),
+    knowledge_facets: Optional[str] = Query(
+        None,
+        description=(
+            'JSON object of governed facets to HARD-filter knowledge on, e.g. '
+            '{"country":"Malaysia"}. When omitted, facets are derived from the '
+            "entity's CRM profile (profile_facet_map). Filter applies to all "
+            "knowledge categories; the always-on management skill is exempt."
+        ),
+    ),
+    knowledge_category: Optional[str] = Query(
+        None, description="Restrict knowledge to one category (skill|playbook|best_practices|lessons_learned|trade_knowledge)."
+    ),
     agent: dict = Depends(verify_agent_key)
 ):
     """Return full context for an entity: pending+enriched interactions
@@ -477,18 +489,69 @@ async def get_context(
             "compacted": r["compacted"],
         } for r in cursor.fetchall()]
 
-        # Knowledge (all categories including playbooks and skills).
-        # Relevance-ranked against a conversation vector (AVG of the entity's
-        # recent embedded interactions) blended with quality — reorder only, no
-        # records dropped unless an explicit similarity floor is configured.
-        # Any failure (older pgvector without AVG, no embeddings, etc.) falls
-        # back to the prior quality-ordered query so behavior never regresses.
+        # Knowledge (all categories: declarative + playbooks + skills).
+        # Sprint 2.5: governed facet hard-filter (WS-5), pinned always-on
+        # management skill exempt from the filter (WS-3), and a lean index mode
+        # that drops full content so the orchestrator pulls records on demand (WS-1).
+        # Relevance ranking + cap + fallback query preserved from Sprint 2.
         settings = get_memory_settings() or {}
+        mode = (settings.get("context_knowledge_mode") or "full").lower()
         k_count = int(settings.get("context_knowledge_count") or 30)
         k_floor = float(settings.get("context_knowledge_min_similarity") or 0.0)
+
+        # Resolve governed facets: explicit param → else derive from CRM profile.
+        resolved_facets: dict = {}
+        if knowledge_facets:
+            try:
+                resolved_facets = json.loads(knowledge_facets) or {}
+            except Exception:
+                resolved_facets = {}
+        if not resolved_facets:
+            try:
+                from memory_facets import get_profile_facet_map
+                pmap = get_profile_facet_map() or {}
+                if pmap:
+                    cursor.execute(
+                        "SELECT properties FROM entity_profiles WHERE entity_type = %s AND entity_id = %s",
+                        (entity_type, entity_id),
+                    )
+                    prow = cursor.fetchone()
+                    props = (prow["properties"] if prow else {}) or {}
+                    if isinstance(props, str):
+                        props = json.loads(props)
+                    for facet_key, prop_key in pmap.items():
+                        v = props.get(prop_key) if isinstance(props, dict) else None
+                        if v:
+                            resolved_facets[facet_key] = str(v)
+            except Exception as e:
+                logger.warning(f"Facet derivation from profile failed: {e}")
+                resolved_facets = {}
+        # Keep only non-empty facet values
+        resolved_facets = {k: v for k, v in resolved_facets.items() if v}
+        facet_clause = ""
+        facet_params: list = []
+        if resolved_facets:
+            facet_clause = " AND metadata @> %s::jsonb"
+            facet_params.append(json.dumps({"facets": resolved_facets}))
+        category_clause = " AND category = %s" if knowledge_category else ""
+        category_params = [knowledge_category] if knowledge_category else []
+
+        # WS-3: pinned always-on management skill(s) — exempt from filter + cap.
+        pinned_clause = " AND metadata->>'always_inject' = 'true'"
+        cursor.execute(f"""
+            SELECT id, name, category, signals, content, summary, tags, metadata, quality_score, merge_count
+            FROM knowledge
+            WHERE status = 'active' AND (visibility = 'shared' OR visibility IS NULL)
+            {pinned_clause}
+            ORDER BY created_at ASC
+        """)
+        pinned_rows = cursor.fetchall()
+
+        # WS-5: the rest, with facet hard-filter + optional category, relevance-ranked.
         knowledge_rows = None
+        not_pinned = " AND metadata->>'always_inject' IS DISTINCT FROM 'true'"
         try:
-            cursor.execute("""
+            cursor.execute(f"""
                 WITH qv AS (
                     SELECT AVG(embedding) AS v FROM (
                         SELECT embedding FROM interactions
@@ -504,6 +567,7 @@ async def get_context(
                 FROM knowledge k, qv
                 WHERE k.status = 'active'
                   AND (k.visibility = 'shared' OR k.visibility IS NULL)
+                  {not_pinned}{facet_clause}{category_clause}
                   AND (
                         %s <= 0
                         OR qv.v IS NULL
@@ -516,31 +580,48 @@ async def get_context(
                          ELSE COALESCE(k.quality_score, 0) END DESC,
                     k.created_at DESC
                 LIMIT %s
-            """, (entity_type, entity_id, k_floor, k_floor, k_count))
+            """, (entity_type, entity_id) + tuple(facet_params) + tuple(category_params) + (k_floor, k_floor, k_count))
             knowledge_rows = cursor.fetchall()
         except Exception as e:
             logger.warning(f"Relevance-ranked knowledge query failed, falling back to quality order: {e}")
-            cursor.execute("""
+            cursor.execute(f"""
                 SELECT id, name, category, signals, content, summary, tags, metadata, quality_score, merge_count
                 FROM knowledge
-                WHERE status = 'active'
-                  AND (visibility = 'shared' OR visibility IS NULL)
+                WHERE status = 'active' AND (visibility = 'shared' OR visibility IS NULL)
+                {not_pinned}{facet_clause}{category_clause}
                 ORDER BY quality_score DESC NULLS LAST, created_at DESC
                 LIMIT %s
-            """, (k_count,))
+            """, tuple(facet_params) + tuple(category_params) + (k_count,))
             knowledge_rows = cursor.fetchall()
-        knowledge = [{
-            "id": r["id"],
-            "name": r["name"],
-            "category": r["category"],
-            "signals": r["signals"] or [],
-            "content": r["content"],
-            "summary": r["summary"],
-            "tags": r["tags"],
-            "metadata": r["metadata"],
-            "quality_score": r["quality_score"],
-            "merge_count": r["merge_count"],
-        } for r in knowledge_rows]
+
+        def _facets_of(r):
+            md = r["metadata"] or {}
+            if isinstance(md, str):
+                try: md = json.loads(md)
+                except Exception: md = {}
+            return md.get("facets") or {}
+
+        def _full_item(r):
+            return {
+                "id": r["id"], "name": r["name"], "category": r["category"],
+                "signals": r["signals"] or [], "content": r["content"], "summary": r["summary"],
+                "tags": r["tags"], "metadata": r["metadata"],
+                "quality_score": r["quality_score"], "merge_count": r["merge_count"],
+            }
+
+        def _index_item(r):
+            # Lean index: no content, no heavy metadata, no tags. facets included for decisions.
+            return {
+                "id": r["id"], "name": r["name"], "category": r["category"],
+                "signals": r["signals"] or [], "summary": r["summary"], "facets": _facets_of(r),
+            }
+
+        # Pinned management skill(s) are always full-content (the instruction must be readable).
+        knowledge = [_full_item(r) for r in pinned_rows]
+        if mode == "index":
+            knowledge += [_index_item(r) for r in knowledge_rows]
+        else:
+            knowledge += [_full_item(r) for r in knowledge_rows]
 
     return {
         "entity_type": entity_type,
@@ -783,30 +864,48 @@ async def create_knowledge(body: KnowledgeCreate, agent: dict = Depends(verify_a
 
 @router.get("/knowledge", tags=["🎓 Knowledge"])
 async def list_knowledge(
-    entity_type: Optional[str] = Query(None),
-    entity_subtype: Optional[str] = Query(None),
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
     signal: Optional[str] = Query(None),
+    category: Optional[str] = Query(None, description="skill | playbook | best_practices | lessons_learned | trade_knowledge"),
+    facets: Optional[str] = Query(None, description='JSON object of governed facets, e.g. {"country":"Malaysia"}'),
+    strict: bool = Query(False, description="True = hard-filter on facets; False (default) = ignore facets"),
+    status: str = Query("active"),
     limit: int = Query(20, le=100),
     offset: int = Query(0),
     agent: dict = Depends(verify_agent_key)
 ):
+    """List knowledge records. Knowledge is global (not entity-scoped), so
+    filtering is by category/signal/date and governed facets only."""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        conditions, params = [], []
-        if signal: conditions.append("%s = ANY(signals)"); params.append(signal)
-        if start_date: conditions.append("created_at >= %s"); params.append(start_date)
-        if end_date: conditions.append("created_at <= %s"); params.append(end_date)
-        # knowledge are globally abstracted away from IDs, but if tags contained entity_type we could filter it here.
-        # For now, it simply filters via metadata or tags if we implement them, otherwise it acts fully globally.
+        conditions, params = ["visibility = 'shared'"], []
+        if status:
+            conditions.append("status = %s"); params.append(status)
+        if category:
+            conditions.append("category = %s"); params.append(category)
+        if signal:
+            conditions.append("%s = ANY(signals)"); params.append(signal)
+        if start_date:
+            conditions.append("created_at >= %s"); params.append(start_date)
+        if end_date:
+            conditions.append("created_at <= %s"); params.append(end_date)
+        if strict and facets:
+            try:
+                facets_obj = json.loads(facets)
+                if facets_obj:
+                    conditions.append("metadata @> %s::jsonb")
+                    params.append(json.dumps({"facets": facets_obj}))
+            except Exception:
+                pass
 
-        where = " AND ".join(conditions) if conditions else "1=1"
+        where = " AND ".join(conditions)
         cursor.execute(f"SELECT COUNT(*) as total FROM knowledge WHERE {where}", params)
         total = cursor.fetchone()["total"]
 
         cursor.execute(f"""
-            SELECT id, seq_id, source_intelligence_ids, signals, name, content, summary, visibility, tags, created_at, updated_at
+            SELECT id, seq_id, source_intelligence_ids, signals, name, content, summary,
+                   visibility, tags, category, metadata, quality_score, merge_count, version, created_at, updated_at
             FROM knowledge WHERE {where} ORDER BY created_at DESC LIMIT %s OFFSET %s
         """, params + [limit, offset])
         rows = []
@@ -816,6 +915,64 @@ async def list_knowledge(
             rows.append(d)
 
     return {"knowledge": rows, "total": total}
+
+
+@router.get("/knowledge/facets", tags=["🎓 Knowledge"])
+async def list_knowledge_facets(
+    key: Optional[str] = Query(None, description="Return distinct values for a single facet key only"),
+    agent: dict = Depends(verify_agent_key)
+):
+    """Discover the governed facet vocabulary in use across active knowledge.
+    No key → {facet_key: [distinct values...]} for every schema key with values.
+    ?key=country → ["Malaysia", "United Kingdom", ...]. Values come from metadata.facets."""
+    from memory_facets import get_facets_schema
+    schema = get_facets_schema()
+    schema_keys = [s.get("key") for s in schema if s.get("key")]
+    keys = [key] if key else schema_keys
+    out: dict = {}
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        for k in keys:
+            if not k:
+                continue
+            cursor.execute("""
+                SELECT DISTINCT metadata->'facets'->>%s AS v
+                FROM knowledge
+                WHERE status = 'active'
+                  AND (visibility = 'shared' OR visibility IS NULL)
+                  AND metadata ? 'facets'
+                  AND metadata->'facets' ? %s
+            """, (k, k))
+            vals = []
+            for row in cursor.fetchall():
+                v = row["v"]
+                if v:
+                    vals.append(v)
+            out[k] = sorted(set(vals))
+    if key:
+        return out.get(key, [])
+    return out
+
+
+@router.get("/knowledge/{id}", tags=["🎓 Knowledge"])
+async def get_knowledge(id: str, agent: dict = Depends(verify_agent_key)):
+    """Retrieve a single full knowledge record (on-demand pull after the agent
+    scans the lean index from get-context). Returns content (SKILL.md for
+    skill/playbook), metadata, signals, quality, version."""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, source_intelligence_ids, signals, name, content, summary,
+                   visibility, tags, category, metadata, quality_score, merge_count,
+                   version, status, created_at, updated_at
+            FROM knowledge WHERE id = %s
+        """, (id,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(404, "Knowledge not found")
+        d = dict(row)
+        d["created_at"] = str(d["created_at"]); d["updated_at"] = str(d["updated_at"])
+        return d
 
 @router.patch("/knowledge/{id}", response_model=KnowledgeResponse, tags=["🎓 Knowledge"])
 async def update_knowledge(id: str, update: KnowledgeUpdate, agent: dict = Depends(verify_agent_key)):
@@ -892,6 +1049,7 @@ async def search_memory_semantic(
         hits = await search_knowledge_by_vector(
             query_embedding, request.knowledge_signal, request.entity_type, request.entity_subtype,
             request.start_date, request.end_date, request.limit, category=request.knowledge_category,
+            facets=request.knowledge_facets, strict=bool(request.strict),
         )
         for hit in hits:
             results.append(SearchResult(
@@ -940,6 +1098,7 @@ async def search_memory_fulltext(
         hits = await search_knowledge_by_fulltext(
             request.query, request.knowledge_signal, request.entity_type, request.entity_subtype,
             request.start_date, request.end_date, request.limit, category=request.knowledge_category,
+            facets=request.knowledge_facets, strict=bool(request.strict),
         )
         for hit in hits:
             results.append(SearchResult(
