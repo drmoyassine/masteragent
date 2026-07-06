@@ -187,6 +187,10 @@ export const deleteKnowledgeAdmin = (id) => api.delete(`/memory/knowledge/${id}`
 export const bulkDeleteKnowledgeAdmin = (data) => api.post('/memory/knowledge/bulk-delete', data);
 export const getKnowledgeDetail = (id) => api.get(`/memory/knowledge/${id}`);
 export const submitKnowledgeFeedback = (id, data) => api.post(`/memory/knowledge/${id}/feedback`, data);
+export const exportKnowledgeMarkdown = (id) => api.get(`/memory/knowledge/${id}/skill.md`, { responseType: 'blob' });
+export const exportKnowledgePack = (params) => api.get('/memory/knowledge-pack', { params, responseType: 'blob' });
+export const importSkillMd = (data) => api.post('/memory/skills/import', data);
+export const getPipelineRuns = (params) => api.get('/memory/pipeline-runs', { params });
 
 // Outbound Webhooks - Admin UI
 export const getOutboundWebhooks = () => api.get('/memory/outbound-webhooks');

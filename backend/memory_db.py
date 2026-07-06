@@ -564,6 +564,14 @@ def _run_migrations(cursor):
         ("memory_generation_max_tokens", "INT DEFAULT 1200"),
         ("intelligence_max_tokens", "INT DEFAULT 1200"),
         ("knowledge_max_tokens", "INT DEFAULT 1200"),
+        # get-context knowledge injection: cap (30 preserves prior behavior) and
+        # optional relevance floor (0 = keep the reorder-only, drop-nothing default)
+        ("context_knowledge_count", "INT DEFAULT 30"),
+        ("context_knowledge_min_similarity", "FLOAT DEFAULT 0.0"),
+        # When a new precursor dedup-matches an existing knowledge/skill/playbook,
+        # LLM-merge the new evidence into it (update-in-place) instead of only
+        # bumping merge_count. Falls back to increment on any failure.
+        ("knowledge_refine_on_merge", "BOOLEAN DEFAULT TRUE"),
     ]:
         cursor.execute(f"ALTER TABLE memory_settings ADD COLUMN IF NOT EXISTS {col} {col_def}")
 
@@ -645,6 +653,23 @@ def _run_migrations(cursor):
             last_date   DATE
         )
     """)
+
+    # Pipeline run observability (one row per check/generation run)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS memory_pipeline_runs (
+            id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            seq_id          BIGSERIAL,
+            job             TEXT NOT NULL,
+            outcome         TEXT NOT NULL,
+            reason_code     TEXT,
+            records_created INT DEFAULT 0,
+            detail          JSONB DEFAULT '{}',
+            trigger         TEXT DEFAULT 'scheduled',
+            created_at      TIMESTAMPTZ DEFAULT NOW()
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_pipeline_runs_job ON memory_pipeline_runs (job, created_at DESC)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_pipeline_runs_created ON memory_pipeline_runs (created_at DESC)")
 
     # Memories columns added after initial deploy
     for col, col_def in [

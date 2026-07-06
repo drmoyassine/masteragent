@@ -277,12 +277,19 @@ async def search_knowledge_by_vector(
     since: str = None,
     until: str = None,
     limit: int = 10,
+    category: str = None,
+    status: str = "active",
 ) -> List[Dict[str, Any]]:
     if not query_vector: return []
     try:
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
             conditions, params = ["embedding IS NOT NULL", "visibility = 'shared'"], []
+            # Default to active-only so retired/draft records never reach agents.
+            if status:
+                conditions.append("status = %s"); params.append(status)
+            if category:
+                conditions.append("category = %s"); params.append(category)
             if signal:
                 conditions.append("%s = ANY(signals)"); params.append(signal)
             if since:
@@ -315,12 +322,18 @@ async def search_knowledge_by_fulltext(
     since: str = None,
     until: str = None,
     limit: int = 10,
+    category: str = None,
+    status: str = "active",
 ) -> List[Dict[str, Any]]:
     if not query: return []
     try:
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
             conditions, params = ["visibility = 'shared'"], []
+            if status:
+                conditions.append("status = %s"); params.append(status)
+            if category:
+                conditions.append("category = %s"); params.append(category)
             if signal:
                 conditions.append("%s = ANY(signals)"); params.append(signal)
             if since:

@@ -13,7 +13,7 @@ from memory_services import (
 from services.config_helpers import get_pipeline_configs, get_system_prompt_by_config_id
 from services.llm import parse_llm_json
 from services.prompt_renderer import inject_variables
-from memory_db_writes import insert_knowledge
+from memory_db_writes import insert_knowledge, log_pipeline_run
 from memory_prior_context import fetch_prior_knowledge_semantic
 from memory_helpers import _get_entity_type_config, _format_signal_definitions
 
@@ -84,7 +84,19 @@ async def _run_knowledge_check_once() -> int:
 
                 batch = [dict(r) for r in cursor.fetchall()]
                 logger.info(f"Knowledge extraction trigger (count) for {entity_type}: {len(batch)} unused intelligence items")
-                created += await generate_knowledge_from_intelligence(batch)
+                n = await generate_knowledge_from_intelligence(batch)
+                created += n
+                log_pipeline_run(
+                    "knowledge_check", "created" if n else "failed",
+                    reason_code=None if n else "generation_failed",
+                    records_created=n,
+                    detail={"entity_type": entity_type, "batch": len(batch), "threshold": threshold},
+                )
+            else:
+                log_pipeline_run(
+                    "knowledge_check", "skipped", reason_code="below_threshold",
+                    detail={"entity_type": entity_type, "unused_confirmed": count, "threshold": threshold},
+                )
     return created
 
 
