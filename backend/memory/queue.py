@@ -110,6 +110,10 @@ async def _process_bulk_job(job: Job, token: str):
             from memory_facets import backfill_facets
             await backfill_facets()
 
+        elif job.name == "backfill_telemetry":
+            from memory_telemetry import backfill_telemetry
+            await backfill_telemetry(max_days=int(job.data.get("max_days", 30)))
+
         elif job.name == "run_intelligence_sweep":
             from memory_compaction import run_compaction_check
             await run_compaction_check(min_count=job.data.get("min_count"))
