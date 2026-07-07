@@ -194,6 +194,7 @@ export const getPipelineRuns = (params) => api.get('/memory/pipeline-runs', { pa
 export const getKnowledgeById = (id) => api.get(`/memory/knowledge/${id}`);
 export const getKnowledgeFacets = (params) => api.get('/memory/knowledge/facets', { params });
 export const triggerBackfillFacets = () => api.post('/memory/trigger/backfill-facets');
+export const triggerReflectTelemetry = (reflectionDate) => api.post('/memory/trigger/reflect-telemetry', null, { params: reflectionDate ? { reflection_date: reflectionDate } : {} });
 
 // Outbound Webhooks - Admin UI
 export const getOutboundWebhooks = () => api.get('/memory/outbound-webhooks');

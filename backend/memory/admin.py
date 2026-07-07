@@ -629,6 +629,17 @@ async def trigger_backfill_facets(admin: dict = Depends(require_admin_auth)):
     return {"message": "Facet backfill queued"}
 
 
+@router.post("/trigger/reflect-telemetry")
+async def trigger_reflect_telemetry(
+    reflection_date: Optional[str] = Query(None, description="YYYY-MM-DD; default yesterday"),
+    admin: dict = Depends(require_admin_auth),
+):
+    """Manually run telemetry reflection (AI telemetry → skill/playbook/knowledge) for a day."""
+    from memory.queue import knowledge_queue
+    await knowledge_queue.add("reflect_telemetry", {"reflection_date": reflection_date}, {"priority": 3})
+    return {"message": "Telemetry reflection queued", "reflection_date": reflection_date}
+
+
 @router.get("/pipeline-runs")
 async def list_pipeline_runs(
     job: Optional[str] = Query(None, description="Filter by job name"),

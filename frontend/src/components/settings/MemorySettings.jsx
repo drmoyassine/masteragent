@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import api, { triggerMemoryGeneration, triggerIntelligenceCheck, triggerKnowledgeCheck, triggerPlaybookExtraction, triggerConsolidation, exportKnowledgePack, triggerBackfillFacets, fetchProviderModels } from "@/lib/api";
+import api, { triggerMemoryGeneration, triggerIntelligenceCheck, triggerKnowledgeCheck, triggerPlaybookExtraction, triggerConsolidation, exportKnowledgePack, triggerBackfillFacets, triggerReflectTelemetry, fetchProviderModels } from "@/lib/api";
 import { useEffect } from "react";
 
 // â”€â”€â”€ Threshold Overrides Table â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -856,11 +856,46 @@ function IntelligenceTab({ settings, onUpdateSettings, llmConfigs, llmProviders,
                         </div>
                     </div>
 
-                    {/* Â§ Mining Triggers */}
+                    {/* § Schedule (nightly sweep valve) */}
+                    <div className="space-y-4 pt-2">
+                        <h4 className="text-sm font-semibold flex items-center gap-1.5 border-b pb-1">
+                            <Clock className="w-4 h-4 text-teal-400" />
+                            Schedule
+                        </h4>
+                        <div className="flex items-center justify-between">
+                            <div className="space-y-0.5 pr-4">
+                                <Label className="text-xs font-mono">Nightly Sweep</Label>
+                                <p className="text-[10px] text-muted-foreground">
+                                    Reflect every night on whatever accumulated — even entities below the threshold.
+                                    Fires alongside the threshold valve (whichever comes first).
+                                </p>
+                            </div>
+                            <Switch
+                                checked={settings.intelligence_schedule_enabled !== undefined ? settings.intelligence_schedule_enabled : true}
+                                onCheckedChange={(v) => onUpdateSettings("intelligence_schedule_enabled", v)}
+                            />
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-1">
+                                <Label className="text-xs font-mono">Daily Run Time (UTC)</Label>
+                                <Input type="time" value={settings.intelligence_generation_time || "02:30"}
+                                    onChange={(e) => onUpdateSettings("intelligence_generation_time", e.target.value)} />
+                            </div>
+                            <div className="space-y-1">
+                                <Label className="text-xs font-mono">Schedule Floor (min memories)</Label>
+                                <Input type="number" min={1}
+                                    value={settings.intelligence_schedule_floor !== undefined ? settings.intelligence_schedule_floor : 2}
+                                    onChange={(e) => onUpdateSettings("intelligence_schedule_floor", parseInt(e.target.value) || 1)} />
+                                <p className="text-[10px] text-muted-foreground">Minimum uncompacted memories for the nightly sweep to synthesize.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Â§ Mining Triggers (threshold valve) */}
                     <div className="space-y-4 pt-2">
                         <h4 className="text-sm font-semibold flex items-center gap-1.5 border-b pb-1">
                             <Brain className="w-4 h-4 text-purple-400" />
-                            Mining Triggers
+                            Threshold Trigger
                         </h4>
                         <div className="space-y-2">
                             <Label className="text-xs font-mono">Global Default Threshold (N memories)</Label>
@@ -873,7 +908,7 @@ function IntelligenceTab({ settings, onUpdateSettings, llmConfigs, llmProviders,
                                 }
                             />
                             <p className="text-[10px] text-muted-foreground">
-                                Generate an intelligence item after this many uncompacted memories accumulate.
+                                Fire an intelligence job intra-day the moment this many uncompacted memories accumulate for an entity (in addition to the nightly sweep).
                             </p>
                         </div>
                         <div className="space-y-3 pt-2">
@@ -1037,6 +1072,13 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                         <Sparkles className="w-3.5 h-3.5" />
                         Backfill Facets
                     </Button>
+                    <Button size="sm" variant="outline" className="gap-1.5"
+                        title="Reflect on yesterday's AI telemetry to extract skills/playbooks/knowledge"
+                        onClick={() => runTrigger('telemetry', () => triggerReflectTelemetry(), "Telemetry reflection queued")}
+                        disabled={!!triggering}>
+                        <Cpu className="w-3.5 h-3.5" />
+                        Reflect Telemetry
+                    </Button>
                 </div>
             </div>
 
@@ -1052,7 +1094,42 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
-                    {/* Knowledge Threshold */}
+                    {/* § Schedule (nightly sweep valve) */}
+                    <div className="space-y-4">
+                        <h4 className="text-sm font-semibold flex items-center gap-1.5 border-b pb-1">
+                            <Clock className="w-4 h-4 text-teal-400" />
+                            Schedule
+                        </h4>
+                        <div className="flex items-center justify-between">
+                            <div className="space-y-0.5 pr-4">
+                                <Label className="text-xs font-mono">Nightly Sweep</Label>
+                                <p className="text-[10px] text-muted-foreground">
+                                    Synthesize knowledge every night from whatever confirmed intelligence accumulated —
+                                    even entity types below the threshold. Fires alongside the threshold valve.
+                                </p>
+                            </div>
+                            <Switch
+                                checked={settings.knowledge_schedule_enabled !== undefined ? settings.knowledge_schedule_enabled : true}
+                                onCheckedChange={(v) => onUpdateSettings("knowledge_schedule_enabled", v)}
+                            />
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-1">
+                                <Label className="text-xs font-mono">Daily Run Time (UTC)</Label>
+                                <Input type="time" value={settings.knowledge_generation_time || "03:00"}
+                                    onChange={(e) => onUpdateSettings("knowledge_generation_time", e.target.value)} />
+                            </div>
+                            <div className="space-y-1">
+                                <Label className="text-xs font-mono">Schedule Floor (min intelligence)</Label>
+                                <Input type="number" min={1}
+                                    value={settings.knowledge_schedule_floor !== undefined ? settings.knowledge_schedule_floor : 2}
+                                    onChange={(e) => onUpdateSettings("knowledge_schedule_floor", parseInt(e.target.value) || 1)} />
+                                <p className="text-[10px] text-muted-foreground">Minimum unused confirmed intelligence for the nightly sweep.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Knowledge Threshold (threshold valve) */}
                     <div className="space-y-2">
                         <Label className="text-xs font-mono">Knowledge Threshold (N intelligence items)</Label>
                         <Input
@@ -1358,6 +1435,56 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                 { label: "Existing Knowledge (do NOT duplicate or repeat these)", color: "text-indigo-400", count: settings.prior_knowledge_semantic_count !== undefined ? settings.prior_knowledge_semantic_count : 3, conditional: true, description: "Semantically similar existing knowledge items for deduplication" },
                 { label: "Intelligence Items to Synthesize", color: "text-purple-400", description: "PII-scrubbed intelligence items being synthesized into reusable knowledge" },
             ]} />
+
+            {/* Telemetry Reflection */}
+            <Card>
+                <CardHeader className="pb-3">
+                    <div className="flex items-center gap-2">
+                        <Cpu className="w-5 h-5 text-cyan-500" />
+                        <CardTitle className="text-lg">Telemetry Reflection</CardTitle>
+                    </div>
+                    <CardDescription className="text-xs mt-1.5">
+                        Nightly reflection on the agent's own telemetry (internal_ai_thought / internal_ai_tool_call).
+                        Learns by doing: extracts reusable skills, playbooks, and trade-knowledge from what the agent
+                        actually did or discovered — per entity, per day. Recurring learnings strengthen via dedup/merge.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <div className="flex items-center justify-between">
+                        <div className="space-y-0.5 pr-4">
+                            <Label className="text-xs font-mono">Enable Nightly Reflection</Label>
+                            <p className="text-[10px] text-muted-foreground">
+                                Emits typed candidates (skill / playbook / best_practices / lessons_learned / trade_knowledge)
+                                as drafts. A single-session discovery starts at evidence_breadth=1 and promotes as it recurs.
+                            </p>
+                        </div>
+                        <Switch
+                            checked={settings.telemetry_reflection_enabled !== undefined ? settings.telemetry_reflection_enabled : true}
+                            onCheckedChange={(v) => onUpdateSettings("telemetry_reflection_enabled", v)}
+                        />
+                    </div>
+                    <div className="grid grid-cols-3 gap-4">
+                        <div className="space-y-1">
+                            <Label className="text-xs font-mono">Daily Run Time (UTC)</Label>
+                            <Input type="time" value={settings.telemetry_reflection_time || "04:00"}
+                                onChange={(e) => onUpdateSettings("telemetry_reflection_time", e.target.value)} />
+                        </div>
+                        <div className="space-y-1">
+                            <Label className="text-xs font-mono">Min Confidence</Label>
+                            <Input type="number" step="0.05" min={0} max={1}
+                                value={settings.telemetry_reflection_confidence_min !== undefined ? settings.telemetry_reflection_confidence_min : 0.6}
+                                onChange={(e) => onUpdateSettings("telemetry_reflection_confidence_min", parseFloat(e.target.value) || 0)} />
+                            <p className="text-[10px] text-muted-foreground">Discard candidates below this.</p>
+                        </div>
+                        <div className="space-y-1">
+                            <Label className="text-xs font-mono">Max Output Tokens</Label>
+                            <Input type="number" min={256} max={8000} step={100}
+                                value={settings.telemetry_reflection_max_tokens !== undefined ? settings.telemetry_reflection_max_tokens : 1200}
+                                onChange={(e) => onUpdateSettings("telemetry_reflection_max_tokens", parseInt(e.target.value) || 1200)} />
+                        </div>
+                    </div>
+                </CardContent>
+            </Card>
 
             {/* Knowledge Pipeline */}
             <Card className="border-dashed bg-muted/20">

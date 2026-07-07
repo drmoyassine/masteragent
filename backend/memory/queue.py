@@ -85,7 +85,7 @@ async def _process_bulk_job(job: Job, token: str):
                 rpm = p_conf.get("rate_limit_rpm", 60)
 
         elif job.name == "generate_knowledge":
-            await run_knowledge_check(drain=bool(job.data.get("drain")))
+            await run_knowledge_check(drain=bool(job.data.get("drain")), min_count=job.data.get("min_count"))
             p_conf = get_llm_config("knowledge_generation")
             if p_conf and "rate_limit_rpm" in p_conf:
                 rpm = p_conf.get("rate_limit_rpm", 60)
@@ -109,6 +109,14 @@ async def _process_bulk_job(job: Job, token: str):
         elif job.name == "backfill_facets":
             from memory_facets import backfill_facets
             await backfill_facets()
+
+        elif job.name == "run_intelligence_sweep":
+            from memory_compaction import run_compaction_check
+            await run_compaction_check(min_count=job.data.get("min_count"))
+
+        elif job.name == "reflect_telemetry":
+            from memory_telemetry import run_telemetry_reflection
+            await run_telemetry_reflection(job.data.get("reflection_date"))
 
         else:
             logger.warning(f"Unknown job name: {job.name}")

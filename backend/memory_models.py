@@ -229,6 +229,20 @@ class MemorySettingsUpdate(BaseModel):
     facet_extraction_enabled: Optional[bool] = True
     knowledge_facets_schema: Optional[List[Dict[str, Any]]] = None
     profile_facet_map: Optional[Dict[str, Any]] = None
+    # Nightly learning cadence — per-tier schedule valves (dual-gate with thresholds)
+    intelligence_schedule_enabled: Optional[bool] = True
+    intelligence_generation_time: Optional[str] = "02:30"
+    intelligence_schedule_floor: Optional[int] = 2
+    knowledge_schedule_enabled: Optional[bool] = True
+    knowledge_generation_time: Optional[str] = "03:00"
+    knowledge_schedule_floor: Optional[int] = 2
+    playbook_schedule_enabled: Optional[bool] = True
+    playbook_generation_time: Optional[str] = "03:30"
+    # Telemetry reflection (AI telemetry → skill/playbook/knowledge)
+    telemetry_reflection_enabled: Optional[bool] = True
+    telemetry_reflection_time: Optional[str] = "04:00"
+    telemetry_reflection_confidence_min: Optional[float] = 0.6
+    telemetry_reflection_max_tokens: Optional[int] = 1200
 
 class MemorySettingsResponse(BaseModel):
     chunk_size: int = 400
