@@ -595,14 +595,24 @@ async def trigger_reprocess_intelligence(body: dict, admin: dict = Depends(requi
 @router.post("/trigger/run-knowledge-check")
 @router.post("/trigger/run-Knowledge-check", include_in_schema=False)  # legacy capitalized alias
 async def trigger_knowledge_check(
-    drain: bool = Query(False, description="Repeat until the confirmed-intelligence backlog is consumed (backfill mode)"),
+    drain: bool = Query(False, description="Drain BOTH backlogs: intelligence→knowledge (looped) + AI-telemetry reflection (historical days)."),
+    drain_telemetry: bool = Query(True, description="When drain=true, also backfill accumulated AI telemetry (set false to drain intelligence only)."),
     admin: dict = Depends(require_admin_auth),
 ):
-    """Manually trigger the Knowledge accumulation check via queue drop.
-    With drain=true the worker loops threshold-sized batches until the backlog is exhausted."""
+    """Manually trigger Knowledge generation.
+
+    drain=false (default / nightly path): one threshold-gated pass.
+    drain=true: backfill mode — loops intelligence→knowledge batches until the
+    confirmed-intelligence backlog is exhausted, AND (unless drain_telemetry=false)
+    reflects on accumulated AI-telemetry history. One click drains both experiential
+    backlogs; each runs as its own queue job with its own pipeline_runs logging."""
     from memory.queue import knowledge_queue
     await knowledge_queue.add("generate_knowledge", {"drain": drain}, {"priority": 1})
-    return {"message": "Knowledge check queued", "drain": drain}
+    queued = ["knowledge_check"]
+    if drain and drain_telemetry:
+        await knowledge_queue.add("backfill_telemetry", {"max_days": 30}, {"priority": 2})
+        queued.append("telemetry_backfill")
+    return {"message": "Knowledge generation queued", "drain": drain, "jobs": queued}
 
 
 @router.post("/trigger/extract-playbooks")
@@ -627,6 +637,19 @@ async def trigger_backfill_facets(admin: dict = Depends(require_admin_auth)):
     from memory.queue import knowledge_queue
     await knowledge_queue.add("backfill_facets", {}, {"priority": 2})
     return {"message": "Facet backfill queued"}
+
+
+@router.post("/trigger/backfill-telemetry")
+async def trigger_backfill_telemetry(
+    max_days: int = Query(30, description="Max historical days to reflect on per invocation (most-recent window). Re-trigger to continue."),
+    admin: dict = Depends(require_admin_auth),
+):
+    """Reflect on accumulated AI-telemetry history (internal_ai_thought / internal_ai_tool_call)
+    that predates the nightly reflection pathway. Idempotent + resumable. Also fired
+    automatically by the Drain Backlog button (run-knowledge-check?drain=true)."""
+    from memory.queue import knowledge_queue
+    await knowledge_queue.add("backfill_telemetry", {"max_days": max_days}, {"priority": 2})
+    return {"message": "Telemetry backfill queued", "max_days": max_days}
 
 
 @router.post("/trigger/reflect-telemetry")

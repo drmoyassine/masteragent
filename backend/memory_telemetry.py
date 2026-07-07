@@ -241,3 +241,72 @@ def _mark_reflected(entity_type: str, entity_id: str, day: str, produced: int) -
             """, (entity_type, entity_id, day, produced))
     except Exception as e:
         logger.warning(f"_mark_reflected failed for {entity_type}/{entity_id}/{day}: {e}")
+
+
+async def backfill_telemetry(max_days: int = 30) -> dict:
+    """Process the accumulated AI-telemetry backlog by reflecting on each
+    historical day that still has unreflected telemetry, oldest-first.
+
+    Idempotent + resumable: run_telemetry_reflection skips any (entity, day)
+    already in telemetry_reflection_log, so re-running picks up where it left off.
+    Processes at most `max_days` days per invocation (most-recent window) to keep
+    the job bounded; re-trigger to continue if more history remains.
+
+    Hooked into the same 'Drain Backlog' trigger as the intelligence→knowledge
+    drain so one click backfills both experiential backlogs."""
+    from memory_db_writes import log_pipeline_run
+
+    try:
+        with get_memory_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT MIN(DATE(timestamp)) AS min_d, MAX(DATE(timestamp)) AS max_d
+                FROM interactions
+                WHERE interaction_type = ANY(%s)
+            """, (list(TELEMETRY_TYPES),))
+            row = cursor.fetchone()
+    except Exception as e:
+        logger.error(f"backfill_telemetry range query failed: {e}")
+        return {"days_processed": 0, "candidates": 0}
+
+    min_d = row["min_d"] if row else None
+    max_d = row["max_d"] if row else None
+    if not min_d:
+        logger.info("Telemetry backfill: no telemetry interactions found")
+        log_pipeline_run("telemetry_reflection_backfill", "skipped", reason_code="no_telemetry")
+        return {"days_processed": 0, "candidates": 0}
+
+    yesterday = date.today() - timedelta(days=1)
+    if max_d > yesterday:
+        max_d = yesterday
+    # Most-recent window of max_days (oldest-first iteration within the window)
+    start = max(min_d, max_d - timedelta(days=max_days - 1))
+    if start > max_d:
+        logger.info("Telemetry backfill: backlog fully within future window, nothing to do")
+        return {"days_processed": 0, "candidates": 0}
+
+    days_processed = 0
+    total_candidates = 0
+    cur = start
+    while cur <= max_d:
+        try:
+            n = await run_telemetry_reflection(cur.isoformat())
+            total_candidates += n
+        except Exception as e:
+            logger.error(f"Telemetry backfill day {cur} failed: {e}")
+        days_processed += 1
+        if days_processed % 5 == 0:
+            logger.info(f"Telemetry backfill progress: {days_processed} day(s) processed, {total_candidates} candidate(s)")
+        cur += timedelta(days=1)
+
+    logger.info(f"Telemetry backfill complete: {days_processed} day(s), {total_candidates} candidate(s) "
+                f"(window {start} → {max_d})")
+    log_pipeline_run(
+        "telemetry_reflection_backfill", "created" if total_candidates else "skipped",
+        reason_code=None if total_candidates else "no_reusable_learning",
+        records_created=total_candidates,
+        detail={"days_processed": days_processed, "window_start": str(start), "window_end": str(max_d)},
+        trigger="manual",
+    )
+    return {"days_processed": days_processed, "candidates": total_candidates,
+            "window_start": str(start), "window_end": str(max_d)}
