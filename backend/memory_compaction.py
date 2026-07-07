@@ -21,8 +21,16 @@ from memory_helpers import _get_entity_type_config, _format_signal_definitions
 logger = logging.getLogger(__name__)
 
 
-async def run_compaction_check():
-    """Check all entities for compaction threshold and trigger if needed."""
+async def run_compaction_check(min_count: int = None):
+    """Check all entities for compaction and trigger if needed.
+
+    Two valves (mirrors memory generation):
+      - Threshold valve: called intra-day after each memory is generated
+        (via _check_compaction_trigger in memory_generation) — uses the
+        configured intelligence_extraction_threshold.
+      - Schedule valve: called nightly with min_count = intelligence_schedule_floor
+        so entities BELOW the main threshold still get reflected on (the
+        "reflect every night on what accumulated" flush)."""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -38,17 +46,21 @@ async def run_compaction_check():
         entity_id = row["primary_entity_id"]
         config = _get_entity_type_config(entity_type)
         try:
-            await _check_compaction_trigger(entity_type, entity_id, config)
+            await _check_compaction_trigger(entity_type, entity_id, config, override_threshold=min_count)
         except Exception as e:
             logger.error(f"Compaction check failed for {entity_type}/{entity_id}: {e}")
 
 
-async def _check_compaction_trigger(entity_type: str, entity_id: str, config: dict):
+async def _check_compaction_trigger(entity_type: str, entity_id: str, config: dict, override_threshold: int = None):
     """Check whether compaction should trigger for this entity.
-    Fires if Uncompacted memory count >= intelligence_extraction_threshold."""
+    Fires if uncompacted memory count >= threshold. override_threshold (the
+    nightly schedule floor) takes precedence when provided."""
     settings = get_memory_settings()
     global_threshold = settings.get("intelligence_extraction_threshold", 10)
-    threshold = config.get("intelligence_extraction_threshold") or global_threshold
+    if override_threshold is not None:
+        threshold = override_threshold
+    else:
+        threshold = config.get("intelligence_extraction_threshold") or global_threshold
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -231,3 +243,42 @@ async def compact_entity(entity_type: str, entity_id: str):
         created += 1
 
     logger.info(f"Created {created} Intelligence item(s) ({status}) for {entity_type}/{entity_id} from {len(memory_ids)} memories")
+
+    # Intra-day knowledge threshold trigger: if this entity type now has enough
+    # unused confirmed intelligence, enqueue a knowledge check immediately rather
+    # than waiting for the nightly sweep. Mirrors how memory generation triggers
+    # the intelligence check. Best-effort; only fires when auto-approved intel
+    # actually confirmed something.
+    if created and auto_approve:
+        try:
+            await _check_knowledge_trigger(entity_type)
+        except Exception as e:
+            logger.warning(f"Knowledge trigger check failed for {entity_type}: {e}")
+
+
+async def _check_knowledge_trigger(entity_type: str):
+    """Enqueue a knowledge check if unused confirmed intelligence for this entity
+    type has reached the knowledge threshold (intra-day early fire)."""
+    settings = get_memory_settings()
+    global_threshold = settings.get("knowledge_threshold", 5)
+    config = _get_entity_type_config(entity_type)
+    threshold = config.get("knowledge_extraction_threshold") or global_threshold
+    if not threshold or threshold <= 0:
+        return
+
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT COUNT(*) as cnt FROM intelligence i
+            WHERE i.status = 'confirmed'
+              AND i.primary_entity_type = %s
+              AND NOT EXISTS (
+                  SELECT 1 FROM knowledge k WHERE i.id = ANY(k.source_intelligence_ids)
+              )
+        """, (entity_type,))
+        count = cursor.fetchone()["cnt"]
+
+    if count >= threshold:
+        logger.info(f"Knowledge threshold trigger for {entity_type}: {count} unused confirmed intelligence")
+        from memory.queue import knowledge_queue
+        await knowledge_queue.add("generate_knowledge", {}, {"priority": 3})

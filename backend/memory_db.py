@@ -577,6 +577,23 @@ def _run_migrations(cursor):
         ("facet_extraction_enabled", "BOOLEAN DEFAULT TRUE"),
         ("knowledge_facets_schema", "JSONB DEFAULT NULL"),        # global governed facet schema
         ("profile_facet_map", "JSONB DEFAULT NULL"),              # facet_key -> entity_profiles property key
+        # ── Nightly learning cadence: per-tier schedule valve (dual-gate) ──
+        # Intelligence (1→2): schedule sweep in addition to the threshold valve
+        ("intelligence_schedule_enabled", "BOOLEAN DEFAULT TRUE"),
+        ("intelligence_generation_time", "TEXT DEFAULT '02:30'"),
+        ("intelligence_schedule_floor", "INT DEFAULT 2"),         # min uncompacted memories for nightly sweep
+        # Knowledge (2→3): schedule sweep + the threshold valve
+        ("knowledge_schedule_enabled", "BOOLEAN DEFAULT TRUE"),
+        ("knowledge_generation_time", "TEXT DEFAULT '03:00'"),
+        ("knowledge_schedule_floor", "INT DEFAULT 2"),            # min unused confirmed intelligence for nightly sweep
+        # Playbooks: nightly cadence (was weekly-only)
+        ("playbook_schedule_enabled", "BOOLEAN DEFAULT TRUE"),
+        ("playbook_generation_time", "TEXT DEFAULT '03:30'"),
+        # Telemetry reflection (AI telemetry → skill/playbook/knowledge, option B)
+        ("telemetry_reflection_enabled", "BOOLEAN DEFAULT TRUE"),
+        ("telemetry_reflection_time", "TEXT DEFAULT '04:00'"),
+        ("telemetry_reflection_confidence_min", "FLOAT DEFAULT 0.6"),
+        ("telemetry_reflection_max_tokens", "INT DEFAULT 1200"),
     ]:
         cursor.execute(f"ALTER TABLE memory_settings ADD COLUMN IF NOT EXISTS {col} {col_def}")
 
@@ -675,6 +692,18 @@ def _run_migrations(cursor):
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_pipeline_runs_job ON memory_pipeline_runs (job, created_at DESC)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_pipeline_runs_created ON memory_pipeline_runs (created_at DESC)")
+
+    # Telemetry reflection idempotency log — one row per (entity, day) reflected on
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS telemetry_reflection_log (
+            entity_type         TEXT NOT NULL,
+            entity_id           TEXT NOT NULL,
+            reflection_date     DATE NOT NULL,
+            candidates_created  INT DEFAULT 0,
+            reflected_at        TIMESTAMPTZ DEFAULT NOW(),
+            PRIMARY KEY (entity_type, entity_id, reflection_date)
+        )
+    """)
 
     # Memories columns added after initial deploy
     for col, col_def in [

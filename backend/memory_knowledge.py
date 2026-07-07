@@ -1,6 +1,7 @@
 """Knowledge generation: intelligence → knowledge via PII scrub + LLM synthesis."""
 import logging
 import uuid
+from typing import Optional
 
 from core.storage import get_memory_db_context
 from memory_services import (
@@ -20,16 +21,19 @@ from memory_helpers import _get_entity_type_config, _format_signal_definitions
 logger = logging.getLogger(__name__)
 
 
-async def run_knowledge_check(drain: bool = False):
+async def run_knowledge_check(drain: bool = False, min_count: Optional[int] = None):
     """Check if enough confirmed intelligence have accumulated to generate a Knowledge.
 
     Each pass consumes at most one threshold-sized batch per entity type. With
     drain=True the check repeats until the backlog no longer yields a batch
-    (safety-capped) — used for backfilling a long-accumulated backlog."""
+    (safety-capped) — used for backfilling a long-accumulated backlog.
+
+    min_count (nightly schedule floor) overrides the per-type knowledge threshold,
+    so entity types below the main threshold still get reflected on nightly."""
     max_rounds = 50 if drain else 1
     total_created = 0
     for round_no in range(max_rounds):
-        created = await _run_knowledge_check_once()
+        created = await _run_knowledge_check_once(min_count=min_count)
         total_created += created
         if not created:
             break
@@ -40,8 +44,9 @@ async def run_knowledge_check(drain: bool = False):
     return total_created
 
 
-async def _run_knowledge_check_once() -> int:
-    """Single knowledge-check pass. Returns the number of knowledge records created."""
+async def _run_knowledge_check_once(min_count: Optional[int] = None) -> int:
+    """Single knowledge-check pass. Returns the number of knowledge records created.
+    min_count overrides the effective threshold (nightly schedule floor)."""
     settings = get_memory_settings()
     global_knowledge_threshold = settings.get("knowledge_threshold", 5)
     created = 0
@@ -67,6 +72,10 @@ async def _run_knowledge_check_once() -> int:
 
             config = _get_entity_type_config(entity_type)
             threshold = config.get("knowledge_extraction_threshold") or global_knowledge_threshold
+            # Nightly schedule floor overrides the main threshold (reflect on
+            # sub-threshold piles). Batch size still capped at the floor value.
+            if min_count is not None:
+                threshold = min_count
 
             if count >= threshold:
                 cursor.execute("""
