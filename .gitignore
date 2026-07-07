@@ -82,3 +82,10 @@ android-sdk/
 # Environment files
 *.env
 !.env.example
+
+# Local Claude Code settings (machine-specific, may contain tokens)
+.claude/settings.local.json
+.claude/worktrees/
+
+# Scratch / untracked side projects
+/sr.html
