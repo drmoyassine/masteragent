@@ -227,12 +227,13 @@ async def generate_knowledge_from_intelligence(intelligence: list) -> int:
 
     # Creation-time near-duplicate guard: if an active knowledge record in the same
     # category is already semantically near-identical, merge this evidence into it
-    # (refine-on-merge) instead of creating a bloating duplicate. Reuses the same
-    # cosine machinery as weekly consolidation, but at a higher threshold so only
-    # true near-duplicates merge (not distinct-but-related items). Zero-regression:
-    # skipped when disabled, when no embedding, or on any error (falls through to insert).
+    # (refine-on-merge) instead of creating a bloating duplicate. Uses the SAME
+    # dedup_similarity_threshold as weekly consolidation AND every other creation
+    # pathway (telemetry, playbook, skill) — one UI dial defines "what is a duplicate."
+    # Zero-regression: skipped when disabled, when no embedding, or on any error
+    # (falls through to insert).
     if embedding is not None and settings.get("knowledge_creation_dedup_enabled", True):
-        dedup_threshold = settings.get("knowledge_creation_dedup_threshold", 0.90)
+        dedup_threshold = settings.get("dedup_similarity_threshold", 0.85)
         try:
             existing_id = await find_similar_existing(embedding, dedup_threshold, category=category)
             if existing_id:

@@ -210,7 +210,6 @@ class MemorySettingsUpdate(BaseModel):
     # ── Knowledge / Playbook / Skill quality gauges (global) ───────────
     dedup_similarity_threshold: Optional[float] = 0.85
     extraction_confidence_threshold: Optional[float] = 0.6
-    consolidation_similarity_threshold: Optional[float] = 0.80
     consolidation_run_interval_days: Optional[int] = 7
     memory_generation_interaction_types: Optional[List[str]] = None
     memory_generation_interaction_types_mode: Optional[str] = "exclude"
@@ -246,7 +245,6 @@ class MemorySettingsUpdate(BaseModel):
     # Knowledge auto-activation (global dial) + creation-time dedup guard
     knowledge_auto_activate: Optional[bool] = True
     knowledge_creation_dedup_enabled: Optional[bool] = True
-    knowledge_creation_dedup_threshold: Optional[float] = 0.90
 
 class MemorySettingsResponse(BaseModel):
     chunk_size: int = 400
@@ -263,7 +261,6 @@ class MemorySettingsResponse(BaseModel):
     # Quality gauges
     dedup_similarity_threshold: float = 0.85
     extraction_confidence_threshold: float = 0.6
-    consolidation_similarity_threshold: float = 0.80
     consolidation_run_interval_days: int = 7
     memory_generation_interaction_types: Optional[List[str]] = None
     memory_generation_interaction_types_mode: Optional[str] = "exclude"
@@ -271,7 +268,6 @@ class MemorySettingsResponse(BaseModel):
     playbook_extraction_evidence_threshold: int = 20
     knowledge_auto_activate: bool = True
     knowledge_creation_dedup_enabled: bool = True
-    knowledge_creation_dedup_threshold: float = 0.90
 
 # ============================================
 # Tier 0: Interaction Models
