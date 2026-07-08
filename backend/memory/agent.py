@@ -37,7 +37,7 @@ from memory_services import (
     search_knowledge_by_vector,
     search_knowledge_by_fulltext,
 )
-from memory.auth import verify_agent_key, log_audit
+from memory.auth import verify_agent_key, log_audit, require_admin_or_agent
 from memory_tasks import check_rate_limit
 
 router = APIRouter()
@@ -947,7 +947,7 @@ async def list_knowledge(
 @router.get("/knowledge/facets", tags=["🎓 Knowledge"])
 async def list_knowledge_facets(
     key: Optional[str] = Query(None, description="Return distinct values for a single facet key only"),
-    agent: dict = Depends(verify_agent_key)
+    agent: dict = Depends(require_admin_or_agent)
 ):
     """Discover the governed facet vocabulary in use across active knowledge.
     No key → {facet_key: [distinct values...]} for every schema key with values.

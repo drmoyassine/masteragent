@@ -163,11 +163,11 @@ export const updateMemoryAdmin = (id, data) => api.patch(`/memory/admin/memories
 export const deleteMemoryAdmin = (id) => api.delete(`/memory/admin/memories/${id}`);
 export const bulkDeleteMemoriesAdmin = (data) => api.post('/memory/admin/memories/bulk-delete', data);
 export const bulkReprocessMemoriesAdmin = (data) => api.post('/memory/admin/memories/bulk-reprocess', data);
-export const getInsightsAdmin = (params) => api.get('/memory/intelligence', { params });
-export const updateInsightAdmin = (id, data) => api.patch(`/memory/intelligence/${id}`, data);
-export const deleteInsightAdmin = (id) => api.delete(`/memory/intelligence/${id}`);
-export const bulkDeleteIntelligenceAdmin = (data) => api.post('/memory/intelligence/bulk-delete', data);
-export const bulkApproveIntelligenceAdmin = (data) => api.post('/memory/intelligence/bulk-approve', data);
+export const getInsightsAdmin = (params) => api.get('/memory/admin/intelligence', { params });
+export const updateInsightAdmin = (id, data) => api.patch(`/memory/admin/intelligence/${id}`, data);
+export const deleteInsightAdmin = (id) => api.delete(`/memory/admin/intelligence/${id}`);
+export const bulkDeleteIntelligenceAdmin = (data) => api.post('/memory/admin/intelligence/bulk-delete', data);
+export const bulkApproveIntelligenceAdmin = (data) => api.post('/memory/admin/intelligence/bulk-approve', data);
 export const getInteractionFilterOptionsAdmin = (params) => api.get('/memory/interactions/filter-options', { params });
 export const getDailyMemories = (date) => api.get(`/memory/admin/daily/${date}`);
 export const getTimeline = (entityType, entityId) => api.get(`/memory/admin/timeline/${entityType}/${entityId}`);
@@ -180,18 +180,18 @@ export const reprocessIntelligence = (intelligenceIds) => api.post('/memory/trig
 export const triggerBackfillProfiles = () => api.post('/memory/trigger/backfill-profiles');
 
 // Public Knowledge - Admin UI
-export const getKnowledgeAdmin = (params) => api.get('/memory/knowledge', { params });
-export const createKnowledgeAdmin = (data) => api.post('/memory/knowledge', data);
-export const updateKnowledgeAdmin = (id, data) => api.patch(`/memory/knowledge/${id}`, data);
-export const deleteKnowledgeAdmin = (id) => api.delete(`/memory/knowledge/${id}`);
-export const bulkDeleteKnowledgeAdmin = (data) => api.post('/memory/knowledge/bulk-delete', data);
-export const getKnowledgeDetail = (id) => api.get(`/memory/knowledge/${id}`);
-export const submitKnowledgeFeedback = (id, data) => api.post(`/memory/knowledge/${id}/feedback`, data);
-export const exportKnowledgeMarkdown = (id) => api.get(`/memory/knowledge/${id}/skill.md`, { responseType: 'blob' });
-export const exportKnowledgePack = (params) => api.get('/memory/knowledge-pack', { params, responseType: 'blob' });
+export const getKnowledgeAdmin = (params) => api.get('/memory/admin/knowledge', { params });
+export const createKnowledgeAdmin = (data) => api.post('/memory/admin/knowledge', data);
+export const updateKnowledgeAdmin = (id, data) => api.patch(`/memory/admin/knowledge/${id}`, data);
+export const deleteKnowledgeAdmin = (id) => api.delete(`/memory/admin/knowledge/${id}`);
+export const bulkDeleteKnowledgeAdmin = (data) => api.post('/memory/admin/knowledge/bulk-delete', data);
+export const getKnowledgeDetail = (id) => api.get(`/memory/admin/knowledge/${id}`);
+export const submitKnowledgeFeedback = (id, data) => api.post(`/memory/admin/knowledge/${id}/feedback`, data);
+export const exportKnowledgeMarkdown = (id) => api.get(`/memory/admin/knowledge/${id}/skill.md`, { responseType: 'blob' });
+export const exportKnowledgePack = (params) => api.get('/memory/admin/knowledge-pack', { params, responseType: 'blob' });
 export const importSkillMd = (data) => api.post('/memory/skills/import', data);
 export const getPipelineRuns = (params) => api.get('/memory/pipeline-runs', { params });
-export const getKnowledgeById = (id) => api.get(`/memory/knowledge/${id}`);
+export const getKnowledgeById = (id) => api.get(`/memory/admin/knowledge/${id}`);
 export const getKnowledgeFacets = (params) => api.get('/memory/knowledge/facets', { params });
 export const triggerBackfillFacets = () => api.post('/memory/trigger/backfill-facets');
 export const triggerReflectTelemetry = (reflectionDate) => api.post('/memory/trigger/reflect-telemetry', null, { params: reflectionDate ? { reflection_date: reflectionDate } : {} });
