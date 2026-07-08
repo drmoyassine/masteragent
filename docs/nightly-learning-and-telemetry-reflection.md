@@ -4,6 +4,16 @@
 > 1. Intelligence & Knowledge now have the same **dual-valve** trigger model as Memory (schedule + threshold, whichever first), each on its own nightly time.
 > 2. AI telemetry gets a **first-class, per-entity path to knowledge** via nightly reflection (skill / playbook / trade-knowledge / best-practice / lesson).
 >
+> **Updates since (2026-07-08):**
+> - **Telemetry backfill** — `POST /trigger/backfill-telemetry?max_days=N` processes accumulated
+>   historical telemetry (date-loop, idempotent+resumable); the **Drain Backlog** button
+>   (`run-knowledge-check?drain=true`) now enqueues it alongside the intelligence→knowledge drain.
+> - **Node-driven prompts** — telemetry reflection, playbook extraction, and skill decomposition
+>   now read admin-editable node prompts (`telemetry_reflection` / `playbook_generation` /
+>   `skill_generation`), seeded with the canonical defaults. The Knowledge-stage UI was refactored
+>   from a misleading ordered "pipeline" into **pathway cards**.
+> - For the current authoritative spec, see [generation-settings-reference.md](generation-settings-reference.md).
+>
 > Companion: [knowledge-to-context-retrieval-report.md](knowledge-to-context-retrieval-report.md), [knowledge-pipeline-map.md](knowledge-pipeline-map.md).
 
 ---

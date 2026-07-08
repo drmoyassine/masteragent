@@ -214,6 +214,18 @@ builds conviction (draft + merge machinery promotes over time), outcome-aware (c
 included). See [the telemetry deep-dive](knowledge-to-context-retrieval-report.md) for why this
 path was needed.
 
+### Manual / backfill triggers
+- **Nightly** (automatic): `reflect_telemetry` job at `telemetry_reflection_time` → reflects yesterday.
+- **`POST /trigger/reflect-telemetry?reflection_date=YYYY-MM-DD`**: one-shot reflection on one day
+  (defaults to yesterday). Note: idempotent — skips any `(entity, day)` already in
+  `telemetry_reflection_log`; to **re-reflect** after editing the prompt, clear that day's log row first.
+- **`POST /trigger/backfill-telemetry?max_days=N`**: process the accumulated historical backlog —
+  loops `run_telemetry_reflection(date)` oldest-first over the most-recent N-day window; idempotent
+  and resumable (re-trigger to continue further back).
+- **Drain Backlog button** (`run-knowledge-check?drain=true`): enqueues `backfill_telemetry{max_days:30}`
+  alongside the intelligence→knowledge drain — one click drains both backlogs
+  (`?drain_telemetry=false` to skip telemetry).
+
 ---
 
 ## 8. All knowledge creation pathways (`source_pathway`)
@@ -344,9 +356,22 @@ The Knowledge Settings UI reflects this as **pathway cards** (Feeds on → Produ
 ## 13. Manual triggers & backfill (admin)
 
 All under `POST /api/memory/trigger/*` (admin JWT):
-`generate-memories`, `run-intelligence-check`, `run-knowledge-check` (with `?drain=true`),
-`extract-playbooks`, `run-consolidation`, `backfill-facets`, `reprocess-intelligence`,
-`backfill-profiles`, `compact/{type}/{id}`.
+
+**Per-tier generation:** `generate-memories`, `run-intelligence-check`,
+`run-knowledge-check` (with `?drain=true&drain_telemetry=true|false`), `extract-playbooks`,
+`run-consolidation`, `reprocess-intelligence`, `compact/{type}/{id}`.
+
+**Telemetry:** `backfill-telemetry?max_days=N` (historical date-loop backfill, idempotent +
+resumable, most-recent N-day window), `reflect-telemetry?reflection_date=YYYY-MM-DD`
+(one-shot reflection on one day; defaults to yesterday).
+
+**Backfill / maintenance:** `backfill-facets` (governed facets on existing knowledge),
+`backfill-profiles` (entity profiles from CRM blobs).
+
+**The "Drain Backlog" button** = `run-knowledge-check?drain=true` and enqueues **both**
+`generate_knowledge{drain:true}` (intelligence→knowledge, looped) **and**
+`backfill_telemetry{max_days:30}` (AI-telemetry reflection, 30-day window) — one click
+drains both experiential backlogs. Opt out of telemetry with `?drain_telemetry=false`.
 
 ---
 
