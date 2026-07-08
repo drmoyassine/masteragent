@@ -180,10 +180,21 @@ from fastapi_mcp import FastApiMCP
 from mcp_utils import sanitize_tools_for_gemini
 
 _mcp_svc_key = os.environ.get("MCP_SERVICE_KEY", "")
-_mcp_http_client = httpx.AsyncClient(headers={
-    "Authorization": f"Bearer {_mcp_svc_key}",
-    "X-API-Key": _mcp_svc_key,
-}) if _mcp_svc_key else None
+# fastapi-mcp executes each tool by making an HTTP request back into this same
+# app. When a custom http_client is supplied it MUST carry a base_url — otherwise
+# the relative tool path has no scheme and httpx rejects it ("Request URL is
+# missing an 'http://' or 'https://' protocol"). Hit uvicorn directly: nginx
+# already proxies 80 → 127.0.0.1:8001, so FastAPI's auth middleware still runs
+# and we skip an extra proxy hop. Override via MCP_BASE_URL if a deployment
+# exposes the app on a different internal address.
+_mcp_base_url = os.environ.get("MCP_BASE_URL", "http://127.0.0.1:8001")
+_mcp_http_client = httpx.AsyncClient(
+    base_url=_mcp_base_url,
+    headers={
+        "Authorization": f"Bearer {_mcp_svc_key}",
+        "X-API-Key": _mcp_svc_key,
+    },
+) if _mcp_svc_key else None
 
 _prompts_mcp = FastApiMCP(
     app,
