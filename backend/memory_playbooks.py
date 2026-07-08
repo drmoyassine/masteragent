@@ -416,10 +416,11 @@ async def _generate_skills_from_playbook(
         except Exception:
             pass
 
-        # Dedup check for skill
+        # Dedup check for skill (unified dedup_similarity_threshold — one dial)
         existing = None
         if embedding:
-            existing = await find_similar_existing(embedding, 0.85, category="skill")
+            _skill_thr = (get_memory_settings() or {}).get("dedup_similarity_threshold", 0.85)
+            existing = await find_similar_existing(embedding, _skill_thr, category="skill")
         if existing:
             await refine_or_increment_merge(
                 existing,

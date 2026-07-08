@@ -1343,13 +1343,13 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                         <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Dedup & Quality</Label>
                         <div className="grid grid-cols-2 gap-4 mt-2">
                             <div className="space-y-1">
-                                <Label className="text-xs font-mono">Dedup Similarity Threshold</Label>
+                                <Label className="text-xs font-mono">Duplicate Similarity Threshold</Label>
                                 <Input
                                     type="number" step="0.05" min="0.5" max="1.0"
                                     value={settings.dedup_similarity_threshold ?? 0.85}
                                     onChange={(e) => onUpdateSettings("dedup_similarity_threshold", parseFloat(e.target.value) || 0.85)}
                                 />
-                                <p className="text-[10px] text-muted-foreground">Cosine similarity threshold for deduplication (0.5-1.0)</p>
+                                <p className="text-[10px] text-muted-foreground">Cosine similarity that defines a "duplicate" — used by BOTH creation-time dedup (every pathway) and weekly consolidation (0.5-1.0; lower = merge more aggressively).</p>
                             </div>
                             <div className="space-y-1">
                                 <Label className="text-xs font-mono">Extraction Confidence Threshold</Label>
@@ -1366,16 +1366,7 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                     {/* Consolidation */}
                     <div className="border-t pt-4">
                         <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Consolidation</Label>
-                        <div className="grid grid-cols-2 gap-4 mt-2">
-                            <div className="space-y-1">
-                                <Label className="text-xs font-mono">Consolidation Similarity Threshold</Label>
-                                <Input
-                                    type="number" step="0.05" min="0.5" max="1.0"
-                                    value={settings.consolidation_similarity_threshold ?? 0.80}
-                                    onChange={(e) => onUpdateSettings("consolidation_similarity_threshold", parseFloat(e.target.value) || 0.80)}
-                                />
-                                <p className="text-[10px] text-muted-foreground">Similarity for merging during consolidation (0.5-1.0)</p>
-                            </div>
+                        <div className="grid grid-cols-1 gap-4 mt-2">
                             <div className="space-y-1">
                                 <Label className="text-xs font-mono">Consolidation Interval (days)</Label>
                                 <Input
@@ -1383,7 +1374,7 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                                     value={settings.consolidation_run_interval_days ?? 7}
                                     onChange={(e) => onUpdateSettings("consolidation_run_interval_days", parseInt(e.target.value) || 7)}
                                 />
-                                <p className="text-[10px] text-muted-foreground">How often to run consolidation</p>
+                                <p className="text-[10px] text-muted-foreground">How often to run the weekly consolidation sweep. The merge similarity threshold is the "Duplicate Similarity Threshold" above — shared with creation-time dedup.</p>
                             </div>
                         </div>
                     </div>
@@ -1397,17 +1388,7 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                                 onCheckedChange={(v) => onUpdateSettings("knowledge_creation_dedup_enabled", v)}
                             />
                         </div>
-                        <div className="grid grid-cols-1 gap-4 mt-2">
-                            <div className="space-y-1">
-                                <Label className="text-xs font-mono">Creation Dedup Similarity Threshold</Label>
-                                <Input
-                                    type="number" step="0.01" min="0.5" max="1.0"
-                                    value={settings.knowledge_creation_dedup_threshold ?? 0.90}
-                                    onChange={(e) => onUpdateSettings("knowledge_creation_dedup_threshold", parseFloat(e.target.value) || 0.90)}
-                                />
-                                <p className="text-[10px] text-muted-foreground">Merge into an existing near-identical record at creation instead of creating a duplicate (0.5-1.0; higher = stricter). Complements the weekly consolidation sweep.</p>
-                            </div>
-                        </div>
+                        <p className="text-[10px] text-muted-foreground mt-2">When on, every knowledge creation pathway (intelligence, telemetry, playbook, skill) merges into an existing near-identical record instead of creating a duplicate. Uses the "Duplicate Similarity Threshold" above (shared with weekly consolidation).</p>
                     </div>
 
                     {/* Playbook Extraction */}

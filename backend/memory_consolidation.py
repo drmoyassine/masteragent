@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 async def run_consolidation():
     """Run all consolidation + decay tasks."""
     settings = get_memory_settings()
-    consolidation_threshold = settings.get("consolidation_similarity_threshold", 0.80)
+    consolidation_threshold = settings.get("dedup_similarity_threshold", 0.85)  # unified with creation-time dedup (one dial)
 
     logger.info("Starting consolidation run")
     await _consolidate_duplicates(consolidation_threshold)
