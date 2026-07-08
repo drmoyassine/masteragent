@@ -8,6 +8,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Trash2, Check, Edit, Plus, Search, Download, Archive, ArchiveRestore, Pin } from "lucide-react";
+import DataTablePagination from "./DataTablePagination";
 
 const SUBTABS = [
   { value: "all", label: "All" },
@@ -43,6 +44,7 @@ export default function KnowledgeTab({
   tagSearch = "", setTagSearch,
   onShowNewDialog, onShowImportDialog, onArchive, onToggleAlwaysInject,
   loading, visCols, renderColumnToggle,
+  page, pageSize, total, onPageChange, onPageSizeChange,
 }) {
   const showInstall = categoryFilter === "skill" || categoryFilter === "playbook";
   return (
@@ -196,6 +198,7 @@ export default function KnowledgeTab({
             </TableBody>
           </Table>
         </div>
+        <DataTablePagination page={page} pageSize={pageSize} total={total} onPageChange={onPageChange} onPageSizeChange={onPageSizeChange} />
       </CardContent>
     </Card>
   );
