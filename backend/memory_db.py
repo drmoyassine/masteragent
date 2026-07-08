@@ -1028,11 +1028,26 @@ def _seed_defaults():
             WHERE task_type = 'summarization' AND pipeline_stage = 'interactions'
         """)
 
-        # Playbook/skill extraction configs — seeded for EXISTING installs too
-        # (these task types resolve by task_type only; without an active row the
-        # LLM call returns empty and the playbook pathway silently no-ops).
-        # Attached to the same provider as knowledge_generation when available.
-        for pb_task, pb_order in [("playbook_generation", 2), ("skill_generation", 3)]:
+        # Knowledge-stage generation nodes that pick-by-task_type (NOT a sequential
+        # pipeline). Their prompts are admin-editable via inline_system_prompt, seeded
+        # from the canonical constants in the implementation modules (single source of
+        # truth). Seeded for EXISTING installs too (idempotent), attached to the same
+        # provider/model as knowledge_generation when available.
+        try:
+            from memory_playbooks import _PLAYBOOK_GEN_PROMPT, _SKILL_GEN_PROMPT
+            from memory_telemetry import _REFLECTION_SYSTEM_PROMPT
+            pick_nodes = [
+                ("playbook_generation", 2, _PLAYBOOK_GEN_PROMPT),
+                ("skill_generation", 3, _SKILL_GEN_PROMPT),
+                ("telemetry_reflection", 4, _REFLECTION_SYSTEM_PROMPT),
+            ]
+        except Exception as e:
+            logger.warning(f"Could not import generation prompt constants for seeding: {e}")
+            pick_nodes = [
+                ("playbook_generation", 2, ""), ("skill_generation", 3, ""), ("telemetry_reflection", 4, ""),
+            ]
+
+        for pb_task, pb_order, pb_prompt in pick_nodes:
             cursor.execute("""
                 INSERT INTO memory_llm_configs
                     (task_type, provider_id, model_name, is_active, pipeline_stage, execution_order, inline_system_prompt, inline_schema)
@@ -1045,11 +1060,18 @@ def _seed_defaults():
                            (SELECT model_name FROM memory_llm_configs WHERE task_type = 'knowledge_generation' AND is_active = TRUE LIMIT 1),
                            'gpt-4o-mini'
                        ),
-                       TRUE, 'knowledge', %s, '', ''
+                       TRUE, 'knowledge', %s, %s, ''
                 WHERE NOT EXISTS (
                     SELECT 1 FROM memory_llm_configs WHERE task_type = %s
                 )
-            """, (pb_task, pb_order, pb_task))
+            """, (pb_task, pb_order, pb_prompt, pb_task))
+            # Backfill the prompt for existing installs where the node exists but is empty
+            if pb_prompt:
+                cursor.execute("""
+                    UPDATE memory_llm_configs
+                    SET inline_system_prompt = %s
+                    WHERE task_type = %s AND (inline_system_prompt IS NULL OR inline_system_prompt = '')
+                """, (pb_prompt, pb_task))
 
 
         # Default system prompts

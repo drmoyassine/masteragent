@@ -144,6 +144,21 @@ def get_schema_by_config_id(config_id: str) -> Optional[str]:
     return None
 
 
+def get_task_system_prompt(task_type: str, fallback: Optional[str] = None) -> Optional[str]:
+    """Resolve the active system prompt for a task type (sync, single-node pick).
+
+    Knowledge-generation pathways (telemetry reflection, playbook extraction,
+    skill decomposition) pick ONE config node by task_type rather than running a
+    sequential pipeline — this returns that node's inline prompt, falling back to
+    the caller's hardcoded default when no active config / no prompt is set.
+    Keeps the admin-editable UI honest: the prompt shown is the one the code uses."""
+    config = get_llm_config(task_type)
+    if not config:
+        return fallback
+    prompt = get_system_prompt_by_config_id(config["id"])
+    return prompt or fallback
+
+
 async def get_system_prompt(task_type: str, user_id: str = "default") -> Optional[str]:
     """Get active system prompt text by fetching the linked Prompt Manager entry."""
     

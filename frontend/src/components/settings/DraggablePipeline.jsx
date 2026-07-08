@@ -15,9 +15,10 @@ import {
   useSortable
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVertical, Plus } from "lucide-react";
+import { GripVertical, Plus, GraduationCap, Sparkles, Brain, Scissors, EyeOff, ArrowRight } from "lucide-react";
 import { InlineTaskConfigAccordion } from "./InlineTaskConfigAccordion";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Dialog,
@@ -28,6 +29,42 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { TASK_TYPE_LABELS } from "@/components/settings/LLMProviderSettings";
+
+// Knowledge-stage pathways are NOT a sequential pipeline — each is an independent
+// producer that picks its node by task_type. This metadata makes each pathway's
+// input/output/trigger legible in the UI (the whole point of the refactor).
+const KNOWLEDGE_PATHWAYS = [
+  {
+    task_type: "knowledge_generation",
+    title: "Declarative Knowledge", icon: GraduationCap, accent: "border-emerald-500/40",
+    feeds: "Confirmed intelligence", produces: "best_practices · lessons_learned · trade_knowledge",
+    trigger: "Nightly + threshold + drain",
+  },
+  {
+    task_type: "telemetry_reflection",
+    title: "Telemetry Reflection", icon: Sparkles, accent: "border-cyan-500/40",
+    feeds: "AI thoughts & tool calls (internal_ai_*)", produces: "skill · playbook · best_practices · lessons · trade",
+    trigger: "Nightly + backfill",
+  },
+  {
+    task_type: "playbook_generation",
+    title: "Playbook Extraction", icon: Brain, accent: "border-orange-500/40",
+    feeds: "Intelligence clusters across ≥3 entities", produces: "playbook",
+    trigger: "Nightly",
+  },
+  {
+    task_type: "skill_generation",
+    title: "Skill Decomposition", icon: Scissors, accent: "border-pink-500/40",
+    feeds: "Playbook steps", produces: "skill",
+    trigger: "Automatic (after each playbook)",
+  },
+  {
+    task_type: "pii_scrubbing",
+    title: "PII Scrubbing", icon: EyeOff, accent: "border-red-500/40",
+    feeds: "Knowledge content before synthesis", produces: "PII redacted in place",
+    trigger: "Inline (used by declarative + manual paths)",
+  },
+];
 
 function SortablePipelineNode({ config, ...props }) {
   const {
@@ -235,5 +272,72 @@ function AddStepDialog({ open, onOpenChange, selectedTaskType, onSelectTaskType,
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ─── Knowledge Pathways (replaces the misleading ordered-pipeline view) ───────
+// The knowledge stage is a set of INDEPENDENT producers (each picks its node by
+// task_type), not a sequential pipeline. This renders one card per pathway with
+// its input → output → trigger metadata + the node's editor (model + prompt),
+// so what each node does is legible and the editable prompt is the one the code
+// actually uses.
+export function KnowledgePathways({
+  pipelineConfigs,
+  llmProviders,
+  onSaveConfig,
+  onDeleteConfig,
+  modelLists,
+  fetchingModels,
+  fetchErrors,
+  onFetchModels,
+}) {
+  const findByType = (tt) => (pipelineConfigs || []).find((c) => c.task_type === tt);
+
+  return (
+    <div className="space-y-4">
+      <p className="text-[11px] text-muted-foreground">
+        These are independent generation pathways, not sequential steps. Each produces a different
+        kind of knowledge from different input; edit a prompt to tune that pathway specifically.
+      </p>
+      {KNOWLEDGE_PATHWAYS.map((pw) => {
+        const Icon = pw.icon;
+        const node = findByType(pw.task_type);
+        return (
+          <div key={pw.task_type} className={`rounded-lg border ${pw.accent} bg-background overflow-hidden`}>
+            <div className="px-4 py-2.5 border-b bg-muted/30 flex items-center gap-2 flex-wrap">
+              <Icon className="w-4 h-4 text-muted-foreground" />
+              <span className="text-sm font-semibold">{pw.title}</span>
+              <Badge variant="outline" className="text-[10px] font-mono ml-auto">{pw.trigger}</Badge>
+            </div>
+            <div className="px-4 py-2 text-[11px] text-muted-foreground flex items-center gap-2 flex-wrap border-b">
+              <span><span className="font-medium text-foreground">Feeds on:</span> {pw.feeds}</span>
+              <ArrowRight className="w-3 h-3" />
+              <span><span className="font-medium text-foreground">Produces:</span> {pw.produces}</span>
+            </div>
+            <div className="p-3">
+              {node ? (
+                <InlineTaskConfigAccordion
+                  config={node}
+                  llmProviders={llmProviders}
+                  onSaveConfig={onSaveConfig}
+                  models={modelLists[node.id] || []}
+                  loadingModels={fetchingModels[node.id]}
+                  error={fetchErrors[node.id]}
+                  onFetchModels={onFetchModels}
+                  isToggleable={true}
+                  toggleChecked={node.is_active}
+                  onToggleChange={(val) => onSaveConfig(node.id, { is_active: val })}
+                  onDeleteConfig={onDeleteConfig}
+                />
+              ) : (
+                <div className="text-xs text-muted-foreground italic py-2">
+                  No {pw.task_type} node configured — this pathway will use its built-in default prompt and is inactive until a node is added.
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }

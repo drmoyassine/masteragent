@@ -133,11 +133,13 @@ async def _reflect_entity_day(entity_type: str, entity_id: str, day: str, confid
 
     settings = get_memory_settings() or {}
     try:
+        from services.config_helpers import get_task_system_prompt
+        system_prompt = get_task_system_prompt("telemetry_reflection", fallback=_REFLECTION_SYSTEM_PROMPT) or _REFLECTION_SYSTEM_PROMPT
         result_text = await call_llm(
             user_msg,
-            system_prompt=_REFLECTION_SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             max_tokens=int(settings.get("telemetry_reflection_max_tokens", 1200)),
-            task_type="knowledge_generation",
+            task_type="telemetry_reflection",
         )
         candidates = parse_llm_json(result_text, context="telemetry_reflection")
     except Exception as e:
