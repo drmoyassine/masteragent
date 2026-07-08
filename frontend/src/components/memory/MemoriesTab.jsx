@@ -6,11 +6,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { RefreshCw, Trash2, CheckCircle2, XCircle, Check } from "lucide-react";
 import { stringToColor } from "./utils";
+import DataTablePagination from "./DataTablePagination";
 
 export default function MemoriesTab({
   memories, selectedIds, toggleAll, toggleOne,
   onEdit, onBulkDelete, onBulkReprocess,
   loading, visCols, renderColumnToggle, onLoad, processingBulk,
+  page, pageSize, total, onPageChange, onPageSizeChange,
 }) {
   return (
     <Card>
@@ -87,6 +89,7 @@ export default function MemoriesTab({
             </TableBody>
           </Table>
         </div>
+        <DataTablePagination page={page} pageSize={pageSize} total={total} onPageChange={onPageChange} onPageSizeChange={onPageSizeChange} />
       </CardContent>
     </Card>
   );

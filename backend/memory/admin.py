@@ -1105,6 +1105,9 @@ async def get_stats(admin: dict = Depends(require_admin_auth)):
         cursor.execute("SELECT COUNT(*) as total FROM knowledge")
         total_knowledge = cursor.fetchone()["total"]
 
+        cursor.execute("SELECT COUNT(*) as total FROM knowledge WHERE status = 'active'")
+        active_knowledge = cursor.fetchone()["total"]
+
         cursor.execute("SELECT COUNT(*) as total FROM memory_agents WHERE is_active = TRUE")
         active_agents = cursor.fetchone()["total"]
 
@@ -1133,7 +1136,7 @@ async def get_stats(admin: dict = Depends(require_admin_auth)):
         },
         "memories": {"total": total_memories},
         "intelligence": {"total": total_insights, "confirmed": confirmed_insights},
-        "knowledge": {"total": total_knowledge},
+        "knowledge": {"total": total_knowledge, "active": active_knowledge},
         "agents": {"total": total_agents, "active": active_agents},
     }
 

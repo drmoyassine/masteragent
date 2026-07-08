@@ -11,6 +11,7 @@ import {
   updateInsightAdmin,
   deleteInsightAdmin,
   getKnowledgeAdmin,
+  getMemoryStats,
   updateMemoryAdmin,
   deleteMemoryAdmin,
   bulkDeleteMemoriesAdmin,
@@ -59,6 +60,17 @@ import IntelligenceInspector from "@/components/memory/IntelligenceInspector";
 import KnowledgeInspector from "@/components/memory/KnowledgeInspector";
 import { NewKnowledgeDialog, ImportSkillDialog } from "@/components/memory/KnowledgeDialogs";
 import FilterBar from "@/components/memory/FilterBar";
+import DataTablePagination from "@/components/memory/DataTablePagination";
+
+function CountCard({ label, value, sub, active }) {
+  return (
+    <div className={`rounded-lg border p-3 ${active ? "border-primary bg-primary/5" : "bg-card"}`}>
+      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="text-2xl font-bold tabular-nums">{value ?? "—"}</div>
+      {sub && <div className="text-[10px] text-muted-foreground">{sub}</div>}
+    </div>
+  );
+}
 
 export default function MemoryExplorerPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -94,6 +106,24 @@ export default function MemoryExplorerPage() {
   const [knowledgeStatusFilter, setKnowledgeStatusFilter] = useState("all");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [tagSearch, setTagSearch] = useState("");
+
+  // Pagination (shared across tiers; resets to page 0 on tab/filter change)
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(20);
+  const [totals, setTotals] = useState({ interactions: 0, memories: 0, intelligence: 0, knowledge: 0 });
+  // Cross-tier live counts (from /admin/stats)
+  const [stats, setStats] = useState(null);
+
+  // Changing tab or any filter resets to page 0 in the same batched update as the
+  // filter change, so the loader fetches the correct page (no wasted double-fetch).
+  const changeStatusFilter = useCallback((v) => { setKnowledgeStatusFilter(v); setPage(0); }, []);
+  const changeCategoryFilter = useCallback((v) => { setCategoryFilter(v); setPage(0); }, []);
+  const changeTagSearch = useCallback((v) => { setTagSearch(v); setPage(0); }, []);
+  const changeAppliedFilter = useCallback((v) => { setAppliedFilter(v); setPage(0); }, []);
+  const changePageSize = useCallback((v) => { setPageSize(v); setPage(0); }, []);
+  const loadStats = useCallback(async () => {
+    try { const res = await getMemoryStats(); setStats(res.data); } catch { setStats(null); }
+  }, []);
   const [editingKnowledge, setEditingKnowledge] = useState(null);
   const [newKnowledge, setNewKnowledge] = useState({ name: "", category: "trade_knowledge", content: "", summary: "", tags: [], status: "draft" });
   const [showNewKnowledgeDialog, setShowNewKnowledgeDialog] = useState(false);
@@ -320,66 +350,74 @@ export default function MemoryExplorerPage() {
   const loadInteractions = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await getInteractionsAdmin(getFetchParams());
+      const params = { ...getFetchParams(), limit: pageSize, offset: page * pageSize };
+      const res = await getInteractionsAdmin(params);
       setInteractions(res.data?.interactions || []);
+      setTotals(prev => ({ ...prev, interactions: res.data?.total ?? 0 }));
     } catch (error) {
       toast.error("Failed to load interactions");
       setInteractions([]);
     } finally {
       setLoading(false);
     }
-  }, [getFetchParams]);
+  }, [getFetchParams, page, pageSize]);
 
   const loadMemories = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await getMemoriesAdmin(getFetchParams());
+      const params = { ...getFetchParams(), limit: pageSize, offset: page * pageSize };
+      const res = await getMemoriesAdmin(params);
       setMemories(res.data?.memories || []);
+      setTotals(prev => ({ ...prev, memories: res.data?.total ?? 0 }));
     } catch (error) {
       toast.error("Failed to load memories");
       setMemories([]);
     } finally {
       setLoading(false);
     }
-  }, [getFetchParams]);
+  }, [getFetchParams, page, pageSize]);
 
   const loadInsights = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await getInsightsAdmin(getFetchParams());
+      const params = { ...getFetchParams(), limit: pageSize, offset: page * pageSize };
+      const res = await getInsightsAdmin(params);
       setInsights(res.data?.intelligence || []);
+      setTotals(prev => ({ ...prev, intelligence: res.data?.total ?? 0 }));
     } catch (error) {
       toast.error("Failed to load intelligence");
       setInsights([]);
     } finally {
       setLoading(false);
     }
-  }, [getFetchParams]);
+  }, [getFetchParams, page, pageSize]);
 
   const loadKnowledge = useCallback(async () => {
     setLoading(true);
     try {
-      const params = getFetchParams();
+      const params = { ...getFetchParams(), limit: pageSize, offset: page * pageSize };
       if (knowledgeStatusFilter !== "all") params.status = knowledgeStatusFilter;
       if (categoryFilter !== "all") params.category = categoryFilter;
       if (tagSearch.trim()) params.tags = tagSearch.trim();
       const res = await getKnowledgeAdmin(params);
       setKnowledge(res.data?.knowledge || []);
+      setTotals(prev => ({ ...prev, knowledge: res.data?.total ?? 0 }));
     } catch (error) {
       console.error("Failed to load knowledge:", error);
       setKnowledge([]);
     } finally {
       setLoading(false);
     }
-  }, [getFetchParams, knowledgeStatusFilter, categoryFilter, tagSearch]);
+  }, [getFetchParams, page, pageSize, knowledgeStatusFilter, categoryFilter, tagSearch]);
 
   useEffect(() => {
     loadFilterOptions();
+    loadStats();
     if (activeTab === "interactions") loadInteractions();
     else if (activeTab === "memories") loadMemories();
     else if (activeTab === "intelligence") loadInsights();
     else if (activeTab === "knowledge") loadKnowledge();
-  }, [activeTab, loadInteractions, loadMemories, loadInsights, loadKnowledge, loadFilterOptions]);
+  }, [activeTab, loadInteractions, loadMemories, loadInsights, loadKnowledge, loadFilterOptions, loadStats]);
 
   // ─── Knowledge Handlers ─────────────────────────────────────
   const handleCreateKnowledge = async () => {
@@ -714,14 +752,23 @@ export default function MemoryExplorerPage() {
       {/* Global Filter Bar */}
       <FilterBar
         appliedFilter={appliedFilter}
-        setAppliedFilter={setAppliedFilter}
+        setAppliedFilter={changeAppliedFilter}
         entityIdInput={entityIdInput}
         setEntityIdInput={setEntityIdInput}
         filterOptions={filterOptions}
       />
 
+      {/* Live counts across all tiers (from /admin/stats) */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <CountCard label="Interactions" value={stats?.interactions?.total} sub={stats?.interactions?.last_24h != null ? `${stats.interactions.last_24h} last 24h` : null} active={activeTab === "interactions"} />
+        <CountCard label="Memories" value={stats?.memories?.total} active={activeTab === "memories"} />
+        <CountCard label="Intelligence" value={stats?.intelligence?.total} sub={stats?.intelligence?.confirmed != null ? `${stats.intelligence.confirmed} confirmed` : null} active={activeTab === "intelligence"} />
+        <CountCard label="Knowledge" value={stats?.knowledge?.total} sub={stats?.knowledge?.active != null ? `${stats.knowledge.active} active` : null} active={activeTab === "knowledge"} />
+      </div>
+
       <Tabs value={activeTab} onValueChange={(tab) => {
         setActiveTab(tab);
+        setPage(0);
         setSearchParams({ tab }, { replace: true });
       }} className="space-y-4">
         <TabsList className="grid w-full grid-cols-4 lg:w-auto lg:inline-grid">
@@ -753,6 +800,11 @@ export default function MemoryExplorerPage() {
             renderColumnToggle={renderColumnToggle}
             onLoad={loadInteractions}
             processingBulk={processingBulk}
+            page={page}
+            pageSize={pageSize}
+            total={totals.interactions}
+            onPageChange={setPage}
+            onPageSizeChange={changePageSize}
           />
         </TabsContent>
 
@@ -770,6 +822,11 @@ export default function MemoryExplorerPage() {
             renderColumnToggle={renderColumnToggle}
             onLoad={loadMemories}
             processingBulk={processingBulk}
+            page={page}
+            pageSize={pageSize}
+            total={totals.memories}
+            onPageChange={setPage}
+            onPageSizeChange={changePageSize}
           />
         </TabsContent>
 
@@ -789,6 +846,11 @@ export default function MemoryExplorerPage() {
             renderColumnToggle={renderColumnToggle}
             onLoad={loadInsights}
             processingBulk={processingBulk}
+            page={page}
+            pageSize={pageSize}
+            total={totals.intelligence}
+            onPageChange={setPage}
+            onPageSizeChange={changePageSize}
           />
         </TabsContent>
 
@@ -803,11 +865,11 @@ export default function MemoryExplorerPage() {
             onDelete={handleDeleteKnowledge}
             onBulkDelete={handleBulkDeleteKnowledge}
             knowledgeStatusFilter={knowledgeStatusFilter}
-            setKnowledgeStatusFilter={setKnowledgeStatusFilter}
+            setKnowledgeStatusFilter={changeStatusFilter}
             categoryFilter={categoryFilter}
-            setCategoryFilter={setCategoryFilter}
+            setCategoryFilter={changeCategoryFilter}
             tagSearch={tagSearch}
-            setTagSearch={setTagSearch}
+            setTagSearch={changeTagSearch}
             onShowNewDialog={() => setShowNewKnowledgeDialog(true)}
             onShowImportDialog={() => setShowImportDialog(true)}
             onArchive={handleArchiveKnowledge}
@@ -815,6 +877,11 @@ export default function MemoryExplorerPage() {
             loading={loading}
             visCols={visCols}
             renderColumnToggle={renderColumnToggle}
+            page={page}
+            pageSize={pageSize}
+            total={totals.knowledge}
+            onPageChange={setPage}
+            onPageSizeChange={changePageSize}
           />
         </TabsContent>
       </Tabs>

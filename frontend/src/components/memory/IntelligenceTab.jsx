@@ -7,11 +7,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { RefreshCw, Trash2, Check, Edit, CheckCheck, RotateCcw } from "lucide-react";
 import { stringToColor } from "./utils";
+import DataTablePagination from "./DataTablePagination";
 
 export default function IntelligenceTab({
   intelligence, selectedIds, toggleAll, toggleOne,
   onEdit, onApprove, onBulkDelete, onBulkApprove, onBulkReprocess,
   loading, visCols, renderColumnToggle, onLoad, processingBulk,
+  page, pageSize, total, onPageChange, onPageSizeChange,
 }) {
   const hasDraftSelected = selectedIds.some(id => intelligence.find(i => i.id === id)?.status === "draft");
   return (
@@ -104,6 +106,7 @@ export default function IntelligenceTab({
             </TableBody>
           </Table>
         </div>
+        <DataTablePagination page={page} pageSize={pageSize} total={total} onPageChange={onPageChange} onPageSizeChange={onPageSizeChange} />
       </CardContent>
     </Card>
   );

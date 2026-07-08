@@ -195,6 +195,7 @@ export const getKnowledgeById = (id) => api.get(`/memory/admin/knowledge/${id}`)
 export const getKnowledgeFacets = (params) => api.get('/memory/knowledge/facets', { params });
 export const triggerBackfillFacets = () => api.post('/memory/trigger/backfill-facets');
 export const triggerReflectTelemetry = (reflectionDate) => api.post('/memory/trigger/reflect-telemetry', null, { params: reflectionDate ? { reflection_date: reflectionDate } : {} });
+export const getMemoryStats = () => api.get('/memory/admin/stats');
 
 // Outbound Webhooks - Admin UI
 export const getOutboundWebhooks = () => api.get('/memory/outbound-webhooks');
