@@ -299,6 +299,19 @@ runs nodes in `execution_order` against a shared mutable context.
 > **Zero-regression rule:** these `inline_system_prompt` values are admin-owned and quality-frozen;
 > code changes never alter them. Only the *mechanics around them* (valves, facets, retrieval) change.
 
+#### Node-vs-pathway truth (important)
+The "pipeline" metaphor is accurate **only for the `memories` stage** (a real sequential executor loops nodes in order). The `intelligence` and `knowledge` stages are **not** sequential pipelines — each generation pathway **picks one node by `task_type`** and ignores the rest. Every knowledge-pathway prompt is now node-driven and admin-editable (seeded with the canonical default), resolved via `get_task_system_prompt(task_type, fallback)`:
+
+| Pathway | Node (`task_type`) | Prompt source | Model source |
+|---|---|---|---|
+| Declarative synthesis | `knowledge_generation` | ✅ node prompt | ✅ node |
+| Telemetry reflection | `telemetry_reflection` | ✅ node prompt | ✅ node |
+| Playbook extraction | `playbook_generation` | ✅ node prompt (`{entity_count}`/`{entity_type}` placeholders) | ✅ node |
+| Skill decomposition | `skill_generation` | ✅ node prompt | ✅ node |
+| PII scrubbing | `pii_scrubbing` | ✅ node prompt (LLM-scrub mode) / `/redact` (zendata) | ✅ node |
+
+The Knowledge Settings UI reflects this as **pathway cards** (Feeds on → Produces → Trigger + editable prompt/model per card), not an ordered draggable pipeline.
+
 ---
 
 ## 12. Settings reference

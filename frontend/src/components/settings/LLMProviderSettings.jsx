@@ -46,6 +46,7 @@ export const TASK_TYPE_LABELS = {
     knowledge_generation: { label: "Knowledge Generation", icon: GraduationCap, color: "bg-green-500" },
     playbook_generation: { label: "Playbook Extraction", icon: Brain, color: "bg-orange-500" },
     skill_generation: { label: "Skill Decomposition", icon: Scissors, color: "bg-pink-500" },
+    telemetry_reflection: { label: "Telemetry Reflection", icon: Sparkles, color: "bg-cyan-500" },
 };
 
 const PROVIDER_META = [

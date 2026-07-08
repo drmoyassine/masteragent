@@ -281,7 +281,7 @@ import {
     TASK_TYPE_LABELS,
 } from "@/components/settings/LLMProviderSettings";
 import { InlineTaskConfigAccordion } from "./InlineTaskConfigAccordion";
-import { DraggablePipeline } from "./DraggablePipeline";
+import { DraggablePipeline, KnowledgePathways } from "./DraggablePipeline";
 import { OutboundWebhooksSettings } from "./OutboundWebhooksSettings";
 import { VisionWebhooksSettings } from "./VisionWebhooksSettings";
 
@@ -1486,20 +1486,20 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                 </CardContent>
             </Card>
 
-            {/* Knowledge Pipeline */}
+            {/* Knowledge Generation Pathways (NOT a sequential pipeline — each
+                pathway is an independent producer that picks its node by task_type) */}
             <Card className="border-dashed bg-muted/20">
                 <CardHeader className="pb-3 border-b">
-                    <CardTitle className="text-sm">Knowledge Pipeline</CardTitle>
+                    <CardTitle className="text-sm">Knowledge Generation Pathways</CardTitle>
+                    <CardDescription className="text-[11px] mt-1">
+                        Each pathway produces a different kind of knowledge from different input. Edit a prompt to tune that pathway.
+                    </CardDescription>
                 </CardHeader>
                 <CardContent className="pt-4">
-                    <DraggablePipeline
-                        title=""
-                        pipelineStage="knowledge"
+                    <KnowledgePathways
                         pipelineConfigs={publicPipelineNodes}
-                        onReorder={(arr) => onReorderPipeline("knowledge", arr)}
                         llmProviders={llmProviders}
                         onSaveConfig={onSaveConfig} onDeleteConfig={onDeleteConfig}
-                        onAddConfig={onAddConfig}
                         modelLists={modelLists}
                         fetchingModels={fetchingModels}
                         fetchErrors={fetchErrors}

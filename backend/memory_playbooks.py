@@ -20,6 +20,40 @@ from memory_helpers import _get_entity_type_config
 logger = logging.getLogger(__name__)
 
 
+# Canonical prompts — seeded into the memory_llm_configs nodes (pipeline_stage='knowledge')
+# so they are admin-editable. The generation functions read the node prompt via
+# get_task_system_prompt() and fall back to these constants if no node/empty prompt.
+_PLAYBOOK_GEN_PROMPT = (
+    "You are a procedural knowledge extractor for a CRM memory system.\n\n"
+    "You are given a cluster of intelligence signals that were independently observed "
+    "across {entity_count} different {entity_type} entities, along with AI agent telemetry "
+    "from the interactions where these signals appeared.\n\n"
+    "RULES:\n"
+    "- Extract 3-7 concrete, ordered action steps\n"
+    "- Steps must be actionable (start with a verb)\n"
+    "- Steps must be generalizable (no specific entity names)\n"
+    "- Include trigger conditions: what keywords/phrases indicate this playbook applies\n"
+    "- Name the playbook descriptively\n\n"
+    'Return JSON: {"name": "...", "description": "...", "signal_type": "...", '
+    '"trigger_conditions": ["..."], "steps": [{"order": 1, "action": "..."}], '
+    '"tags": ["..."], "confidence": 0.0-1.0}'
+)
+
+_SKILL_GEN_PROMPT = (
+    "You are a skill extractor for a CRM memory system.\n\n"
+    "Given a playbook's ordered steps, identify 1-3 distinct reusable capabilities (skills) "
+    "that the agent needs to execute these steps. Each skill should be a discrete, composable ability.\n\n"
+    "For each skill return:\n"
+    '- "name": short descriptive name (will be slugified to lowercase-hyphens)\n'
+    '- "skill_type": "soft" (behavioral) or "hard" (technical)\n'
+    '- "trigger_desc": 1-2 sentences stating BOTH what this skill does AND when to use it '
+    "(this becomes the skill's discovery description that an agent reads to decide whether "
+    "to activate it — make it self-contained, max 1024 characters)\n"
+    '- "procedure": how to execute (natural language)\n\n'
+    'Return JSON array: [{"name": "...", "skill_type": "...", "trigger_desc": "...", "procedure": "..."}]'
+)
+
+
 # ---------------------------------------------------------------------------
 # Union-Find for clustering pairwise similarity results
 # ---------------------------------------------------------------------------
@@ -309,22 +343,11 @@ async def _process_cluster(
 
 
 async def _generate_playbook(entity_type: str, intel_context: str, ai_context: str, entity_count: int) -> Optional[dict]:
-    """LLM call to extract a playbook from clustered intelligence + AI telemetry."""
-    system_prompt = (
-        "You are a procedural knowledge extractor for a CRM memory system.\n\n"
-        "You are given a cluster of intelligence signals that were independently observed "
-        f"across {entity_count} different {entity_type} entities, along with AI agent telemetry "
-        "from the interactions where these signals appeared.\n\n"
-        "RULES:\n"
-        "- Extract 3-7 concrete, ordered action steps\n"
-        "- Steps must be actionable (start with a verb)\n"
-        "- Steps must be generalizable (no specific entity names)\n"
-        "- Include trigger conditions: what keywords/phrases indicate this playbook applies\n"
-        "- Name the playbook descriptively\n\n"
-        'Return JSON: {"name": "...", "description": "...", "signal_type": "...", '
-        '"trigger_conditions": ["..."], "steps": [{"order": 1, "action": "..."}], '
-        '"tags": ["..."], "confidence": 0.0-1.0}'
-    )
+    """LLM call to extract a playbook from clustered intelligence + AI telemetry.
+    Prompt is admin-editable via the playbook_generation node (seeded with this default)."""
+    from services.config_helpers import get_task_system_prompt
+    system_prompt = (get_task_system_prompt("playbook_generation", fallback=_PLAYBOOK_GEN_PROMPT) or _PLAYBOOK_GEN_PROMPT)
+    system_prompt = system_prompt.replace("{entity_count}", str(entity_count)).replace("{entity_type}", entity_type)
     user_msg = f"--- Intelligence Cluster ---\n{intel_context}\n{ai_context}"
 
     try:
@@ -351,19 +374,8 @@ async def _generate_skills_from_playbook(
     if not steps:
         return
 
-    system_prompt = (
-        "You are a skill extractor for a CRM memory system.\n\n"
-        "Given a playbook's ordered steps, identify 1-3 distinct reusable capabilities (skills) "
-        "that the agent needs to execute these steps. Each skill should be a discrete, composable ability.\n\n"
-        "For each skill return:\n"
-        '- "name": short descriptive name (will be slugified to lowercase-hyphens)\n'
-        '- "skill_type": "soft" (behavioral) or "hard" (technical)\n'
-        '- "trigger_desc": 1-2 sentences stating BOTH what this skill does AND when to use it '
-        "(this becomes the skill's discovery description that an agent reads to decide whether "
-        "to activate it — make it self-contained, max 1024 characters)\n"
-        '- "procedure": how to execute (natural language)\n\n'
-        'Return JSON array: [{"name": "...", "skill_type": "...", "trigger_desc": "...", "procedure": "..."}]'
-    )
+    from services.config_helpers import get_task_system_prompt
+    system_prompt = get_task_system_prompt("skill_generation", fallback=_SKILL_GEN_PROMPT) or _SKILL_GEN_PROMPT
     steps_text = "\n".join(f"Step {s.get('order')}: {s.get('action')}" for s in steps)
     user_msg = f"Playbook: {playbook_data.get('name')}\n\nSteps:\n{steps_text}"
 
