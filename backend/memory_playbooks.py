@@ -279,7 +279,7 @@ async def _process_cluster(
         return
 
     # Determine status
-    auto_activate = config.get("playbook_auto_activate", False)
+    auto_activate = config.get("playbook_auto_activate", (get_memory_settings() or {}).get("knowledge_auto_activate", True))
     auto_score = config.get("auto_activate_score_threshold")
     quality = compute_quality_score(
         evidence_breadth_norm=min(len(entity_ids) / 10.0, 1.0),
@@ -393,7 +393,7 @@ async def _generate_skills_from_playbook(
         logger.error(f"Skill decomposition LLM call failed: {e}")
         return
 
-    auto_activate = config.get("skill_auto_activate", False)
+    auto_activate = config.get("skill_auto_activate", (get_memory_settings() or {}).get("knowledge_auto_activate", True))
     from memory_facets import enrich_metadata_with_facets
     for skill_data in skills[:5]:
         skill_id = str(uuid.uuid4())

@@ -1233,6 +1233,22 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                         />
                     </div>
 
+                    {/* Auto-activate new knowledge (global dial) */}
+                    <div className="flex items-center justify-between border-t pt-4">
+                        <div className="space-y-0.5 pr-4">
+                            <Label className="text-xs font-mono">Auto-activate New Knowledge</Label>
+                            <p className="text-[10px] text-muted-foreground">
+                                When on, new knowledge — including telemetry-reflected skill/playbook candidates — is
+                                created <code>active</code> so the agent sees it immediately. Turn off to keep new
+                                knowledge as drafts for review. Existing drafts were activated once on deploy.
+                            </p>
+                        </div>
+                        <Switch
+                            checked={settings.knowledge_auto_activate !== undefined ? settings.knowledge_auto_activate : true}
+                            onCheckedChange={(v) => onUpdateSettings("knowledge_auto_activate", v)}
+                        />
+                    </div>
+
                     {/* Sprint 2.5 — governed facets + lean index injection */}
                     <div className="grid grid-cols-2 gap-4 border-t pt-4">
                         <div className="space-y-2">
@@ -1368,6 +1384,28 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                                     onChange={(e) => onUpdateSettings("consolidation_run_interval_days", parseInt(e.target.value) || 7)}
                                 />
                                 <p className="text-[10px] text-muted-foreground">How often to run consolidation</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Creation-time Dedup */}
+                    <div className="border-t pt-4">
+                        <div className="flex items-center justify-between">
+                            <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Creation-time Dedup</Label>
+                            <Switch
+                                checked={settings.knowledge_creation_dedup_enabled !== undefined ? settings.knowledge_creation_dedup_enabled : true}
+                                onCheckedChange={(v) => onUpdateSettings("knowledge_creation_dedup_enabled", v)}
+                            />
+                        </div>
+                        <div className="grid grid-cols-1 gap-4 mt-2">
+                            <div className="space-y-1">
+                                <Label className="text-xs font-mono">Creation Dedup Similarity Threshold</Label>
+                                <Input
+                                    type="number" step="0.01" min="0.5" max="1.0"
+                                    value={settings.knowledge_creation_dedup_threshold ?? 0.90}
+                                    onChange={(e) => onUpdateSettings("knowledge_creation_dedup_threshold", parseFloat(e.target.value) || 0.90)}
+                                />
+                                <p className="text-[10px] text-muted-foreground">Merge into an existing near-identical record at creation instead of creating a duplicate (0.5-1.0; higher = stricter). Complements the weekly consolidation sweep.</p>
                             </div>
                         </div>
                     </div>
