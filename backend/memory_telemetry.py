@@ -198,7 +198,8 @@ async def _reflect_entity_day(entity_type: str, entity_id: str, day: str, confid
         from memory_facets import enrich_metadata_with_facets
         metadata = await enrich_metadata_with_facets(metadata or None, name, content, summary)
 
-        auto_activate = config.get("skill_auto_activate", False) if target == "skill" else config.get("playbook_auto_activate", False)
+        _global_aa = settings.get("knowledge_auto_activate", True)
+        auto_activate = config.get("skill_auto_activate", _global_aa) if target == "skill" else config.get("playbook_auto_activate", _global_aa)
         status = "active" if auto_activate else "draft"
         quality = compute_quality_score(0.1, 0.0, conf, 0, 0.0)
         insert_knowledge(

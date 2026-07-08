@@ -243,6 +243,10 @@ class MemorySettingsUpdate(BaseModel):
     telemetry_reflection_time: Optional[str] = "04:00"
     telemetry_reflection_confidence_min: Optional[float] = 0.6
     telemetry_reflection_max_tokens: Optional[int] = 1200
+    # Knowledge auto-activation (global dial) + creation-time dedup guard
+    knowledge_auto_activate: Optional[bool] = True
+    knowledge_creation_dedup_enabled: Optional[bool] = True
+    knowledge_creation_dedup_threshold: Optional[float] = 0.90
 
 class MemorySettingsResponse(BaseModel):
     chunk_size: int = 400
@@ -265,6 +269,9 @@ class MemorySettingsResponse(BaseModel):
     memory_generation_interaction_types_mode: Optional[str] = "exclude"
     playbook_extraction_interval_days: int = 7
     playbook_extraction_evidence_threshold: int = 20
+    knowledge_auto_activate: bool = True
+    knowledge_creation_dedup_enabled: bool = True
+    knowledge_creation_dedup_threshold: float = 0.90
 
 # ============================================
 # Tier 0: Interaction Models

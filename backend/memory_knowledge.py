@@ -16,6 +16,7 @@ from services.llm import parse_llm_json
 from services.prompt_renderer import inject_variables
 from memory_db_writes import insert_knowledge, log_pipeline_run
 from memory_prior_context import fetch_prior_knowledge_semantic
+from memory_dedup import find_similar_existing, refine_or_increment_merge
 from memory_helpers import _get_entity_type_config, _format_signal_definitions
 
 logger = logging.getLogger(__name__)
@@ -153,7 +154,8 @@ async def generate_knowledge_from_intelligence(intelligence: list) -> int:
             "Return JSON: {\"name\": \"...\", \"category\": \"...\", \"signals\": [\"...\"], "
             "\"content\": \"...\", \"summary\": \"...\", \"tags\": [...]}. "
             "\"category\" must be one of: best_practices, lessons_learned, trade_knowledge. "
-            "Set \"signals\" to one or more of the defined signal names provided below."
+            "Set \"signals\" to one or more of the defined signal names provided below. "
+            "Emit each signal in lowercase (e.g. \"momentum\", not \"Momentum\")."
         )
 
     entity_type = intelligence[0].get("primary_entity_type", "") if intelligence else ""
@@ -212,7 +214,7 @@ async def generate_knowledge_from_intelligence(intelligence: list) -> int:
             signals.append(canonical)
         elif not valid_signals:
             signals.append(s)
-    signals = list(dict.fromkeys(signals))
+    signals = list(dict.fromkeys(s.lower() for s in signals))
 
     if not content:
         return 0
@@ -222,6 +224,29 @@ async def generate_knowledge_from_intelligence(intelligence: list) -> int:
         embedding = await generate_embedding(f"{name}. {summary or content}")
     except Exception as e:
         logger.warning(f"Knowledge embedding failed: {e}")
+
+    # Creation-time near-duplicate guard: if an active knowledge record in the same
+    # category is already semantically near-identical, merge this evidence into it
+    # (refine-on-merge) instead of creating a bloating duplicate. Reuses the same
+    # cosine machinery as weekly consolidation, but at a higher threshold so only
+    # true near-duplicates merge (not distinct-but-related items). Zero-regression:
+    # skipped when disabled, when no embedding, or on any error (falls through to insert).
+    if embedding is not None and settings.get("knowledge_creation_dedup_enabled", True):
+        dedup_threshold = settings.get("knowledge_creation_dedup_threshold", 0.90)
+        try:
+            existing_id = await find_similar_existing(embedding, dedup_threshold, category=category)
+            if existing_id:
+                await refine_or_increment_merge(
+                    existing_id, new_name=name, new_content=content, new_summary=summary
+                )
+                logger.info(
+                    f"Knowledge near-duplicate of {existing_id} (sim>{dedup_threshold}) — "
+                    f"merged instead of inserting"
+                )
+                log_pipeline_run("knowledge_generation", "dedup_merged", 0, {"merged_into": existing_id})
+                return 1
+        except Exception as e:
+            logger.warning(f"Creation-time dedup check failed (proceeding to insert): {e}")
 
     # WS-4: extract governed facets into metadata.facets (best-effort, never blocks)
     from memory_facets import enrich_metadata_with_facets

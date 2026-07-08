@@ -594,6 +594,18 @@ def _run_migrations(cursor):
         ("telemetry_reflection_time", "TEXT DEFAULT '04:00'"),
         ("telemetry_reflection_confidence_min", "FLOAT DEFAULT 0.6"),
         ("telemetry_reflection_max_tokens", "INT DEFAULT 1200"),
+        # Knowledge auto-activation (global dial): when True, new knowledge — including
+        # telemetry-reflected skill/playbook candidates — is created active, not draft.
+        ("knowledge_auto_activate", "BOOLEAN DEFAULT TRUE"),
+        # Creation-time near-duplicate guard: merge into an existing near-identical
+        # record instead of creating a bloating duplicate (complements the weekly
+        # consolidation sweep). Threshold is higher than consolidation's so only true
+        # near-duplicates match.
+        ("knowledge_creation_dedup_enabled", "BOOLEAN DEFAULT TRUE"),
+        ("knowledge_creation_dedup_threshold", "FLOAT DEFAULT 0.90"),
+        # One-time backfill guard flags (set TRUE after the matching backfill runs)
+        ("knowledge_drafts_backfilled", "BOOLEAN DEFAULT FALSE"),
+        ("knowledge_signals_lowercased", "BOOLEAN DEFAULT FALSE"),
     ]:
         cursor.execute(f"ALTER TABLE memory_settings ADD COLUMN IF NOT EXISTS {col} {col_def}")
 
@@ -923,6 +935,30 @@ def _seed_defaults():
             INSERT INTO memory_settings (id) VALUES (1)
             ON CONFLICT (id) DO NOTHING
         """)
+
+        # ── One-time backfills (guarded by memory_settings flags; run once) ──
+        # Backfill #2: activate existing draft knowledge. The new global
+        # knowledge_auto_activate dial defaults True, so historical drafts (the 94
+        # telemetry-reflected records) should join the active set the agent sees.
+        cursor.execute("SELECT knowledge_drafts_backfilled FROM memory_settings WHERE id=1")
+        _row = cursor.fetchone()
+        if _row and not _row["knowledge_drafts_backfilled"]:
+            cursor.execute("UPDATE knowledge SET status='active', updated_at=now() WHERE status='draft'")
+            cursor.execute("UPDATE memory_settings SET knowledge_drafts_backfilled=TRUE WHERE id=1")
+            logger.info("Backfill: activated existing draft knowledge records")
+
+        # Backfill #3: lowercase existing knowledge signals so the historical casing
+        # split (momentum vs Momentum) collapses into single canonical buckets.
+        cursor.execute("SELECT knowledge_signals_lowercased FROM memory_settings WHERE id=1")
+        _row = cursor.fetchone()
+        if _row and not _row["knowledge_signals_lowercased"]:
+            cursor.execute("""
+                UPDATE knowledge
+                SET signals = ARRAY(SELECT DISTINCT lower(x) FROM unnest(signals) AS x)
+                WHERE cardinality(signals) > 0
+            """)
+            cursor.execute("UPDATE memory_settings SET knowledge_signals_lowercased=TRUE WHERE id=1")
+            logger.info("Backfill: lowercased existing knowledge signals")
 
         # Entity types
         for name, icon in [("contact", "👤"), ("institution", "🏢"), ("program", "📋"), ("supplier", "🏭"), ("product", "📦")]:
