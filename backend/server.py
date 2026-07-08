@@ -42,6 +42,24 @@ if not env_path.exists():
     env_path = ROOT_DIR.parent / ".env"
 load_dotenv(env_path)
 
+# Auto-provision MCP_SERVICE_KEY if not configured. The MCP servers' internal
+# tool-execution client (built below from this value) must carry a credential
+# the API routes accept; without it every tools/call 401s even though the MCP
+# endpoint itself authenticates fine via the caller's agent key. Generating a
+# random per-boot key when none is set makes the MCP work out-of-the-box — no
+# env var required — while staying secure: the key is random, never exposed to
+# external clients (who still auth with their own agent keys), and is not an
+# agent key so it grants no privilege escalation. Runs before any auth module
+# import (those start at db_init/memory_db below) so all four modules that read
+# MCP_SERVICE_KEY at import time pick up the same value.
+if not os.environ.get("MCP_SERVICE_KEY"):
+    import secrets as _secrets
+    os.environ["MCP_SERVICE_KEY"] = _secrets.token_hex(32)
+    logging.getLogger(__name__).warning(
+        "MCP_SERVICE_KEY not set in env — generated an ephemeral per-boot key. "
+        "Set MCP_SERVICE_KEY explicitly for a stable value across restarts."
+    )
+
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 
 # ─────────────────────────────────────────────
