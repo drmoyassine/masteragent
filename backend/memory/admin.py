@@ -39,6 +39,11 @@ from memory_services import (
 from memory.auth import require_admin_auth, require_admin_or_agent
 
 router = APIRouter()
+# Sub-router for admin /intelligence & /knowledge CRUD, repathed under /admin so they
+# no longer shadow the agent routes at /api/memory/intelligence and /api/memory/knowledge
+# (the shadow made list_knowledge / list_intelligence etc. 401 via the MCP: the admin
+# route's require_auth never saw fastapi-mcp's internal service-key call). See memory/__init__.py.
+admin_crud = APIRouter(prefix="/admin")
 logger = logging.getLogger(__name__)
 
 
@@ -46,7 +51,7 @@ logger = logging.getLogger(__name__)
 # intelligence (Tier 2)
 # ============================================================
 
-@router.get("/intelligence")
+@admin_crud.get("/intelligence")
 async def list_intelligence(
     entity_type: Optional[str] = Query(None),
     entity_id: Optional[str] = Query(None),
@@ -101,7 +106,7 @@ async def list_intelligence(
     return {"intelligence": [dict(r) for r in rows], "total": total}
 
 
-@router.get("/intelligence/{insight_id}")
+@admin_crud.get("/intelligence/{insight_id}")
 async def get_insight(insight_id: str, admin: dict = Depends(require_admin_auth)):
     """Get a single Intelligence by ID."""
     with get_memory_db_context() as conn:
@@ -114,7 +119,7 @@ async def get_insight(insight_id: str, admin: dict = Depends(require_admin_auth)
     return dict(row)
 
 
-@router.post("/intelligence")
+@admin_crud.post("/intelligence")
 async def create_intelligence(body: IntelligenceCreate, admin: dict = Depends(require_admin_auth)):
     """Manually create an Intelligence (draft)."""
     insight_id = str(uuid.uuid4())
@@ -138,7 +143,7 @@ async def create_intelligence(body: IntelligenceCreate, admin: dict = Depends(re
     return {"id": insight_id, "status": "draft", "created_at": now}
 
 
-@router.patch("/intelligence/{insight_id}")
+@admin_crud.patch("/intelligence/{insight_id}")
 async def update_intelligence(
     insight_id: str,
     body: IntelligenceUpdate,
@@ -192,7 +197,7 @@ async def update_intelligence(
     return dict(updated) if updated else {"id": insight_id, "updated_at": now}
 
 
-@router.delete("/intelligence/{insight_id}", status_code=204)
+@admin_crud.delete("/intelligence/{insight_id}", status_code=204)
 async def delete_intelligence(insight_id: str, admin: dict = Depends(require_admin_auth)):
     """Delete an Intelligence."""
     with get_memory_db_context() as conn:
@@ -203,7 +208,7 @@ async def delete_intelligence(insight_id: str, admin: dict = Depends(require_adm
 class BulkIntelligenceDelete(BaseModel):
     intelligence_ids: list[str]
 
-@router.post("/intelligence/bulk-delete")
+@admin_crud.post("/intelligence/bulk-delete")
 async def bulk_delete_intelligence(body: BulkIntelligenceDelete, admin: dict = Depends(require_admin_auth)):
     """Bulk delete intelligence records."""
     with get_memory_db_context() as conn:
@@ -215,7 +220,7 @@ async def bulk_delete_intelligence(body: BulkIntelligenceDelete, admin: dict = D
 class BulkIntelligenceApprove(BaseModel):
     intelligence_ids: list[str]
 
-@router.post("/intelligence/bulk-approve")
+@admin_crud.post("/intelligence/bulk-approve")
 async def bulk_approve_intelligence(body: BulkIntelligenceApprove, admin: dict = Depends(require_admin_auth)):
     """Bulk approve (confirm) intelligence records."""
     now = datetime.now(timezone.utc).isoformat()
@@ -229,7 +234,7 @@ async def bulk_approve_intelligence(body: BulkIntelligenceApprove, admin: dict =
     return {"approved": len(body.intelligence_ids)}
 
 
-@router.post("/intelligence/{insight_id}/promote")
+@admin_crud.post("/intelligence/{insight_id}/promote")
 async def promote_insight_to_knowledge(
     insight_id: str,
     admin: dict = Depends(require_admin_auth)
@@ -253,7 +258,7 @@ async def promote_insight_to_knowledge(
 # knowledge (Tier 3)
 # ============================================================
 
-@router.get("/knowledge")
+@admin_crud.get("/knowledge")
 async def list_knowledge(
     signal: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
@@ -305,7 +310,7 @@ async def list_knowledge(
     return {"knowledge": [dict(r) for r in rows], "total": total}
 
 
-@router.get("/knowledge/{knowledge_id}")
+@admin_crud.get("/knowledge/{knowledge_id}")
 async def get_knowledge(knowledge_id: str, admin: dict = Depends(require_admin_auth)):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -317,7 +322,7 @@ async def get_knowledge(knowledge_id: str, admin: dict = Depends(require_admin_a
     return dict(row)
 
 
-@router.post("/knowledge")
+@admin_crud.post("/knowledge")
 async def create_knowledge(body: KnowledgeCreate, admin: dict = Depends(require_admin_auth)):
     """Manually create a Knowledge. Skill/playbook content is stored in
     agent-skills-standard SKILL.md format (rendered here if plain text)."""
@@ -363,7 +368,7 @@ async def create_knowledge(body: KnowledgeCreate, admin: dict = Depends(require_
     return {"id": knowledge_id, "created_at": now}
 
 
-@router.patch("/knowledge/{knowledge_id}")
+@admin_crud.patch("/knowledge/{knowledge_id}")
 async def update_knowledge(
     knowledge_id: str,
     body: KnowledgeUpdate,
@@ -415,7 +420,7 @@ async def update_knowledge(
     return {"id": knowledge_id, "updated_at": now}
 
 
-@router.delete("/knowledge/{knowledge_id}", status_code=204)
+@admin_crud.delete("/knowledge/{knowledge_id}", status_code=204)
 async def delete_knowledge(knowledge_id: str, admin: dict = Depends(require_admin_auth)):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -425,7 +430,7 @@ async def delete_knowledge(knowledge_id: str, admin: dict = Depends(require_admi
 class BulkKnowledgeDelete(BaseModel):
     knowledge_ids: list[str]
 
-@router.post("/knowledge/bulk-delete")
+@admin_crud.post("/knowledge/bulk-delete")
 async def bulk_delete_knowledge(body: BulkKnowledgeDelete, admin: dict = Depends(require_admin_auth)):
     """Bulk delete knowledge records."""
     with get_memory_db_context() as conn:
@@ -1591,7 +1596,7 @@ async def admin_instruct(body: AdminInstruction, admin: dict = Depends(require_a
     return result
 
 
-@router.post("/knowledge/{knowledge_id}/feedback")
+@admin_crud.post("/knowledge/{knowledge_id}/feedback")
 async def submit_knowledge_feedback(
     knowledge_id: str,
     body: PlaybookFeedback,
@@ -1617,7 +1622,7 @@ async def submit_knowledge_feedback(
 _KNOWLEDGE_EXPORT_COLS = "name, category, content, summary, metadata, signals, tags, quality_score, version"
 
 
-@router.get("/knowledge/{knowledge_id}/skill.md")
+@admin_crud.get("/knowledge/{knowledge_id}/skill.md")
 async def export_skill_md(knowledge_id: str, auth: dict = Depends(require_admin_or_agent)):
     """Export a single knowledge record as a standalone markdown document.
 
@@ -1645,7 +1650,7 @@ async def export_skill_md(knowledge_id: str, auth: dict = Depends(require_admin_
     )
 
 
-@router.get("/knowledge-pack")
+@admin_crud.get("/knowledge-pack")
 async def export_knowledge_pack(
     category: Optional[str] = Query(None, description="Filter to one category; omit for all"),
     status: str = Query("active", description="active | draft | retired | all"),
@@ -1759,3 +1764,5 @@ async def import_skill_md(body: SkillImportBody, admin: dict = Depends(require_a
         metadata=metadata,
     )
     return {"status": "created", "id": knowledge_id, "name": parsed["name"], "category": body.category}
+
+router.include_router(admin_crud)
