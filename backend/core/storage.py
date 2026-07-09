@@ -19,6 +19,8 @@ from contextlib import contextmanager
 import psycopg2
 import psycopg2.extras
 import redis as redis_lib
+from core.secrets import decrypt_secret, encrypt_secret
+from core.db_pool import get_pool, return_connection
 
 logger = logging.getLogger(__name__)
 
@@ -59,11 +61,11 @@ def get_postgres_url() -> str:
         try:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT supabase_url FROM memory_settings WHERE id = 1"
+                "SELECT supabase_db_url FROM memory_settings WHERE id = 1"
             )
             row = cursor.fetchone()
-            if row and row.get("supabase_url"):
-                url = row["supabase_url"]
+            if row and row.get("supabase_db_url"):
+                url = decrypt_secret(row["supabase_db_url"])
                 _pg_url_cache = url
                 logger.info("Memory system using Supabase PostgreSQL")
                 return url
@@ -89,7 +91,7 @@ def get_memory_db_context():
     Commits on success, rolls back on exception.
     """
     url = get_postgres_url()
-    conn = psycopg2.connect(url, cursor_factory=psycopg2.extras.RealDictCursor)
+    conn = get_pool(url).getconn()
     try:
         yield conn
         conn.commit()
@@ -97,7 +99,7 @@ def get_memory_db_context():
         conn.rollback()
         raise
     finally:
-        conn.close()
+        return_connection(url, conn)
 
 
 def get_redis_client() -> redis_lib.Redis:
@@ -197,7 +199,7 @@ def connect_supabase(supabase_url: str, supabase_db_url: str) -> dict:
                 UPDATE memory_settings
                 SET supabase_url = %s, supabase_db_url = %s
                 WHERE id = 1
-            """, (supabase_url, supabase_db_url))
+            """, (supabase_url, encrypt_secret(supabase_db_url)))
             local_conn.commit()
         finally:
             local_conn.close()
@@ -260,7 +262,7 @@ def get_supabase_status() -> dict:
             return {
                 "backend": "supabase",
                 "supabase_url": row["supabase_url"],
-                "db_url_preview": _redact_pg_url(row.get("supabase_db_url", "")),
+                "db_url_preview": _redact_pg_url(decrypt_secret(row.get("supabase_db_url", "")) or ""),
                 "connected": True,
             }
     except Exception as e:

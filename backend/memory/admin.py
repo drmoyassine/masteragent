@@ -37,6 +37,7 @@ from memory_services import (
     get_memory_settings
 )
 from memory.auth import require_admin_auth, require_admin_or_agent
+from memory.access import scope_enforced
 
 router = APIRouter()
 # Sub-router for admin /intelligence & /knowledge CRUD, repathed under /admin so they
@@ -66,7 +67,6 @@ async def list_intelligence(
         cursor = conn.cursor()
         conditions = []
         params = []
-
         if entity_type:
             conditions.append("primary_entity_type = %s")
             params.append(entity_type)
@@ -599,6 +599,7 @@ async def trigger_reprocess_intelligence(body: dict, admin: dict = Depends(requi
 
 @router.post("/trigger/run-knowledge-check")
 @router.post("/trigger/run-Knowledge-check", include_in_schema=False)  # legacy capitalized alias
+@router.post("/trigger/run-lesson-check", include_in_schema=False)  # pre-Intelligence/Knowledge compatibility
 async def trigger_knowledge_check(
     drain: bool = Query(False, description="Drain BOTH backlogs: intelligence→knowledge (looped) + AI-telemetry reflection (historical days)."),
     drain_telemetry: bool = Query(True, description="When drain=true, also backfill accumulated AI telemetry (set false to drain intelligence only)."),
@@ -838,6 +839,9 @@ async def list_interactions(
         cursor = conn.cursor()
         conditions = []
         params = []
+        if scope_enforced() and not caller.get("is_admin") and caller.get("id") != "mcp-service" and caller.get("access_level") != "shared":
+            conditions.append("i.agent_id = %s")
+            params.append(caller.get("id"))
         
         final_entity_types = []
         if entity_type and entity_type != 'all': final_entity_types.append(entity_type)
@@ -1769,3 +1773,17 @@ async def import_skill_md(body: SkillImportBody, admin: dict = Depends(require_a
     return {"status": "created", "id": knowledge_id, "name": parsed["name"], "category": body.category}
 
 router.include_router(admin_crud)
+
+# Hidden pre-redesign aliases. They deliberately retain the old nouns while
+# delegating to the current handlers and response models.
+router.add_api_route("/insights", list_intelligence, methods=["GET"], include_in_schema=False)
+router.add_api_route("/insights", create_intelligence, methods=["POST"], include_in_schema=False)
+router.add_api_route("/insights/{insight_id}", get_insight, methods=["GET"], include_in_schema=False)
+router.add_api_route("/insights/{insight_id}", update_intelligence, methods=["PATCH"], include_in_schema=False)
+router.add_api_route("/insights/{insight_id}", delete_intelligence, methods=["DELETE"], include_in_schema=False)
+router.add_api_route("/insights/{insight_id}/promote", promote_insight_to_knowledge, methods=["POST"], include_in_schema=False)
+router.add_api_route("/lessons", list_knowledge, methods=["GET"], include_in_schema=False)
+router.add_api_route("/lessons", create_knowledge, methods=["POST"], include_in_schema=False)
+router.add_api_route("/lessons/{knowledge_id}", get_knowledge, methods=["GET"], include_in_schema=False)
+router.add_api_route("/lessons/{knowledge_id}", update_knowledge, methods=["PATCH"], include_in_schema=False)
+router.add_api_route("/lessons/{knowledge_id}", delete_knowledge, methods=["DELETE"], include_in_schema=False)

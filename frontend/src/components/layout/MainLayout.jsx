@@ -27,6 +27,7 @@ import {
 import { useNavigate } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { canAdministerMemory } from "@/lib/access";
 
 export const MainLayout = ({ children }) => {
   const { user, logout } = useAuth();
@@ -36,8 +37,10 @@ export const MainLayout = ({ children }) => {
   const navItems = [
     { path: "/app", icon: LayoutDashboard, label: "Prompts", end: true },
     { path: "/app/templates", icon: Sparkles, label: "Templates" },
-    { path: "/app/memory/explore", icon: Search, label: "Memory Explorer" },
-    { path: "/app/memory/monitor", icon: Activity, label: "System Monitor" },
+    ...(canAdministerMemory(user) ? [
+      { path: "/app/memory/explore", icon: Search, label: "Memory Explorer" },
+      { path: "/app/memory/monitor", icon: Activity, label: "System Monitor" },
+    ] : []),
     { path: "/app/settings", icon: Settings, label: "Settings" },
   ];
 

@@ -20,7 +20,7 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Depends
 from starlette.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
@@ -63,15 +63,9 @@ if not os.environ.get("MCP_SERVICE_KEY"):
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 
 # ─────────────────────────────────────────────
-# Database initialization (must run before routes import DB)
+# Database initialization is performed in lifespan under a PostgreSQL advisory
+# lock. Keeping it out of module import makes tooling and tests import-safe.
 # ─────────────────────────────────────────────
-from db_init import init_db, seed_admin_user
-from memory_db import init_memory_db
-
-init_db()
-init_memory_db()  # Set up PostgreSQL schema + seed defaults
-seed_admin_user()
-
 # ─────────────────────────────────────────────
 # Background tasks (lifespan)
 # ─────────────────────────────────────────────
@@ -81,6 +75,8 @@ from memory.queue import start_bullmq_workers, stop_bullmq_workers
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Start background tasks on boot, stop cleanly on shutdown."""
+    from core.startup import initialize_application
+    initialize_application()
     logger.info("Starting memory system background tasks")
     await start_background_tasks()
     await start_bullmq_workers()
@@ -220,6 +216,7 @@ logger.info("MCP servers mounted: /api/prompts/mcp, /api/memory/mcp")
 # Sanitization self-check — fails loud at boot if any tool still leaks anyOf/etc
 # ─────────────────────────────────────────────
 import json as _json
+from core.auth import require_admin_auth
 
 def _count_leaks(tools):
     counts = {"anyOf": 0, "oneOf": 0, "allOf": 0, "list_type": 0, "ref": 0, "nullable": 0, "default_null": 0}
@@ -244,7 +241,7 @@ for _name, _leaks in [("prompts", _p_leaks), ("memory", _m_leaks)]:
 
 # Diagnostic: leak counts only (no schema content) — unauthenticated
 @app.get("/api/mcp-debug/leaks", include_in_schema=False)
-async def mcp_leaks():
+async def mcp_leaks(_admin: dict = Depends(require_admin_auth)):
     return {
         "prompts": {"tool_count": len(_prompts_mcp.tools), "leaks": _count_leaks(_prompts_mcp.tools)},
         "memory":  {"tool_count": len(_memory_mcp.tools),  "leaks": _count_leaks(_memory_mcp.tools)},
@@ -254,10 +251,11 @@ async def mcp_leaks():
 # ─────────────────────────────────────────────
 # Middleware
 # ─────────────────────────────────────────────
+_cors_origins = [o.strip() for o in os.environ.get("CORS_ORIGINS", "http://localhost:3000").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
+    allow_credentials="*" not in _cors_origins,
+    allow_origins=_cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -328,10 +326,10 @@ async def log_requests(request: Request, call_next):
 # ─────────────────────────────────────────────
 # Startup logging
 # ─────────────────────────────────────────────
-from core.db import DB_PATH
+from core.db import DB_PATH, redact_database_url
 
 logger.info("Starting Prompt Manager & Memory System API")
 logger.info(f"CORS Origins: {os.environ.get('CORS_ORIGINS', '*')}")
 logger.info(f"Frontend URL: {FRONTEND_URL}")
-logger.info(f"Main DB: {DB_PATH}")
-logger.info(f"Memory DB: {os.environ.get('MEMORY_POSTGRES_URL', 'postgresql://postgres:postgres@localhost:5432/memory')}")
+logger.info(f"Main DB: {redact_database_url(DB_PATH)}")
+logger.info(f"Memory DB: {redact_database_url(os.environ.get('MEMORY_POSTGRES_URL', 'postgresql://postgres:postgres@localhost:5432/memory'))}")

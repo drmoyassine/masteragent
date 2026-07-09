@@ -67,6 +67,43 @@ def set_job_last_date(job_name: str, run_date: date):
         logger.warning(f"set_job_last_date failed: {e}")
 
 
+def claim_job_date(job_name: str, run_date: date) -> bool:
+    """Atomically claim a scheduled job/date across all app replicas."""
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO memory_job_log (job_name, last_run, last_date, status, last_error)
+            VALUES (%s, NOW(), %s, 'running', NULL)
+            ON CONFLICT (job_name) DO UPDATE
+              SET last_run = NOW(), last_date = EXCLUDED.last_date,
+                  status = 'running', last_error = NULL
+            WHERE memory_job_log.last_date IS DISTINCT FROM EXCLUDED.last_date
+               OR memory_job_log.status = 'failed'
+            RETURNING job_name
+        """, (job_name, run_date))
+        return cursor.fetchone() is not None
+
+
+def complete_job_date(job_name: str, run_date: date) -> None:
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE memory_job_log SET status='completed', completed_at=NOW(), last_error=NULL "
+            "WHERE job_name=%s AND last_date=%s",
+            (job_name, run_date),
+        )
+
+
+def fail_job_date(job_name: str, run_date: date, error: Exception) -> None:
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE memory_job_log SET status='failed', last_error=%s, last_date=NULL "
+            "WHERE job_name=%s AND last_date=%s",
+            (str(error)[:2000], job_name, run_date),
+        )
+
+
 # ── Orphan Sweeper ──────────────────────────────────────────────────────────
 
 async def run_orphan_sweeper():
@@ -165,7 +202,8 @@ async def _generate_memory_for_entity(entity_type: str, entity_id: str, interact
     # Best-effort: if another memory job is already holding the lock for this
     # entity, skip — that job will produce the memory. The daily scheduler will
     # also retry on the next run.
-    if not memory_lock.acquire(entity_type, entity_id):
+    lock_token = memory_lock.acquire(entity_type, entity_id)
+    if not lock_token:
         logger.info(
             f"Memory lock held for {entity_type}/{entity_id}; another job in flight. Skipping."
         )
@@ -174,7 +212,7 @@ async def _generate_memory_for_entity(entity_type: str, entity_id: str, interact
     try:
         await _generate_memory_for_entity_impl(entity_type, entity_id, interaction_date)
     finally:
-        memory_lock.release(entity_type, entity_id)
+        memory_lock.release(entity_type, entity_id, lock_token)
 
 
 async def _generate_memory_for_entity_impl(entity_type: str, entity_id: str, interaction_date: str):

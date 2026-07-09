@@ -8,11 +8,12 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
 
 from core.auth import require_auth
 from core.db import get_db_context, get_github_settings
+from core.secrets import encrypt_secret
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -103,13 +104,13 @@ async def save_settings(settings_data: SettingsCreate, user: dict = Depends(requ
         if existing:
             cursor.execute(
                 "UPDATE settings SET github_token=%s, github_repo=%s, github_owner=%s, storage_mode='github', updated_at=%s WHERE user_id=%s",
-                (settings_data.github_token, settings_data.github_repo, settings_data.github_owner, now, user["id"]),
+                (encrypt_secret(settings_data.github_token), settings_data.github_repo, settings_data.github_owner, now, user["id"]),
             )
             settings_id = existing["id"]
         else:
             cursor.execute(
                 "INSERT INTO settings (user_id, github_token, github_repo, github_owner, storage_mode, created_at, updated_at) VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id",
-                (user["id"], settings_data.github_token, settings_data.github_repo, settings_data.github_owner, 'github', now, now),
+                (user["id"], encrypt_secret(settings_data.github_token), settings_data.github_repo, settings_data.github_owner, 'github', now, now),
             )
             settings_id = cursor.fetchone()["id"]
 
@@ -172,9 +173,18 @@ async def set_storage_mode(mode_data: StorageModeUpdate, user: dict = Depends(re
     )
 
 
-@router.get("/github/user")
-async def get_github_user(token: str):
+@router.get("/github/user", include_in_schema=False)
+async def get_github_user(
+    token: Optional[str] = Query(None),
+    x_github_token: Optional[str] = Header(None, alias="X-GitHub-Token"),
+    user: dict = Depends(require_auth),
+):
     """Get GitHub user info from token."""
+    token = x_github_token or token
+    if not token:
+        raise HTTPException(status_code=422, detail="GitHub token required")
+    if not x_github_token:
+        logger.warning("Deprecated GitHub token query parameter used; send X-GitHub-Token instead")
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github.v3+json"}
     async with httpx.AsyncClient() as client:
         resp = await client.get("https://api.github.com/user", headers=headers)

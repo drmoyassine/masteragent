@@ -323,9 +323,10 @@ class PromptManagerAPITester:
     def test_create_api_key(self):
         """Test create API key endpoint"""
         try:
+            headers = {"Authorization": f"Bearer {self.test_token}"}
             test_key_name = f"Test Key {datetime.now().strftime('%H%M%S')}"
             payload = {"name": test_key_name}
-            response = requests.post(f"{self.api_base}/keys", json=payload, timeout=10)
+            response = requests.post(f"{self.api_base}/keys", json=payload, headers=headers, timeout=10)
             success = response.status_code == 200
             details = f"Status: {response.status_code}"
             
@@ -347,7 +348,8 @@ class PromptManagerAPITester:
     def test_get_api_keys(self):
         """Test get API keys endpoint"""
         try:
-            response = requests.get(f"{self.api_base}/keys", timeout=10)
+            headers = {"Authorization": f"Bearer {self.test_token}"}
+            response = requests.get(f"{self.api_base}/keys", headers=headers, timeout=10)
             success = response.status_code == 200
             details = f"Status: {response.status_code}"
             
@@ -369,15 +371,16 @@ class PromptManagerAPITester:
             return False
             
         try:
+            headers = {"Authorization": f"Bearer {self.test_token}"}
             # Delete the first key
             key_to_delete = keys_data[0]
-            response = requests.delete(f"{self.api_base}/keys/{key_to_delete['id']}", timeout=10)
+            response = requests.delete(f"{self.api_base}/keys/{key_to_delete['id']}", headers=headers, timeout=10)
             success = response.status_code == 200
             details = f"Status: {response.status_code}"
             
             if success:
                 # Verify it was deleted by checking the list
-                get_response = requests.get(f"{self.api_base}/keys", timeout=10)
+                get_response = requests.get(f"{self.api_base}/keys", headers=headers, timeout=10)
                 if get_response.status_code == 200:
                     remaining_keys = get_response.json()
                     deleted_key_ids = [k['id'] for k in remaining_keys]

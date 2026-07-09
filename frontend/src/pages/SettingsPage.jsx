@@ -49,22 +49,25 @@ import { KnowledgeModelSettings } from "@/components/settings/KnowledgeModelSett
 import { MemorySettings } from "@/components/settings/MemorySettings";
 
 import { useConfig } from "@/context/ConfigContext";
+import { useAuth } from "@/context/AuthContext";
+import { canAdministerMemory, visibleSettingsTabs } from "@/lib/access";
 
 const TABS = [
   { id: "storage", label: "Storage", icon: HardDrive, description: "GitHub & Local persistence" },
-  { id: "llm", label: "LLM Providers", icon: Cpu, description: "API keys for AI tasks" },
+  { id: "llm", label: "LLM Providers", icon: Cpu, description: "API keys for AI tasks", adminOnly: true },
   { id: "access", label: "API Access", icon: ShieldCheck, description: "Keys & Documentation" },
-  { id: "model", label: "Knowledge Model", icon: Database, description: "Entity & Lesson definitions" },
-  { id: "memory", label: "Memory Settings", icon: Brain, description: "Pipeline configuration" },
+  { id: "model", label: "Knowledge Model", icon: Database, description: "Entity & Knowledge definitions", adminOnly: true },
+  { id: "memory", label: "Memory Settings", icon: Brain, description: "Pipeline configuration", adminOnly: true },
 ];
 
 export default function SettingsPage({ onDisconnect }) {
   const navigate = useNavigate();
   const { storageMode, checkConfiguration } = useConfig();
+  const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   
   // Deep linking: initialize tab from URL, validate against available tabs
-  const validTabs = ["storage", "llm", "access", "model", "memory"];
+  const validTabs = visibleSettingsTabs(TABS, user).map(tab => tab.id);
   const urlTab = searchParams.get("tab");
   const [activeTab, setActiveTab] = useState(validTabs.includes(urlTab) ? urlTab : "storage");
   const [loading, setLoading] = useState(true);
@@ -109,23 +112,7 @@ export default function SettingsPage({ onDisconnect }) {
   const loadAllData = useCallback(async () => {
     setLoading(true);
     try {
-      const [
-        promptSettingsRes,
-        memorySettingsRes,
-        llmProvidersRes,
-        llmRes,
-        pKeysRes,
-        mKeysRes,
-        entityRes
-      ] = await Promise.all([
-        getSettings(),
-        getMemorySettings(),
-        getLLMProviders(),
-        getLLMConfigs(),
-        getApiKeys(),
-        getAgents(),
-        getEntityTypes()
-      ]);
+      const [promptSettingsRes, pKeysRes] = await Promise.all([getSettings(), getApiKeys()]);
 
       setSettings(promptSettingsRes.data);
       setGithubFormData({
@@ -133,18 +120,23 @@ export default function SettingsPage({ onDisconnect }) {
         github_owner: promptSettingsRes.data.github_owner || "",
         github_repo: promptSettingsRes.data.github_repo || "",
       });
-      setMemorySettings(memorySettingsRes.data);
-      setLLMProviders(llmProvidersRes.data);
-      setLLMConfigs(llmRes.data);
       setPromptsKeys(pKeysRes.data);
-      setMemoryKeys(mKeysRes.data);
-      setEntityTypes(entityRes.data);
+      if (canAdministerMemory(user)) {
+        const [memorySettingsRes, llmProvidersRes, llmRes, mKeysRes, entityRes] = await Promise.all([
+          getMemorySettings(), getLLMProviders(), getLLMConfigs(), getAgents(), getEntityTypes()
+        ]);
+        setMemorySettings(memorySettingsRes.data);
+        setLLMProviders(llmProvidersRes.data);
+        setLLMConfigs(llmRes.data);
+        setMemoryKeys(mKeysRes.data);
+        setEntityTypes(entityRes.data);
+      }
     } catch (error) {
       toast.error("Failed to load settings data");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     loadAllData();
@@ -408,7 +400,7 @@ export default function SettingsPage({ onDisconnect }) {
       <div className="flex flex-1 gap-12">
         {/* Sidebar Navigation */}
         <aside className="w-64 space-y-1">
-          {TABS.map((tab) => {
+          {visibleSettingsTabs(TABS, user).map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
             return (
@@ -494,6 +486,7 @@ export default function SettingsPage({ onDisconnect }) {
               onToggleMemoryKey={handleToggleMemoryKey}
               creating={creating}
               formatDate={formatDate}
+              isAdmin={canAdministerMemory(user)}
             />
           )}
 

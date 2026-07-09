@@ -10,6 +10,7 @@ releasing, the TTL expires and the lock auto-clears.
 """
 
 import logging
+import secrets
 
 from core.storage import get_redis_client
 
@@ -25,23 +26,34 @@ def _lock_key(entity_type: str, entity_id: str) -> str:
     return f"memory_lock:{entity_type}:{entity_id}"
 
 
-def acquire(entity_type: str, entity_id: str, ttl_seconds: int = LOCK_TTL_SECONDS) -> bool:
+def acquire(entity_type: str, entity_id: str, ttl_seconds: int = LOCK_TTL_SECONDS) -> str | None:
     """Try to acquire the memory lock for an entity.
 
     Returns True if acquired, False if another holder already has it.
     """
     redis = get_redis_client()
     key = _lock_key(entity_type, entity_id)
-    # SET NX: only set if not exists. ex: TTL in seconds.
-    return bool(redis.set(key, "1", nx=True, ex=ttl_seconds))
+    token = secrets.token_urlsafe(24)
+    return token if redis.set(key, token, nx=True, ex=ttl_seconds) else None
 
 
-def release(entity_type: str, entity_id: str) -> None:
+def release(entity_type: str, entity_id: str, token: str | None = None) -> None:
     """Release the memory lock. Safe to call even if not currently held."""
     redis = get_redis_client()
     key = _lock_key(entity_type, entity_id)
     try:
-        redis.delete(key)
+        if token is None:
+            # Compatibility path for older callers. New code always supplies the
+            # ownership token so it cannot delete a successor's lock.
+            redis.delete(key)
+        else:
+            redis.eval(
+                "if redis.call('get', KEYS[1]) == ARGV[1] then "
+                "return redis.call('del', KEYS[1]) else return 0 end",
+                1,
+                key,
+                token,
+            )
     except Exception as e:
         logger.warning(f"memory_lock.release failed for {entity_type}/{entity_id}: {e}")
 

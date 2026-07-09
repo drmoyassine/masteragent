@@ -388,6 +388,9 @@ export function TaskConfigDialog({
                    .catch(err => console.error("Failed to fetch prompts:", err));
             }
         }
+        // Initialization is keyed to dialog/config changes. Fetch callback and
+        // settings identities must not retrigger form initialization.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [open, config]);
 
     const handleProviderChange = (v) => {

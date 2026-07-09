@@ -20,10 +20,42 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
+import psycopg2
 
-from core.storage import get_memory_db_context
+from core.storage import get_memory_db_context, get_postgres_url
+from core.secrets import encrypt_secret, is_encrypted
 
 logger = logging.getLogger(__name__)
+
+
+def _create_operational_indexes_concurrently():
+    """Build new potentially-large indexes without blocking production writes."""
+    statements = [
+        ("idx_interactions_fts", "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_interactions_fts ON interactions USING GIN (to_tsvector('simple', coalesce(content, '')))"),
+        ("idx_memories_fts", "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_memories_fts ON memories USING GIN (to_tsvector('simple', coalesce(content_summary, '')))"),
+        ("idx_intelligence_fts", "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_intelligence_fts ON intelligence USING GIN (to_tsvector('simple', coalesce(name, '') || ' ' || coalesce(summary, '') || ' ' || coalesce(content, '')))"),
+        ("idx_knowledge_fts", "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_knowledge_fts ON knowledge USING GIN (to_tsvector('simple', coalesce(name, '') || ' ' || coalesce(summary, '') || ' ' || coalesce(content, '')))"),
+        ("idx_interactions_entity_status_time", "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_interactions_entity_status_time ON interactions (primary_entity_type, primary_entity_id, status, timestamp DESC)"),
+        ("idx_intelligence_entity_status_created", "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_intelligence_entity_status_created ON intelligence (primary_entity_type, primary_entity_id, status, created_at DESC)"),
+    ]
+    conn = psycopg2.connect(get_postgres_url())
+    conn.autocommit = True
+    try:
+        cursor = conn.cursor()
+        for index_name, statement in statements:
+            try:
+                cursor.execute("""
+                    SELECT i.indisvalid FROM pg_index i
+                    JOIN pg_class c ON c.oid=i.indexrelid WHERE c.relname=%s
+                """, (index_name,))
+                state = cursor.fetchone()
+                if state and not state[0]:
+                    cursor.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {index_name}")
+                cursor.execute(statement)
+            except Exception as exc:
+                logger.warning("Concurrent index migration skipped: %s", exc)
+    finally:
+        conn.close()
 
 
 def _enable_extensions(cursor):
@@ -310,6 +342,17 @@ def _create_memory_tier_tables(cursor):
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_agent ON memory_audit_log (agent_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON memory_audit_log (timestamp)")
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS memory_agent_entities (
+            agent_id TEXT NOT NULL REFERENCES memory_agents(id) ON DELETE CASCADE,
+            entity_type TEXT NOT NULL,
+            entity_id TEXT NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            PRIMARY KEY (agent_id, entity_type, entity_id)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_entities_entity ON memory_agent_entities (entity_type, entity_id)")
+
     # Webhook sources
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS memory_webhook_sources (
@@ -317,6 +360,7 @@ def _create_memory_tier_tables(cursor):
             name                        TEXT NOT NULL,
             source_system               TEXT NOT NULL,
             secret_hash                 TEXT NOT NULL,
+            secret_encrypted            TEXT,
             event_types                 TEXT[] DEFAULT '{}',
             metadata_field_map          JSONB DEFAULT '{}',
             default_interaction_type    TEXT DEFAULT 'webhook_event',
@@ -325,6 +369,7 @@ def _create_memory_tier_tables(cursor):
             created_at                  TIMESTAMPTZ DEFAULT NOW()
         )
     """)
+    cursor.execute("ALTER TABLE memory_webhook_sources ADD COLUMN IF NOT EXISTS secret_encrypted TEXT")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_webhook_sources_active ON memory_webhook_sources (is_active)")
 
     # Vision/Doc parsing completion webhooks. Fired once per successfully-parsed
@@ -365,7 +410,7 @@ def _create_memory_tier_tables(cursor):
 
 def _run_migrations(cursor):
     """Idempotent schema migrations for existing installations."""
-    
+
     # ─── Taxonomy Migration ───
     try:
         # Check if old tables exist to avoid crashing
@@ -374,16 +419,16 @@ def _run_migrations(cursor):
             cursor.execute("ALTER TABLE insights RENAME TO private_knowledge")
             cursor.execute("ALTER INDEX IF EXISTS idx_insights_entity RENAME TO idx_private_knowledge_entity")
             cursor.execute("ALTER INDEX IF EXISTS idx_insights_status RENAME TO idx_private_knowledge_status")
-        
+
         cursor.execute("SELECT to_regclass('public.lessons')")
         if cursor.fetchone()[0] is not None:
             cursor.execute("ALTER TABLE lessons RENAME TO public_knowledge")
             cursor.execute("ALTER INDEX IF EXISTS idx_lessons_type RENAME TO idx_knowledge_type")
-        
+
         cursor.execute("SELECT to_regclass('public.memory_lesson_types')")
         if cursor.fetchone()[0] is not None:
             cursor.execute("ALTER TABLE memory_lesson_types RENAME TO memory_knowledge_types")
-            
+
         # Rename columns if they exist
         cursor.execute("""
             DO $$
@@ -400,7 +445,7 @@ def _run_migrations(cursor):
             END
             $$;
         """)
-        
+
         # Rename keys in JSONB settings — go directly to final names
         cursor.execute("""
             UPDATE memory_llm_configs SET task_type = 'intelligence_generation' WHERE task_type = 'insight_generation';
@@ -429,7 +474,7 @@ def _run_migrations(cursor):
         """)
     except Exception as e:
         logger.warning(f"Taxonomy migration skipped/failed: {e}")
-        
+
     # Add description column to all config-type lookup tables
     for tbl in ["memory_entity_types", "memory_entity_subtypes",
                 "memory_channel_types"]:
@@ -528,18 +573,18 @@ def _run_migrations(cursor):
         # Backfill existing nodes into the 5 logical pipelines based on their legacy task_type
         # ONLY for rows that have never been assigned a pipeline_stage (first-time migration).
         # This prevents overwriting user-configured drag-and-drop ordering on server restarts.
-        
+
         # Interactions Pipeline
         cursor.execute("UPDATE memory_llm_configs SET pipeline_stage = 'interactions', execution_order = 0 WHERE task_type = 'vision' AND pipeline_stage IS NULL")
-        
+
         # Memories Pipeline
         cursor.execute("UPDATE memory_llm_configs SET pipeline_stage = 'memories', execution_order = 0 WHERE task_type = 'entity_extraction' AND pipeline_stage IS NULL")
         cursor.execute("UPDATE memory_llm_configs SET pipeline_stage = 'memories', execution_order = 1 WHERE task_type = 'embedding' AND pipeline_stage IS NULL")
         cursor.execute("UPDATE memory_llm_configs SET pipeline_stage = 'memories', execution_order = 2 WHERE task_type = 'memory_generation' AND pipeline_stage IS NULL")
-        
+
         # Intelligence Pipeline
         cursor.execute("UPDATE memory_llm_configs SET pipeline_stage = 'intelligence', execution_order = 0 WHERE task_type = 'intelligence_generation' AND pipeline_stage IS NULL")
-        
+
         # Knowledge Pipeline
         cursor.execute("UPDATE memory_llm_configs SET pipeline_stage = 'knowledge', execution_order = 0 WHERE task_type = 'pii_scrubbing' AND pipeline_stage IS NULL")
         cursor.execute("UPDATE memory_llm_configs SET pipeline_stage = 'knowledge', execution_order = 1 WHERE task_type = 'knowledge_generation' AND pipeline_stage IS NULL")
@@ -621,16 +666,27 @@ def _run_migrations(cursor):
         ("discovered_schema", "JSONB DEFAULT NULL"),
     ]:
         cursor.execute(f"ALTER TABLE memory_entity_type_config ADD COLUMN IF NOT EXISTS {col} {col_def}")
-                
+
     # Migrate signal columns from TEXT to JSONB (if they were created as TEXT in a prior version)
     for col in ("intelligence_signals_prompt", "knowledge_signals_prompt"):
+        cursor.execute(
+            "SELECT data_type FROM information_schema.columns WHERE table_name=%s AND column_name=%s",
+            ("memory_entity_type_config", col),
+        )
+        column = cursor.fetchone()
+        if not column or column["data_type"] == "jsonb":
+            continue
+        cursor.execute("SAVEPOINT signal_column_migration")
         try:
             cursor.execute(f"""
                 ALTER TABLE memory_entity_type_config
                 ALTER COLUMN {col} TYPE JSONB USING {col}::jsonb
             """)
-        except Exception:
-            conn.rollback()  # Column already JSONB or empty — safe to skip
+        except Exception as exc:
+            cursor.execute("ROLLBACK TO SAVEPOINT signal_column_migration")
+            logger.warning("Could not convert %s to JSONB: %s", col, exc)
+        finally:
+            cursor.execute("RELEASE SAVEPOINT signal_column_migration")
 
     # Drop legacy and dead columns
     try:
@@ -641,7 +697,7 @@ def _run_migrations(cursor):
         cursor.execute("ALTER TABLE memory_settings DROP COLUMN IF EXISTS auto_share_scrubbed")
     except Exception as e:
         logger.warning(f"Drop legacy columns skipped: {e}")
-        
+
     # Rename compaction_threshold to intelligence_extraction_threshold safely
     try:
         cursor.execute("""
@@ -889,7 +945,7 @@ def init_memory_db():
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         _enable_extensions(cursor)
-        
+
         # Seamless Migration: private_knowledge -> intelligence, public_knowledge -> knowledge
         try:
             cursor.execute("SELECT 1 FROM information_schema.tables WHERE table_name='private_knowledge'")
@@ -901,14 +957,14 @@ def init_memory_db():
                 cursor.execute("ALTER INDEX IF EXISTS idx_private_knowledge_status RENAME TO idx_intelligence_status")
         except Exception as e:
             logger.warning(f"Failed to rename private_knowledge to intelligence: {e}")
-            
+
         try:
             cursor.execute("SELECT 1 FROM information_schema.tables WHERE table_name='public_knowledge'")
             if cursor.fetchone():
                 cursor.execute("ALTER TABLE public_knowledge RENAME TO knowledge")
                 cursor.execute("ALTER INDEX IF EXISTS idx_lessons_type RENAME TO idx_knowledge_type")
                 cursor.execute("ALTER INDEX IF EXISTS idx_public_knowledge_type RENAME TO idx_knowledge_type")
-                
+
                 # Check column and rename
                 cursor.execute("SELECT 1 FROM information_schema.columns WHERE table_name='knowledge' AND column_name='source_private_knowledge_ids'")
                 if cursor.fetchone():
@@ -920,10 +976,40 @@ def init_memory_db():
         _create_interaction_tables(cursor)
         _create_memory_tier_tables(cursor)
         _run_migrations(cursor)
+
+        # Operational hardening migrations are additive and safe on existing
+        # production tables.
+        cursor.execute("ALTER TABLE memory_job_log ADD COLUMN IF NOT EXISTS status TEXT")
+        cursor.execute("ALTER TABLE memory_job_log ADD COLUMN IF NOT EXISTS last_error TEXT")
+        cursor.execute("ALTER TABLE memory_job_log ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ")
+
+        cursor.execute("""
+            INSERT INTO memory_agent_entities (agent_id, entity_type, entity_id)
+            SELECT DISTINCT i.agent_id, i.primary_entity_type, i.primary_entity_id
+            FROM interactions i
+            JOIN memory_agents a ON a.id = i.agent_id
+            WHERE i.primary_entity_type IS NOT NULL AND i.primary_entity_id IS NOT NULL
+            ON CONFLICT DO NOTHING
+        """)
+
+        cursor.execute("SELECT id, api_key_encrypted FROM memory_llm_providers WHERE api_key_encrypted IS NOT NULL AND api_key_encrypted <> ''")
+        for row in cursor.fetchall():
+            if not is_encrypted(row["api_key_encrypted"]):
+                cursor.execute(
+                    "UPDATE memory_llm_providers SET api_key_encrypted = %s WHERE id = %s",
+                    (encrypt_secret(row["api_key_encrypted"]), row["id"]),
+                )
+        cursor.execute("SELECT supabase_db_url FROM memory_settings WHERE id = 1")
+        settings_row = cursor.fetchone()
+        if settings_row and settings_row.get("supabase_db_url") and not is_encrypted(settings_row["supabase_db_url"]):
+            cursor.execute(
+                "UPDATE memory_settings SET supabase_db_url = %s WHERE id = 1",
+                (encrypt_secret(settings_row["supabase_db_url"]),),
+            )
         logger.info("Memory system database schema initialized")
 
     _seed_defaults()
-
+    _create_operational_indexes_concurrently()
 
 def _seed_defaults():
     """Seed default configuration data. Idempotent."""
@@ -1015,7 +1101,7 @@ def _seed_defaults():
                         SELECT 1 FROM memory_llm_providers WHERE name = %s
                     )
                 """, (p_name, p_type, base_url, p_name))
-        
+
         # Default LLM configs structured logically into pipelines (only seed if table is empty)
         cursor.execute("SELECT COUNT(*) as cnt FROM memory_llm_configs")
         if cursor.fetchone()["cnt"] == 0:
@@ -1048,10 +1134,10 @@ def _seed_defaults():
                         SELECT 1 FROM memory_llm_configs WHERE pipeline_stage = %s AND task_type = %s
                     )
                 """, (task_type, provider_key, model, pipeline_stage, exec_order, prompt, schema, pipeline_stage, task_type))
-    
+
                 # Migrate existing configs that may have been created before inline_system_prompt was seeded
                 cursor.execute("""
-                    UPDATE memory_llm_configs 
+                    UPDATE memory_llm_configs
                     SET inline_system_prompt = %s, inline_schema = %s
                     WHERE task_type = %s AND (inline_system_prompt IS NULL OR inline_system_prompt = '')
                 """, (prompt, schema, task_type))
@@ -1150,15 +1236,15 @@ def _seed_defaults():
         for prompt_type, name, text in prompts:
             if prompt_type in ["memory_generation", "summarization", "intelligence_generation", "entity_extraction", "pii_scrubbing"]:
                 cursor.execute("""
-                    UPDATE memory_llm_configs 
-                    SET inline_system_prompt = %s 
+                    UPDATE memory_llm_configs
+                    SET inline_system_prompt = %s
                     WHERE task_type = %s AND inline_system_prompt IS NULL
                 """, (text, prompt_type))
 
         # Add default GLiNER schema to entity_extraction config if null
         cursor.execute("""
-            UPDATE memory_llm_configs 
-            SET inline_schema = %s 
+            UPDATE memory_llm_configs
+            SET inline_schema = %s
             WHERE task_type = 'entity_extraction' AND inline_schema IS NULL
         """, ('{\n  "entities": ["Organization", "Person", "Location", "Product", "Event"]\n}',))
 

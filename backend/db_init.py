@@ -9,8 +9,9 @@ import uuid
 import logging
 from datetime import datetime, timezone
 
-from core.auth import hash_password
+from core.auth import hash_api_key, hash_password
 from core.db import get_db_context
+from core.secrets import encrypt_secret, is_encrypted
 
 logger = logging.getLogger(__name__)
 
@@ -32,10 +33,12 @@ def init_db():
                 github_url TEXT,
                 github_token TEXT,
                 plan TEXT DEFAULT 'free',
+                is_admin BOOLEAN NOT NULL DEFAULT FALSE,
                 created_at TEXT,
                 updated_at TEXT
             )
         """)
+        cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE")
 
         # Settings table (GitHub config per user)
         cursor.execute("""
@@ -99,13 +102,38 @@ def init_db():
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS api_keys (
                 id TEXT PRIMARY KEY,
+                user_id TEXT,
                 name TEXT NOT NULL,
                 key_hash TEXT NOT NULL,
                 key_preview TEXT NOT NULL,
                 created_at TEXT,
-                last_used TEXT
+                last_used TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(id)
             )
         """)
+        cursor.execute("ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS user_id TEXT REFERENCES users(id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON api_keys (user_id)")
+
+        # Releases before the security hardening pass stored the full pm_* key in
+        # key_hash. Convert those rows in place while preserving their global
+        # (user_id IS NULL) compatibility semantics.
+        cursor.execute("SELECT id, key_hash FROM api_keys WHERE key_hash LIKE 'pm_%'")
+        for row in cursor.fetchall():
+            cursor.execute(
+                "UPDATE api_keys SET key_hash = %s WHERE id = %s",
+                (hash_api_key(row["key_hash"]), row["id"]),
+            )
+
+        # Encrypt credentials written by older releases. This is idempotent and
+        # uses the same compatibility envelope as all new credential writes.
+        for table, id_column in (("settings", "id"), ("users", "id")):
+            cursor.execute(f"SELECT {id_column}, github_token FROM {table} WHERE github_token IS NOT NULL AND github_token <> ''")
+            for row in cursor.fetchall():
+                if not is_encrypted(row["github_token"]):
+                    cursor.execute(
+                        f"UPDATE {table} SET github_token = %s WHERE {id_column} = %s",
+                        (encrypt_secret(row["github_token"]), row[id_column]),
+                    )
 
         # Account-level variables
         cursor.execute("""
@@ -217,14 +245,18 @@ def seed_admin_user():
 
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT id FROM users WHERE email = %s", (admin_email,))
-        if not cursor.fetchone():
+        cursor.execute("SELECT id, is_admin FROM users WHERE email = %s", (admin_email,))
+        existing = cursor.fetchone()
+        if not existing:
             now = datetime.now(timezone.utc).isoformat()
             admin_id = str(uuid.uuid4())
             password_hash = hash_password(admin_password)
             cursor.execute(
-                """INSERT INTO users (id, username, email, password_hash, plan, created_at, updated_at)
-                   VALUES (%s, %s, %s, %s, 'pro', %s, %s)""",
+                """INSERT INTO users (id, username, email, password_hash, plan, is_admin, created_at, updated_at)
+                   VALUES (%s, %s, %s, %s, 'pro', TRUE, %s, %s)""",
                 (admin_id, admin_username, admin_email, password_hash, now, now),
             )
             logger.info(f"Admin user created: {admin_email}")
+        elif not existing.get("is_admin"):
+            cursor.execute("UPDATE users SET is_admin = TRUE WHERE id = %s", (existing["id"],))
+            logger.info("Promoted configured administrator account: %s", admin_email)

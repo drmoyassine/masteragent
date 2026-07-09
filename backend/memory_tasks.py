@@ -43,6 +43,9 @@ from memory_ingestion import process_interaction  # noqa: E402, F401
 from memory_generation import (  # noqa: E402, F401
     get_job_last_date,
     set_job_last_date,
+    claim_job_date,
+    complete_job_date,
+    fail_job_date,
     run_orphan_sweeper,
     run_daily_memory_generation,
     _generate_memory_for_entity,
@@ -135,57 +138,81 @@ async def _background_loop():
 
             # ── Tier 0→1: Memory generation (true nightly flush) ──────────────
             if _time_reached(now_utc, settings.get("memory_generation_time", "02:00"), (2, 0)):
-                if get_job_last_date("daily_memory_generation") != today:
+                if claim_job_date("daily_memory_generation", today):
                     logger.info("Firing daily memory generation")
-                    set_job_last_date("daily_memory_generation", today)
-                    await run_orphan_sweeper()
-                    await run_daily_memory_generation()
+                    try:
+                        await run_orphan_sweeper()
+                        await run_daily_memory_generation()
+                        complete_job_date("daily_memory_generation", today)
+                    except Exception as exc:
+                        fail_job_date("daily_memory_generation", today, exc)
+                        raise
                     # run_daily_memory_generation → per-entity memory jobs →
                     # _check_compaction_trigger (intra-day intelligence threshold valve)
 
             # ── Tier 1→2: Intelligence SCHEDULE sweep (floor) ─────────────────
             if settings.get("intelligence_schedule_enabled", True) and \
                _time_reached(now_utc, settings.get("intelligence_generation_time", "02:30"), (2, 30)):
-                if get_job_last_date("intelligence_schedule") != today:
-                    set_job_last_date("intelligence_schedule", today)
+                if claim_job_date("intelligence_schedule", today):
                     floor = int(settings.get("intelligence_schedule_floor", 2))
                     logger.info(f"Firing nightly intelligence sweep (floor={floor})")
-                    await knowledge_queue.add("run_intelligence_sweep", {"min_count": floor}, {"priority": 3})
+                    try:
+                        await knowledge_queue.add("run_intelligence_sweep", {"min_count": floor}, {"priority": 3})
+                        complete_job_date("intelligence_schedule", today)
+                    except Exception as exc:
+                        fail_job_date("intelligence_schedule", today, exc)
+                        raise
 
             # ── Tier 2→3: Knowledge SCHEDULE sweep (floor) ────────────────────
             if settings.get("knowledge_schedule_enabled", True) and \
                _time_reached(now_utc, settings.get("knowledge_generation_time", "03:00"), (3, 0)):
-                if get_job_last_date("knowledge_schedule") != today:
-                    set_job_last_date("knowledge_schedule", today)
+                if claim_job_date("knowledge_schedule", today):
                     floor = int(settings.get("knowledge_schedule_floor", 2))
                     logger.info(f"Firing nightly knowledge sweep (floor={floor})")
-                    await knowledge_queue.add("generate_knowledge", {"min_count": floor}, {"priority": 3})
+                    try:
+                        await knowledge_queue.add("generate_knowledge", {"min_count": floor}, {"priority": 3})
+                        complete_job_date("knowledge_schedule", today)
+                    except Exception as exc:
+                        fail_job_date("knowledge_schedule", today, exc)
+                        raise
 
             # ── Playbook extraction (now nightly, own time) ───────────────────
             if settings.get("playbook_schedule_enabled", True) and \
                _time_reached(now_utc, settings.get("playbook_generation_time", "03:30"), (3, 30)):
-                if get_job_last_date("playbook_extraction") != today:
-                    set_job_last_date("playbook_extraction", today)
+                if claim_job_date("playbook_extraction", today):
                     logger.info("Firing nightly playbook extraction")
-                    await knowledge_queue.add("extract_playbooks", {}, {"priority": 2})
+                    try:
+                        await knowledge_queue.add("extract_playbooks", {}, {"priority": 2})
+                        complete_job_date("playbook_extraction", today)
+                    except Exception as exc:
+                        fail_job_date("playbook_extraction", today, exc)
+                        raise
 
             # ── Telemetry reflection: AI telemetry → skill/playbook/knowledge ─
             if settings.get("telemetry_reflection_enabled", True) and \
                _time_reached(now_utc, settings.get("telemetry_reflection_time", "04:00"), (4, 0)):
-                if get_job_last_date("telemetry_reflection") != today:
-                    set_job_last_date("telemetry_reflection", today)
+                if claim_job_date("telemetry_reflection", today):
                     logger.info("Firing nightly telemetry reflection")
-                    await knowledge_queue.add("reflect_telemetry", {}, {"priority": 3})
+                    try:
+                        await knowledge_queue.add("reflect_telemetry", {}, {"priority": 3})
+                        complete_job_date("telemetry_reflection", today)
+                    except Exception as exc:
+                        fail_job_date("telemetry_reflection", today, exc)
+                        raise
 
             # ── Consolidation: periodic maintenance (weekly, not nightly) ─────
             consolidation_interval = settings.get("consolidation_run_interval_days", 7)
             last_consol = get_job_last_date("consolidation")
             days_since_consol = (today - last_consol).days if last_consol else consolidation_interval
             if _time_reached(now_utc, settings.get("memory_generation_time", "02:00"), (2, 0)) and \
-               days_since_consol >= consolidation_interval:
-                set_job_last_date("consolidation", today)
+               days_since_consol >= consolidation_interval and claim_job_date("consolidation", today):
                 logger.info(f"Triggering consolidation (days_since={days_since_consol})")
-                await knowledge_queue.add("run_consolidation", {}, {"priority": 4})
+                try:
+                    await knowledge_queue.add("run_consolidation", {}, {"priority": 4})
+                    complete_job_date("consolidation", today)
+                except Exception as exc:
+                    fail_job_date("consolidation", today, exc)
+                    raise
 
         except Exception as e:
             logger.error(f"Background loop error: {e}", exc_info=True)

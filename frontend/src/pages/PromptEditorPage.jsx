@@ -206,6 +206,8 @@ export default function PromptEditorPage() {
 
   useEffect(() => {
     loadPromptData();
+    // Route identity is the reload boundary.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [promptId]);
 
   useEffect(() => {
@@ -213,6 +215,8 @@ export default function PromptEditorPage() {
       loadSections();
       loadAvailableVariables();
     }
+    // Both loaders intentionally consume the selected version at this boundary.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentVersion]);
 
   useEffect(() => {
@@ -297,6 +301,8 @@ export default function PromptEditorPage() {
       toast.error(error.response?.data?.detail || "Failed to create variable");
       throw error;
     }
+    // Variable reload uses the same selected prompt/version boundary.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [promptId, currentVersion]);
 
   const handleSaveSection = async () => {

@@ -22,7 +22,7 @@ class TestInteractionIngestion:
             "primary_entity_id": "test-contact-001",
             "source": "api",
         })
-        assert resp.status_code == 200, resp.text
+        assert resp.status_code == 202, resp.text
         data = resp.json()
         assert "id" in data
         assert data.get("status") == "pending"
@@ -40,7 +40,7 @@ class TestInteractionIngestion:
             "metadata_field_map": {"summary_field": "subject"},
             "source": "api",
         })
-        assert resp.status_code == 200, resp.text
+        assert resp.status_code == 202, resp.text
         data = resp.json()
         assert "id" in data
         print(f"✓ Interaction with metadata created: {data['id']}")

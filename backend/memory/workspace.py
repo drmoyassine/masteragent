@@ -39,6 +39,7 @@ from memory_services import (
     search_knowledge_by_vector,
 )
 from memory.auth import require_agent_auth, require_admin_auth
+from memory.access import ensure_entity_access
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -91,6 +92,7 @@ async def entity_workspace_chat(
     Conversational chat scoped to a specific entity (agent key auth).
     Retrieves relevant memories, intelligence, and knowledge for context.
     """
+    ensure_entity_access(caller, entity_type, entity_id)
     return await _run_chat(entity_type, entity_id, body, caller)
 
 

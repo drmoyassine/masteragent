@@ -9,6 +9,7 @@ Supports two storage modes:
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Any
 from pathlib import Path
+from core.safe_paths import safe_join, validate_relative_storage_path, validate_storage_component
 import json
 import os
 import base64
@@ -140,6 +141,11 @@ class GitHubStorageService(StorageService):
     def __init__(self, user_id: str):
         self.user_id = user_id
         self.settings = get_github_settings(user_id)
+
+    @staticmethod
+    def _version_path(folder_path: str, version: str) -> str:
+        folder = validate_relative_storage_path(folder_path, "prompt path")
+        return f"{folder}/{validate_storage_component(version, 'version')}"
         
     def _get_repo_info(self) -> tuple:
         """Get repository owner and name from settings."""
@@ -194,7 +200,7 @@ class GitHubStorageService(StorageService):
         variables: Dict
     ) -> bool:
         """Create a new prompt in GitHub."""
-        version_path = f"{folder_path}/v1"
+        version_path = self._version_path(folder_path, "v1")
         
         # Create manifest
         manifest = {
@@ -246,7 +252,7 @@ class GitHubStorageService(StorageService):
     
     async def get_prompt_content(self, folder_path: str, version: str = "v1") -> Optional[Dict]:
         """Get prompt content from GitHub."""
-        version_path = f"{folder_path}/{version}"
+        version_path = self._version_path(folder_path, version)
         
         # Get manifest
         manifest_data = await self._github_api_request(
@@ -262,6 +268,7 @@ class GitHubStorageService(StorageService):
         # Get sections
         sections = []
         for section_file in manifest.get("sections", []):
+            validate_storage_component(section_file, "section filename")
             section_data = await self._github_api_request(
                 "GET", f"/contents/{version_path}/{section_file}"
             )
@@ -280,7 +287,8 @@ class GitHubStorageService(StorageService):
     
     async def get_section(self, folder_path: str, filename: str, version: str = "v1") -> Optional[Dict]:
         """Get a specific section from GitHub."""
-        version_path = f"{folder_path}/{version}"
+        version_path = self._version_path(folder_path, version)
+        validate_storage_component(filename, "section filename")
         section_data = await self._github_api_request(
             "GET", f"/contents/{version_path}/{filename}"
         )
@@ -302,7 +310,8 @@ class GitHubStorageService(StorageService):
         version: str = "v1"
     ) -> bool:
         """Create a new section in GitHub."""
-        version_path = f"{folder_path}/{version}"
+        version_path = self._version_path(folder_path, version)
+        validate_storage_component(filename, "section filename")
         encoded_content = base64.b64encode(content.encode()).decode()
         
         await self._github_api_request("PUT", f"/contents/{version_path}/{filename}", {
@@ -319,7 +328,8 @@ class GitHubStorageService(StorageService):
         version: str = "v1"
     ) -> bool:
         """Update a section in GitHub."""
-        version_path = f"{folder_path}/{version}"
+        version_path = self._version_path(folder_path, version)
+        validate_storage_component(filename, "section filename")
         
         # Get current file SHA
         current = await self._github_api_request(
@@ -344,7 +354,8 @@ class GitHubStorageService(StorageService):
         version: str = "v1"
     ) -> bool:
         """Delete a section from GitHub."""
-        version_path = f"{folder_path}/{version}"
+        version_path = self._version_path(folder_path, version)
+        validate_storage_component(filename, "section filename")
         
         # Get current file SHA
         current = await self._github_api_request(
@@ -366,7 +377,7 @@ class GitHubStorageService(StorageService):
         version: str = "v1"
     ) -> bool:
         """Update manifest in GitHub."""
-        version_path = f"{folder_path}/{version}"
+        version_path = self._version_path(folder_path, version)
         
         # Get current manifest SHA
         current = await self._github_api_request(
@@ -392,6 +403,7 @@ class GitHubStorageService(StorageService):
         # This is a simplified version - in production you'd want to handle all versions
         try:
             # Get all contents
+            folder_path = validate_relative_storage_path(folder_path, "prompt path")
             contents = await self._github_api_request("GET", f"/contents/{folder_path}")
             if not contents:
                 return True
@@ -442,7 +454,9 @@ class LocalStorageService(StorageService):
     
     def _get_prompt_path(self, folder_path: str, version: str = "v1") -> Path:
         """Get the filesystem path for a prompt version."""
-        return self.storage_path / folder_path / version
+        folder = validate_relative_storage_path(folder_path, "prompt path")
+        version = validate_storage_component(version, "version")
+        return safe_join(self.storage_path, folder, version)
     
     async def create_prompt(
         self, 
@@ -471,6 +485,7 @@ class LocalStorageService(StorageService):
         # Create sections and update manifest
         for section in sections:
             filename = section.get("filename", f"{section.get('order', 1):02d}_{section.get('name', 'section')}.md")
+            validate_storage_component(filename, "section filename")
             section_path = version_path / filename
             
             with open(section_path, "w", encoding="utf-8") as f:
@@ -499,6 +514,7 @@ class LocalStorageService(StorageService):
         # Get sections
         sections = []
         for section_file in manifest.get("sections", []):
+            validate_storage_component(section_file, "section filename")
             section_path = version_path / section_file
             if section_path.exists():
                 with open(section_path, "r", encoding="utf-8") as f:
@@ -515,6 +531,7 @@ class LocalStorageService(StorageService):
     async def get_section(self, folder_path: str, filename: str, version: str = "v1") -> Optional[Dict]:
         """Get a specific section from local filesystem."""
         version_path = self._get_prompt_path(folder_path, version)
+        validate_storage_component(filename, "section filename")
         section_path = version_path / filename
         
         if not section_path.exists():
@@ -535,6 +552,7 @@ class LocalStorageService(StorageService):
     ) -> bool:
         """Create a new section locally."""
         version_path = self._get_prompt_path(folder_path, version)
+        validate_storage_component(filename, "section filename")
         version_path.mkdir(parents=True, exist_ok=True)
         
         section_path = version_path / filename
@@ -552,6 +570,7 @@ class LocalStorageService(StorageService):
     ) -> bool:
         """Update a section locally."""
         version_path = self._get_prompt_path(folder_path, version)
+        validate_storage_component(filename, "section filename")
         section_path = version_path / filename
         
         if not section_path.exists():
@@ -579,6 +598,7 @@ class LocalStorageService(StorageService):
     ) -> bool:
         """Delete a section locally."""
         version_path = self._get_prompt_path(folder_path, version)
+        validate_storage_component(filename, "section filename")
         section_path = version_path / filename
         
         if not section_path.exists():
@@ -606,7 +626,8 @@ class LocalStorageService(StorageService):
     
     async def delete_prompt(self, folder_path: str) -> bool:
         """Delete prompt from local filesystem."""
-        prompt_path = self.storage_path / folder_path
+        folder = validate_relative_storage_path(folder_path, "prompt path")
+        prompt_path = safe_join(self.storage_path, folder)
         
         if not prompt_path.exists():
             return False

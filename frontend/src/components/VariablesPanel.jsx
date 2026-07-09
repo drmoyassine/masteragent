@@ -73,6 +73,8 @@ export default function VariablesPanel({ promptId, version, onVariablesChange })
     if (promptId && version) {
       loadVariables();
     }
+    // loadVariables intentionally rebinds to the selected prompt/version.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [promptId, version]);
 
   const loadVariables = async () => {

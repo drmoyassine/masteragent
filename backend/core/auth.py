@@ -41,6 +41,10 @@ _MCP_SERVICE_KEY: str = os.environ.get("MCP_SERVICE_KEY", "")
 _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
+def hash_api_key(api_key: str) -> str:
+    return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+
+
 # ─────────────────────────────────────────────
 # Password Hashing
 # ─────────────────────────────────────────────
@@ -129,6 +133,19 @@ def require_auth(authorization: str = Header(None)) -> dict:
     return user
 
 
+def require_admin_auth(authorization: str = Header(None)) -> dict:
+    """Require an authenticated administrator.
+
+    MCP_SERVICE_KEY remains an explicit service administrator for compatibility
+    with the internal MCP tool executor. Human users are authorized from the
+    database on every request so demotion takes effect immediately.
+    """
+    user = require_auth(authorization)
+    if not user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Administrator access required")
+    return user
+
+
 async def verify_api_key(api_key: str = Security(_api_key_header)) -> Optional[dict]:
     """
     Optional API key authentication dependency (checks api_keys table).
@@ -137,8 +154,11 @@ async def verify_api_key(api_key: str = Security(_api_key_header)) -> Optional[d
     if not api_key:
         return None
 
+    if _MCP_SERVICE_KEY and api_key == _MCP_SERVICE_KEY:
+        return {"id": "mcp-service", "user_id": None, "is_service": True}
+
     # Hash incoming key for comparison
-    hashed_key = hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+    hashed_key = hash_api_key(api_key)
 
     with get_db_context() as conn:
         cursor = conn.cursor()
@@ -151,3 +171,11 @@ async def verify_api_key(api_key: str = Security(_api_key_header)) -> Optional[d
             )
             return dict(key_row)
     return None
+
+
+async def require_api_key(api_key: str = Security(_api_key_header)) -> dict:
+    """Strict form of :func:`verify_api_key` for external prompt consumers."""
+    key = await verify_api_key(api_key)
+    if not key:
+        raise HTTPException(status_code=401, detail="Valid API key required")
+    return key

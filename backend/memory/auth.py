@@ -15,8 +15,7 @@ from datetime import datetime, timezone
 
 from fastapi import Header, HTTPException
 
-# require_admin_auth is identical to require_auth — simply re-exported for clarity
-from core.auth import require_auth as require_admin_auth  # noqa: F401
+from core.auth import require_admin_auth  # noqa: F401
 from core.storage import get_memory_db_context
 from core.utils import utcnow
 

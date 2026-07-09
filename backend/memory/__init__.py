@@ -1,7 +1,8 @@
 """
 memory/__init__.py — Memory system router
 """
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from core.auth import require_admin_auth
 
 from memory.config import router as config_router
 from memory.agent import router as agent_router
@@ -10,6 +11,19 @@ from memory.webhooks import router as webhook_router
 from memory.workspace import router as workspace_router
 
 memory_router = APIRouter(prefix="/api/memory")
+
+
+@memory_router.get("/health", include_in_schema=False)
+async def memory_health():
+    return {"status": "healthy", "system": "memory"}
+
+
+@memory_router.post("/init", include_in_schema=False)
+async def memory_init_compat(_admin: dict = Depends(require_admin_auth)):
+    """Compatibility no-op; schema initialization now occurs during lifespan."""
+    return {"status": "initialized"}
+
+
 memory_router.include_router(admin_router, include_in_schema=False)
 memory_router.include_router(config_router, include_in_schema=False)
 memory_router.include_router(agent_router, tags=["🧠 Memory"])  # The actual Agent SDK

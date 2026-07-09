@@ -31,8 +31,8 @@ Both modules share a single **PostgreSQL 16 + pgvector** instance. Redis provide
 |---|---|---|
 | `/api/auth`, `/api/prompts`, `/api/render`, `/api/settings`, `/api/templates` | `backend/routes/` | Prompt Manager |
 | `/api/memory/config/*` | `backend/memory/config.py` | Memory admin config |
-| `/api/memory/admin/*`, `/api/memory/insights`, `/api/memory/lessons` | `backend/memory/admin.py` | Memory admin CRUD + stats |
-| `/api/memory/interactions`, `/api/memory/search`, `/api/memory/timeline`, `/api/memory/lessons` | `backend/memory/agent.py` | Agent-facing APIs |
+| `/api/memory/admin/*` | `backend/memory/admin.py` | Memory admin CRUD + stats |
+| `/api/memory/interactions`, `/api/memory/memories`, `/api/memory/intelligence`, `/api/memory/knowledge`, `/api/memory/search/*` | `backend/memory/agent.py` | Agent-facing APIs |
 | `/api/memory/webhooks/*` | `backend/memory/webhooks.py` | Webhook sources + inbound routing |
 | `/api/memory/workspace/*` | `backend/memory/workspace.py` | Per-entity workspace chat |
 
@@ -65,7 +65,7 @@ A single PostgreSQL instance hosts all tables. Schema is split by domain:
 
 ### Memory System Tables (`memory_db.py`)
 - **Config**: `memory_entity_types`, `memory_entity_subtypes`, `memory_lesson_types`, `memory_channel_types`, `memory_agents`, `memory_llm_configs`, `memory_system_prompts`, `memory_settings`, `memory_entity_type_config`
-- **Data**: `interactions`, `memories`, `memory_documents`, `insights`, `lessons`, `memory_audit_log`, `webhook_sources`
+- **Data**: `interactions`, `memories`, `intelligence`, `knowledge`, `entity_profiles`, `memory_audit_log`, `memory_webhook_sources`
 
 All memory tables have an `embedding vector(1536)` column (or equivalent) enabled by the `pgvector` extension for semantic search.
 
@@ -82,9 +82,9 @@ Tier 0: Interactions (raw events — POST /api/memory/interactions)
     ↓  (batch processing / compaction)
 Tier 1: Memories (chunked, embedded, searchable)
     ↓  (threshold-based compaction)
-Tier 2: Insights (patterns + trends, draft → confirmed)
+Tier 2: Intelligence (patterns + trends, draft → confirmed)
     ↓  (admin promotion)
-Tier 3: Lessons (organization-wide knowledge)
+Tier 3: Knowledge (organization-wide skills, playbooks, and trade knowledge)
 ```
 
 ---
@@ -93,7 +93,7 @@ Tier 3: Lessons (organization-wide knowledge)
 
 | Consumer | Mechanism | Header | Handler |
 |---|---|---|---|
-| Human admins | JWT (Bearer) | `Authorization: Bearer <token>` | `memory.auth.require_admin_auth()` |
+| Human admins | JWT + `users.is_admin` | `Authorization: Bearer <token>` | `memory.auth.require_admin_auth()` |
 | AI agents / scripts | API Key | `X-API-Key: <key>` | `core.auth.verify_agent_key()` |
 | Webhook sources | HMAC-SHA256 signature | `X-Webhook-Signature: <sig>` | `memory.webhooks` inline validation |
 

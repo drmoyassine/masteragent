@@ -250,6 +250,8 @@ export default function MemoryExplorerPage() {
 
   useEffect(() => {
     loadInitialData();
+    // Initial schema discovery runs once; later table refreshes are explicit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadInitialData = async () => {

@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from core.auth import require_auth
 from core.db import get_db_context
+from routes.prompt_access import require_prompt_owner
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -143,9 +144,7 @@ async def delete_account_variable(name: str, user: dict = Depends(require_auth))
 async def list_prompt_variables(prompt_id: str, version: str = "v1", user: dict = Depends(require_auth)):
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM prompts WHERE id = %s", (prompt_id,))
-        if not cursor.fetchone():
-            raise HTTPException(status_code=404, detail="Prompt not found")
+        require_prompt_owner(cursor, prompt_id, user["id"])
         cursor.execute(
             "SELECT * FROM prompt_variables WHERE prompt_id = %s AND version = %s ORDER BY name",
             (prompt_id, version),
@@ -166,9 +165,7 @@ async def create_prompt_variable(prompt_id: str, data: VariableCreate, version: 
     var_id = str(uuid.uuid4())
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM prompts WHERE id = %s", (prompt_id,))
-        if not cursor.fetchone():
-            raise HTTPException(status_code=404, detail="Prompt not found")
+        require_prompt_owner(cursor, prompt_id, user["id"])
         cursor.execute(
             "SELECT id FROM prompt_variables WHERE prompt_id = %s AND version = %s AND name = %s",
             (prompt_id, version, data.name),
@@ -191,6 +188,7 @@ async def update_prompt_variable(prompt_id: str, name: str, data: VariableUpdate
     now = datetime.now(timezone.utc).isoformat()
     with get_db_context() as conn:
         cursor = conn.cursor()
+        require_prompt_owner(cursor, prompt_id, user["id"])
         cursor.execute(
             "SELECT * FROM prompt_variables WHERE prompt_id = %s AND version = %s AND name = %s",
             (prompt_id, version, name),
@@ -215,6 +213,7 @@ async def update_prompt_variable(prompt_id: str, name: str, data: VariableUpdate
 async def delete_prompt_variable(prompt_id: str, name: str, version: str = "v1", user: dict = Depends(require_auth)):
     with get_db_context() as conn:
         cursor = conn.cursor()
+        require_prompt_owner(cursor, prompt_id, user["id"])
         cursor.execute(
             "SELECT id FROM prompt_variables WHERE prompt_id = %s AND version = %s AND name = %s",
             (prompt_id, version, name),
@@ -239,9 +238,7 @@ async def get_available_variables(prompt_id: str, version: str = "v1", user: dic
     seen = set()
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM prompts WHERE id = %s", (prompt_id,))
-        if not cursor.fetchone():
-            raise HTTPException(status_code=404, detail="Prompt not found")
+        require_prompt_owner(cursor, prompt_id, user["id"])
         # Prompt-level (higher priority)
         cursor.execute("SELECT * FROM prompt_variables WHERE prompt_id = %s AND version = %s", (prompt_id, version))
         for row in cursor.fetchall():

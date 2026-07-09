@@ -255,7 +255,7 @@ class TestAgentAPIKeyAuthentication:
                     "primary_entity_id": "test-auth-001"
                 }
             )
-            assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
+            assert response.status_code == 202, f"Expected 202, got {response.status_code}: {response.text}"
             data = response.json()
             assert "id" in data
             print(f"✓ Interaction ingested with API key: {data['id']}")
@@ -315,7 +315,7 @@ class TestMemoryPersistence:
                     "metadata": {"test": True}
                 }
             )
-            assert response.status_code == 200
+            assert response.status_code == 202
             data = response.json()
             memory_id = data["id"]
             assert memory_id is not None

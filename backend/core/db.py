@@ -10,11 +10,14 @@ Both the prompt manager and memory system use the same PostgreSQL instance.
 """
 import os
 import logging
+import re
 from contextlib import contextmanager
 from typing import Optional, Dict, Any
 
 import psycopg2
 import psycopg2.extras
+from core.secrets import decrypt_secret
+from core.db_pool import get_pool, return_connection
 
 logger = logging.getLogger(__name__)
 
@@ -38,12 +41,13 @@ if not DATABASE_URL or DATABASE_URL.startswith("sqlite:"):
 DB_PATH = DATABASE_URL
 
 
+def redact_database_url(url: str) -> str:
+    return re.sub(r"(:)[^:@/]+(@)", r"\1***\2", url or "")
+
+
 def get_db() -> psycopg2.extensions.connection:
-    """Open and return a raw psycopg2 connection."""
-    return psycopg2.connect(
-        DATABASE_URL,
-        cursor_factory=psycopg2.extras.RealDictCursor
-    )
+    """Borrow and return a psycopg2 connection from the process pool."""
+    return get_pool(DATABASE_URL).getconn()
 
 
 @contextmanager
@@ -65,7 +69,7 @@ def get_db_context():
         conn.rollback()
         raise
     finally:
-        conn.close()
+        return_connection(DATABASE_URL, conn)
 
 
 def get_github_settings(user_id: str = None) -> Optional[Dict[str, Any]]:
@@ -86,7 +90,10 @@ def get_github_settings(user_id: str = None) -> Optional[Dict[str, Any]]:
                 cursor.execute("SELECT * FROM settings WHERE id = 1")
             row = cursor.fetchone()
             if row:
-                return dict(row)
+                result = dict(row)
+                if result.get("github_token"):
+                    result["github_token"] = decrypt_secret(result["github_token"])
+                return result
     except Exception as e:
         logger.error(f"Failed to fetch settings from DB: {e}")
     return None

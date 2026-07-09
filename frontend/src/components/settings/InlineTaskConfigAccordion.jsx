@@ -87,6 +87,9 @@ export function InlineTaskConfigAccordion({
         const provider = llmProviders.find(p => p.id === formData.provider_id);
         const fetchable = provider && ["openai", "anthropic", "gemini", "openrouter", "ollama"].includes(provider.provider);
         if (fetchable) onFetchModels(config.id, formData.provider_id);
+        // Fetch only when the accordion opens; including provider collections or
+        // callback identities here causes duplicate provider API requests.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [expanded]);
 
     const taskInfo = TASK_TYPE_LABELS[config.task_type] || {

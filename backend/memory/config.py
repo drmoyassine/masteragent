@@ -16,11 +16,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel as _BaseModel
 
 from core.storage import get_memory_db_context
+from core.secrets import decrypt_secret, encrypt_secret
 from core.utils import utcnow
 from memory.auth import require_admin_auth
 from services.config_helpers import get_memory_settings
 from memory_models import (
     AgentCreate, AgentCreateResponse, AgentResponse,
+    ChannelTypeCreate, ChannelTypeResponse,
     EntitySubtypeCreate, EntitySubtypeResponse,
     EntityTypeCreate, EntityTypeResponse,
     FetchModelsRequest, FetchModelsResponse,
@@ -126,6 +128,39 @@ async def delete_entity_subtype(subtype_id: str, user: dict = Depends(require_ad
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM memory_entity_subtypes WHERE id = %s", (subtype_id,))
+    return {"message": "Deleted"}
+
+
+# ============================================
+# Admin Config Endpoints - Channel Types
+# ============================================
+
+@router.get("/config/channel-types", response_model=List[ChannelTypeResponse])
+async def list_channel_types(user: dict = Depends(require_admin_auth)):
+    return _list_config_table("memory_channel_types")
+
+
+@router.post("/config/channel-types", response_model=ChannelTypeResponse)
+async def create_channel_type(data: ChannelTypeCreate, user: dict = Depends(require_admin_auth)):
+    channel_id = str(uuid.uuid4())
+    now = utcnow()
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "INSERT INTO memory_channel_types (id, name, description, icon, created_at) VALUES (%s,%s,%s,%s,%s) RETURNING *",
+                (channel_id, data.name, data.description, data.icon, now),
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="Channel type already exists") from exc
+        return dict(cursor.fetchone())
+
+
+@router.delete("/config/channel-types/{channel_id}")
+async def delete_channel_type(channel_id: str, user: dict = Depends(require_admin_auth)):
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM memory_channel_types WHERE id=%s", (channel_id,))
     return {"message": "Deleted"}
 
 
@@ -292,7 +327,7 @@ async def create_llm_provider(data: LLMProviderCreate, user: dict = Depends(requ
         cursor = conn.cursor()
         cursor.execute(
             "INSERT INTO memory_llm_providers (id, name, provider, api_base_url, api_key_encrypted, api_key_preview, rate_limit_rpm, max_retries, retry_delay_ms, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-            (provider_id, data.name, data.provider, data.api_base_url or "", data.api_key or "", api_key_preview, data.rate_limit_rpm, data.max_retries, data.retry_delay_ms, now, now)
+            (provider_id, data.name, data.provider, data.api_base_url or "", encrypt_secret(data.api_key or ""), api_key_preview, data.rate_limit_rpm, data.max_retries, data.retry_delay_ms, now, now)
         )
         return LLMProviderResponse(
             id=provider_id, name=data.name, provider=data.provider,
@@ -318,7 +353,7 @@ async def update_llm_provider(provider_id: str, data: LLMProviderUpdate, user: d
         if data.api_base_url is not None:
             updates.append("api_base_url = %s"); params.append(data.api_base_url)
         if data.api_key is not None:
-            updates.append("api_key_encrypted = %s"); params.append(data.api_key)
+            updates.append("api_key_encrypted = %s"); params.append(encrypt_secret(data.api_key))
             api_key_preview = f"{data.api_key[:4]}...{data.api_key[-4:]}" if len(data.api_key) > 8 else "****"
             updates.append("api_key_preview = %s"); params.append(api_key_preview)
         if data.rate_limit_rpm is not None:
@@ -499,7 +534,7 @@ async def fetch_provider_models(data: FetchModelsRequest, user: dict = Depends(r
             row = cursor.fetchone()
             if row:
                 if not api_key and row["api_key_encrypted"]:
-                    api_key = row["api_key_encrypted"]
+                    api_key = decrypt_secret(row["api_key_encrypted"])
                 if not api_base_url and row["api_base_url"]:
                     api_base_url = row["api_base_url"].rstrip("/")
 

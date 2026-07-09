@@ -1,0 +1,14 @@
+name = "chatwoot-template-sender"
+main = "worker.js"
+compatibility_date = "2026-06-01"
+
+# These point at the wa_template_picker_api n8n webhooks (secret paths = auth).
+# They live server-side in the Worker and are never exposed to the browser —
+# the form only ever calls the Worker's own /api/* routes.
+[vars]
+N8N_LIST_URL = "https://api.studygram.me/webhook/wa-tmpl-list-Qx7m2Kp9vT"
+N8N_SEND_URL = "https://api.studygram.me/webhook/wa-tmpl-send-Zr4n8Tj6wB"
+# Chatwoot Agents API — resolves the logged-in agent's display name (available_name).
+# CHATWOOT_API_TOKEN is set as a Worker secret (wrangler secret put), not here.
+CHATWOOT_BASE = "https://chat.studygram.me"
+CHATWOOT_ACCOUNT = "2"

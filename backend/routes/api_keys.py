@@ -7,10 +7,11 @@ import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from core.db import get_db_context
+from core.auth import hash_api_key, require_auth
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -41,15 +42,26 @@ class APIKeyCreateResponse(APIKeyResponse):
 # ─────────────────────────────────────────────
 
 @router.get("/keys", response_model=List[APIKeyResponse])
-async def get_api_keys():
+async def get_api_keys(user: dict = Depends(require_auth)):
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT id, name, key_preview, created_at, last_used FROM api_keys ORDER BY created_at DESC")
+        if user.get("is_admin"):
+            cursor.execute(
+                "SELECT id, name, key_preview, created_at, last_used FROM api_keys "
+                "WHERE user_id = %s OR user_id IS NULL ORDER BY created_at DESC",
+                (user["id"],),
+            )
+        else:
+            cursor.execute(
+                "SELECT id, name, key_preview, created_at, last_used FROM api_keys "
+                "WHERE user_id = %s ORDER BY created_at DESC",
+                (user["id"],),
+            )
         return [dict(row) for row in cursor.fetchall()]
 
 
 @router.post("/keys", response_model=APIKeyCreateResponse)
-async def create_api_key(key_data: APIKeyCreate):
+async def create_api_key(key_data: APIKeyCreate, user: dict = Depends(require_auth)):
     key_id = str(uuid.uuid4())
     full_key = f"pm_{secrets.token_urlsafe(32)}"
     key_preview = f"{full_key[:7]}...{full_key[-4:]}"
@@ -57,8 +69,8 @@ async def create_api_key(key_data: APIKeyCreate):
     with get_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO api_keys (id, name, key_hash, key_preview, created_at) VALUES (%s,%s,%s,%s,%s)",
-            (key_id, key_data.name, full_key, key_preview, now),
+            "INSERT INTO api_keys (id, user_id, name, key_hash, key_preview, created_at) VALUES (%s,%s,%s,%s,%s,%s)",
+            (key_id, user["id"], key_data.name, hash_api_key(full_key), key_preview, now),
         )
     return APIKeyCreateResponse(
         id=key_id, name=key_data.name, key=full_key, key_preview=key_preview, created_at=now
@@ -66,8 +78,16 @@ async def create_api_key(key_data: APIKeyCreate):
 
 
 @router.delete("/keys/{key_id}")
-async def delete_api_key(key_id: str):
+async def delete_api_key(key_id: str, user: dict = Depends(require_auth)):
     with get_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM api_keys WHERE id = %s", (key_id,))
+        if user.get("is_admin"):
+            cursor.execute(
+                "DELETE FROM api_keys WHERE id = %s AND (user_id = %s OR user_id IS NULL)",
+                (key_id, user["id"]),
+            )
+        else:
+            cursor.execute("DELETE FROM api_keys WHERE id = %s AND user_id = %s", (key_id, user["id"]))
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="API key not found")
     return {"message": "API key deleted"}

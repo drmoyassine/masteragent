@@ -30,7 +30,7 @@ Both are exposed as **MCP tools** via streamable HTTP — connect any MCP-compat
 | Component | Technology |
 |-----------|------------|
 | Backend | FastAPI (Python 3.11+) |
-| Frontend | React 18, Tailwind CSS, Shadcn/UI |
+| Frontend | React 19, Tailwind CSS, Shadcn/UI |
 | Database | PostgreSQL 16 + pgvector |
 | Queue | Redis 7 + BullMQ |
 | MCP | fastapi-mcp (Streamable HTTP) |
@@ -46,6 +46,7 @@ Both are exposed as **MCP tools** via streamable HTTP — connect any MCP-compat
 - **Render API** — Clean HTTP endpoints for consuming compiled prompts
 - **Starter Templates** — Agent Persona, Task Executor, Knowledge Expert, and more
 - **API Key Authentication** — Secure access for your agents
+- **Role-separated Administration** — Prompt users cannot administer memory infrastructure
 
 ### Memory System
 - **4-Tier Memory Architecture** — Interactions → Memories (T1) → Intelligence (T2) → Knowledge (T3)
@@ -67,6 +68,7 @@ Both are exposed as **MCP tools** via streamable HTTP — connect any MCP-compat
 - **Two MCP Servers** — Separate endpoints for prompts and memory, each auto-discovering available tools
 - **Streamable HTTP** — Modern MCP transport (no SSE dependency)
 - **Service Key Auth** — Single `MCP_SERVICE_KEY` env var authenticates all tool calls
+- **Optional Agent Entity Isolation** — Gradual production rollout through `ENFORCE_AGENT_SCOPE`
 - **n8n Ready** — Add an MCP Client node, point to the URL, tools auto-populate
 
 ### Multimodal Data Ingestion
@@ -131,6 +133,7 @@ REDIS_URL=redis://redis:6379/0
 ADMIN_EMAIL=admin@example.com
 ADMIN_PASSWORD=change_me_in_production
 MCP_SERVICE_KEY=<generate with: openssl rand -hex 32>
+DATA_ENCRYPTION_KEY=<generate independently with: openssl rand -hex 32>
 ```
 
 ## Project Structure

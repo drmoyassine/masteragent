@@ -18,6 +18,7 @@ import MemoryMonitorPage from "@/pages/MemoryMonitorPage";
 
 // Layout
 import MainLayout from "@/components/layout/MainLayout";
+import { canAdministerMemory } from "@/lib/access";
 
 // Protected Route Component
 const ProtectedRoute = ({ children }) => {
@@ -43,6 +44,11 @@ const ProtectedRoute = ({ children }) => {
   return children;
 };
 
+const AdminRoute = ({ children }) => {
+  const { user } = useAuth();
+  return canAdministerMemory(user) ? children : <Navigate to="/app" replace />;
+};
+
 // App Content - All routes accessible, warnings shown via MainLayout
 const AppContent = () => {
   return (
@@ -63,8 +69,8 @@ const AppContent = () => {
                 <Route path="prompts/:promptId" element={<PromptEditorPage />} />
                 <Route path="templates" element={<TemplatesPage />} />
                 <Route path="settings" element={<SettingsPage />} />
-                <Route path="memory/explore" element={<MemoryExplorerPage />} />
-                <Route path="memory/monitor" element={<MemoryMonitorPage />} />
+                <Route path="memory/explore" element={<AdminRoute><MemoryExplorerPage /></AdminRoute>} />
+                <Route path="memory/monitor" element={<AdminRoute><MemoryMonitorPage /></AdminRoute>} />
                 <Route path="setup" element={<SetupPage />} />
               </Routes>
             </MainLayout>

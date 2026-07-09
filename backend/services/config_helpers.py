@@ -4,6 +4,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from core.storage import get_memory_db_context
+from core.secrets import decrypt_secret
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,8 @@ def _parse_extra_config(config: dict) -> dict:
             config["extra_config"] = {}
     else:
         config["extra_config"] = extra
+    if config.get("api_key_encrypted"):
+        config["api_key_encrypted"] = decrypt_secret(config["api_key_encrypted"])
     return config
 
 

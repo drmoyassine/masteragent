@@ -19,7 +19,9 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import secrets
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Optional, List
@@ -28,6 +30,7 @@ from fastapi import APIRouter, Depends, HTTPException, Header, Request, Query
 from pydantic import BaseModel
 
 from core.storage import get_memory_db_context, cache_interaction
+from core.secrets import decrypt_secret, encrypt_secret
 from memory.auth import require_admin_auth
 
 router = APIRouter()
@@ -86,13 +89,13 @@ async def register_webhook_source(
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO memory_webhook_sources (
-                id, name, source_system, secret_hash,
+                id, name, source_system, secret_hash, secret_encrypted,
                 event_types, metadata_field_map,
                 default_interaction_type, default_entity_type,
                 is_active, created_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
-            source_id, body.name, body.source_system, secret_hash,
+            source_id, body.name, body.source_system, secret_hash, encrypt_secret(secret),
             body.event_types or [],
             json.dumps(body.metadata_field_map or {}),
             body.default_interaction_type,
@@ -195,8 +198,8 @@ async def rotate_webhook_secret(source_id: str, admin: dict = Depends(require_ad
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "UPDATE memory_webhook_sources SET secret_hash = %s WHERE id = %s",
-            (secret_hash, source_id)
+            "UPDATE memory_webhook_sources SET secret_hash = %s, secret_encrypted = %s WHERE id = %s",
+            (secret_hash, encrypt_secret(secret), source_id)
         )
 
     return {
@@ -215,6 +218,7 @@ async def receive_webhook(
     source_id: str,
     request: Request,
     x_webhook_signature: Optional[str] = Header(None),
+    x_webhook_timestamp: Optional[str] = Header(None),
 ):
     """
     Receive an inbound webhook event from an external system.
@@ -232,7 +236,7 @@ async def receive_webhook(
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, name, source_system, secret_hash, event_types,
+            SELECT id, name, source_system, secret_hash, secret_encrypted, event_types,
                    metadata_field_map, default_interaction_type, default_entity_type, is_active
             FROM memory_webhook_sources WHERE id = %s
         """, (source_id,))
@@ -247,8 +251,23 @@ async def receive_webhook(
     raw_body = await request.body()
 
     # 3. Verify HMAC signature
+    require_timestamp = os.environ.get("REQUIRE_WEBHOOK_TIMESTAMP", "false").lower() in {"1", "true", "yes"}
+    if require_timestamp:
+        try:
+            if not x_webhook_timestamp or abs(time.time() - float(x_webhook_timestamp)) > 300:
+                raise ValueError
+        except ValueError:
+            raise HTTPException(status_code=401, detail="Missing or stale webhook timestamp")
+
     secret_hash = source["secret_hash"]
-    if not _verify_signature(raw_body, x_webhook_signature, secret_hash):
+    plaintext_secret = decrypt_secret(source.get("secret_encrypted")) if source.get("secret_encrypted") else None
+    if not _verify_signature(
+        raw_body,
+        x_webhook_signature,
+        secret_hash,
+        plaintext_secret,
+        x_webhook_timestamp if require_timestamp else None,
+    ):
         logger.warning(f"Webhook signature verification failed for source {source_id}")
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
@@ -342,7 +361,13 @@ async def receive_webhook(
 # Helpers
 # ─────────────────────────────────────────────────────────────
 
-def _verify_signature(raw_body: bytes, signature_header: Optional[str], stored_secret_hash: str) -> bool:
+def _verify_signature(
+    raw_body: bytes,
+    signature_header: Optional[str],
+    stored_secret_hash: str,
+    plaintext_secret: Optional[str] = None,
+    timestamp: Optional[str] = None,
+) -> bool:
     """
     Verify X-Webhook-Signature: sha256=<hex>
 
@@ -350,8 +375,9 @@ def _verify_signature(raw_body: bytes, signature_header: Optional[str], stored_s
     HMAC-SHA256(key=secret_hash_bytes, msg=raw_body) and compare to the provided
     signature.
 
-    Callers should sign their payloads using:
-        hmac.new(signing_secret_hash.encode(), raw_body, hashlib.sha256).hexdigest()
+    New callers sign raw_body with the returned secret. When timestamp
+    enforcement is enabled, sign ``<timestamp>.<raw_body>`` instead. The
+    historical hash-as-key form remains accepted while compatibility is enabled.
 
     This is a deliberate trade-off: avoids storing plaintext secrets while keeping
     HMAC-based verification. For higher compatibility with third-party platforms
@@ -366,13 +392,14 @@ def _verify_signature(raw_body: bytes, signature_header: Optional[str], stored_s
 
     provided_sig = signature_header[len("sha256="):]
 
-    expected_sig = hmac.new(
-        stored_secret_hash.encode(),
-        raw_body,
-        hashlib.sha256
-    ).hexdigest()
-
-    return hmac.compare_digest(provided_sig, expected_sig)
+    signed_payload = f"{timestamp}.".encode() + raw_body if timestamp else raw_body
+    # New sources use the industry-standard returned secret directly. Keep the
+    # historical hash-as-key verifier as a fallback for existing integrations.
+    candidates = []
+    if plaintext_secret:
+        candidates.append(hmac.new(plaintext_secret.encode(), signed_payload, hashlib.sha256).hexdigest())
+    candidates.append(hmac.new(stored_secret_hash.encode(), signed_payload, hashlib.sha256).hexdigest())
+    return any(hmac.compare_digest(provided_sig, expected) for expected in candidates)
 
 
 

@@ -8,13 +8,14 @@ Also exposes github_api_request() used by routes/prompts.py create_version.
 """
 import base64
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 
-from core.auth import verify_api_key
+from core.auth import verify_api_key, get_current_user
 from core.db import get_db_context, get_github_settings
 from routes.prompts import extract_variables, inject_variables
 
@@ -81,7 +82,10 @@ async def render_prompt(
     version: str,
     render_data: RenderRequest,
     api_key: dict = Depends(verify_api_key),
+    authorization: str = Header(None),
 ):
+    if not api_key and not authorization:
+        raise HTTPException(status_code=401, detail="Prompt credentials required")
     with get_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM prompts WHERE id = %s", (prompt_id,))
@@ -90,6 +94,22 @@ async def render_prompt(
             raise HTTPException(status_code=404, detail="Prompt not found")
         folder_path = prompt["folder_path"]
         user_id = prompt["user_id"]
+
+    # Browser preview uses the owner's JWT; external consumers use a prompt API
+    # key. Legacy keys created before ownership was introduced have user_id NULL
+    # and retain their historical global behavior during the migration window.
+    jwt_user = get_current_user(authorization) if authorization else None
+    legacy_global_keys = os.environ.get("LEGACY_PROMPT_KEYS_GLOBAL", "true").lower() in {"1", "true", "yes"}
+    key_allowed = bool(
+        api_key and (
+            api_key.get("is_service")
+            or (api_key.get("user_id") is None and legacy_global_keys)
+            or api_key.get("user_id") == user_id
+        )
+    )
+    user_allowed = bool(jwt_user and (jwt_user.get("id") == user_id or jwt_user.get("is_admin")))
+    if not key_allowed and not user_allowed:
+        raise HTTPException(status_code=401 if not api_key and not jwt_user else 403, detail="Prompt access denied")
 
     # Get sections via storage service (works for both local and GitHub storage)
     from storage_service import get_storage_service

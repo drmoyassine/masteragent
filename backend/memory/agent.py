@@ -7,6 +7,7 @@ All endpoints use the Agent API Key validation.
 """
 import json
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import List, Optional, Any
@@ -38,6 +39,7 @@ from memory_services import (
     search_knowledge_by_fulltext,
 )
 from memory.auth import verify_agent_key, log_audit, require_admin_or_agent
+from memory.access import ensure_entity_access, ensure_record_access, grant_entity, scope_enforced
 from memory_tasks import check_rate_limit
 
 router = APIRouter()
@@ -93,6 +95,7 @@ async def ingest_interaction(
         "interaction_type": body.interaction_type,
         "entity": f"{body.primary_entity_type}/{body.primary_entity_id}",
     })
+    grant_entity(agent["id"], body.primary_entity_type, body.primary_entity_id)
 
     # Return HTTP 202 Accepted instantly
     response.status_code = 202
@@ -155,6 +158,8 @@ async def ingest_interactions_bulk(
         "count": len(ids),
         "interaction_types": sorted({i.interaction_type for i in items}),
     })
+    for item in items:
+        grant_entity(agent["id"], item.primary_entity_type, item.primary_entity_id)
 
     response.status_code = 202
     return BulkInteractionResponse(ids=ids, count=len(ids), status="pending")
@@ -197,16 +202,18 @@ async def parse_document_sync(
     if body.data:
         import base64
         try:
-            raw_blob = base64.b64decode(body.data)
+            raw_blob = base64.b64decode(body.data, validate=True)
         except Exception:
             raise HTTPException(status_code=422, detail="Invalid base64 in 'data'.")
+        max_bytes = int(os.environ.get("MAX_DOCUMENT_BYTES", str(25 * 1024 * 1024)))
+        if len(raw_blob) > max_bytes:
+            raise HTTPException(status_code=413, detail="Document exceeds the configured size limit")
     else:
-        import httpx
+        from core.url_security import fetch_document, UnsafeURL
         try:
-            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-                resp = await client.get(body.url)
-                resp.raise_for_status()
-                raw_blob = resp.content
+            raw_blob = await fetch_document(body.url)
+        except UnsafeURL as e:
+            raise HTTPException(status_code=422, detail=str(e))
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Failed to fetch document URL: {e}")
 
@@ -258,6 +265,7 @@ async def list_interactions(
     agent: dict = Depends(verify_agent_key)
 ):
     """Retrieve the interaction timeline for an entity."""
+    ensure_entity_access(agent, entity_type, entity_id)
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         conditions, params = ["primary_entity_type = %s", "primary_entity_id = %s"], [entity_type, entity_id]
@@ -297,6 +305,7 @@ async def update_interaction(
     update: InteractionUpdate,
     agent: dict = Depends(verify_agent_key)
 ):
+    ensure_record_access(agent, "interactions", id)
     updates, params = [], []
     for k, v in update.model_dump(exclude_unset=True).items():
         updates.append(f"{k} = %s")
@@ -322,6 +331,7 @@ async def update_interaction(
 
 @router.delete("/interactions/{id}", tags=["🔄 Interactions"])
 async def delete_interaction(id: str, agent: dict = Depends(verify_agent_key)):
+    ensure_record_access(agent, "interactions", id)
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM interactions WHERE id = %s RETURNING id", (id,))
@@ -337,6 +347,7 @@ async def get_has_context(
     agent: dict = Depends(verify_agent_key)
 ):
     """Check if any memory history exists prior to pulling detailed data."""
+    ensure_entity_access(agent, entity_type, entity_id)
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT id, timestamp FROM interactions WHERE primary_entity_type = %s AND primary_entity_id = %s ORDER BY timestamp DESC", (entity_type, entity_id))
@@ -418,6 +429,7 @@ async def get_context(
 
     Optional ?interaction_types=a,b&interaction_types_mode=include|exclude
     filters the interactions list (memories and intelligence are unaffected)."""
+    ensure_entity_access(agent, entity_type, entity_id)
     type_filter: Optional[List[str]] = None
     if interaction_types:
         type_filter = [t.strip() for t in interaction_types.split(",") if t.strip()]
@@ -651,6 +663,7 @@ async def get_context(
 
 @router.post("/memories", response_model=MemoryResponse, tags=["🧠 Memories"])
 async def create_memory(body: MemoryCreate, agent: dict = Depends(verify_agent_key)):
+    grant_entity(agent["id"], body.primary_entity_type, body.primary_entity_id)
     mem_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
     embedding = None
@@ -694,6 +707,7 @@ async def list_memories(
     offset: int = Query(0),
     agent: dict = Depends(verify_agent_key)
 ):
+    ensure_entity_access(agent, entity_type, entity_id)
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         conditions, params = ["primary_entity_type = %s", "primary_entity_id = %s"], [entity_type, entity_id]
@@ -722,6 +736,7 @@ async def list_memories(
 
 @router.patch("/memories/{id}", response_model=MemoryResponse, tags=["🧠 Memories"])
 async def update_memory(id: str, update: MemoryUpdate, agent: dict = Depends(verify_agent_key)):
+    ensure_record_access(agent, "memories", id)
     updates, params = [], []
     dmp = update.model_dump(exclude_unset=True)
     if "related_entities" in dmp: dmp["related_entities"] = json.dumps(dmp["related_entities"])
@@ -749,6 +764,7 @@ async def update_memory(id: str, update: MemoryUpdate, agent: dict = Depends(ver
 
 @router.delete("/memories/{id}", tags=["🧠 Memories"])
 async def delete_memory(id: str, agent: dict = Depends(verify_agent_key)):
+    ensure_record_access(agent, "memories", id)
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM memories WHERE id = %s RETURNING id", (id,))
@@ -762,6 +778,7 @@ async def delete_memory(id: str, agent: dict = Depends(verify_agent_key)):
 
 @router.post("/intelligence", response_model=IntelligenceResponse, tags=["💡 Intelligence"])
 async def create_intelligence(body: IntelligenceCreate, agent: dict = Depends(verify_agent_key)):
+    grant_entity(agent["id"], body.primary_entity_type, body.primary_entity_id)
     in_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
     embedding = await generate_embedding(f"{body.name}. {body.summary or body.content}")
@@ -792,6 +809,7 @@ async def list_intelligence(
     offset: int = Query(0),
     agent: dict = Depends(verify_agent_key)
 ):
+    ensure_entity_access(agent, entity_type, entity_id)
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         conditions, params = ["primary_entity_type = %s", "primary_entity_id = %s"], [entity_type, entity_id]
@@ -819,6 +837,7 @@ async def list_intelligence(
 
 @router.patch("/intelligence/{id}", response_model=IntelligenceResponse, tags=["💡 Intelligence"])
 async def update_intelligence(id: str, update: IntelligenceUpdate, agent: dict = Depends(verify_agent_key)):
+    ensure_record_access(agent, "intelligence", id)
     updates, params = [], []
     for k, v in update.model_dump(exclude_unset=True).items():
         updates.append(f"{k} = %s")
@@ -842,6 +861,7 @@ async def update_intelligence(id: str, update: IntelligenceUpdate, agent: dict =
 
 @router.delete("/intelligence/{id}", tags=["💡 Intelligence"])
 async def delete_intelligence(id: str, agent: dict = Depends(verify_agent_key)):
+    ensure_record_access(agent, "intelligence", id)
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM intelligence WHERE id = %s RETURNING id", (id,))
@@ -865,6 +885,8 @@ async def create_knowledge(body: KnowledgeCreate, agent: dict = Depends(verify_a
     category = body.category or "trade_knowledge"
     embedding = await generate_embedding(f"{body.name}. {body.summary or body.content}")
     metadata = await enrich_metadata_with_facets(body.metadata, body.name, body.content, body.summary or "")
+    metadata = dict(metadata or {})
+    metadata["created_by_agent_id"] = agent["id"]
 
     insert_knowledge(
         knowledge_id=knowledge_id,
@@ -1001,18 +1023,21 @@ async def get_knowledge(id: str, agent: dict = Depends(verify_agent_key)):
         d["created_at"] = str(d["created_at"]); d["updated_at"] = str(d["updated_at"])
         return d
 
-def _assert_agent_mutable(cursor, id: str) -> None:
+def _assert_agent_mutable(cursor, id: str, agent: dict) -> None:
     """Block agent-key mutations of system-governed knowledge (the always-on
     management skill and other source_pathway='system' records). These govern
     every agent globally, so a single agent key must not be able to alter or
     delete them — that's an admin-only operation."""
     cursor.execute(
-        "SELECT source_pathway, metadata->>'always_inject' AS ai FROM knowledge WHERE id = %s",
+        "SELECT source_pathway, metadata->>'always_inject' AS ai, "
+        "metadata->>'created_by_agent_id' AS owner FROM knowledge WHERE id = %s",
         (id,),
     )
     r = cursor.fetchone()
     if r and (r.get("source_pathway") == "system" or r.get("ai") == "true"):
         raise HTTPException(403, "This knowledge record is system-governed and can only be modified by an admin")
+    if scope_enforced() and r and r.get("owner") != agent.get("id") and agent.get("id") != "mcp-service":
+        raise HTTPException(403, "Agent can only modify knowledge it created")
 
 
 @router.patch("/knowledge/{id}", response_model=KnowledgeResponse, tags=["🎓 Knowledge"])
@@ -1029,7 +1054,7 @@ async def update_knowledge(id: str, update: KnowledgeUpdate, agent: dict = Depen
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        _assert_agent_mutable(cursor, id)
+        _assert_agent_mutable(cursor, id, agent)
         cursor.execute(f"UPDATE knowledge SET {', '.join(updates)}, updated_at = NOW() WHERE id = %s RETURNING *", params + [id])
         row = cursor.fetchone()
         if not row: raise HTTPException(404, "Knowledge not found")
@@ -1046,7 +1071,7 @@ async def update_knowledge(id: str, update: KnowledgeUpdate, agent: dict = Depen
 async def delete_knowledge(id: str, agent: dict = Depends(verify_agent_key)):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        _assert_agent_mutable(cursor, id)
+        _assert_agent_mutable(cursor, id, agent)
         cursor.execute("DELETE FROM knowledge WHERE id = %s RETURNING id", (id,))
         if not cursor.fetchone(): raise HTTPException(404, "Knowledge not found")
     return Response(status_code=204)
@@ -1057,6 +1082,7 @@ async def delete_knowledge(id: str, agent: dict = Depends(verify_agent_key)):
 # ============================================
 
 @router.post("/search/semantic", response_model=SearchResponse, tags=["🔍 Global Search"])
+@router.post("/search", response_model=SearchResponse, include_in_schema=False)
 async def search_memory_semantic(
     request: SearchRequest,
     agent: dict = Depends(verify_agent_key)
@@ -1065,6 +1091,11 @@ async def search_memory_semantic(
     Fan-out semantic search across all requested memory tiers using RAG.
     Applies mathematical chronological decay dynamically.
     """
+    non_global_layers = [layer for layer in request.layers if layer != "knowledge"]
+    if scope_enforced() and non_global_layers:
+        if not request.entity_type or not request.entity_id:
+            raise HTTPException(403, "Scoped searches require entity_type and entity_id")
+        ensure_entity_access(agent, request.entity_type, request.entity_id)
     query_embedding = await generate_embedding(request.query)
     if not query_embedding:
         return SearchResponse(results=[], total=0, query=request.query)
@@ -1118,6 +1149,11 @@ async def search_memory_fulltext(
     Fan-out deterministic exact string full-text search across all requested memory tiers using Postgres websearch_to_tsquery.
     No LLMs used. Multi-lingual support via 'simple' dictionary constraints.
     """
+    non_global_layers = [layer for layer in request.layers if layer != "knowledge"]
+    if scope_enforced() and non_global_layers:
+        if not request.entity_type or not request.entity_id:
+            raise HTTPException(403, "Scoped searches require entity_type and entity_id")
+        ensure_entity_access(agent, request.entity_type, request.entity_id)
     results: list[SearchResult] = []
     
     if "interactions" in request.layers:

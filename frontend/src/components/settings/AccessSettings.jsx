@@ -68,7 +68,8 @@ export function AccessSettings({
     onDeleteMemoryKey,
     onToggleMemoryKey,
     creating,
-    formatDate
+    formatDate,
+    isAdmin = false
 }) {
     return (
         <div className="space-y-8 max-w-5xl">
@@ -126,7 +127,7 @@ export function AccessSettings({
                 </section>
 
                 {/* Memory Keys Section */}
-                <section className="space-y-4">
+                {isAdmin && <section className="space-y-4">
                     <div className="flex items-center justify-between">
                         <div>
                             <h3 className="text-lg font-semibold flex items-center gap-2">
@@ -184,7 +185,7 @@ export function AccessSettings({
                             ))
                         )}
                     </div>
-                </section>
+                </section>}
             </div>
 
             {/* API Documentation Section */}
@@ -264,7 +265,7 @@ export function AccessSettings({
             </Dialog>
 
             {/* Create Memory Key Dialog */}
-            <Dialog open={createMemoryKeyDialog} onOpenChange={(v) => { if (!v) { setCreatedKey(null); setNewMemoryKey({ name: "", description: "", access_level: "private" }); } setCreateMemoryKeyDialog(v); }}>
+            {isAdmin && <Dialog open={createMemoryKeyDialog} onOpenChange={(v) => { if (!v) { setCreatedKey(null); setNewMemoryKey({ name: "", description: "", access_level: "private" }); } setCreateMemoryKeyDialog(v); }}>
                 <DialogContent>
                     <DialogHeader>
                         <DialogTitle>{createdKey ? "Key Created" : "Create Memory Key"}</DialogTitle>
@@ -333,7 +334,7 @@ export function AccessSettings({
                         )}
                     </DialogFooter>
                 </DialogContent>
-            </Dialog>
+            </Dialog>}
 
             {/* Delete Prompt Key Confirmation */}
             <AlertDialog open={deletePromptKeyDialog} onOpenChange={setDeletePromptKeyDialog}>
@@ -354,7 +355,7 @@ export function AccessSettings({
             </AlertDialog>
 
             {/* Delete Memory Key Confirmation */}
-            <AlertDialog open={deleteMemoryKeyDialog} onOpenChange={setDeleteMemoryKeyDialog}>
+            {isAdmin && <AlertDialog open={deleteMemoryKeyDialog} onOpenChange={setDeleteMemoryKeyDialog}>
                 <AlertDialogContent>
                     <AlertDialogHeader>
                         <AlertDialogTitle>Delete Memory Key</AlertDialogTitle>
@@ -369,7 +370,7 @@ export function AccessSettings({
                         </AlertDialogAction>
                     </AlertDialogFooter>
                 </AlertDialogContent>
-            </AlertDialog>
+            </AlertDialog>}
         </div>
     );
 }
