@@ -58,6 +58,8 @@ export const getTemplate = (id) => api.get(`/templates/${id}`);
 export const getPrompts = () => api.get('/prompts');
 export const getPrompt = (id) => api.get(`/prompts/${id}`);
 export const createPrompt = (data) => api.post('/prompts', data);
+export const exportPromptMarkdown = (id) => api.get(`/prompts/${id}/export.md`, { responseType: 'blob' });
+export const importPromptMarkdown = (data) => api.post('/prompts/import-md', data);
 export const updatePrompt = (id, data) => api.put(`/prompts/${id}`, data);
 export const deletePrompt = (id) => api.delete(`/prompts/${id}`);
 

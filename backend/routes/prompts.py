@@ -15,7 +15,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
 from core.auth import require_auth
@@ -33,6 +33,49 @@ class PromptCreate(BaseModel):
     name: str
     description: Optional[str] = ""
     template_id: Optional[str] = None
+
+
+class PromptMarkdownImport(BaseModel):
+    """Body for POST /prompts/import-md — create a prompt from a markdown file."""
+    name: str
+    description: Optional[str] = ""
+    markdown: str
+
+
+def _parse_prompt_markdown(markdown: str):
+    """Parse a prompt markdown file into (metadata, sections).
+
+    Format: YAML-ish frontmatter (name/description) followed by one top-level
+    "## Name" heading per section. Files with no headings collapse into a single
+    "Main" section so plain markdown imports too.
+    """
+    meta = {"name": "", "description": ""}
+    text = markdown.lstrip("\n")
+    body = text
+    if text.startswith("---"):
+        m = re.match(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", text, re.DOTALL)
+        if m:
+            frontmatter, body = m.group(1), m.group(2)
+            for line in frontmatter.splitlines():
+                if ":" in line:
+                    key, _, value = line.partition(":")
+                    meta[key.strip().lower()] = value.strip()
+
+    sections: List[Dict[str, Any]] = []
+    chunks = re.split(r"^## (.+)$", body, flags=re.MULTILINE)
+    if len(chunks) > 1:
+        i = 1
+        while i < len(chunks):
+            sec_name = chunks[i].strip()
+            sec_content = chunks[i + 1].strip() if i + 1 < len(chunks) else ""
+            if sec_content:
+                sections.append({"name": sec_name or "section", "content": sec_content})
+            i += 2
+    else:
+        single = body.strip()
+        if single:
+            sections.append({"name": "Main", "content": single})
+    return meta, sections
 
 
 class PromptUpdate(BaseModel):
@@ -182,6 +225,133 @@ async def create_prompt(prompt_data: PromptCreate, user: dict = Depends(require_
         id=prompt_id,
         name=prompt_data.name,
         description=prompt_data.description,
+        folder_path=folder_path,
+        created_at=now,
+        updated_at=now,
+        versions=[{"id": version_id, "version_name": "v1", "branch_name": "v1", "is_default": True}],
+    )
+
+
+@router.get("/prompts/{prompt_id}/export.md")
+async def export_prompt_markdown(prompt_id: str, version: str = "v1", user: dict = Depends(require_auth)):
+    """Export a prompt as a portable Markdown file (frontmatter + one ## section each)."""
+    from storage_service import get_storage_service
+
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM prompts WHERE id = %s AND user_id = %s", (prompt_id, user["id"]))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Prompt not found")
+        prompt = dict(row)
+
+    folder_path = prompt["folder_path"]
+    name = prompt.get("name") or "prompt"
+    description = (prompt.get("description") or "").replace("\n", " ")
+
+    sections = []
+    try:
+        storage_service = get_storage_service(user["id"])
+        content = await storage_service.get_prompt_content(folder_path, version)
+        for section in (content or {}).get("sections", []):
+            filename = section.get("filename", "")
+            m = re.match(r"^(\d+)_(.+)\.md$", filename)
+            sec_name = m.group(2) if m else filename.replace(".md", "") or "section"
+            sections.append({"name": sec_name, "content": section.get("content", "")})
+    except Exception as e:
+        logger.warning(f"Failed to read sections for export {prompt_id}: {e}")
+
+    md = f"---\nname: {name}\ndescription: {description}\n---\n\n"
+    if sections:
+        md += "\n\n".join(f"## {s['name']}\n\n{s['content'].rstrip()}" for s in sections)
+
+    return Response(
+        content=md,
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{slugify(name)}.md"'},
+    )
+
+
+@router.post("/prompts/import-md", response_model=PromptResponse)
+async def import_prompt_markdown(data: PromptMarkdownImport, user: dict = Depends(require_auth)):
+    """Create a new prompt (with sections) from a Markdown file. Mirrors create_prompt."""
+    from storage_service import get_storage_service, get_storage_mode
+
+    meta, parsed_sections = _parse_prompt_markdown(data.markdown)
+    name = (data.name or meta.get("name") or "Imported Prompt").strip()
+    description = data.description if data.description is not None else meta.get("description", "")
+
+    if not parsed_sections:
+        raise HTTPException(status_code=400, detail="No prompt content found in markdown")
+
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) as count FROM prompts WHERE user_id = %s", (user["id"],))
+        count = cursor.fetchone()["count"]
+        if user.get("plan") == "free" and count >= 1:
+            raise HTTPException(
+                status_code=403,
+                detail="Free plan limited to 1 prompt. Upgrade to Pro for unlimited prompts.",
+            )
+
+    prompt_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    # Unique folder per import so re-importing the same file never collides in storage.
+    folder_path = f"prompts/{slugify(name)}-{prompt_id[:8]}"
+
+    storage_mode = get_storage_mode(user["id"])
+    if storage_mode == "github":
+        settings = get_github_settings(user["id"])
+        if not settings or not settings.get("github_token"):
+            storage_mode = "local"
+
+    sections = [
+        {
+            "filename": f"{str(i + 1).zfill(2)}_{slugify(s['name'])}.md",
+            "content": s["content"],
+            "order": i + 1,
+            "name": s["name"],
+        }
+        for i, s in enumerate(parsed_sections)
+    ]
+    variables = {}
+    for s in parsed_sections:
+        for v in extract_variables(s["content"]):
+            if v not in variables:
+                variables[v] = {"required": True}
+
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO prompts (id, user_id, name, description, folder_path, created_at, updated_at) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+            (prompt_id, user["id"], name, description or "", folder_path, now, now),
+        )
+        version_id = str(uuid.uuid4())
+        cursor.execute(
+            "INSERT INTO prompt_versions (id, prompt_id, version_name, branch_name, is_default, created_at) VALUES (%s,%s,%s,%s,TRUE,%s)",
+            (version_id, prompt_id, "v1", "v1", now),
+        )
+
+    try:
+        storage_service = get_storage_service(user["id"])
+        await storage_service.create_prompt(
+            folder_path=folder_path,
+            name=name,
+            description=description or "",
+            sections=sections,
+            variables=variables,
+        )
+    except Exception as e:
+        with get_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM prompt_versions WHERE prompt_id = %s", (prompt_id,))
+            cursor.execute("DELETE FROM prompts WHERE id = %s", (prompt_id,))
+        raise HTTPException(status_code=500, detail=f"Failed to import prompt: {e}")
+
+    return PromptResponse(
+        id=prompt_id,
+        name=name,
+        description=description,
         folder_path=folder_path,
         created_at=now,
         updated_at=now,

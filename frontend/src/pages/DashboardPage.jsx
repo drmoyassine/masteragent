@@ -2,14 +2,16 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   AlertCircle,
-  Plus, 
-  FileText, 
-  GitBranch, 
-  Clock, 
+  Plus,
+  FileText,
+  GitBranch,
+  Clock,
   Search,
   MoreVertical,
   Trash2,
-  Edit
+  Edit,
+  Download,
+  Upload
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,8 +32,25 @@ import {
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { getPrompts, createPrompt, deletePrompt, getTemplates } from "@/lib/api";
+import { getPrompts, createPrompt, deletePrompt, getTemplates, exportPromptMarkdown, importPromptMarkdown } from "@/lib/api";
 import { toast } from "sonner";
+
+// Parse YAML-ish frontmatter (name/description) from a markdown string.
+function parseMarkdownFrontmatter(md) {
+  const out = { name: "", description: "" };
+  if (!md.startsWith("---")) return out;
+  const m = md.match(/^---\s*\n([\s\S]*?)\n---\s*\n?/);
+  if (!m) return out;
+  for (const line of m[1].split("\n")) {
+    const idx = line.indexOf(":");
+    if (idx === -1) continue;
+    const key = line.slice(0, idx).trim().toLowerCase();
+    const value = line.slice(idx + 1).trim();
+    if (key === "name") out.name = value;
+    else if (key === "description") out.description = value;
+  }
+  return out;
+}
 
 export default function DashboardPage() {
   const navigate = useNavigate();
@@ -48,7 +67,9 @@ export default function DashboardPage() {
     name: "",
     description: "",
     template_id: null,
+    markdown: undefined,
   });
+  const [importFileName, setImportFileName] = useState(null);
 
   useEffect(() => {
     loadData();
@@ -78,10 +99,17 @@ export default function DashboardPage() {
     setCreating(true);
     setLimitError(null);
     try {
-      const response = await createPrompt(newPrompt);
-      toast.success("Prompt created successfully!");
+      const response = newPrompt.markdown
+        ? await importPromptMarkdown({
+            name: newPrompt.name,
+            description: newPrompt.description,
+            markdown: newPrompt.markdown,
+          })
+        : await createPrompt(newPrompt);
+      toast.success(newPrompt.markdown ? "Prompt imported successfully!" : "Prompt created successfully!");
       setCreateDialogOpen(false);
-      setNewPrompt({ name: "", description: "", template_id: null });
+      setNewPrompt({ name: "", description: "", template_id: null, markdown: undefined });
+      setImportFileName(null);
       navigate(`/app/prompts/${response.data.id}`);
     } catch (error) {
       if (error.response?.status === 403) {
@@ -92,6 +120,50 @@ export default function DashboardPage() {
     } finally {
       setCreating(false);
     }
+  };
+
+  const handleExportPrompt = async (prompt) => {
+    try {
+      const res = await exportPromptMarkdown(prompt.id);
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: "text/markdown" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${(prompt.name || "prompt").replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.md`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success("Prompt exported as Markdown");
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Failed to export prompt");
+    }
+  };
+
+  const handleImportFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = parseMarkdownFrontmatter(text);
+      setNewPrompt((prev) => ({
+        ...prev,
+        markdown: text,
+        name: parsed.name || prev.name || file.name.replace(/\.md$/i, ""),
+        description: parsed.description || prev.description,
+        template_id: null,
+      }));
+      setImportFileName(file.name);
+      toast.success("Markdown loaded — review and create");
+    } catch {
+      toast.error("Failed to read markdown file");
+    }
+  };
+
+  const handleClearImport = () => {
+    setNewPrompt((prev) => ({ ...prev, markdown: undefined }));
+    setImportFileName(null);
+    const input = document.getElementById("import-md-input");
+    if (input) input.value = "";
   };
 
   const handleDeletePrompt = async () => {
@@ -233,6 +305,16 @@ export default function DashboardPage() {
                         Edit
                       </DropdownMenuItem>
                       <DropdownMenuItem
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleExportPrompt(prompt);
+                        }}
+                        data-testid={`prompt-export-${prompt.id}`}
+                      >
+                        <Download className="w-4 h-4 mr-2" />
+                        Export as Markdown
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
                         className="text-destructive"
                         onClick={(e) => {
                           e.stopPropagation();
@@ -316,6 +398,46 @@ export default function DashboardPage() {
                 className="font-mono min-h-[80px]"
                 data-testid="prompt-description-input"
               />
+            </div>
+
+            <div className="space-y-2">
+              <Label className="font-mono text-sm">IMPORT FROM MARKDOWN (Optional)</Label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="file"
+                  accept=".md,.markdown,text/markdown,text/plain"
+                  onChange={handleImportFile}
+                  className="hidden"
+                  id="import-md-input"
+                  data-testid="import-md-input"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="font-mono"
+                  onClick={() => document.getElementById("import-md-input").click()}
+                  data-testid="import-md-button"
+                >
+                  <Upload className="w-4 h-4 mr-2" />
+                  {importFileName ? importFileName : "Choose .md file"}
+                </Button>
+                {newPrompt.markdown && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="font-mono"
+                    onClick={handleClearImport}
+                  >
+                    Clear
+                  </Button>
+                )}
+              </div>
+              {newPrompt.markdown && (
+                <p className="text-xs text-muted-foreground">
+                  Sections will be created from the file. Template selection is ignored.
+                </p>
+              )}
             </div>
 
             <div className="space-y-2">
