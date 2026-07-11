@@ -21,67 +21,40 @@ logger = logging.getLogger(__name__)
 
 
 async def run_consolidation():
-    """Run all consolidation + decay tasks."""
-    settings = get_memory_settings()
-    consolidation_threshold = settings.get("dedup_similarity_threshold", 0.85)  # unified with creation-time dedup (one dial)
+    """Run hygiene + decay + quality maintenance.
 
-    logger.info("Starting consolidation run")
-    await _consolidate_duplicates(consolidation_threshold)
+    The destructive pairwise retirement loop is GONE. Candidate discovery and
+    consolidation proposals now go through the shared hygiene service
+    (``memory_consolidation_service.discover_and_propose``), which respects the
+    configured mode and never applies unless policy gates pass. Decay and
+    quality-score recompute remain as non-destructive maintenance.
+    """
+    settings = get_memory_settings()
+    logger.info("Starting consolidation run (hygiene mode)")
+
+    # Knowledge hygiene discovery + proposals (mode-gated; manual_only never applies).
+    if settings.get("knowledge_hygiene_enabled", True):
+        try:
+            from memory_consolidation_service import discover_and_propose
+            mode = settings.get("knowledge_hygiene_mode", "manual_only")
+            await discover_and_propose(
+                origin="scheduled", mode=mode,
+                auto_apply=mode in ("auto_conservative", "auto_synthesis"),
+            )
+        except Exception as exc:
+            logger.warning(f"Hygiene discovery failed during consolidation run: {exc}")
+
     _apply_decay()
     _recompute_quality_scores()
     logger.info("Consolidation run complete")
 
 
-async def _consolidate_duplicates(threshold: float):
-    """Find and merge semantically similar knowledge records with the same category."""
-    with get_memory_db_context() as conn:
-        cursor = conn.cursor()
-        # Find candidate pairs: same category, high cosine similarity, both active
-        cursor.execute("""
-            SELECT a.id AS aid, b.id AS bid,
-                   a.category, a.merge_count AS a_mc, b.merge_count AS b_mc,
-                   1 - (a.embedding <=> b.embedding) AS similarity
-            FROM knowledge a
-            JOIN knowledge b ON a.id < b.id
-              AND a.category = b.category
-              AND a.status = 'active' AND b.status = 'active'
-              AND a.embedding IS NOT NULL AND b.embedding IS NOT NULL
-            WHERE 1 - (a.embedding <=> b.embedding) > %s
-            ORDER BY similarity DESC
-            LIMIT 50
-        """, (threshold,))
-        pairs = [dict(r) for r in cursor.fetchall()]
-
-    if not pairs:
-        logger.info("No duplicate pairs found for consolidation")
-        return
-
-    merged = 0
-    for p in pairs:
-        # Keep the one with higher merge_count (more established)
-        keep_id, retire_id = (p["aid"], p["bid"]) if p["a_mc"] >= p["b_mc"] else (p["bid"], p["aid"])
-
-        with get_memory_db_context() as conn:
-            cursor = conn.cursor()
-            now = datetime.now(timezone.utc).isoformat()
-            cursor.execute("""
-                UPDATE knowledge
-                SET merge_count = merge_count + 1,
-                    last_merged_at = %s,
-                    updated_at = %s
-                WHERE id = %s
-            """, (now, now, keep_id))
-            cursor.execute("""
-                UPDATE knowledge SET status = 'retired', updated_at = %s WHERE id = %s
-            """, (now, retire_id))
-            # Refine playbook if the kept record is a playbook
-            cursor.execute("SELECT category FROM knowledge WHERE id = %s", (keep_id,))
-            cat_row = cursor.fetchone()
-        if cat_row and dict(cat_row).get("category") == "playbook":
-            await _refine_playbook(keep_id)
-        merged += 1
-
-    logger.info(f"Consolidated {merged} duplicate pairs")
+# Legacy pairwise retirement removed — see run_consolidation above. The shared
+# hygiene service is the single consolidation path (preview + transactional apply).
+async def _consolidate_duplicates(threshold: float):  # pragma: no cover - legacy shim
+    """Deprecated: retained only as a no-op shim for any stale callers."""
+    logger.warning("_consolidate_duplicates is deprecated; hygiene service handles consolidation")
+    return
 
 
 async def _refine_playbook(keep_id: str):

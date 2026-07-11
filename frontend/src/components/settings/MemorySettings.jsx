@@ -3,7 +3,7 @@ import {
     Clock, Play, ShieldAlert, Shield, Zap, GraduationCap, Brain,
     Layers, Scissors, FileText, Eye, AlertCircle, CheckCircle2,
     Edit2, Cpu, Sparkles, BarChart3, Image as ImageIcon, ChevronDown, Settings,
-    Plus, X
+    Plus, X, GitMerge, Search
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import api, { triggerMemoryGeneration, triggerIntelligenceCheck, triggerKnowledgeCheck, triggerPlaybookExtraction, triggerConsolidation, exportKnowledgePack, triggerBackfillFacets, triggerReflectTelemetry, fetchProviderModels } from "@/lib/api";
+import api, { triggerMemoryGeneration, triggerIntelligenceCheck, triggerKnowledgeCheck, triggerPlaybookExtraction, exportKnowledgePack, triggerBackfillFacets, triggerReflectTelemetry, fetchProviderModels, analyzeHygieneNow, backfillEmbeddings, getEmbeddingCoverage } from "@/lib/api";
 import { useEffect } from "react";
 
 // â”€â”€â”€ Threshold Overrides Table â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -1020,36 +1020,41 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                         Knowledge Generation
                     </h3>
                     <p className="text-sm text-muted-foreground mt-1">
-                        Generates agnostic, PII-scrubbed, reusable Knowledge items.
+                        Generate reusable knowledge and maintain the source data used by the pipeline.
                     </p>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
                     <Button size="sm" variant="outline" className="gap-1.5"
-                        onClick={() => runTrigger('check', () => triggerKnowledgeCheck(false), "Knowledge check queued")}
+                        title="Process the next eligible intelligence batch"
+                        onClick={() => runTrigger('check', () => triggerKnowledgeCheck(false), "Knowledge generation queued")}
                         disabled={!!triggering}>
                         <Play className="w-3.5 h-3.5" />
-                        Run Now
+                        Generate Next Batch
                     </Button>
                     <Button size="sm" variant="outline" className="gap-1.5"
-                        title="Loops threshold-sized batches until the confirmed-intelligence backlog is fully consumed"
+                        title="Process all eligible confirmed intelligence and historical telemetry"
                         onClick={() => runTrigger('drain', () => triggerKnowledgeCheck(true), "Backlog drain queued — batches run until exhausted")}
                         disabled={!!triggering}>
                         <Zap className="w-3.5 h-3.5" />
-                        Drain Backlog
+                        Process Backlog
                     </Button>
+                </div>
+            </div>
+
+            <Card className="border-dashed bg-muted/20">
+                <CardHeader className="pb-3">
+                    <CardTitle className="text-sm">Maintenance tools</CardTitle>
+                    <CardDescription className="text-xs mt-1">
+                        Use these only for a specific maintenance need. The planned Knowledge-table consolidation workflow is proposal-and-review based, so automatic consolidation is intentionally not exposed here.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent className="flex items-center gap-2 flex-wrap">
                     <Button size="sm" variant="outline" className="gap-1.5"
                         title="Cluster confirmed intelligence across entities and extract playbooks + skills (normally weekly)"
                         onClick={() => runTrigger('playbooks', triggerPlaybookExtraction, "Playbook extraction queued")}
                         disabled={!!triggering}>
                         <Brain className="w-3.5 h-3.5" />
-                        Extract Playbooks
-                    </Button>
-                    <Button size="sm" variant="outline" className="gap-1.5"
-                        title="Merge near-duplicate knowledge, apply decay, recompute quality scores (normally weekly)"
-                        onClick={() => runTrigger('consolidation', triggerConsolidation, "Consolidation queued")}
-                        disabled={!!triggering}>
-                        <Layers className="w-3.5 h-3.5" />
-                        Consolidate
+                        Extract Skills & Playbooks
                     </Button>
                     <Button size="sm" variant="outline" className="gap-1.5"
                         title="Download the whole knowledge base as a memory-file pack (INDEX.md + one markdown file per record)"
@@ -1079,8 +1084,8 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                         <Cpu className="w-3.5 h-3.5" />
                         Reflect Telemetry
                     </Button>
-                </div>
-            </div>
+                </CardContent>
+            </Card>
 
             {/* Knowledge Configuration — flat, no sub-section headers */}
             <Card>
@@ -1090,7 +1095,7 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                         <CardTitle className="text-lg">Knowledge Configuration</CardTitle>
                     </div>
                     <CardDescription className="text-xs mt-1.5">
-                        Mining triggers and prior context for deduplication.
+                        Mining triggers and prior context for knowledge generation.
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
@@ -1450,6 +1455,8 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                 </CardContent>
             </Card>
 
+            <KnowledgeHygieneCard settings={settings} onUpdateSettings={onUpdateSettings} />
+
             <PromptStructurePreview sections={[
                 { label: "Existing Knowledge (do NOT duplicate or repeat these)", color: "text-indigo-400", count: settings.prior_knowledge_semantic_count !== undefined ? settings.prior_knowledge_semantic_count : 3, conditional: true, description: "Semantically similar existing knowledge items for deduplication" },
                 { label: "Intelligence Items to Synthesize", color: "text-purple-400", description: "PII-scrubbed intelligence items being synthesized into reusable knowledge" },
@@ -1715,6 +1722,188 @@ export function MemorySettings({
 
         </div>
     );
+}
+
+// ── Knowledge Hygiene & Consolidation settings card ──────────────────────────
+// Candidate similarity only DISCOVERS related records; the merge decision
+// always comes from the category-aware LLM proposal + review. First rollout
+// is manual_only; auto modes are exposed but disabled by default.
+function KnowledgeHygieneCard({ settings, onUpdateSettings }) {
+    const [coverage, setCoverage] = useState(null);
+    const [busy, setBusy] = useState(false);
+
+    const refreshCoverage = () => {
+        getEmbeddingCoverage().then(({ data }) => setCoverage(data)).catch(() => {});
+    };
+    useEffect(() => {
+        getEmbeddingCoverage().then(({ data }) => setCoverage(data)).catch(() => {});
+    }, []);
+
+    const CATEGORIES = ["best_practices", "lessons_learned", "trade_knowledge", "skill", "playbook"];
+    const enabledCats = settings.knowledge_hygiene_enabled_categories || CATEGORIES;
+    const catPolicies = settings.knowledge_hygiene_category_policies || {};
+
+    const toggleCategory = (cat) => {
+        const next = enabledCats.includes(cat) ? enabledCats.filter((c) => c !== cat) : [...enabledCats, cat];
+        onUpdateSettings("knowledge_hygiene_enabled_categories", next);
+    };
+
+    const runAnalyze = async () => {
+        setBusy(true);
+        try {
+            const { data } = await analyzeHygieneNow({ mode: settings.knowledge_hygiene_mode || "manual_only" });
+            toast.success(`Hygiene run queued (run ${data.run_id?.slice(0, 8)}…)`);
+        } catch (e) { toast.error("Failed to start hygiene run"); }
+        finally { setBusy(false); }
+    };
+    const runBackfill = async () => {
+        setBusy(true);
+        try {
+            await backfillEmbeddings();
+            toast.success("Embedding backfill queued");
+            setTimeout(refreshCoverage, 1500);
+        } catch (e) { toast.error("Failed to start backfill"); }
+        finally { setBusy(false); }
+    };
+
+    return (
+        <Card>
+            <CardHeader className="pb-3">
+                <div className="flex items-center gap-2">
+                    <GitMerge className="w-5 h-5 text-rose-500" />
+                    <CardTitle className="text-lg">Knowledge Hygiene & Consolidation</CardTitle>
+                </div>
+                <CardDescription className="text-xs mt-1.5">
+                    Consolidation groups related records and proposes a stronger canonical record via a category-aware LLM. Candidate similarity finds related records — it never decides a merge.
+                </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+                <div className="flex items-center justify-between">
+                    <div className="space-y-0.5 pr-4">
+                        <Label className="text-xs font-mono">Knowledge hygiene enabled</Label>
+                        <p className="text-[10px] text-muted-foreground">Master switch for candidate discovery + proposals.</p>
+                    </div>
+                    <Switch
+                        checked={settings.knowledge_hygiene_enabled !== undefined ? settings.knowledge_hygiene_enabled : true}
+                        onCheckedChange={(v) => onUpdateSettings("knowledge_hygiene_enabled", v)}
+                    />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                        <Label className="text-xs font-mono">Mode</Label>
+                        <Select value={settings.knowledge_hygiene_mode || "manual_only"} onValueChange={(v) => onUpdateSettings("knowledge_hygiene_mode", v)}>
+                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="analysis_only">Analysis only (no proposals)</SelectItem>
+                                <SelectItem value="proposal_only">Proposal only (no apply)</SelectItem>
+                                <SelectItem value="manual_only">Manual (review + apply) — recommended</SelectItem>
+                                <SelectItem value="auto_conservative">Auto (conservative)</SelectItem>
+                                <SelectItem value="auto_synthesis">Auto (synthesis)</SelectItem>
+                            </SelectContent>
+                        </Select>
+                        <p className="text-[10px] text-muted-foreground">Auto modes apply only when policy gates pass (high confidence, no contradictions). Start manual.</p>
+                    </div>
+                    <div className="space-y-1">
+                        <Label className="text-xs font-mono">Candidate similarity</Label>
+                        <Input type="number" step="0.01" min="0" max="1"
+                            value={settings.knowledge_hygiene_similarity_threshold ?? 0.82}
+                            onChange={(e) => onUpdateSettings("knowledge_hygiene_similarity_threshold", parseFloat(e.target.value) || 0.82)} />
+                        <p className="text-[10px] text-muted-foreground">0–1 edge threshold for grouping candidates. Finds related records; does NOT decide merges.</p>
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-4 gap-3">
+                    <div className="space-y-1">
+                        <Label className="text-xs font-mono">Min cluster</Label>
+                        <Input type="number" min="2" value={settings.knowledge_hygiene_min_cluster_size ?? 2}
+                            onChange={(e) => onUpdateSettings("knowledge_hygiene_min_cluster_size", parseInt(e.target.value) || 2)} />
+                    </div>
+                    <div className="space-y-1">
+                        <Label className="text-xs font-mono">Max cluster</Label>
+                        <Input type="number" min="2" max="20" value={settings.knowledge_hygiene_max_cluster_size ?? 5}
+                            onChange={(e) => onUpdateSettings("knowledge_hygiene_max_cluster_size", parseInt(e.target.value) || 5)} />
+                    </div>
+                    <div className="space-y-1">
+                        <Label className="text-xs font-mono">Min cohesion</Label>
+                        <Input type="number" step="0.01" min="0" max="1" value={settings.knowledge_hygiene_min_cluster_cohesion ?? 0.72}
+                            onChange={(e) => onUpdateSettings("knowledge_hygiene_min_cluster_cohesion", parseFloat(e.target.value) || 0.72)} />
+                    </div>
+                    <div className="space-y-1">
+                        <Label className="text-xs font-mono">Weak-link</Label>
+                        <Input type="number" step="0.01" min="0" max="1" value={settings.knowledge_hygiene_weak_link_threshold ?? 0.65}
+                            onChange={(e) => onUpdateSettings("knowledge_hygiene_weak_link_threshold", parseFloat(e.target.value) || 0.65)} />
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-4">
+                    <div className="space-y-1">
+                        <Label className="text-xs font-mono">Preview TTL (min)</Label>
+                        <Input type="number" min="5" max="1440" value={settings.knowledge_hygiene_preview_ttl_minutes ?? 60}
+                            onChange={(e) => onUpdateSettings("knowledge_hygiene_preview_ttl_minutes", parseInt(e.target.value) || 60)} />
+                    </div>
+                    <div className="space-y-1">
+                        <Label className="text-xs font-mono">Min auto-confidence</Label>
+                        <Input type="number" step="0.01" min="0" max="1" value={settings.knowledge_hygiene_min_auto_confidence ?? 0.9}
+                            onChange={(e) => onUpdateSettings("knowledge_hygiene_min_auto_confidence", parseFloat(e.target.value) || 0.9)} />
+                    </div>
+                    <div className="space-y-1">
+                        <Label className="text-xs font-mono">Contradiction policy</Label>
+                        <Select value={settings.knowledge_hygiene_contradiction_policy || "manual_review"} onValueChange={(v) => onUpdateSettings("knowledge_hygiene_contradiction_policy", v)}>
+                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="manual_review">Manual review</SelectItem>
+                                <SelectItem value="keep_separate">Keep separate</SelectItem>
+                                <SelectItem value="warn_and_merge">Warn and merge</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+                </div>
+
+                <div className="space-y-1">
+                    <Label className="text-xs font-mono">Categories enabled for consolidation</Label>
+                    <div className="flex flex-wrap gap-2 mt-1">
+                        {CATEGORIES.map((cat) => (
+                            <Badge key={cat} variant={enabledCats.includes(cat) ? "default" : "outline"} className="cursor-pointer" onClick={() => toggleCategory(cat)}>
+                                {cat.replace(/_/g, " ")}
+                            </Badge>
+                        ))}
+                    </div>
+                </div>
+
+                {coverage && (
+                    <div className="rounded-md border p-3 text-xs space-y-1">
+                        <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground">Embedding coverage (v{coverage.current_version})</span>
+                            <span className="font-medium">{coverage.compatible}/{coverage.total} compatible ({(coverage.coverage * 100).toFixed(0)}%)</span>
+                        </div>
+                        {coverage.stale > 0 && <div className="text-amber-700">{coverage.stale} record(s) need backfill.</div>}
+                        <div className="flex gap-2 mt-2">
+                            <Button size="sm" variant="outline" onClick={runBackfill} disabled={busy}>Backfill embeddings</Button>
+                        </div>
+                    </div>
+                )}
+
+                <div className="flex items-center justify-between border-t pt-4">
+                    <div className="space-y-0.5 pr-4">
+                        <Label className="text-xs font-mono">Creation-time consolidation</Label>
+                        <p className="text-[10px] text-muted-foreground">When a new record matches candidates, enqueue a preview async. Off until calibrated.</p>
+                    </div>
+                    <Switch
+                        checked={settings.knowledge_hygiene_creation_time_enabled === true}
+                        onCheckedChange={(v) => onUpdateSettings("knowledge_hygiene_creation_time_enabled", v)}
+                    />
+                </div>
+
+                <div className="flex gap-2 border-t pt-4">
+                    <Button size="sm" onClick={runAnalyze} disabled={busy || settings.knowledge_hygiene_enabled === false}>
+                        <Search className="w-4 h-4 mr-2" /> Analyze now
+                    </Button>
+                    <p className="text-[10px] text-muted-foreground self-center">Runs candidate discovery + proposals in the selected mode without forcing any merge.</p>
+                </div>
+            </CardContent>
+        </Card>
+);
 }
 
 

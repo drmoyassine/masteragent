@@ -654,7 +654,8 @@ async def update_settings_endpoint(data: MemorySettingsUpdate, user: dict = Depe
     # Fields backed by JSONB columns need explicit JSON serialization before
     # binding through psycopg (which would otherwise coerce list → PG array).
     JSONB_FIELDS = {"memory_safe_boundary_types", "memory_generation_interaction_types",
-                    "knowledge_facets_schema", "profile_facet_map"}
+                    "knowledge_facets_schema", "profile_facet_map",
+                    "knowledge_hygiene_enabled_categories", "knowledge_hygiene_category_policies"}
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         updates, params = [], []

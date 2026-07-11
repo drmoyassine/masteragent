@@ -103,8 +103,44 @@ async def _process_bulk_job(job: Job, token: str):
             await run_playbook_check()
 
         elif job.name == "run_consolidation":
+            # Legacy job name kept as a backward-compatible alias: it now starts
+            # a hygiene run using the configured mode (no pairwise retirement).
             from memory_consolidation import run_consolidation
             await run_consolidation()
+
+        elif job.name == "knowledge_hygiene_run":
+            # Knowledge hygiene: discover candidate clusters + generate proposals.
+            # Auto-apply only in auto_* modes; manual_only/proposal_only never apply.
+            from memory_consolidation_service import discover_and_propose
+            from services.config_helpers import get_memory_settings
+            _hsettings = get_memory_settings() or {}
+            _mode = job.data.get("mode") or _hsettings.get("knowledge_hygiene_mode", "manual_only")
+            _auto = _mode in ("auto_conservative", "auto_synthesis") and _hsettings.get("knowledge_hygiene_enabled", True)
+            await discover_and_propose(
+                run_id=job.data.get("run_id"),
+                origin=job.data.get("origin") or "scheduled",
+                mode=_mode,
+                category_filter=job.data.get("category"),
+                actor_id=None,
+                auto_apply=bool(_auto),
+            )
+
+        elif job.name == "knowledge_embedding_backfill":
+            # Resumable, idempotent embedding backfill (never mutates content/status).
+            from memory_embedding_backfill import run_embedding_backfill
+            await run_embedding_backfill()
+
+        elif job.name == "creation_time_consolidation":
+            # Async creation-time consolidation: find candidates for a freshly
+            # created record and propose (auto-apply only in auto_* modes).
+            from memory_consolidation_service import creation_time_propose
+            from services.config_helpers import get_memory_settings
+            _cts = get_memory_settings() or {}
+            _cmode = _cts.get("knowledge_hygiene_mode", "manual_only")
+            await creation_time_propose(
+                knowledge_id=job.data.get("knowledge_id"),
+                auto_apply=_cmode in ("auto_conservative", "auto_synthesis"),
+            )
 
         elif job.name == "backfill_facets":
             from memory_facets import backfill_facets

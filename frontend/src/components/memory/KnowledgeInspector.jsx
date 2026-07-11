@@ -9,6 +9,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { Trash2, Check, X, Plus, ThumbsUp, ThumbsDown } from "lucide-react";
+import KnowledgeLineagePanel from "./KnowledgeLineagePanel";
 
 const CATEGORY_COLORS = {
   best_practices: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-300",
@@ -315,6 +316,9 @@ export default function KnowledgeInspector({ editingKnowledge, setEditingKnowled
                 </div>
               </>
             )}
+
+            {/* Consolidation lineage (canonical + retired records) */}
+            <KnowledgeLineagePanel knowledgeId={editingKnowledge.id} status={editingKnowledge.status} />
           </div>
         </ScrollArea>
         <DialogFooter className="mt-4 sm:justify-between">

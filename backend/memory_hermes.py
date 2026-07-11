@@ -84,10 +84,13 @@ async def process_admin_instruction(
             "skill_ids": [],
         }
 
-    # Generate embedding
+    # Generate embedding via the canonical category-aware serializer.
     embedding = None
     try:
-        embedding = await generate_embedding(f"{name}. {summary or content}")
+        from memory_embedding import embed_knowledge_fields
+        embedding, _model = await embed_knowledge_fields(
+            name=name, category=determined_category, content=content, summary=summary,
+        )
     except Exception:
         pass
 

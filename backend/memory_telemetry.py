@@ -171,10 +171,14 @@ async def _reflect_entity_day(entity_type: str, entity_id: str, day: str, confid
         if not name or not content:
             continue
 
-        # Embed on name+summary (the discovery signal), same as other pathways
+        # Embed via the canonical category-aware serializer (same path as every
+        # other creation pathway) so candidate discovery compares like-for-like.
         embedding = None
         try:
-            embedding = await generate_embedding(f"{name}. {summary or content}")
+            from memory_embedding import embed_knowledge_fields
+            embedding, _model = await embed_knowledge_fields(
+                name=name, category=target, content=content, summary=summary,
+            )
         except Exception:
             pass
 

@@ -221,7 +221,11 @@ async def generate_knowledge_from_intelligence(intelligence: list) -> int:
 
     embedding = None
     try:
-        embedding = await generate_embedding(f"{name}. {summary or content}")
+        from memory_embedding import embed_knowledge_fields
+        embedding, _model = await embed_knowledge_fields(
+            name=name, category=category, content=content,
+            summary=summary, signals=signals, tags=tags,
+        )
     except Exception as e:
         logger.warning(f"Knowledge embedding failed: {e}")
 
