@@ -655,7 +655,8 @@ async def update_settings_endpoint(data: MemorySettingsUpdate, user: dict = Depe
     # binding through psycopg (which would otherwise coerce list → PG array).
     JSONB_FIELDS = {"memory_safe_boundary_types", "memory_generation_interaction_types",
                     "knowledge_facets_schema", "profile_facet_map",
-                    "knowledge_hygiene_enabled_categories", "knowledge_hygiene_category_policies"}
+                    "knowledge_hygiene_enabled_categories", "knowledge_hygiene_category_policies",
+                    "knowledge_generation_pathway_overrides"}
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         updates, params = [], []

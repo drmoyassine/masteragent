@@ -1,6 +1,6 @@
 # Features List — Knowledge Retrieval and Playbook Activation
 
-**Status:** Next roadmap initiative — ready after Knowledge Hygiene QA
+**Status:** Next roadmap initiative — begin after the shipped Knowledge pipeline refactor is activated and observed in production
 **Date:** 2026-07-11
 **Supersedes remaining roadmap work in:** `plans/archived/knowledge-to-context-retrieval-report.md` Part 2.2–2.5 and `knowledge-pipeline-map.md` Sprint 3 items 8 and 10.
 **Does not reimplement:** the shipped Sprint 2.5 pre-context retrieval work.
@@ -11,8 +11,11 @@ This is the authoritative feature list for the next retrieval/activation initiat
 
 | Document | Classification | Action |
 |---|---|---|
-| `features_list.md` | Next feature roadmap | Implement after Knowledge Hygiene QA |
-| `pairwise-to-clustering-knowledge-hygiene-plan.md` | Active implementation | Keep until delivery and QA complete |
+| `features_list.md` | Next feature roadmap | Implement after Knowledge pipeline production activation |
+| `plans/archived/pairwise-to-clustering-knowledge-hygiene-plan.md` | Implemented Knowledge Hygiene specification | Historical reference only |
+| `plans/archived/knowledge-hygiene-delivery-report.md` | Implemented Knowledge Hygiene delivery | Historical reference only |
+| `plans/archived/knowledge-settings-and-pipeline-refactor-implementation-plan.md` | Implemented settings/pipeline specification | Historical reference only |
+| `plans/archived/knowledge-settings-and-pipeline-refactor-delivery-report.md` | Implemented settings/pipeline delivery | Production activation checklist and historical reference |
 | `mastermemory-npm-migration.md` | Future product roadmap | Keep; begins after Python contracts are production-proven |
 | `knowledge-tier-productionization.md` | Production-state plan requiring VPS confirmation | Keep until its remaining production gates are explicitly closed |
 | `knowledge-pipeline-map.md` | Current architecture/reference map | Keep and update as behavior changes |
@@ -20,7 +23,7 @@ This is the authoritative feature list for the next retrieval/activation initiat
 | `nightly-learning-and-telemetry-reflection.md` | Current behavior reference | Keep |
 | `plans/archived/*` | Implemented or superseded plans/reports | Historical reference only; do not implement |
 
-Completed production-hardening, Variables, and Sprint 2.5 plans are archived. Prompt files remain under `docs/prompts` because they are runtime/reference assets, not roadmap documents.
+Completed production-hardening, Variables, Sprint 2.5, Knowledge Hygiene, and Knowledge settings/pipeline plans are archived. Prompt files remain under `docs/prompts` because they are runtime/reference assets, not roadmap documents.
 
 ## 1. Outcome
 
@@ -45,15 +48,15 @@ This initiative completes the consumption side of the learning loop. It does not
 
 | Capability | Current location | Status |
 |---|---|---|
-| Full versus lean-index injection | `memory/agent.py`, `context_knowledge_mode` | Shipped |
+| Index-first injection with full always-on exception | `memory/agent.py`, `metadata.always_inject` | Shipped; ordinary records are always lean index entries |
 | Total injected-knowledge cap | `context_knowledge_count` | Shipped |
 | Semantic similarity floor | `context_knowledge_min_similarity` | Shipped |
 | Conversation vector from recent interaction embeddings | `memory/agent.py` | Shipped; window hardcoded to 10 |
-| Relevance/quality ranking | `memory/agent.py` | Shipped; weights hardcoded 0.7/0.3 |
+| Relevance/quality/profile-facet ranking | `memory/agent.py` | Shipped; weights currently hardcoded 0.65/0.20/0.15 when profile facets exist |
 | Active-only agent retrieval | `memory/agent.py`, `services/search.py`, `memory_prior_context.py` | Shipped |
 | Governed facet extraction and schema | `memory_facets.py` | Shipped |
 | Profile-to-facet mapping | `profile_facet_map` | Shipped, opt-in |
-| Hard facet filtering in get-context | `memory/agent.py` | Shipped |
+| Explicit facet filtering and profile-facet boost | `memory/agent.py` | Shipped; explicit facets filter, profile-derived facets boost |
 | Strict/broaden behavior in search | `services/search.py` | Shipped |
 | Pinned always-on knowledge | `metadata.always_inject` | Shipped |
 | Knowledge Management skill | `memory_facets.py` | Shipped |
@@ -69,7 +72,7 @@ Do not create replacements for these features. Move their logic behind the share
 1. Retrieval SQL and projection logic remain concentrated inside `memory/agent.py` rather than a reusable service.
 2. Ranking weights and conversation-vector window are hardcoded.
 3. There are no per-category caps, recency term, signal-overlap boost, or diversity control.
-4. Get-context facets are hard filtering only; administrators cannot choose boost or off.
+4. Explicit-versus-profile facet semantics are fixed and correct, but administrators cannot tune the profile boost or disable profile-derived ranking.
 5. There is no token-budget enforcement across injected knowledge.
 6. There is no live preview or per-result scoring explanation.
 7. Playbook `trigger_conditions` are stored but not evaluated during retrieval.
@@ -81,7 +84,7 @@ Do not create replacements for these features. Move their logic behind the share
 
 1. `RetrievalService` is the single selection implementation for get-context, preview, and proactive activation.
 2. Existing semantic/full-text search continues to use the shared active/visibility/facet primitives but remains query-oriented; it does not apply context caps.
-3. Defaults reproduce current output ordering as closely as possible: relevance 0.7, quality 0.3, recency 0, window 10, strict facets, no signal boost, no category caps.
+3. Defaults reproduce current output ordering as closely as possible: relevance 0.65, quality 0.20, profile-facet boost 0.15 when applicable, recency 0, window 10, explicit facet filtering, no signal boost, and no category caps.
 4. Pinned records bypass relevance floors and category caps but never bypass `status='active'`, shared visibility, or agent capability/safety checks.
 5. Retired, draft, and merged source records never appear in agent context, semantic search, full-text search, prior context, or direct agent retrieval.
 6. Retrieval ranks and gates; it does not rewrite knowledge.
@@ -125,12 +128,12 @@ Add idempotent `memory_settings` columns and matching request/response model fie
 
 | Setting | Type | Default |
 |---|---|---|
-| `context_rank_weights` | JSONB | `{"relevance":0.7,"quality":0.3,"recency":0.0}` |
+| `context_rank_weights` | JSONB | `{"relevance":0.65,"quality":0.20,"recency":0.0}` |
 | `context_conversation_window` | INT 1..100 | `10` |
 | `context_per_category_caps` | JSONB | `{}` |
-| `context_facet_mode` | TEXT enum | `strict` |
+| `context_profile_facet_enabled` | BOOLEAN | `true` |
 | `context_signal_boost` | FLOAT 0..1 | `0.0` |
-| `context_facet_boost` | FLOAT 0..1 | `0.10` |
+| `context_facet_boost` | FLOAT 0..1 | `0.15` |
 | `context_recency_half_life_days` | INT 1..3650 | `180` |
 | `context_token_budget` | INT 256..32768 | `6000` |
 | `context_diversity_enabled` | BOOLEAN | `true` |
@@ -160,13 +163,13 @@ score = clamp(base + signal_overlap*signal_boost + facet_match*facet_boost, 0, 1
 
 Apply the configured similarity floor to semantic relevance before boosts. Pinned records receive `selection_reason='pinned'` and are projected first.
 
-### 5.3 Facet modes
+### 5.3 Facet behavior
 
-- `strict`: current get-context behavior; incompatible/missing governed facets are excluded when a facet value is available.
-- `boost`: never exclude on facets; matching records receive `facet_boost`.
-- `off`: do not filter or score facets.
+- Explicit request facets remain deterministic hard filters.
+- Profile-derived facets never exclude candidates; matching records receive the configurable `context_facet_boost`.
+- `context_profile_facet_enabled=false` disables profile-derived ranking without changing explicit request filtering.
 
-Explicit request facets override profile-derived facets. Canonicalize values through existing `memory_facets` helpers.
+Explicit request facets override profile-derived facets. Canonicalize values through existing `memory_facets` helpers. Do not introduce a mode that can accidentally turn a profile-derived value into a hard filter.
 
 ### 5.4 Caps, diversity, and token budget
 

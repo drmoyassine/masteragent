@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import api, { triggerMemoryGeneration, triggerIntelligenceCheck, triggerKnowledgeCheck, triggerPlaybookExtraction, exportKnowledgePack, triggerBackfillFacets, triggerReflectTelemetry, fetchProviderModels, analyzeHygieneNow, backfillEmbeddings, getEmbeddingCoverage } from "@/lib/api";
+import api, { triggerMemoryGeneration, triggerIntelligenceCheck, triggerKnowledgeCheck, triggerPlaybookExtraction, exportKnowledgePack, triggerBackfillFacets, triggerReflectTelemetry, fetchProviderModels, analyzeHygieneNow, backfillEmbeddings, getEmbeddingCoverage, getPipelineRuns } from "@/lib/api";
 import { useEffect } from "react";
 
 // â”€â”€â”€ Threshold Overrides Table â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -976,7 +976,7 @@ function IntelligenceTab({ settings, onUpdateSettings, llmConfigs, llmProviders,
 }
 
 // â”€â”€â”€ Knowledge Tab â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, onDeleteConfig, onAddConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline, entityTypes }) {
+function LegacyKnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, onDeleteConfig, onAddConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline, entityTypes }) {
     const publicPipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "knowledge").sort((a,b) => a.execution_order - b.execution_order);
     const [triggering, setTriggering] = useState(null); // 'check' | 'drain' | 'playbooks' | 'consolidation' | 'facets' | 'export'
     const [facetsSchemaText, setFacetsSchemaText] = useState("[]");
@@ -1720,6 +1720,89 @@ export function MemorySettings({
                 </TabsContent>
             </Tabs>
 
+        </div>
+    );
+}
+
+// Simplified Knowledge settings: generation, maintenance, and retrieval only.
+function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, onDeleteConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, entityTypes }) {
+    const publicPipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "knowledge").sort((a,b) => a.execution_order - b.execution_order);
+    const [triggering, setTriggering] = useState(null);
+    const [runs, setRuns] = useState([]);
+    const [facetsSchemaText, setFacetsSchemaText] = useState("[]");
+    const [profileMapText, setProfileMapText] = useState("{}");
+
+    useEffect(() => {
+        try { setFacetsSchemaText(JSON.stringify(settings.knowledge_facets_schema || [], null, 2)); } catch { /* noop */ }
+        try { setProfileMapText(JSON.stringify(settings.profile_facet_map || {}, null, 2)); } catch { /* noop */ }
+    }, [settings.knowledge_facets_schema, settings.profile_facet_map]);
+    const refreshRuns = () => getPipelineRuns({ limit: 8 }).then(({ data }) => setRuns(data?.items || data || [])).catch(() => setRuns([]));
+    useEffect(refreshRuns, []);
+    const run = async (kind, fn, message) => {
+        setTriggering(kind);
+        try { await fn(); toast.success(message); setTimeout(refreshRuns, 700); }
+        catch (error) { toast.error(error?.response?.data?.detail || "Could not queue this action"); }
+        finally { setTriggering(null); }
+    };
+    const saveJson = (field, text) => {
+        try { onUpdateSettings(field, JSON.parse(text)); }
+        catch { toast.error(`Invalid JSON in ${field}`); }
+    };
+
+    return (
+        <div className="space-y-5">
+            <div>
+                <h3 className="text-lg font-semibold flex items-center gap-2"><GraduationCap className="w-5 h-5 text-indigo-500" />Knowledge</h3>
+                <p className="text-sm text-muted-foreground mt-1">Configure how knowledge is generated, maintained, and retrieved.</p>
+            </div>
+            <Tabs defaultValue="generation" className="w-full">
+                <TabsList className="grid w-full grid-cols-3">
+                    <TabsTrigger value="generation">Knowledge Generation</TabsTrigger>
+                    <TabsTrigger value="maintenance">Knowledge Maintenance</TabsTrigger>
+                    <TabsTrigger value="retrieval">Knowledge Retrieval</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="generation" className="space-y-5 mt-5">
+                    <Card>
+                        <CardHeader><CardTitle className="text-base">Global generation controls</CardTitle><CardDescription>Defaults shared by every generation pathway. A pathway override applies only where shown below.</CardDescription></CardHeader>
+                        <CardContent className="space-y-4">
+                            <div className="flex items-center justify-between"><div><Label>Generation enabled</Label><p className="text-[11px] text-muted-foreground">Master switch for scheduled and threshold-driven generation.</p></div><Switch checked={settings.knowledge_generation_enabled ?? true} onCheckedChange={(v) => onUpdateSettings("knowledge_generation_enabled", v)} /></div>
+                            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                                <div className="space-y-1"><Label className="text-xs">Daily run time (UTC)</Label><Input type="time" value={settings.knowledge_generation_time || "03:00"} onChange={(e) => onUpdateSettings("knowledge_generation_time", e.target.value)} /></div>
+                                <div className="space-y-1"><Label className="text-xs">Evidence threshold</Label><Input type="number" min="1" value={settings.knowledge_generation_evidence_threshold ?? 5} onChange={(e) => onUpdateSettings("knowledge_generation_evidence_threshold", Number(e.target.value) || 1)} /></div>
+                                <div className="space-y-1"><Label className="text-xs">Minimum confidence</Label><Input type="number" min="0" max="1" step="0.05" value={settings.knowledge_generation_min_confidence ?? 0.6} onChange={(e) => onUpdateSettings("knowledge_generation_min_confidence", Number(e.target.value))} /></div>
+                                <div className="space-y-1"><Label className="text-xs">Maximum output tokens</Label><Input type="number" min="256" max="8000" value={settings.knowledge_generation_max_tokens ?? 1200} onChange={(e) => onUpdateSettings("knowledge_generation_max_tokens", Number(e.target.value) || 1200)} /></div>
+                            </div>
+                            <div className="max-w-sm space-y-1"><Label className="text-xs">Activation policy</Label><Select value={settings.knowledge_generation_approval_policy || "approve_immediately"} onValueChange={(v) => onUpdateSettings("knowledge_generation_approval_policy", v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="approve_immediately">Create as Approved</SelectItem><SelectItem value="create_as_draft">Create as Draft</SelectItem></SelectContent></Select><p className="text-[10px] text-muted-foreground">Approved records may be retrieved by agents. Draft records require review.</p></div>
+                            <div className="border-t pt-4"><Label className="text-xs">Entity-specific evidence threshold overrides</Label><div className="mt-2"><ThresholdOverridesTable entityTypes={entityTypes} overrideKey="knowledge_extraction_threshold" globalFallback={settings.knowledge_generation_evidence_threshold ?? 5} /></div></div>
+                        </CardContent>
+                    </Card>
+
+                    <Card>
+                        <CardHeader><CardTitle className="text-base">Generation actions and recent runs</CardTitle><CardDescription>Run all enabled pathways once, or drain accumulated source evidence.</CardDescription></CardHeader>
+                        <CardContent className="space-y-4">
+                            <div className="flex gap-2 flex-wrap"><Button variant="outline" disabled={!!triggering} onClick={() => run("run", () => triggerKnowledgeCheck(false), "Knowledge generation queued")}><Play className="w-4 h-4 mr-2" />Run now</Button><Button variant="outline" disabled={!!triggering} onClick={() => run("drain", () => triggerKnowledgeCheck(true), "Knowledge backlog processing queued")}><Zap className="w-4 h-4 mr-2" />Process backlog</Button></div>
+                            <div className="rounded-md border divide-y">{runs.length ? runs.slice(0,5).map((item, i) => <div key={item.id || i} className="px-3 py-2 text-xs flex justify-between gap-3"><span>{item.pipeline || item.pipeline_name || item.run_type || "Knowledge run"}</span><Badge variant="outline">{item.status || "queued"}</Badge></div>) : <div className="px-3 py-3 text-xs text-muted-foreground">No recent run information.</div>}</div>
+                        </CardContent>
+                    </Card>
+
+                    <Card className="border-dashed bg-muted/20"><CardHeader><CardTitle className="text-base">Knowledge Generation Pathways</CardTitle><CardDescription>Each independent pathway contains its own overrides, prompt, provider, and model.</CardDescription></CardHeader><CardContent><KnowledgePathways pipelineConfigs={publicPipelineNodes} llmProviders={llmProviders} onSaveConfig={onSaveConfig} onDeleteConfig={onDeleteConfig} modelLists={modelLists} fetchingModels={fetchingModels} fetchErrors={fetchErrors} onFetchModels={onFetchModels} settings={settings} onUpdateSettings={onUpdateSettings} entityTypes={entityTypes} /></CardContent></Card>
+                </TabsContent>
+
+                <TabsContent value="maintenance" className="space-y-5 mt-5">
+                    <KnowledgeHygieneCard settings={settings} onUpdateSettings={onUpdateSettings} />
+                    <Card><CardHeader><CardTitle className="text-base">Pre-generation evidence routing</CardTitle><CardDescription>Uses persisted source embeddings before an expensive generation call. Similarity discovers the route; the LLM decides whether moderate matches revise an existing record.</CardDescription></CardHeader><CardContent className="space-y-4">
+                        <div className="flex items-center justify-between"><div><Label>Evidence routing enabled</Label><p className="text-[10px] text-muted-foreground">Applies to declarative, telemetry, playbook, and skill pathways.</p></div><Switch checked={settings.knowledge_evidence_routing_enabled ?? true} onCheckedChange={(v) => onUpdateSettings("knowledge_evidence_routing_enabled", v)} /></div>
+                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4"><div className="space-y-1"><Label className="text-xs">Mode</Label><Select value={settings.knowledge_evidence_routing_mode || "analysis_only"} onValueChange={(v) => onUpdateSettings("knowledge_evidence_routing_mode", v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="analysis_only">Analysis only</SelectItem><SelectItem value="enforced">Enforced</SelectItem></SelectContent></Select></div><div className="space-y-1"><Label className="text-xs">Moderate from</Label><Input type="number" min="0" max="1" step="0.01" value={settings.knowledge_evidence_low_threshold ?? 0.78} onChange={(e) => onUpdateSettings("knowledge_evidence_low_threshold", Number(e.target.value))} /></div><div className="space-y-1"><Label className="text-xs">Very high from</Label><Input type="number" min="0" max="1" step="0.01" value={settings.knowledge_evidence_high_threshold ?? 0.95} onChange={(e) => onUpdateSettings("knowledge_evidence_high_threshold", Number(e.target.value))} /></div><div className="space-y-1"><Label className="text-xs">High-match coverage</Label><Input type="number" min="0" max="1" step="0.05" value={settings.knowledge_evidence_high_coverage ?? 0.9} onChange={(e) => onUpdateSettings("knowledge_evidence_high_coverage", Number(e.target.value))} /></div></div>
+                    </CardContent></Card>
+                    <Card><CardHeader><CardTitle className="text-base">Maintenance actions</CardTitle><CardDescription>Occasional repair and export tools. Consolidation analysis and application remain proposal-and-review based.</CardDescription></CardHeader><CardContent className="flex gap-2 flex-wrap"><Button variant="outline" onClick={() => run("facets", triggerBackfillFacets, "Facet backfill queued")} disabled={!!triggering}><Sparkles className="w-4 h-4 mr-2" />Backfill facets</Button><Button variant="outline" onClick={() => run("export", async () => { const res = await exportKnowledgePack({ status: "active" }); const url = URL.createObjectURL(new Blob([res.data])); const a = document.createElement("a"); a.href=url; a.download="knowledge-pack.zip"; a.click(); URL.revokeObjectURL(url); }, "Knowledge pack exported")} disabled={!!triggering}><FileText className="w-4 h-4 mr-2" />Export approved knowledge</Button></CardContent></Card>
+                </TabsContent>
+
+                <TabsContent value="retrieval" className="space-y-5 mt-5">
+                    <Card><CardHeader><CardTitle className="text-base">Context retrieval</CardTitle><CardDescription>Always-on records are injected in full. All other matches are compact index entries that agents retrieve in full only when needed.</CardDescription></CardHeader><CardContent className="grid grid-cols-2 gap-4"><div className="space-y-1"><Label className="text-xs">Maximum matched records</Label><Input type="number" min="1" max="100" value={settings.context_knowledge_count ?? 30} onChange={(e) => onUpdateSettings("context_knowledge_count", Number(e.target.value) || 30)} /></div><div className="space-y-1"><Label className="text-xs">Relevance floor</Label><Input type="number" min="0" max="1" step="0.05" value={settings.context_knowledge_min_similarity ?? 0} onChange={(e) => onUpdateSettings("context_knowledge_min_similarity", Number(e.target.value))} /><p className="text-[10px] text-muted-foreground">0 ranks without excluding. Above 0, records without compatible embeddings are excluded.</p></div></CardContent></Card>
+                    <Card><CardHeader><CardTitle className="text-base">Governed facets</CardTitle><CardDescription>Explicit request facets are hard filters. Profile-derived facets only boost ranking and never remove otherwise relevant knowledge.</CardDescription></CardHeader><CardContent className="grid grid-cols-1 lg:grid-cols-2 gap-4"><div className="space-y-2"><div className="flex justify-between"><Label className="text-xs">Facet schema</Label><Button size="sm" variant="ghost" onClick={() => saveJson("knowledge_facets_schema", facetsSchemaText)}>Save</Button></div><textarea className="w-full h-48 rounded-md border bg-background p-2 text-xs font-mono" value={facetsSchemaText} onChange={(e) => setFacetsSchemaText(e.target.value)} /></div><div className="space-y-2"><div className="flex justify-between"><Label className="text-xs">Profile-to-facet map</Label><Button size="sm" variant="ghost" onClick={() => saveJson("profile_facet_map", profileMapText)}>Save</Button></div><textarea className="w-full h-48 rounded-md border bg-background p-2 text-xs font-mono" value={profileMapText} onChange={(e) => setProfileMapText(e.target.value)} /></div></CardContent></Card>
+                </TabsContent>
+            </Tabs>
         </div>
     );
 }

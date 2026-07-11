@@ -90,6 +90,20 @@ async def _process_bulk_job(job: Job, token: str):
             if p_conf and "rate_limit_rpm" in p_conf:
                 rpm = p_conf.get("rate_limit_rpm", 60)
 
+        elif job.name == "run_all_knowledge_generation":
+            # One orchestrated run for every enabled producer. Individual legacy
+            # job names remain accepted for API/backlog compatibility.
+            await run_knowledge_check(
+                drain=bool(job.data.get("drain")), min_count=job.data.get("min_count"),
+            )
+            from memory_playbooks import run_playbook_check
+            from memory_telemetry import run_telemetry_reflection, backfill_telemetry
+            await run_playbook_check()
+            if job.data.get("drain"):
+                await backfill_telemetry(max_days=int(job.data.get("max_days", 30)))
+            else:
+                await run_telemetry_reflection(job.data.get("reflection_date"))
+
         elif job.name == "promote_to_knowledge":
             i_id = job.data.get("insight_id")
             if i_id:

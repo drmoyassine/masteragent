@@ -12,6 +12,16 @@ from typing import Optional
 from core.storage import get_memory_db_context
 
 
+def _embedding_provenance(embedding, *, knowledge: bool = False):
+    if not embedding:
+        return (None, None, None, None)
+    from memory_embedding import current_embedding_model, EMBEDDING_VERSION
+    return (
+        current_embedding_model(), EMBEDDING_VERSION if knowledge else 1,
+        len(embedding), datetime.now(timezone.utc).isoformat(),
+    )
+
+
 def insert_memory(
     *,
     memory_id: str,
@@ -26,26 +36,28 @@ def insert_memory(
     embedding: Optional[list],
     processing_errors: dict,
 ) -> None:
-    """INSERT a row into memories. Marks source interactions as done and
-    clears their ephemeral embeddings. Idempotent on (date, entity_type, entity_id)."""
+    """INSERT a memory and retain source embeddings for semantic lineage."""
+    emodel, eversion, edims, embedded_at = _embedding_provenance(embedding)
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO memories (
                 id, date, primary_entity_type, primary_entity_id,
                 interaction_ids, interaction_count, content_summary,
-                related_entities, intents, relationships, embedding, processing_errors
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                related_entities, intents, relationships, embedding, processing_errors,
+                embedding_model, embedding_version, embedding_dimensions, embedded_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (date, primary_entity_type, primary_entity_id) DO NOTHING
         """, (
             memory_id, interaction_date, entity_type, entity_id,
             interaction_ids, len(interaction_ids), content_summary,
             json.dumps(related_entities), intents,
             json.dumps(relationships), embedding, json.dumps(processing_errors),
+            emodel, eversion, edims, embedded_at,
         ))
 
         cursor.execute("""
-            UPDATE interactions SET status = 'done', embedding = NULL
+            UPDATE interactions SET status = 'done'
             WHERE id = ANY(%s) AND status IN ('pending', 'failed')
         """, (interaction_ids,))
 
@@ -66,6 +78,7 @@ def insert_intelligence(
     """INSERT a row into intelligence and mark source memories as compacted."""
     status = "confirmed" if auto_approve else "draft"
     now = datetime.now(timezone.utc).isoformat()
+    emodel, eversion, edims, embedded_at = _embedding_provenance(embedding)
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -73,12 +86,14 @@ def insert_intelligence(
             INSERT INTO intelligence (
                 id, primary_entity_type, primary_entity_id, source_memory_ids,
                 signals, name, content, summary, embedding,
-                status, created_by, confirmed_at, created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                status, created_by, confirmed_at, created_at, updated_at,
+                embedding_model, embedding_version, embedding_dimensions, embedded_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             insight_id, entity_type, entity_id, memory_ids,
             signals or [], name, content, summary, embedding,
             status, "auto", now if auto_approve else None, now, now,
+            emodel, eversion, edims, embedded_at,
         ))
 
         cursor.execute("""
@@ -103,12 +118,17 @@ def insert_knowledge(
     metadata: Optional[dict] = None,
     source_pathway: str = "experiential",
     source_ai_interaction_ids: Optional[list] = None,
+    source_links: Optional[list] = None,
     extraction_confidence: float = 0.5,
     evidence_breadth: int = 1,
     outcome_signal: float = 0.0,
     quality_score: Optional[float] = None,
     status: str = "active",
     version: int = 1,
+    approved_by_type: Optional[str] = None,
+    approved_by_id: Optional[str] = None,
+    approval_origin: Optional[str] = None,
+    generation_state: str = "ready",
 ) -> None:
     """INSERT a row into knowledge (unified table for all categories).
 
@@ -144,7 +164,10 @@ def insert_knowledge(
         except Exception:
             pass
     md = _json.dumps(metadata) if metadata else "{}"
+    facet_info = (metadata or {}).get("facet_extraction") or {}
+    facet_status = facet_info.get("status") or ("explicit" if (metadata or {}).get("facets") else "no_facet")
     ai_ids = source_ai_interaction_ids or []
+    emodel, eversion, edims, embedded_at = _embedding_provenance(embedding, knowledge=True)
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -153,12 +176,18 @@ def insert_knowledge(
                 embedding, visibility, tags, created_at, updated_at,
                 category, metadata, source_pathway, source_ai_interaction_ids,
                 extraction_confidence, evidence_breadth, outcome_signal,
-                quality_score, status, version
+                quality_score, status, version,
+                embedding_model, embedding_version, embedding_dimensions, embedded_at,
+                approved_at, approved_by_type, approved_by_id, approval_origin, generation_state,
+                facet_schema_version, facet_status, facet_provenance
             ) VALUES (
                 %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s,
                 %s, %s, %s, %s,
                 %s, %s, %s,
+                %s, %s, %s,
+                %s, %s, %s, %s,
+                %s, %s, %s, %s, %s,
                 %s, %s, %s
             )
         """, (
@@ -167,7 +196,38 @@ def insert_knowledge(
             category, md, source_pathway, ai_ids,
             extraction_confidence, evidence_breadth, outcome_signal,
             quality_score, status, version,
+            emodel, eversion, edims, embedded_at,
+            now if status == "active" else None,
+            (approved_by_type or "system") if status == "active" else None,
+            approved_by_id if status == "active" else None,
+            (approval_origin or "generation_policy") if status == "active" else None,
+            generation_state,
+            1, facet_status, _json.dumps(facet_info),
         ))
+
+        # Normalized provenance is authoritative; arrays remain compatibility fields.
+        for sid in intelligence_ids or []:
+            cursor.execute("""
+                INSERT INTO knowledge_source_links(knowledge_id,source_type,source_id,source_role)
+                VALUES (%s,'intelligence',%s,'primary') ON CONFLICT DO NOTHING
+            """, (knowledge_id, sid))
+        for sid in ai_ids:
+            cursor.execute("""
+                INSERT INTO knowledge_source_links(knowledge_id,source_type,source_id,source_role)
+                VALUES (%s,'interaction',%s,'context') ON CONFLICT DO NOTHING
+            """, (knowledge_id, sid))
+        for source in source_links or []:
+            source_type = source.get("source_type")
+            source_id = source.get("source_id")
+            if source_type not in {"interaction", "memory", "intelligence", "telemetry"} or not source_id:
+                continue
+            cursor.execute("""
+                INSERT INTO knowledge_source_links(knowledge_id,source_type,source_id,source_role)
+                VALUES (%s,%s,%s,'primary') ON CONFLICT DO NOTHING
+            """, (knowledge_id, source_type, source_id))
+
+    from memory_quality import recalculate_knowledge_quality
+    recalculate_knowledge_quality(knowledge_id)
 
     # Creation-time consolidation hook (opt-in, default off). Fire-and-forget:
     # enqueues an async preview job so generation never waits on a consolidation
@@ -259,3 +319,5 @@ def append_knowledge_feedback(knowledge_id: str, outcome: str, notes: Optional[s
                 updated_at = %s
             WHERE id = %s
         """, (entry, now, knowledge_id))
+    from memory_quality import recalculate_knowledge_quality
+    recalculate_knowledge_quality(knowledge_id)

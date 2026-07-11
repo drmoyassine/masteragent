@@ -12,9 +12,7 @@ from datetime import datetime, timezone
 
 from core.storage import get_memory_db_context
 from memory_services import get_memory_settings
-from memory_dedup import compute_quality_score
 from services.llm import parse_llm_json
-from memory_db_writes import update_knowledge_quality
 from memory_helpers import _get_entity_type_config
 
 logger = logging.getLogger(__name__)
@@ -172,42 +170,18 @@ def _apply_decay():
 
 
 def _recompute_quality_scores():
-    """Batch recompute quality scores for all active knowledge records."""
+    """Batch recompute every record with the canonical explainable v2 model."""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT id, category, evidence_breadth, outcome_signal,
-                   extraction_confidence, merge_count, created_at
-            FROM knowledge
-            WHERE status = 'active' AND embedding IS NOT NULL
-        """)
-        records = [dict(r) for r in cursor.fetchall()]
-
-    now = datetime.now(timezone.utc)
+        cursor.execute("SELECT COUNT(*) AS n FROM knowledge")
+        total = int(cursor.fetchone()["n"] or 0)
+    from memory_quality import backfill_quality_v2
     updated = 0
-    for r in records:
-        created = r.get("created_at")
-        days_old = 0.0
-        if created:
-            try:
-                created_dt = created if isinstance(created, datetime) else datetime.fromisoformat(str(created))
-                days_old = (now - created_dt).days
-            except Exception:
-                pass
-
-        # Normalize evidence_breadth: assume extraction_min_entities = 3 default
-        eb = r.get("evidence_breadth", 1)
-        eb_norm = min(eb / 10.0, 1.0)
-
-        quality = compute_quality_score(
-            evidence_breadth_norm=eb_norm,
-            outcome_signal=r.get("outcome_signal", 0.0),
-            confidence=r.get("extraction_confidence", 0.5),
-            merge_count=r.get("merge_count", 0),
-            days_since_created=days_old,
-        )
-        update_knowledge_quality(r["id"], quality)
-        updated += 1
+    while updated < total:
+        result = backfill_quality_v2(limit=500)
+        updated += result["updated"]
+        if result["processed"] == 0 or result["updated"] == 0:
+            break
 
     if updated:
         logger.info(f"Recomputed quality scores for {updated} active records")

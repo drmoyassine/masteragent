@@ -6,7 +6,6 @@ from typing import Optional
 from core.storage import get_memory_db_context
 from memory_services import (
     call_llm,
-    generate_embedding,
     get_memory_settings,
     get_system_prompt,
     scrub_pii,
@@ -15,9 +14,9 @@ from services.config_helpers import get_pipeline_configs, get_system_prompt_by_c
 from services.llm import parse_llm_json
 from services.prompt_renderer import inject_variables
 from memory_db_writes import insert_knowledge, log_pipeline_run
-from memory_prior_context import fetch_prior_knowledge_semantic
-from memory_dedup import find_similar_existing, refine_or_increment_merge
 from memory_helpers import _get_entity_type_config, _format_signal_definitions
+from memory_generation_policy import approval_status, resolve_generation_policy
+from memory_facets import facet_prompt_instructions, validate_generated_facets
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +48,9 @@ async def _run_knowledge_check_once(min_count: Optional[int] = None) -> int:
     """Single knowledge-check pass. Returns the number of knowledge records created.
     min_count overrides the effective threshold (nightly schedule floor)."""
     settings = get_memory_settings()
-    global_knowledge_threshold = settings.get("knowledge_threshold", 5)
+    global_knowledge_threshold = settings.get(
+        "knowledge_generation_evidence_threshold", settings.get("knowledge_threshold", 5),
+    )
     created = 0
 
     with get_memory_db_context() as conn:
@@ -72,7 +73,12 @@ async def _run_knowledge_check_once(min_count: Optional[int] = None) -> int:
             count = row["unused_count"]
 
             config = _get_entity_type_config(entity_type)
-            threshold = config.get("knowledge_extraction_threshold") or global_knowledge_threshold
+            policy = resolve_generation_policy(
+                "declarative_knowledge", settings=settings, entity_config=config,
+            )["values"]
+            if not policy["enabled"]:
+                continue
+            threshold = config.get("knowledge_extraction_threshold") or policy["evidence_threshold"] or global_knowledge_threshold
             # Nightly schedule floor overrides the main threshold (reflect on
             # sub-threshold piles). Batch size still capped at the floor value.
             if min_count is not None:
@@ -80,7 +86,10 @@ async def _run_knowledge_check_once(min_count: Optional[int] = None) -> int:
 
             if count >= threshold:
                 cursor.execute("""
-                    SELECT i.id, i.name, i.content, i.summary, i.signals, i.created_at
+                    SELECT i.id, i.name, i.content, i.summary, i.signals, i.created_at,
+                           i.primary_entity_type, i.primary_entity_id, i.embedding,
+                           i.embedding_model, i.embedding_version, i.embedding_dimensions,
+                           i.embedded_at
                     FROM intelligence i
                     WHERE i.status = 'confirmed'
                       AND primary_entity_type = %s
@@ -133,11 +142,57 @@ async def generate_knowledge_from_intelligence(intelligence: list) -> int:
     intelligence_ids = [ins["id"] for ins in intelligence]
 
     settings = get_memory_settings()
-    prior_knowledge_count = settings.get("prior_knowledge_semantic_count", 3)
-    prior_knowledge_text = await fetch_prior_knowledge_semantic(
-        context, prior_knowledge_count,
-        log_label="prior knowledge for deduplication",
-    )
+    entity_type = intelligence[0].get("primary_entity_type", "") if intelligence else ""
+    entity_config = _get_entity_type_config(entity_type) if entity_type else {}
+    policy = resolve_generation_policy(
+        "declarative_knowledge", settings=settings, entity_config=entity_config,
+    )["values"]
+    if not policy["enabled"]:
+        log_pipeline_run("knowledge_generation", "skipped", reason_code="pathway_disabled")
+        return 0
+
+    # Cheap source-first routing happens before the generation LLM. In analysis mode
+    # it records what would happen without changing the established pathway.
+    sources = [{
+        "source_type": "intelligence",
+        "source_id": str(ins["id"]),
+        "entity_id": ins.get("primary_entity_id"),
+        "name": ins.get("name") or "",
+        "summary": ins.get("summary") or "",
+        "content": ins.get("content") or "",
+        "embedding": ins.get("embedding"),
+        "embedding_model": ins.get("embedding_model"),
+        "embedding_version": ins.get("embedding_version"),
+        "embedding_dimensions": ins.get("embedding_dimensions"),
+        "embedded_at": ins.get("embedded_at"),
+    } for ins in intelligence]
+    route = None
+    if settings.get("knowledge_evidence_routing_enabled", True):
+        try:
+            from memory_evidence_service import analyze_evidence, apply_high_similarity_link
+            route = analyze_evidence(
+                pathway="declarative_knowledge", sources=sources, settings=settings,
+                entity_type=entity_type,
+            )
+            linked = apply_high_similarity_link(route, sources, settings)
+            if linked:
+                log_pipeline_run("knowledge_generation", "skipped", reason_code="evidence_linked",
+                                 detail={"canonical_id": route.get("canonical_knowledge_id")})
+                return 0
+            if (route.get("route") == "revision_assessment" and
+                    settings.get("knowledge_evidence_routing_mode") == "enforced"):
+                from memory_evidence_revision_service import assess_and_apply
+                revision = await assess_and_apply(route=route, sources=sources, settings=settings)
+                if revision.get("action") in {"no_change", "revised"}:
+                    log_pipeline_run("knowledge_generation", "revised", records_created=0,
+                                     detail={"action": revision.get("action")})
+                    return 0
+                if revision.get("action") == "manual_review":
+                    log_pipeline_run("knowledge_generation", "skipped",
+                                     reason_code="revision_manual_review")
+                    return 0
+        except Exception as exc:
+            logger.exception("Evidence routing failed; generation remains available: %s", exc)
 
     pipeline_nodes = get_pipeline_configs("knowledge")
     pk_gen_node = next((n for n in pipeline_nodes if n["task_type"] == "knowledge_generation"), None)
@@ -158,7 +213,6 @@ async def generate_knowledge_from_intelligence(intelligence: list) -> int:
             "Emit each signal in lowercase (e.g. \"momentum\", not \"Momentum\")."
         )
 
-    entity_type = intelligence[0].get("primary_entity_type", "") if intelligence else ""
     know_signals_text = ""
     valid_signals = {}
     if entity_type:
@@ -172,18 +226,17 @@ async def generate_knowledge_from_intelligence(intelligence: list) -> int:
     system_prompt = inject_variables(system_prompt, {
         "knowledge_signals": know_signals_text,
     })
+    system_prompt += "\n\n" + facet_prompt_instructions()
+    system_prompt += (
+        "\nReturn confidence as a number from 0 to 1. Return governed facets in "
+        "metadata.facets using the supplied schema."
+    )
 
     try:
-        user_msg_parts = []
-        if prior_knowledge_text:
-            user_msg_parts.append(f"--- Existing Knowledge (do NOT duplicate or repeat these) ---\n{prior_knowledge_text}")
-        user_msg_parts.append(f"--- Intelligence Items to Synthesize ---\n{context}")
-        user_msg = "\n\n".join(user_msg_parts)
-
         result_text = await call_llm(
-            user_msg[:8000],
+            f"--- Intelligence Items to Synthesize ---\n{context}"[:8000],
             system_prompt=system_prompt,
-            max_tokens=settings.get("knowledge_max_tokens") or 1200,
+            max_tokens=int(policy["max_tokens"]),
             config_id=node_id,
             task_type="knowledge_generation",
         )
@@ -197,6 +250,11 @@ async def generate_knowledge_from_intelligence(intelligence: list) -> int:
     content = result.get("content", "")
     summary = result.get("summary", "")
     tags = result.get("tags", [])
+    confidence = float(result.get("confidence") or 0.0)
+    if confidence < float(policy["min_confidence"]):
+        log_pipeline_run("knowledge_generation", "skipped", reason_code="below_confidence",
+                         detail={"confidence": confidence, "minimum": policy["min_confidence"]})
+        return 0
 
     # Normalize signals: accept array or legacy comma-string; validate against
     # the entity type's defined knowledge signals (unknown values dropped; kept
@@ -229,33 +287,12 @@ async def generate_knowledge_from_intelligence(intelligence: list) -> int:
     except Exception as e:
         logger.warning(f"Knowledge embedding failed: {e}")
 
-    # Creation-time near-duplicate guard: if an active knowledge record in the same
-    # category is already semantically near-identical, merge this evidence into it
-    # (refine-on-merge) instead of creating a bloating duplicate. Uses the SAME
-    # dedup_similarity_threshold as weekly consolidation AND every other creation
-    # pathway (telemetry, playbook, skill) — one UI dial defines "what is a duplicate."
-    # Zero-regression: skipped when disabled, when no embedding, or on any error
-    # (falls through to insert).
-    if embedding is not None and settings.get("knowledge_creation_dedup_enabled", True):
-        dedup_threshold = settings.get("dedup_similarity_threshold", 0.85)
-        try:
-            existing_id = await find_similar_existing(embedding, dedup_threshold, category=category)
-            if existing_id:
-                await refine_or_increment_merge(
-                    existing_id, new_name=name, new_content=content, new_summary=summary
-                )
-                logger.info(
-                    f"Knowledge near-duplicate of {existing_id} (sim>{dedup_threshold}) — "
-                    f"merged instead of inserting"
-                )
-                log_pipeline_run("knowledge_generation", "dedup_merged", 0, {"merged_into": existing_id})
-                return 1
-        except Exception as e:
-            logger.warning(f"Creation-time dedup check failed (proceeding to insert): {e}")
-
-    # WS-4: extract governed facets into metadata.facets (best-effort, never blocks)
-    from memory_facets import enrich_metadata_with_facets
-    metadata = await enrich_metadata_with_facets(None, name, content, summary)
+    metadata = result.get("metadata") or {}
+    facets, facet_state = validate_generated_facets(
+        metadata.get("facets") or result.get("facets") or {}
+    )
+    metadata["facets"] = facets
+    metadata["facet_extraction"] = facet_state
 
     knowledge_id = str(uuid.uuid4())
     insert_knowledge(
@@ -269,66 +306,27 @@ async def generate_knowledge_from_intelligence(intelligence: list) -> int:
         embedding=embedding,
         tags=tags,
         metadata=metadata,
+        extraction_confidence=confidence,
+        status=approval_status(policy["approval_policy"]),
+        evidence_breadth=len(sources),
+        source_links=sources,
     )
     logger.info(f"Generated Knowledge {knowledge_id} from {len(intelligence_ids)} intelligence")
     return 1
 
 
 async def promote_to_knowledge(insight_id: str):
-    """PII scrub + generalize a single Intelligence and write it as a Knowledge.
-    Kept for manual admin promotion — not used by the automatic Knowledge accumulation path."""
+    """Manual promotion through the same producer, evidence gate, and policy."""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT id, primary_entity_type, primary_entity_id, source_memory_ids,
-                   signals, name, content, summary
+                   signals, name, content, summary, created_at, embedding,
+                   embedding_model, embedding_version, embedding_dimensions, embedded_at
             FROM intelligence WHERE id = %s
         """, (insight_id,))
-        Intelligence = cursor.fetchone()
-
-    if not Intelligence:
+        intelligence = cursor.fetchone()
+    if not intelligence:
         logger.warning(f"promote_to_knowledge: Intelligence {insight_id} not found")
-        return
-
-    content = Intelligence["content"]
-    summary = Intelligence["summary"] or ""
-
-    try:
-        content = await scrub_pii(content)
-        summary = await scrub_pii(summary) if summary else ""
-    except Exception as e:
-        logger.warning(f"PII scrub failed for Intelligence {insight_id}: {e}")
-
-    generalize_prompt = (
-        "You are an AI editor. Remove all specific entity names, organization names, and other "
-        "identifying information from the following text, replacing with generic terms (e.g., 'the client', "
-        "'the institution'). Preserve the Intelligence's meaning. Return only the edited text."
-    )
-    try:
-        content = await call_llm(
-            content,
-            system_prompt=generalize_prompt,
-            max_tokens=get_memory_settings().get("knowledge_max_tokens") or 1200,
-            task_type="knowledge_generation"
-        )
-    except Exception as e:
-        logger.warning(f"Knowledge generalization failed: {e}")
-
-    embedding = None
-    try:
-        embedding = await generate_embedding(f"{Intelligence['name']}. {summary or content}")
-    except Exception as e:
-        logger.warning(f"Knowledge embedding failed: {e}")
-
-    knowledge_id = str(uuid.uuid4())
-    insert_knowledge(
-        knowledge_id=knowledge_id,
-        intelligence_ids=[insight_id],
-        signals=Intelligence.get("signals") or [],
-        name=Intelligence["name"],
-        content=content,
-        summary=summary,
-        embedding=embedding,
-        tags=[],
-    )
-    logger.info(f"Promoted Intelligence {insight_id} to Knowledge {knowledge_id}")
+        return 0
+    return await generate_knowledge_from_intelligence([dict(intelligence)])

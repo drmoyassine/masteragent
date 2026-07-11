@@ -173,6 +173,14 @@ async def update_intelligence(
         fields.append("signals = %s"); values.append(body.signals or [])
     if body.status is not None:
         fields.append("status = %s"); values.append(body.status)
+        if body.status == "active":
+            fields.extend([
+                "approved_at = COALESCE(approved_at, %s)",
+                "approved_by_type = COALESCE(approved_by_type, 'user')",
+                "approved_by_id = COALESCE(approved_by_id, %s)",
+                "approval_origin = COALESCE(approval_origin, 'manual')",
+            ])
+            values.extend([now, str(admin.get("id") or admin.get("sub") or "")])
         if body.status == "confirmed":
             fields.append("confirmed_by = %s"); values.append("admin")
             fields.append("confirmed_at = %s"); values.append(now)
@@ -349,22 +357,26 @@ async def create_knowledge(body: KnowledgeCreate, admin: dict = Depends(require_
     from memory_facets import enrich_metadata_with_facets
     final_metadata = await enrich_metadata_with_facets(body.metadata, body.name, content, body.summary)
 
-    with get_memory_db_context() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO knowledge (
-                id, source_intelligence_ids, signals, name, content, summary,
-                visibility, tags, category, metadata, status, created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """, (
-            knowledge_id, body.source_Intelligence_ids or [],
-            body.signals or [], body.name, body.content, body.summary,
-            body.visibility, body.tags or [],
-            body.category or "trade_knowledge",
-            json.dumps(final_metadata),
-            body.status or "draft",
-            now, now
-        ))
+    embedding = None
+    try:
+        from memory_embedding import embed_knowledge_fields
+        embedding, _ = await embed_knowledge_fields(
+            name=body.name, category=category, content=content,
+            summary=body.summary or "", signals=body.signals or [],
+            tags=body.tags or [], metadata=final_metadata,
+        )
+    except Exception as exc:
+        logger.warning("Manual Knowledge embedding failed: %s", exc)
+    from memory_db_writes import insert_knowledge
+    insert_knowledge(
+        knowledge_id=knowledge_id, intelligence_ids=body.source_Intelligence_ids or [],
+        signals=body.signals or [], name=body.name, content=content,
+        summary=body.summary or "", embedding=embedding, visibility=body.visibility,
+        tags=body.tags or [], category=category, metadata=final_metadata,
+        source_pathway="manual", status=body.status or "draft",
+        approved_by_type="user", approved_by_id=str(admin.get("id") or admin.get("sub") or ""),
+        approval_origin="manual",
+    )
 
     return {"id": knowledge_id, "created_at": now}
 
@@ -421,6 +433,28 @@ async def update_knowledge(
             f"UPDATE knowledge SET {', '.join(fields)} WHERE id = %s",
             values
         )
+
+    # Any semantic edit gets a fresh canonical embedding and quality score.
+    if any(getattr(body, key) is not None for key in ("name", "content", "summary", "signals", "tags", "category", "metadata")):
+        with get_memory_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM knowledge WHERE id=%s", (knowledge_id,))
+            updated = dict(cursor.fetchone())
+        try:
+            from memory_embedding import embed_knowledge_record
+            vector, model, md = await embed_knowledge_record(updated)
+            from memory_embedding import EMBEDDING_VERSION
+            with get_memory_db_context() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE knowledge SET embedding=%s::vector,embedding_model=%s,
+                        embedding_version=%s,embedding_dimensions=%s,embedded_at=NOW(),
+                        metadata=%s::jsonb WHERE id=%s
+                """, (vector, model, EMBEDDING_VERSION, len(vector), json.dumps(md), knowledge_id))
+        except Exception as exc:
+            logger.warning("Knowledge re-embedding failed for %s: %s", knowledge_id, exc)
+    from memory_quality import recalculate_knowledge_quality
+    recalculate_knowledge_quality(knowledge_id)
 
     return {"id": knowledge_id, "updated_at": now}
 
@@ -733,6 +767,9 @@ async def update_entity_type_config(
     if "knowledge_signals_prompt" in body.model_fields_set:
         fields.append("knowledge_signals_prompt = %s")
         values.append(json.dumps(body.knowledge_signals_prompt) if body.knowledge_signals_prompt is not None else None)
+    if "knowledge_generation_overrides" in body.model_fields_set:
+        fields.append("knowledge_generation_overrides = %s")
+        values.append(json.dumps(body.knowledge_generation_overrides or {}))
     if "discovered_schema" in body.model_fields_set:
         fields.append("discovered_schema = %s")
         values.append(json.dumps(body.discovered_schema) if body.discovered_schema is not None else None)
@@ -844,11 +881,11 @@ async def trigger_knowledge_check(
     reflects on accumulated AI-telemetry history. One click drains both experiential
     backlogs; each runs as its own queue job with its own pipeline_runs logging."""
     from memory.queue import knowledge_queue
-    await knowledge_queue.add("generate_knowledge", {"drain": drain}, {"priority": 1})
-    queued = ["knowledge_check"]
-    if drain and drain_telemetry:
-        await knowledge_queue.add("backfill_telemetry", {"max_days": 30}, {"priority": 2})
-        queued.append("telemetry_backfill")
+    await knowledge_queue.add(
+        "run_all_knowledge_generation",
+        {"drain": drain, "max_days": 30 if drain_telemetry else 0}, {"priority": 1},
+    )
+    queued = ["all_knowledge_generation"]
     return {"message": "Knowledge generation queued", "drain": drain, "jobs": queued}
 
 
@@ -1954,10 +1991,8 @@ async def import_skill_md(body: SkillImportBody, admin: dict = Depends(require_a
     """Import an agent-skills-standard SKILL.md document (e.g. from a public
     marketplace) as a knowledge record. The document is stored verbatim in the
     content column; frontmatter name/description populate name/summary.
-    Dedup: merges into an existing similar record instead of duplicating."""
+    Consolidation is intentionally deferred to the shared hygiene preview/apply service."""
     from memory_skill_md import SKILL_MD_CATEGORIES, parse_skill_md
-    from memory_services import generate_embedding, get_memory_settings
-    from memory_dedup import find_similar_existing, refine_or_increment_merge
     from memory_db_writes import insert_knowledge
 
     if body.category not in SKILL_MD_CATEGORIES:
@@ -1977,16 +2012,6 @@ async def import_skill_md(body: SkillImportBody, admin: dict = Depends(require_a
     except Exception as e:
         logger.warning(f"Skill import embedding failed: {e}")
 
-    if embedding:
-        threshold = (get_memory_settings() or {}).get("dedup_similarity_threshold", 0.85)
-        existing = await find_similar_existing(embedding, threshold, category=body.category)
-        if existing:
-            await refine_or_increment_merge(
-                existing, new_name=parsed["name"],
-                new_content=parsed["body"], new_summary=parsed["description"],
-            )
-            return {"status": "merged", "id": existing, "category": body.category}
-
     knowledge_id = str(uuid.uuid4())
     # WS-4: extract governed facets from the parsed body (best-effort)
     from memory_facets import enrich_metadata_with_facets
@@ -2004,6 +2029,9 @@ async def import_skill_md(body: SkillImportBody, admin: dict = Depends(require_a
         source_pathway="imported",
         status=body.status,
         metadata=metadata,
+        approved_by_type="user",
+        approved_by_id=str(admin.get("id") or admin.get("sub") or ""),
+        approval_origin="manual_import",
     )
     return {"status": "created", "id": knowledge_id, "name": parsed["name"], "category": body.category}
 

@@ -263,6 +263,20 @@ class MemorySettingsUpdate(BaseModel):
     knowledge_hygiene_default_canonical_strategy: Optional[Literal["update_existing", "create_new"]] = "update_existing"
     knowledge_hygiene_creation_time_enabled: Optional[bool] = False
     knowledge_hygiene_category_policies: Optional[Dict[str, str]] = None
+    # Unified Knowledge generation policy + pre-generation evidence routing.
+    knowledge_generation_enabled: Optional[bool] = True
+    knowledge_generation_max_tokens: Optional[int] = Field(1200, ge=256, le=32000)
+    knowledge_generation_min_confidence: Optional[float] = Field(0.60, ge=0, le=1)
+    knowledge_generation_evidence_threshold: Optional[int] = Field(5, ge=1, le=1000)
+    knowledge_generation_approval_policy: Optional[Literal["approve_immediately", "create_as_draft"]] = "approve_immediately"
+    knowledge_generation_pathway_overrides: Optional[Dict[str, Dict[str, Any]]] = None
+    knowledge_evidence_routing_enabled: Optional[bool] = True
+    knowledge_evidence_routing_mode: Optional[Literal["analysis_only", "enforced"]] = "analysis_only"
+    knowledge_evidence_low_threshold: Optional[float] = Field(0.78, ge=0, le=1)
+    knowledge_evidence_high_threshold: Optional[float] = Field(0.95, ge=0, le=1)
+    knowledge_evidence_high_coverage: Optional[float] = Field(0.90, ge=0, le=1)
+    knowledge_quality_version: Optional[int] = Field(2, ge=1)
+    knowledge_facet_schema_version: Optional[int] = Field(1, ge=1)
 
     @model_validator(mode="after")
     def validate_hygiene_settings(self):
@@ -283,6 +297,28 @@ class MemorySettingsUpdate(BaseModel):
             invalid_values = set(self.knowledge_hygiene_category_policies.values()) - allowed_policies
             if invalid_keys or invalid_values:
                 raise ValueError("Invalid knowledge_hygiene_category_policies")
+        if (
+            self.knowledge_evidence_low_threshold is not None
+            and self.knowledge_evidence_high_threshold is not None
+            and self.knowledge_evidence_low_threshold >= self.knowledge_evidence_high_threshold
+        ):
+            raise ValueError("knowledge_evidence_low_threshold must be below high_threshold")
+        allowed_pathways = {
+            "declarative_knowledge", "telemetry_reflection", "playbook_extraction",
+            "skill_extraction", "manual_creation", "import",
+        }
+        if self.knowledge_generation_pathway_overrides is not None:
+            unknown = set(self.knowledge_generation_pathway_overrides) - allowed_pathways
+            if unknown:
+                raise ValueError(f"Unsupported generation pathways: {sorted(unknown)}")
+            allowed_override_keys = {
+                "enabled", "schedule_time", "max_tokens", "min_confidence",
+                "evidence_threshold", "approval_policy",
+            }
+            for pathway, override in self.knowledge_generation_pathway_overrides.items():
+                invalid = set(override or {}) - allowed_override_keys
+                if invalid:
+                    raise ValueError(f"Unsupported overrides for {pathway}: {sorted(invalid)}")
         return self
 
 class MemorySettingsResponse(BaseModel):
@@ -329,6 +365,19 @@ class MemorySettingsResponse(BaseModel):
         "skill": "manual_only",
         "playbook": "manual_only",
     }
+    knowledge_generation_enabled: bool = True
+    knowledge_generation_max_tokens: int = 1200
+    knowledge_generation_min_confidence: float = 0.60
+    knowledge_generation_evidence_threshold: int = 5
+    knowledge_generation_approval_policy: str = "approve_immediately"
+    knowledge_generation_pathway_overrides: Dict[str, Dict[str, Any]] = {}
+    knowledge_evidence_routing_enabled: bool = True
+    knowledge_evidence_routing_mode: str = "analysis_only"
+    knowledge_evidence_low_threshold: float = 0.78
+    knowledge_evidence_high_threshold: float = 0.95
+    knowledge_evidence_high_coverage: float = 0.90
+    knowledge_quality_version: int = 2
+    knowledge_facet_schema_version: int = 1
 
 # ============================================
 # Tier 0: Interaction Models
@@ -530,6 +579,7 @@ class EntityTypeConfig(BaseModel):
     metadata_field_map: Dict[str, Any] = {}
     intelligence_signals_prompt: Optional[List[Dict[str, str]]] = None
     knowledge_signals_prompt: Optional[List[Dict[str, str]]] = None
+    knowledge_generation_overrides: Dict[str, Dict[str, Any]] = {}
     discovered_schema: Optional[List[str]] = None
     # ── Per-entity-type quality gauges ─────────────────────────────────
     extraction_min_entities: int = 3
@@ -553,6 +603,7 @@ class EntityTypeConfigUpdate(BaseModel):
     metadata_field_map: Optional[Dict[str, Any]] = None
     intelligence_signals_prompt: Optional[List[Dict[str, str]]] = None
     knowledge_signals_prompt: Optional[List[Dict[str, str]]] = None
+    knowledge_generation_overrides: Optional[Dict[str, Dict[str, Any]]] = None
     discovered_schema: Optional[List[str]] = None
     # Per-entity-type quality gauges
     extraction_min_entities: Optional[int] = None

@@ -19,6 +19,8 @@ import { GripVertical, Plus, GraduationCap, Sparkles, Brain, Scissors, EyeOff, A
 import { InlineTaskConfigAccordion } from "./InlineTaskConfigAccordion";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Dialog,
@@ -29,6 +31,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { TASK_TYPE_LABELS } from "@/components/settings/LLMProviderSettings";
+import api from "@/lib/api";
+import { toast } from "sonner";
 
 // Knowledge-stage pathways are NOT a sequential pipeline — each is an independent
 // producer that picks its node by task_type. This metadata makes each pathway's
@@ -65,6 +69,50 @@ const KNOWLEDGE_PATHWAYS = [
     trigger: "Inline (used by declarative + manual paths)",
   },
 ];
+
+function EntityPathwayOverrides({ entityTypes, pathwayKey }) {
+  const [configs, setConfigs] = useState({});
+  const [loading, setLoading] = useState(false);
+  const load = async () => {
+    if (!entityTypes?.length) return;
+    setLoading(true);
+    const next = {};
+    await Promise.all(entityTypes.map(async (entity) => {
+      try {
+        const { data } = await api.get(`/memory/entity-type-config/${entity.name}`);
+        next[entity.name] = data.knowledge_generation_overrides || {};
+      } catch { next[entity.name] = {}; }
+    }));
+    setConfigs(next); setLoading(false);
+  };
+  const save = async (entityName, field, value) => {
+    const all = { ...(configs[entityName] || {}) };
+    const pathway = { ...(all[pathwayKey] || {}) };
+    if (value === "" || value === "inherit") delete pathway[field];
+    else pathway[field] = value;
+    if (Object.keys(pathway).length) all[pathwayKey] = pathway;
+    else delete all[pathwayKey];
+    setConfigs((current) => ({ ...current, [entityName]: all }));
+    try { await api.patch(`/memory/entity-type-config/${entityName}`, { knowledge_generation_overrides: all }); }
+    catch { toast.error(`Could not save ${entityName} override`); }
+  };
+  return (
+    <details className="mt-3 rounded-md border bg-muted/10" onToggle={(e) => e.currentTarget.open && !Object.keys(configs).length && load()}>
+      <summary className="cursor-pointer px-3 py-2 text-[11px] font-semibold">Entity-specific overrides</summary>
+      <div className="border-t p-3 space-y-2">
+        {loading ? <p className="text-xs text-muted-foreground">Loading…</p> : (entityTypes || []).map((entity) => {
+          const current = (configs[entity.name] || {})[pathwayKey] || {};
+          return <div key={entity.name} className="grid grid-cols-[1.2fr_1fr_1fr_1fr] gap-2 items-center">
+            <span className="text-xs capitalize">{entity.icon || "📦"} {entity.name}</span>
+            <Input className="h-7 text-[11px]" type="number" min="0" max="1" step="0.05" placeholder="Global confidence" value={current.min_confidence ?? ""} onChange={(e) => save(entity.name, "min_confidence", e.target.value === "" ? "" : Number(e.target.value))} />
+            <Input className="h-7 text-[11px]" type="number" min="256" max="8000" placeholder="Global tokens" value={current.max_tokens ?? ""} onChange={(e) => save(entity.name, "max_tokens", e.target.value === "" ? "" : Number(e.target.value))} />
+            <Select value={current.approval_policy || "inherit"} onValueChange={(v) => save(entity.name, "approval_policy", v)}><SelectTrigger className="h-7 text-[11px]"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="inherit">Global approval</SelectItem><SelectItem value="approve_immediately">Approved</SelectItem><SelectItem value="create_as_draft">Draft</SelectItem></SelectContent></Select>
+          </div>;
+        })}
+      </div>
+    </details>
+  );
+}
 
 function SortablePipelineNode({ config, ...props }) {
   const {
@@ -290,6 +338,9 @@ export function KnowledgePathways({
   fetchingModels,
   fetchErrors,
   onFetchModels,
+  settings,
+  onUpdateSettings,
+  entityTypes,
 }) {
   const findByType = (tt) => (pipelineConfigs || []).find((c) => c.task_type === tt);
 
@@ -302,6 +353,25 @@ export function KnowledgePathways({
       {KNOWLEDGE_PATHWAYS.map((pw) => {
         const Icon = pw.icon;
         const node = findByType(pw.task_type);
+        const pathwayKey = ({
+          knowledge_generation: "declarative_knowledge",
+          telemetry_reflection: "telemetry_reflection",
+          playbook_generation: "playbook_extraction",
+          skill_generation: "skill_extraction",
+        })[pw.task_type];
+        const overrides = pathwayKey
+          ? ((settings?.knowledge_generation_pathway_overrides || {})[pathwayKey] || {})
+          : null;
+        const setOverride = (field, value) => {
+          if (!pathwayKey || !onUpdateSettings) return;
+          const all = { ...(settings?.knowledge_generation_pathway_overrides || {}) };
+          const next = { ...(all[pathwayKey] || {}) };
+          if (value === "inherit" || value === "") delete next[field];
+          else next[field] = value;
+          if (Object.keys(next).length) all[pathwayKey] = next;
+          else delete all[pathwayKey];
+          onUpdateSettings("knowledge_generation_pathway_overrides", all);
+        };
         return (
           <div key={pw.task_type} className={`rounded-lg border ${pw.accent} bg-background overflow-hidden`}>
             <div className="px-4 py-2.5 border-b bg-muted/30 flex items-center gap-2 flex-wrap">
@@ -315,6 +385,41 @@ export function KnowledgePathways({
               <span><span className="font-medium text-foreground">Produces:</span> {pw.produces}</span>
             </div>
             <div className="p-3">
+              {overrides && (
+                <div className="mb-3 rounded-md border bg-muted/20 p-3">
+                  <div className="text-[11px] font-semibold mb-2">Pathway overrides</div>
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                    <div className="space-y-1">
+                      <Label className="text-[10px]">Enabled</Label>
+                      <Select value={overrides.enabled === undefined ? "inherit" : String(overrides.enabled)}
+                        onValueChange={(v) => setOverride("enabled", v === "inherit" ? v : v === "true")}>
+                        <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                        <SelectContent><SelectItem value="inherit">Use global</SelectItem><SelectItem value="true">Enabled</SelectItem><SelectItem value="false">Disabled</SelectItem></SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[10px]">Minimum confidence</Label>
+                      <Input className="h-8 text-xs" type="number" min="0" max="1" step="0.05"
+                        placeholder="Use global" value={overrides.min_confidence ?? ""}
+                        onChange={(e) => setOverride("min_confidence", e.target.value === "" ? "" : Number(e.target.value))} />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[10px]">Max tokens</Label>
+                      <Input className="h-8 text-xs" type="number" min="256" max="8000"
+                        placeholder="Use global" value={overrides.max_tokens ?? ""}
+                        onChange={(e) => setOverride("max_tokens", e.target.value === "" ? "" : Number(e.target.value))} />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[10px]">Approval policy</Label>
+                      <Select value={overrides.approval_policy || "inherit"} onValueChange={(v) => setOverride("approval_policy", v)}>
+                        <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                        <SelectContent><SelectItem value="inherit">Use global</SelectItem><SelectItem value="approve_immediately">Approved</SelectItem><SelectItem value="create_as_draft">Draft</SelectItem></SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </div>
+              )}
+              {pathwayKey && <EntityPathwayOverrides entityTypes={entityTypes} pathwayKey={pathwayKey} />}
               {node ? (
                 <InlineTaskConfigAccordion
                   config={node}

@@ -507,7 +507,6 @@ async def get_context(
         # that drops full content so the orchestrator pulls records on demand (WS-1).
         # Relevance ranking + cap + fallback query preserved from Sprint 2.
         settings = get_memory_settings() or {}
-        mode = (settings.get("context_knowledge_mode") or "full").lower()
         k_count = int(settings.get("context_knowledge_count") or 30)
         k_floor = float(settings.get("context_knowledge_min_similarity") or 0.0)
 
@@ -554,7 +553,7 @@ async def get_context(
                 logger.warning(f"Facet canonicalization failed: {e}")
         facet_clause = ""
         facet_params: list = []
-        if resolved_facets:
+        if resolved_facets and not facets_from_profile:
             facet_clause = " AND metadata @> %s::jsonb"
             facet_params.append(json.dumps({"facets": resolved_facets}))
         category_clause = " AND category = %s" if knowledge_category else ""
@@ -594,9 +593,8 @@ async def get_context(
                   {not_pinned}{facet_clause}{category_clause}
                   AND (
                         %s <= 0
-                        OR qv.v IS NULL
-                        OR k.embedding IS NULL
-                        OR (1 - (k.embedding <=> qv.v)) >= %s
+                        OR (qv.v IS NOT NULL AND k.embedding IS NOT NULL
+                            AND (1 - (k.embedding <=> qv.v)) >= %s)
                       )
                 ORDER BY
                     CASE WHEN qv.v IS NOT NULL AND k.embedding IS NOT NULL
@@ -604,19 +602,23 @@ async def get_context(
                          ELSE COALESCE(k.quality_score, 0) END DESC,
                     k.created_at DESC
                 LIMIT %s
-            """, (entity_type, entity_id) + tuple(facet_params) + tuple(category_params) + (k_floor, k_floor, k_count))
+            """, (entity_type, entity_id) + tuple(facet_params) + tuple(category_params) +
+                 (k_floor, k_floor, max(k_count * 3, k_count)))
             knowledge_rows = cursor.fetchall()
         except Exception as e:
             logger.warning(f"Relevance-ranked knowledge query failed, falling back to quality order: {e}")
-            cursor.execute(f"""
-                SELECT id, name, category, signals, content, summary, tags, metadata, quality_score, merge_count
-                FROM knowledge
-                WHERE status = 'active' AND (visibility = 'shared' OR visibility IS NULL)
-                {not_pinned}{facet_clause}{category_clause}
-                ORDER BY quality_score DESC NULLS LAST, created_at DESC
-                LIMIT %s
-            """, tuple(facet_params) + tuple(category_params) + (k_count,))
-            knowledge_rows = cursor.fetchall()
+            if k_floor > 0:
+                knowledge_rows = []
+            else:
+                cursor.execute(f"""
+                    SELECT id, name, category, signals, content, summary, tags, metadata, quality_score, merge_count
+                    FROM knowledge
+                    WHERE status = 'active' AND (visibility = 'shared' OR visibility IS NULL)
+                    {not_pinned}{facet_clause}{category_clause}
+                    ORDER BY quality_score DESC NULLS LAST, created_at DESC
+                    LIMIT %s
+                """, tuple(facet_params) + tuple(category_params) + (k_count,))
+                knowledge_rows = cursor.fetchall()
 
         def _facets_of(r):
             md = r["metadata"] or {}
@@ -640,12 +642,27 @@ async def get_context(
                 "signals": r["signals"] or [], "summary": r["summary"], "facets": _facets_of(r),
             }
 
-        # Pinned management skill(s) are always full-content (the instruction must be readable).
-        knowledge = [_full_item(r) for r in pinned_rows]
-        if mode == "index":
-            knowledge += [_index_item(r) for r in knowledge_rows]
+        # Profile-derived facets are a bounded boost, never a hard filter. Explicit
+        # request facets were already applied as deterministic SQL filters above.
+        if facets_from_profile and resolved_facets:
+            def _rank(row):
+                facets = {str(k): str(v).lower() for k, v in _facets_of(row).items()}
+                matched = sum(
+                    1 for key, value in resolved_facets.items()
+                    if facets.get(str(key), "") == str(value).lower()
+                )
+                profile_match = matched / max(len(resolved_facets), 1)
+                relevance = float(row.get("relevance") or 0.0)
+                quality = float(row.get("quality_score") or 0.0)
+                return 0.65 * relevance + 0.20 * quality + 0.15 * profile_match
+            knowledge_rows = sorted(knowledge_rows, key=_rank, reverse=True)[:k_count]
         else:
-            knowledge += [_full_item(r) for r in knowledge_rows]
+            knowledge_rows = list(knowledge_rows)[:k_count]
+
+        # Always-on records are fully injected. Every retrieved ordinary record
+        # is index-only and must be pulled explicitly before use.
+        knowledge = [_full_item(r) for r in pinned_rows]
+        knowledge += [_index_item(r) for r in knowledge_rows]
 
     return {
         "entity_type": entity_type,

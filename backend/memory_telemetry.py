@@ -25,9 +25,10 @@ from typing import Optional
 from core.storage import get_memory_db_context
 from memory_services import call_llm, generate_embedding, get_memory_settings
 from services.llm import parse_llm_json
-from memory_dedup import find_similar_existing, compute_quality_score, refine_or_increment_merge
 from memory_db_writes import insert_knowledge, log_pipeline_run
 from memory_helpers import _get_entity_type_config
+from memory_generation_policy import approval_status, resolve_generation_policy
+from memory_facets import facet_prompt_instructions, validate_generated_facets
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,10 @@ async def run_telemetry_reflection(reflection_date: Optional[str] = None):
     settings = get_memory_settings() or {}
     if not settings.get("telemetry_reflection_enabled", True):
         return 0
-    confidence_min = float(settings.get("telemetry_reflection_confidence_min", 0.6))
+    policy = resolve_generation_policy("telemetry_reflection", settings=settings)["values"]
+    if not policy["enabled"]:
+        return 0
+    confidence_min = float(policy["min_confidence"])
     target_day = reflection_date or (date.today() - timedelta(days=1)).isoformat()
 
     # Entities with unreflected telemetry on target_day
@@ -105,7 +109,9 @@ async def _reflect_entity_day(entity_type: str, entity_id: str, day: str, confid
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT interaction_type, content, timestamp
+            SELECT id, interaction_type, content, timestamp, primary_entity_id,
+                   embedding, embedding_model, embedding_version,
+                   embedding_dimensions, embedded_at
             FROM interactions
             WHERE primary_entity_type = %s AND primary_entity_id = %s
               AND DATE(timestamp) = %s
@@ -126,19 +132,57 @@ async def _reflect_entity_day(entity_type: str, entity_id: str, day: str, confid
         f"[{r['interaction_type']}] {(r.get('content') or '')[:500]}" for r in convo
     )[:3000]
 
+    settings = get_memory_settings() or {}
+    config = _get_entity_type_config(entity_type)
+    policy = resolve_generation_policy(
+        "telemetry_reflection", settings=settings, entity_config=config,
+    )["values"]
+    sources = [{
+        "source_type": "interaction", "source_id": str(r["id"]),
+        "entity_id": r.get("primary_entity_id"), "name": r["interaction_type"],
+        "summary": "", "content": r.get("content") or "",
+        "embedding": r.get("embedding"), "embedding_model": r.get("embedding_model"),
+        "embedding_version": r.get("embedding_version"),
+        "embedding_dimensions": r.get("embedding_dimensions"),
+        "embedded_at": r.get("embedded_at"),
+    } for r in telemetry]
+    if settings.get("knowledge_evidence_routing_enabled", True):
+        try:
+            from memory_evidence_service import analyze_evidence, apply_high_similarity_link
+            route = analyze_evidence(
+                pathway="telemetry_reflection", sources=sources, settings=settings,
+                entity_type=entity_type, outcome_signature={"day": day},
+            )
+            if apply_high_similarity_link(route, sources, settings):
+                _mark_reflected(entity_type, entity_id, day, 0)
+                return 0
+            if (route.get("route") == "revision_assessment" and
+                    settings.get("knowledge_evidence_routing_mode") == "enforced"):
+                from memory_evidence_revision_service import assess_and_apply
+                revision = await assess_and_apply(route=route, sources=sources, settings=settings)
+                if revision.get("action") in {"no_change", "revised"}:
+                    _mark_reflected(entity_type, entity_id, day, 0)
+                    return 0
+                if revision.get("action") == "manual_review":
+                    log_pipeline_run("telemetry_reflection", "skipped",
+                                     reason_code="revision_manual_review")
+                    return 0
+        except Exception as exc:
+            logger.exception("Telemetry evidence routing failed: %s", exc)
+
     user_msg = (
         f"--- AGENT TELEMETRY ({len(telemetry)} events) ---\n{telemetry_text}\n\n"
         f"--- CONVERSATION (outcome context) ---\n{convo_text or '(none)'}"
     )
 
-    settings = get_memory_settings() or {}
     try:
         from services.config_helpers import get_task_system_prompt
         system_prompt = get_task_system_prompt("telemetry_reflection", fallback=_REFLECTION_SYSTEM_PROMPT) or _REFLECTION_SYSTEM_PROMPT
+        system_prompt += "\n\n" + facet_prompt_instructions()
         result_text = await call_llm(
             user_msg,
             system_prompt=system_prompt,
-            max_tokens=int(settings.get("telemetry_reflection_max_tokens", 1200)),
+            max_tokens=int(policy["max_tokens"]),
             task_type="telemetry_reflection",
         )
         candidates = parse_llm_json(result_text, context="telemetry_reflection")
@@ -152,8 +196,6 @@ async def _reflect_entity_day(entity_type: str, entity_id: str, day: str, confid
     if not isinstance(candidates, list):
         candidates = [candidates] if isinstance(candidates, dict) else []
 
-    dedup_threshold = float(settings.get("dedup_similarity_threshold", 0.85))
-    config = _get_entity_type_config(entity_type)
     created = 0
 
     for c in candidates[:5]:
@@ -182,14 +224,6 @@ async def _reflect_entity_day(entity_type: str, entity_id: str, day: str, confid
         except Exception:
             pass
 
-        # Dedup: recurrence strengthens an existing record rather than duplicating
-        if embedding:
-            existing = await find_similar_existing(embedding, dedup_threshold, category=target)
-            if existing:
-                await refine_or_increment_merge(existing, new_name=name, new_content=content, new_summary=summary)
-                created += 1
-                continue
-
         metadata = {}
         if target == "skill":
             metadata = {"skill_type": c.get("skill_type", "hard"), "trigger_desc": summary,
@@ -199,13 +233,10 @@ async def _reflect_entity_day(entity_type: str, entity_id: str, day: str, confid
                         "trigger_conditions": c.get("trigger_conditions", []),
                         "steps": c.get("steps", []), "skill_ids": []}
 
-        from memory_facets import enrich_metadata_with_facets
-        metadata = await enrich_metadata_with_facets(metadata or None, name, content, summary)
-
-        _global_aa = settings.get("knowledge_auto_activate", True)
-        auto_activate = config.get("skill_auto_activate", _global_aa) if target == "skill" else config.get("playbook_auto_activate", _global_aa)
-        status = "active" if auto_activate else "draft"
-        quality = compute_quality_score(0.1, 0.0, conf, 0, 0.0)
+        facets, facet_state = validate_generated_facets(c.get("facets") or {})
+        metadata["facets"] = facets
+        metadata["facet_extraction"] = facet_state
+        status = approval_status(policy["approval_policy"])
         insert_knowledge(
             knowledge_id=str(uuid.uuid4()),
             intelligence_ids=[],
@@ -219,9 +250,10 @@ async def _reflect_entity_day(entity_type: str, entity_id: str, day: str, confid
             source_pathway="telemetry_reflected",
             extraction_confidence=conf,
             evidence_breadth=1,
-            quality_score=quality,
             status=status,
             metadata=metadata,
+            source_ai_interaction_ids=[s["source_id"] for s in sources],
+            source_links=sources,
         )
         created += 1
         logger.info(f"Telemetry reflection created {target} '{name}' [{status}] for {entity_type}/{entity_id}")

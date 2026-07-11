@@ -117,15 +117,12 @@ def _time_reached(now_utc: datetime, hhmm: str, default=(2, 0)) -> bool:
 async def _background_loop():
     """Per-tier schedule-aware background loop.
 
-    Wakes every 60s. Each learning tier fires once per day at its own configured
-    time (independent, staggered so they cascade same-night), each guarded by its
-    own memory_job_log entry so it fires exactly once per day:
+    Wakes every 60s. Memory and Intelligence keep their tier schedules. All
+    Knowledge producers share one global schedule and one idempotency claim:
 
       memory_generation_time      (default 02:00) → memories + intra-day intel trigger
       intelligence_generation_time(default 02:30) → intelligence schedule sweep (floor)
-      knowledge_generation_time   (default 03:00) → knowledge schedule sweep (floor)
-      playbook_generation_time    (default 03:30) → playbook extraction (nightly)
-      telemetry_reflection_time   (default 04:00) → telemetry → skill/playbook/knowledge
+      knowledge_generation_time   (default 03:00) → all enabled Knowledge pathways
 
     Threshold valves still fire intra-day (independent of this loop). Consolidation
     stays a periodic (weekly) maintenance job — pruning, not learning."""
@@ -163,41 +160,17 @@ async def _background_loop():
                         fail_job_date("intelligence_schedule", today, exc)
                         raise
 
-            # ── Tier 2→3: Knowledge SCHEDULE sweep (floor) ────────────────────
+            # ── Tier 2→3: one schedule for every Knowledge producer ──────────
             if settings.get("knowledge_schedule_enabled", True) and \
                _time_reached(now_utc, settings.get("knowledge_generation_time", "03:00"), (3, 0)):
-                if claim_job_date("knowledge_schedule", today):
+                if claim_job_date("knowledge_generation_all", today):
                     floor = int(settings.get("knowledge_schedule_floor", 2))
                     logger.info(f"Firing nightly knowledge sweep (floor={floor})")
                     try:
-                        await knowledge_queue.add("generate_knowledge", {"min_count": floor}, {"priority": 3})
-                        complete_job_date("knowledge_schedule", today)
+                        await knowledge_queue.add("run_all_knowledge_generation", {"min_count": floor}, {"priority": 3})
+                        complete_job_date("knowledge_generation_all", today)
                     except Exception as exc:
-                        fail_job_date("knowledge_schedule", today, exc)
-                        raise
-
-            # ── Playbook extraction (now nightly, own time) ───────────────────
-            if settings.get("playbook_schedule_enabled", True) and \
-               _time_reached(now_utc, settings.get("playbook_generation_time", "03:30"), (3, 30)):
-                if claim_job_date("playbook_extraction", today):
-                    logger.info("Firing nightly playbook extraction")
-                    try:
-                        await knowledge_queue.add("extract_playbooks", {}, {"priority": 2})
-                        complete_job_date("playbook_extraction", today)
-                    except Exception as exc:
-                        fail_job_date("playbook_extraction", today, exc)
-                        raise
-
-            # ── Telemetry reflection: AI telemetry → skill/playbook/knowledge ─
-            if settings.get("telemetry_reflection_enabled", True) and \
-               _time_reached(now_utc, settings.get("telemetry_reflection_time", "04:00"), (4, 0)):
-                if claim_job_date("telemetry_reflection", today):
-                    logger.info("Firing nightly telemetry reflection")
-                    try:
-                        await knowledge_queue.add("reflect_telemetry", {}, {"priority": 3})
-                        complete_job_date("telemetry_reflection", today)
-                    except Exception as exc:
-                        fail_job_date("telemetry_reflection", today, exc)
+                        fail_job_date("knowledge_generation_all", today, exc)
                         raise
 
             # ── Consolidation: periodic maintenance (weekly, not nightly) ─────

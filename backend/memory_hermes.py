@@ -9,8 +9,9 @@ from typing import Optional
 
 from memory_services import call_llm, generate_embedding, get_memory_settings
 from services.llm import parse_llm_json
-from memory_dedup import find_similar_existing, increment_merge, compute_quality_score, refine_or_increment_merge
 from memory_db_writes import insert_knowledge
+from memory_generation_policy import approval_status, resolve_generation_policy
+from memory_facets import facet_prompt_instructions, validate_generated_facets
 
 logger = logging.getLogger(__name__)
 
@@ -42,12 +43,16 @@ async def process_admin_instruction(
         '"steps": [{"order": 1, "action": "..."}] (only for playbook)}. '
         '"signals" are the domain topics this record relates to.'
     )
+    system_prompt += "\n\n" + facet_prompt_instructions()
+
+    settings = get_memory_settings() or {}
+    policy = resolve_generation_policy("manual_creation", settings=settings)["values"]
 
     try:
         result_text = await call_llm(
             instruction[:2000],
             system_prompt=system_prompt,
-            max_tokens=800,
+            max_tokens=int(policy["max_tokens"]),
             task_type="admin_instruct",
         )
         result = parse_llm_json(result_text, context="admin_instruct")
@@ -57,6 +62,8 @@ async def process_admin_instruction(
 
     determined_category = category or result.get("category", "trade_knowledge")
     confidence = result.get("confidence", 0.5)
+    if float(confidence) < float(policy["min_confidence"]):
+        return {"status": "skipped", "reason": "below_confidence", "confidence": confidence}
     name = result.get("name", "Admin Instruction")
     content = result.get("content", instruction)
     summary = result.get("summary", "")
@@ -94,24 +101,11 @@ async def process_admin_instruction(
     except Exception:
         pass
 
-    # Dedup check
-    settings = get_memory_settings()
-    threshold = settings.get("dedup_similarity_threshold", 0.85)
-    if embedding:
-        existing = await find_similar_existing(embedding, threshold, category=determined_category)
-        if existing:
-            await refine_or_increment_merge(
-                existing, new_name=name, new_content=content, new_summary=summary,
-            )
-            return {"status": "merged", "id": existing, "category": determined_category}
-
-    # Insert
-    quality = compute_quality_score(0.5, 0.0, confidence, 0, 0.0)
     knowledge_id = str(uuid.uuid4())
-    status = "active" if auto_activate else "draft"
-    # WS-4: extract governed facets (best-effort)
-    from memory_facets import enrich_metadata_with_facets
-    metadata = await enrich_metadata_with_facets(metadata, name, content, summary)
+    status = "active" if auto_activate else approval_status(policy["approval_policy"])
+    facets, facet_state = validate_generated_facets(result.get("facets") or {})
+    metadata["facets"] = facets
+    metadata["facet_extraction"] = facet_state
     insert_knowledge(
         knowledge_id=knowledge_id,
         intelligence_ids=[],
@@ -124,9 +118,10 @@ async def process_admin_instruction(
         tags=tags,
         source_pathway="admin_instructed",
         extraction_confidence=confidence,
-        quality_score=quality,
         status=status,
         metadata=metadata or None,
+        approved_by_type="user",
+        approval_origin="admin_instruction",
     )
     logger.info(f"Hermes created {determined_category} '{name}' [{status}]")
     return {"status": "created", "id": knowledge_id, "category": determined_category}

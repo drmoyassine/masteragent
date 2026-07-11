@@ -13,9 +13,10 @@ from typing import Optional
 from core.storage import get_memory_db_context
 from memory_services import call_llm, generate_embedding, get_memory_settings
 from services.llm import parse_llm_json
-from memory_dedup import find_similar_existing, increment_merge, compute_quality_score, refine_or_increment_merge
-from memory_db_writes import insert_knowledge, update_knowledge_quality
+from memory_db_writes import insert_knowledge
 from memory_helpers import _get_entity_type_config
+from memory_generation_policy import approval_status, resolve_generation_policy
+from memory_facets import facet_prompt_instructions, validate_generated_facets
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,8 @@ _SKILL_GEN_PROMPT = (
     "(this becomes the skill's discovery description that an agent reads to decide whether "
     "to activate it — make it self-contained, max 1024 characters)\n"
     '- "procedure": how to execute (natural language)\n\n'
-    'Return JSON array: [{"name": "...", "skill_type": "...", "trigger_desc": "...", "procedure": "..."}]'
+    'Return JSON array: [{"name": "...", "skill_type": "...", "trigger_desc": "...", '
+    '"procedure": "...", "confidence": 0.0-1.0, "facets": {}}]'
 )
 
 
@@ -83,8 +85,11 @@ class UnionFind:
 async def run_playbook_check():
     """Check for playbook extraction opportunities across all entity types."""
     settings = get_memory_settings()
+    policy = resolve_generation_policy("playbook_extraction", settings=settings)["values"]
+    if not policy["enabled"]:
+        return 0
     threshold = settings.get("dedup_similarity_threshold", 0.85)
-    confidence_min = settings.get("extraction_confidence_threshold", 0.6)
+    confidence_min = policy["min_confidence"]
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -202,7 +207,9 @@ async def _process_cluster(
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, name, content, summary, signals, created_at, embedding, primary_entity_id
+            SELECT id, name, content, summary, signals, created_at, embedding,
+                   primary_entity_id, embedding_model, embedding_version,
+                   embedding_dimensions, embedded_at
             FROM intelligence WHERE id = ANY(%s)
         """, (intel_ids,))
         intel_records = [dict(r) for r in cursor.fetchall()]
@@ -224,7 +231,9 @@ async def _process_cluster(
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, content, interaction_type, primary_entity_id, timestamp
+            SELECT id, content, interaction_type, primary_entity_id, timestamp,
+                   embedding, embedding_model, embedding_version,
+                   embedding_dimensions, embedded_at
             FROM interactions
             WHERE interaction_type IN ('internal_ai_thought', 'internal_ai_tool_call')
               AND primary_entity_type = %s
@@ -251,23 +260,57 @@ async def _process_cluster(
             for r in ai_interactions
         )
 
-    # Compute centroid embedding for dedup check
+    # Compute centroid embedding for deterministic serialization and routing.
     embeddings = [r["embedding"] for r in intel_records if r.get("embedding")]
     if not embeddings:
         return
     centroid = [sum(vals) / len(vals) for vals in zip(*embeddings)]
 
-    # Dedup check
-    existing_id = await find_similar_existing(centroid, dedup_threshold, category="playbook")
-    if existing_id:
-        increment_merge(existing_id)
-        logger.info(f"Playbook merged into existing {existing_id} (merge_count incremented)")
-        # Still mark AI interactions as processed
-        _mark_processed(processed_ids)
-        return
+    settings = get_memory_settings() or {}
+    policy = resolve_generation_policy(
+        "playbook_extraction", settings=settings, entity_config=config,
+    )["values"]
+    sources = [{
+        "source_type": "intelligence", "source_id": str(r["id"]),
+        "entity_id": r.get("primary_entity_id"), "name": r.get("name") or "",
+        "summary": r.get("summary") or "", "content": r.get("content") or "",
+        "embedding": r.get("embedding"), "embedding_model": r.get("embedding_model"),
+        "embedding_version": r.get("embedding_version"),
+        "embedding_dimensions": r.get("embedding_dimensions"), "embedded_at": r.get("embedded_at"),
+    } for r in intel_records] + [{
+        "source_type": "interaction", "source_id": str(r["id"]),
+        "entity_id": r.get("primary_entity_id"), "name": r.get("interaction_type") or "",
+        "summary": "", "content": r.get("content") or "",
+        "embedding": r.get("embedding"), "embedding_model": r.get("embedding_model"),
+        "embedding_version": r.get("embedding_version"),
+        "embedding_dimensions": r.get("embedding_dimensions"), "embedded_at": r.get("embedded_at"),
+    } for r in ai_interactions]
+    if settings.get("knowledge_evidence_routing_enabled", True):
+        try:
+            from memory_evidence_service import analyze_evidence, apply_high_similarity_link
+            route = analyze_evidence(
+                pathway="playbook_extraction", sources=sources, settings=settings,
+                entity_type=entity_type,
+            )
+            if apply_high_similarity_link(route, sources, settings):
+                _mark_processed(processed_ids)
+                return
+            if (route.get("route") == "revision_assessment" and
+                    settings.get("knowledge_evidence_routing_mode") == "enforced"):
+                from memory_evidence_revision_service import assess_and_apply
+                revision = await assess_and_apply(route=route, sources=sources, settings=settings)
+                if revision.get("action") in {"no_change", "revised"}:
+                    _mark_processed(processed_ids)
+                    return
+                if revision.get("action") == "manual_review":
+                    return
+        except Exception as exc:
+            logger.exception("Playbook evidence routing failed: %s", exc)
 
     # Generate playbook via LLM
-    playbook_data = await _generate_playbook(entity_type, intel_context, ai_context, len(entity_ids))
+    playbook_data = await _generate_playbook(
+        entity_type, intel_context, ai_context, len(entity_ids), policy,
+    )
     if not playbook_data:
         _mark_processed(processed_ids)
         return
@@ -278,19 +321,7 @@ async def _process_cluster(
         _mark_processed(processed_ids)
         return
 
-    # Determine status
-    auto_activate = config.get("playbook_auto_activate", (get_memory_settings() or {}).get("knowledge_auto_activate", True))
-    auto_score = config.get("auto_activate_score_threshold")
-    quality = compute_quality_score(
-        evidence_breadth_norm=min(len(entity_ids) / 10.0, 1.0),
-        outcome_signal=0.0,
-        confidence=confidence,
-        merge_count=0,
-        days_since_created=0.0,
-    )
-    status = "draft"
-    if auto_activate and (auto_score is None or quality >= auto_score):
-        status = "active"
+    status = approval_status(policy["approval_policy"])
 
     # Derive the playbook's domain signals from the union of its source
     # intelligence signals, so skills decomposed from it can inherit them.
@@ -310,9 +341,9 @@ async def _process_cluster(
         "steps": playbook_data.get("steps", []),
         "skill_ids": [],
     }
-    # WS-4: extract governed facets (best-effort)
-    from memory_facets import enrich_metadata_with_facets
-    metadata = await enrich_metadata_with_facets(metadata, pb_name, pb_desc, pb_desc)
+    facets, facet_state = validate_generated_facets(playbook_data.get("facets") or {})
+    metadata["facets"] = facets
+    metadata["facet_extraction"] = facet_state
     insert_knowledge(
         knowledge_id=playbook_id,
         intelligence_ids=intel_ids,
@@ -328,33 +359,34 @@ async def _process_cluster(
         source_ai_interaction_ids=processed_ids,
         extraction_confidence=confidence,
         evidence_breadth=len(entity_ids),
-        quality_score=quality,
         status=status,
+        source_links=sources,
     )
-    update_knowledge_quality(playbook_id, quality)
-    logger.info(f"Created playbook '{playbook_data.get('name')}' [{status}] (score={quality:.2f}, entities={len(entity_ids)})")
+    logger.info(f"Created playbook '{playbook_data.get('name')}' [{status}] (entities={len(entity_ids)})")
 
     # Mark AI interactions as processed
     _mark_processed(processed_ids)
 
     # Decompose skills from playbook
     if playbook_data.get("steps"):
-        await _generate_skills_from_playbook(playbook_id, playbook_data, entity_type, config)
+        await _generate_skills_from_playbook(playbook_id, playbook_data, entity_type, config, sources)
 
 
-async def _generate_playbook(entity_type: str, intel_context: str, ai_context: str, entity_count: int) -> Optional[dict]:
+async def _generate_playbook(entity_type: str, intel_context: str, ai_context: str,
+                             entity_count: int, policy: dict) -> Optional[dict]:
     """LLM call to extract a playbook from clustered intelligence + AI telemetry.
     Prompt is admin-editable via the playbook_generation node (seeded with this default)."""
     from services.config_helpers import get_task_system_prompt
     system_prompt = (get_task_system_prompt("playbook_generation", fallback=_PLAYBOOK_GEN_PROMPT) or _PLAYBOOK_GEN_PROMPT)
     system_prompt = system_prompt.replace("{entity_count}", str(entity_count)).replace("{entity_type}", entity_type)
+    system_prompt += "\n\n" + facet_prompt_instructions()
     user_msg = f"--- Intelligence Cluster ---\n{intel_context}\n{ai_context}"
 
     try:
         result_text = await call_llm(
             user_msg[:6000],
             system_prompt=system_prompt,
-            max_tokens=1200,
+            max_tokens=int(policy["max_tokens"]),
             task_type="playbook_generation",
         )
         return parse_llm_json(result_text, context="playbook_generation")
@@ -368,14 +400,35 @@ async def _generate_skills_from_playbook(
     playbook_data: dict,
     entity_type: str,
     config: dict,
+    sources: list,
 ):
     """Decompose playbook steps into reusable skills."""
     steps = playbook_data.get("steps", [])
     if not steps:
         return
 
+    skill_settings = get_memory_settings() or {}
+    if skill_settings.get("knowledge_evidence_routing_enabled", True):
+        try:
+            from memory_evidence_service import analyze_evidence, apply_high_similarity_link
+            route = analyze_evidence(
+                pathway="skill_extraction", sources=sources, settings=skill_settings,
+                entity_type=entity_type,
+            )
+            if apply_high_similarity_link(route, sources, skill_settings):
+                return
+            if (route.get("route") == "revision_assessment" and
+                    skill_settings.get("knowledge_evidence_routing_mode") == "enforced"):
+                from memory_evidence_revision_service import assess_and_apply
+                revision = await assess_and_apply(route=route, sources=sources, settings=skill_settings)
+                if revision.get("action") in {"no_change", "revised", "manual_review"}:
+                    return
+        except Exception as exc:
+            logger.exception("Skill evidence routing failed: %s", exc)
+
     from services.config_helpers import get_task_system_prompt
     system_prompt = get_task_system_prompt("skill_generation", fallback=_SKILL_GEN_PROMPT) or _SKILL_GEN_PROMPT
+    system_prompt += "\n\n" + facet_prompt_instructions()
     steps_text = "\n".join(f"Step {s.get('order')}: {s.get('action')}" for s in steps)
     user_msg = f"Playbook: {playbook_data.get('name')}\n\nSteps:\n{steps_text}"
 
@@ -383,7 +436,9 @@ async def _generate_skills_from_playbook(
         result_text = await call_llm(
             user_msg,
             system_prompt=system_prompt,
-            max_tokens=800,
+            max_tokens=int(resolve_generation_policy(
+                "skill_extraction", settings=get_memory_settings() or {}, entity_config=config,
+            )["values"]["max_tokens"]),
             task_type="skill_generation",
         )
         skills = parse_llm_json(result_text, context="skill_generation")
@@ -393,9 +448,13 @@ async def _generate_skills_from_playbook(
         logger.error(f"Skill decomposition LLM call failed: {e}")
         return
 
-    auto_activate = config.get("skill_auto_activate", (get_memory_settings() or {}).get("knowledge_auto_activate", True))
-    from memory_facets import enrich_metadata_with_facets
+    skill_policy = resolve_generation_policy(
+        "skill_extraction", settings=get_memory_settings() or {}, entity_config=config,
+    )["values"]
     for skill_data in skills[:5]:
+        confidence = float(skill_data.get("confidence") or 0.0)
+        if confidence < float(skill_policy["min_confidence"]):
+            continue
         skill_id = str(uuid.uuid4())
         sk_name = skill_data.get("name", "Unnamed Skill")
         sk_proc = skill_data.get("procedure", "")
@@ -407,8 +466,9 @@ async def _generate_skills_from_playbook(
             "entity_types": [entity_type],
             "playbook_ids": [playbook_id],
         }
-        # WS-4: extract governed facets (best-effort)
-        metadata = await enrich_metadata_with_facets(metadata, sk_name, sk_proc, sk_trigger)
+        facets, facet_state = validate_generated_facets(skill_data.get("facets") or {})
+        metadata["facets"] = facets
+        metadata["facet_extraction"] = facet_state
         # Canonical category-aware embedding (covers skill operational fields).
         embedding = None
         try:
@@ -421,22 +481,7 @@ async def _generate_skills_from_playbook(
         except Exception:
             pass
 
-        # Dedup check for skill (unified dedup_similarity_threshold — one dial)
-        existing = None
-        if embedding:
-            _skill_thr = (get_memory_settings() or {}).get("dedup_similarity_threshold", 0.85)
-            existing = await find_similar_existing(embedding, _skill_thr, category="skill")
-        if existing:
-            await refine_or_increment_merge(
-                existing,
-                new_name=skill_data.get("name", ""),
-                new_content=skill_data.get("procedure", ""),
-                new_summary=skill_data.get("trigger_desc", ""),
-            )
-            continue
-
-        status = "active" if auto_activate else "draft"
-        quality = compute_quality_score(0.5, 0.0, 0.5, 0, 0.0)
+        status = approval_status(skill_policy["approval_policy"])
         insert_knowledge(
             knowledge_id=skill_id,
             intelligence_ids=[],
@@ -448,10 +493,10 @@ async def _generate_skills_from_playbook(
             embedding=embedding,
             tags=playbook_data.get("tags", []),
             source_pathway="decomposed",
-            extraction_confidence=0.5,
-            quality_score=quality,
+            extraction_confidence=confidence,
             status=status,
             metadata=metadata,
+            source_links=sources,
         )
         logger.info(f"Created skill '{skill_data.get('name')}' [{status}] from playbook {playbook_id}")
 

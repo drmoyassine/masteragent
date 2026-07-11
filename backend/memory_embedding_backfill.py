@@ -81,7 +81,7 @@ async def run_embedding_backfill(
     max_records: Optional[int] = None,
     configured_version: Optional[int] = None,
     settings: Optional[Dict[str, Any]] = None,
-) -> Dict[str, int]:
+) -> Dict[str, Any]:
     """Re-embed stale records in batches. Idempotent and resumable.
 
     Processes up to ``max_records`` records (default unbounded → drains all
@@ -135,15 +135,67 @@ async def run_embedding_backfill(
         if len(rows) < this_batch:
             break
 
+    tier_counts = await _backfill_source_tiers(batch_size=batch_size, max_records=max_records)
     counts = {
         "processed": processed,
         "succeeded": succeeded,
         "failed": failed,
         "configured_version": cv,
         "batches": batches,
+        "tiers": tier_counts,
     }
     logger.info("Embedding backfill complete: %s", counts)
     return counts
+
+
+async def _backfill_source_tiers(*, batch_size: int, max_records: Optional[int]) -> Dict[str, Dict[str, int]]:
+    """Persist missing/stale embeddings for tiers 0–2 using their canonical text."""
+    from memory_services import generate_embedding
+    model = current_embedding_model()
+    specs = {
+        "interactions": ("content", "timestamp"),
+        "memories": ("content_summary", "created_at"),
+        "intelligence": ("COALESCE(name,'') || '. ' || COALESCE(summary,'') || ' ' || COALESCE(content,'')", "created_at"),
+    }
+    results: Dict[str, Dict[str, int]] = {}
+    for table, (text_expr, order_col) in specs.items():
+        processed = succeeded = failed = 0
+        attempted: set[str] = set()
+        while max_records is None or processed < max_records:
+            limit = min(batch_size, max_records - processed) if max_records is not None else batch_size
+            with get_memory_db_context() as conn:
+                cur = conn.cursor()
+                cur.execute(f"""
+                    SELECT id, {text_expr} AS embedding_text FROM {table}
+                    WHERE NOT (id = ANY(%s)) AND ({text_expr}) IS NOT NULL
+                      AND (embedding IS NULL OR embedding_model IS DISTINCT FROM %s
+                           OR embedding_dimensions IS DISTINCT FROM vector_dims(embedding))
+                    ORDER BY {order_col} ASC, id ASC LIMIT %s
+                """, (list(attempted), model, limit))
+                rows = [dict(r) for r in cur.fetchall()]
+            if not rows:
+                break
+            for row in rows:
+                attempted.add(row["id"]); processed += 1
+                try:
+                    vector = await generate_embedding(str(row.get("embedding_text") or ""))
+                    if not vector:
+                        failed += 1; continue
+                    with get_memory_db_context() as conn:
+                        cur = conn.cursor()
+                        cur.execute(f"""
+                            UPDATE {table} SET embedding=%s::vector,embedding_model=%s,
+                                embedding_version=1,embedding_dimensions=%s,embedded_at=NOW()
+                            WHERE id=%s
+                        """, (vector, model, len(vector), row["id"]))
+                    succeeded += 1
+                except Exception as exc:
+                    failed += 1
+                    logger.warning("%s embedding backfill failed for %s: %s", table, row["id"], exc)
+            if len(rows) < limit:
+                break
+        results[table] = {"processed": processed, "succeeded": succeeded, "failed": failed}
+    return results
 
 
 def _apply_embedding_update(
@@ -166,6 +218,10 @@ def _apply_embedding_update(
             """
             UPDATE knowledge
             SET embedding = %s,
+                embedding_model = %s,
+                embedding_version = %s,
+                embedding_dimensions = %s,
+                embedded_at = NOW(),
                 metadata = jsonb_set(
                     COALESCE(metadata, '{}'::jsonb),
                     '{embedding}',
@@ -173,7 +229,6 @@ def _apply_embedding_update(
                 ),
                 updated_at = NOW()
             WHERE id = %s
-              AND status = 'active'
               AND (
                     embedding IS NULL
                  OR COALESCE(metadata->'embedding'->>'version', '1') <> %s
@@ -181,7 +236,8 @@ def _apply_embedding_update(
                  OR metadata->'embedding'->>'dimensions' IS DISTINCT FROM vector_dims(embedding)::text
               )
             """,
-            (vector, json.dumps(metadata.get("embedding") or {}), knowledge_id,
+            (vector, configured_model, version, len(vector),
+             json.dumps(metadata.get("embedding") or {}), knowledge_id,
              str(version), configured_model or ""),
         )
         return cursor.rowcount == 1
@@ -210,8 +266,7 @@ def preview_backfill(configured_version: Optional[int] = None) -> Dict[str, Any]
                  OR COALESCE(metadata->'embedding'->>'model', '') <> %s
                  OR metadata->'embedding'->>'dimensions' IS DISTINCT FROM vector_dims(embedding)::text) AS stale
             FROM knowledge
-            WHERE status = 'active'
-              AND category IN ('best_practices','lessons_learned','trade_knowledge','skill','playbook')
+            WHERE category IN ('best_practices','lessons_learned','trade_knowledge','skill','playbook')
             """,
             (str(cv), configured_model or "", str(cv), configured_model or ""),
         )
@@ -219,10 +274,31 @@ def preview_backfill(configured_version: Optional[int] = None) -> Dict[str, Any]
     total = int(row.get("total") or 0)
     current = int(row.get("current") or 0)
     stale = int(row.get("stale") or 0)
+    tiers = {"knowledge": {"total": total, "compatible": current, "stale": stale}}
+    for table in ("interactions", "memories", "intelligence"):
+        with get_memory_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"""
+                SELECT COUNT(*) AS total,
+                       COUNT(*) FILTER (WHERE embedding IS NOT NULL AND embedding_model=%s
+                         AND embedding_dimensions=vector_dims(embedding)) AS compatible
+                FROM {table}
+            """, (configured_model,))
+            tier = cursor.fetchone() or {}
+        tier_total = int(tier.get("total") or 0)
+        tier_current = int(tier.get("compatible") or 0)
+        tiers[table] = {
+            "total": tier_total, "compatible": tier_current,
+            "stale": tier_total - tier_current,
+            "coverage": round(tier_current / tier_total, 4) if tier_total else 0.0,
+        }
+    all_total = sum(item["total"] for item in tiers.values())
+    all_current = sum(item["compatible"] for item in tiers.values())
     return {
-        "total": total,
+        "total": all_total,
         "current_version": cv,
-        "compatible": current,
-        "stale": stale,
-        "coverage": round(current / total, 4) if total else 0.0,
+        "compatible": all_current,
+        "stale": all_total - all_current,
+        "coverage": round(all_current / all_total, 4) if all_total else 0.0,
+        "tiers": tiers,
     }

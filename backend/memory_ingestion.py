@@ -134,12 +134,17 @@ async def process_interaction(interaction_id: str):
         cursor = conn.cursor()
 
         if embedding:
+            from memory_embedding import current_embedding_model
             cursor.execute("""
                 UPDATE interactions
-                SET content = %s, attachment_refs = %s, embedding = %s, processing_errors = %s, is_enriched = TRUE
+                SET content = %s, attachment_refs = %s, embedding = %s,
+                    embedding_model = %s, embedding_version = 1,
+                    embedding_dimensions = %s, embedded_at = NOW(),
+                    processing_errors = %s, is_enriched = TRUE
                 WHERE id = %s
             """, (
                 content, json.dumps(attachment_refs, ensure_ascii=False), embedding,
+                current_embedding_model(), len(embedding),
                 json.dumps(processing_errors, ensure_ascii=False), interaction_id
             ))
         else:

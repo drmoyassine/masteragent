@@ -1,7 +1,7 @@
 # Knowledge Hygiene & Consolidation — Delivery Report
 
 **Feature:** Cluster-based knowledge hygiene & consolidation system (replaces legacy pairwise dedup)
-**Plan reference:** `docs/pairwise-to-clustering-knowledge-hygiene-plan.md`
+**Plan reference:** `pairwise-to-clustering-knowledge-hygiene-plan.md`
 **Delivery:** PR #48 — commit `8ce57e0`, merged to `main` (`98eff5e`) on 2026-07-11
 **Status:** ✅ Implemented & deployable · ❌ Not yet deployed to VPS (no deployment access this session)
 

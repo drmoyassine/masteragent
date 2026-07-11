@@ -105,6 +105,39 @@ def get_profile_facet_map() -> dict:
         return {}
 
 
+def facet_prompt_instructions() -> str:
+    """Compact governed schema instructions for primary generation prompts."""
+    schema = get_facets_schema()
+    if not schema:
+        return 'Return "facets": {}.'
+    keys = "\n".join(
+        f"- {item.get('key')}: {item.get('description', '')}"
+        for item in schema if item.get("key")
+    )
+    return (
+        "Return a `facets` object using ONLY the governed keys below. Include a scalar value "
+        "only when explicitly supported by the source; never infer or guess.\n" + keys
+    )
+
+
+def validate_generated_facets(facets: object, explicit: Optional[dict] = None) -> tuple[dict, dict]:
+    """Validate generated facets and preserve authoritative explicit values."""
+    schema = get_facets_schema()
+    allowed = {item.get("key"): item for item in schema if item.get("key")}
+    output = dict(explicit or {})
+    rejected = []
+    if isinstance(facets, dict):
+        for key, value in facets.items():
+            if key not in allowed or key in output or value in (None, "", [], {}):
+                if key not in allowed: rejected.append(key)
+                continue
+            if isinstance(value, (dict, list)):
+                rejected.append(key)
+                continue
+            output[key] = str(value).strip()
+    return output, {"status": "explicit" if explicit else "succeeded", "rejected_keys": rejected}
+
+
 # ── Facet extraction (creation-side, WS-4) ───────────────────────────────────
 
 async def extract_facets(name: str, content: str, summary: str) -> dict:
@@ -206,7 +239,10 @@ async def enrich_metadata_with_facets(
     result to insert_knowledge. Keeps facets out of the rendered SKILL.md body
     (the renderer only reads operational keys)."""
     md = dict(metadata or {})
-    md["facets"] = await extract_facets(name, content, summary)
+    explicit = md.get("facets") if isinstance(md.get("facets"), dict) else {}
+    extracted = await extract_facets(name, content, summary)
+    validated, _ = validate_generated_facets(extracted, explicit=explicit)
+    md["facets"] = validated
     return md
 
 

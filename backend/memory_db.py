@@ -669,6 +669,22 @@ def _run_migrations(cursor):
         ("knowledge_hygiene_default_canonical_strategy", "TEXT DEFAULT 'update_existing'"),
         ("knowledge_hygiene_creation_time_enabled", "BOOLEAN DEFAULT FALSE"),
         ("knowledge_hygiene_category_policies", "JSONB DEFAULT '{\"best_practices\":\"manual_only\",\"lessons_learned\":\"manual_only\",\"trade_knowledge\":\"manual_only\",\"skill\":\"manual_only\",\"playbook\":\"manual_only\"}'::jsonb"),
+        # Unified Knowledge generation policy (legacy pathway fields remain aliases).
+        ("knowledge_generation_enabled", "BOOLEAN DEFAULT TRUE"),
+        ("knowledge_generation_max_tokens", "INT DEFAULT 1200"),
+        ("knowledge_generation_min_confidence", "FLOAT DEFAULT 0.60"),
+        ("knowledge_generation_evidence_threshold", "INT DEFAULT 5"),
+        ("knowledge_generation_approval_policy", "TEXT DEFAULT 'approve_immediately'"),
+        ("knowledge_generation_pathway_overrides", "JSONB DEFAULT '{}'::jsonb"),
+        # Pre-generation evidence routing starts analysis-only for safe calibration.
+        ("knowledge_evidence_routing_enabled", "BOOLEAN DEFAULT TRUE"),
+        ("knowledge_evidence_routing_mode", "TEXT DEFAULT 'analysis_only'"),
+        ("knowledge_evidence_low_threshold", "FLOAT DEFAULT 0.78"),
+        ("knowledge_evidence_high_threshold", "FLOAT DEFAULT 0.95"),
+        ("knowledge_evidence_high_coverage", "FLOAT DEFAULT 0.90"),
+        ("knowledge_quality_version", "INT DEFAULT 2"),
+        ("knowledge_facet_schema_version", "INT DEFAULT 1"),
+        ("knowledge_policy_migrated", "BOOLEAN DEFAULT FALSE"),
     ]:
         cursor.execute(f"ALTER TABLE memory_settings ADD COLUMN IF NOT EXISTS {col} {col_def}")
 
@@ -682,6 +698,7 @@ def _run_migrations(cursor):
         ("intelligence_signals_prompt", "JSONB DEFAULT NULL"),
         ("knowledge_signals_prompt", "JSONB DEFAULT NULL"),
         ("discovered_schema", "JSONB DEFAULT NULL"),
+        ("knowledge_generation_overrides", "JSONB DEFAULT '{}'::jsonb"),
     ]:
         cursor.execute(f"ALTER TABLE memory_entity_type_config ADD COLUMN IF NOT EXISTS {col} {col_def}")
 
@@ -882,6 +899,17 @@ def _run_migrations(cursor):
         ("merged_from", "TEXT[] NOT NULL DEFAULT '{}'"),
         ("consolidation_event_id", "TEXT"),
         ("consolidation_protected", "BOOLEAN NOT NULL DEFAULT FALSE"),
+        # Approval, explainable quality, facets, and initial hygiene lifecycle.
+        ("approved_at", "TIMESTAMPTZ"),
+        ("approved_by_type", "TEXT"),
+        ("approved_by_id", "TEXT"),
+        ("approval_origin", "TEXT"),
+        ("quality_version", "INT"),
+        ("quality_components", "JSONB DEFAULT '{}'"),
+        ("facet_schema_version", "INT"),
+        ("facet_status", "TEXT"),
+        ("facet_provenance", "JSONB DEFAULT '{}'"),
+        ("generation_state", "TEXT DEFAULT 'ready'"),
     ]
     for col, col_def in knowledge_cols:
         try:
@@ -909,6 +937,20 @@ def _run_migrations(cursor):
         cursor.execute("UPDATE knowledge SET status = 'active' WHERE status = 'confirmed' AND category IS NOT NULL")
     except Exception as e:
         logger.error(f"Failed to backfill knowledge category/status: {e}")
+
+    # Explicit embedding provenance across all four tiers. Flexible vector
+    # dimensions remain supported; comparisons validate these columns first.
+    for table in ("interactions", "memories", "intelligence", "knowledge"):
+        for col, col_def in [
+            ("embedding_model", "TEXT"),
+            ("embedding_version", "INT"),
+            ("embedding_dimensions", "INT"),
+            ("embedded_at", "TIMESTAMPTZ"),
+        ]:
+            try:
+                cursor.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {col_def}")
+            except Exception as e:
+                logger.error("Failed to add %s.%s: %s", table, col, e)
 
     # Knowledge: migrate legacy scalar `knowledge_type` → `signals` TEXT[] array.
     # Knowledge records carry the domain signals defined per entity type
@@ -1129,6 +1171,112 @@ def _create_consolidation_schema(cursor):
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_consolidation_event_sources_kid ON knowledge_consolidation_event_sources (knowledge_id)")
 
 
+def _create_evidence_schema(cursor):
+    """Pre-generation evidence routing, revision audit, and normalized lineage."""
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS knowledge_evidence_bundles (
+            id                      TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            pathway                 TEXT NOT NULL,
+            source_types            TEXT[] NOT NULL DEFAULT '{}',
+            source_digest           TEXT NOT NULL,
+            entity_type             TEXT,
+            entity_ids              TEXT[] DEFAULT '{}',
+            window_started_at       TIMESTAMPTZ,
+            window_ended_at         TIMESTAMPTZ,
+            aggregate_embedding     vector,
+            embedding_model         TEXT,
+            embedding_version       INT,
+            embedding_dimensions    INT,
+            context_digest          TEXT,
+            outcome_signature       JSONB DEFAULT '{}',
+            status                  TEXT NOT NULL DEFAULT 'pending',
+            route                   TEXT,
+            route_metrics           JSONB DEFAULT '{}',
+            matched_bundle_ids      TEXT[] DEFAULT '{}',
+            matched_knowledge_ids   TEXT[] DEFAULT '{}',
+            canonical_knowledge_id  TEXT,
+            generation_run_id       TEXT,
+            error                   JSONB DEFAULT '{}',
+            created_at              TIMESTAMPTZ DEFAULT NOW(),
+            updated_at              TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE(pathway, source_digest)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_evidence_bundles_route ON knowledge_evidence_bundles(pathway, status, route)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_evidence_bundles_canonical ON knowledge_evidence_bundles(canonical_knowledge_id)")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS knowledge_evidence_bundle_members (
+            bundle_id              TEXT REFERENCES knowledge_evidence_bundles(id) ON DELETE CASCADE,
+            source_type            TEXT NOT NULL,
+            source_id              TEXT NOT NULL,
+            source_role            TEXT NOT NULL DEFAULT 'primary',
+            ordinal                INT,
+            entity_type            TEXT,
+            entity_id              TEXT,
+            source_timestamp       TIMESTAMPTZ,
+            embedding_model        TEXT,
+            embedding_version      INT,
+            embedding_dimensions   INT,
+            created_at              TIMESTAMPTZ DEFAULT NOW(),
+            PRIMARY KEY(bundle_id, source_type, source_id, source_role)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_evidence_members_source ON knowledge_evidence_bundle_members(source_type, source_id)")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS knowledge_source_links (
+            knowledge_id        TEXT NOT NULL,
+            source_type         TEXT NOT NULL,
+            source_id           TEXT NOT NULL,
+            bundle_id           TEXT,
+            source_role         TEXT NOT NULL DEFAULT 'primary',
+            linked_by_event_id  TEXT,
+            created_at          TIMESTAMPTZ DEFAULT NOW(),
+            PRIMARY KEY(knowledge_id, source_type, source_id, source_role)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_source_links_source ON knowledge_source_links(source_type, source_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_source_links_bundle ON knowledge_source_links(bundle_id)")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS knowledge_evidence_events (
+            id                  TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            bundle_id           TEXT,
+            knowledge_id        TEXT,
+            event_type          TEXT NOT NULL,
+            actor_type          TEXT,
+            actor_id            TEXT,
+            origin              TEXT,
+            similarity_settings JSONB DEFAULT '{}',
+            route_metrics       JSONB DEFAULT '{}',
+            source_ids          TEXT[] DEFAULT '{}',
+            previous_snapshot   JSONB DEFAULT '{}',
+            approved_output     JSONB DEFAULT '{}',
+            model_provider      TEXT,
+            model_name          TEXT,
+            prompt_version      TEXT,
+            created_at          TIMESTAMPTZ DEFAULT NOW()
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_evidence_events_bundle ON knowledge_evidence_events(bundle_id, created_at DESC)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_evidence_events_knowledge ON knowledge_evidence_events(knowledge_id, created_at DESC)")
+
+    # Backward-compatible normalized links for existing provenance arrays.
+    cursor.execute("""
+        INSERT INTO knowledge_source_links(knowledge_id, source_type, source_id, source_role)
+        SELECT k.id, 'intelligence', sid, 'primary'
+        FROM knowledge k, unnest(COALESCE(k.source_intelligence_ids, '{}')) sid
+        ON CONFLICT DO NOTHING
+    """)
+    cursor.execute("""
+        INSERT INTO knowledge_source_links(knowledge_id, source_type, source_id, source_role)
+        SELECT k.id, 'interaction', sid, 'context'
+        FROM knowledge k, unnest(COALESCE(k.source_ai_interaction_ids, '{}')) sid
+        ON CONFLICT DO NOTHING
+    """)
+
+
 def init_memory_db():
     """Initialize all memory system tables in PostgreSQL. Idempotent."""
     with get_memory_db_context() as conn:
@@ -1166,6 +1314,7 @@ def init_memory_db():
         _create_memory_tier_tables(cursor)
         _run_migrations(cursor)
         _create_consolidation_schema(cursor)
+        _create_evidence_schema(cursor)
 
         # Operational hardening migrations are additive and safe on existing
         # production tables.
@@ -1211,6 +1360,41 @@ def _seed_defaults():
             INSERT INTO memory_settings (id) VALUES (1)
             ON CONFLICT (id) DO NOTHING
         """)
+
+        # One-time compatibility migration into the unified Knowledge policy.
+        cursor.execute("SELECT * FROM memory_settings WHERE id = 1")
+        policy_row = cursor.fetchone()
+        if policy_row and not policy_row.get("knowledge_policy_migrated", False):
+            overrides = {}
+            global_tokens = int(policy_row.get("knowledge_max_tokens") or 1200)
+            global_conf = float(policy_row.get("extraction_confidence_threshold") or 0.60)
+            global_time = policy_row.get("knowledge_generation_time") or "03:00"
+            telemetry_override = {}
+            if int(policy_row.get("telemetry_reflection_max_tokens") or global_tokens) != global_tokens:
+                telemetry_override["max_tokens"] = int(policy_row["telemetry_reflection_max_tokens"])
+            if float(policy_row.get("telemetry_reflection_confidence_min") or global_conf) != global_conf:
+                telemetry_override["min_confidence"] = float(policy_row["telemetry_reflection_confidence_min"])
+            if (policy_row.get("telemetry_reflection_time") or global_time) != global_time:
+                telemetry_override["schedule_time"] = policy_row["telemetry_reflection_time"]
+            if telemetry_override:
+                overrides["telemetry_reflection"] = telemetry_override
+            playbook_time = policy_row.get("playbook_generation_time") or global_time
+            if playbook_time != global_time:
+                overrides["playbook_extraction"] = {"schedule_time": playbook_time}
+            cursor.execute("""
+                UPDATE memory_settings SET
+                    knowledge_generation_max_tokens = %s,
+                    knowledge_generation_min_confidence = %s,
+                    knowledge_generation_time = %s,
+                    knowledge_generation_evidence_threshold = COALESCE(knowledge_threshold, 5),
+                    knowledge_generation_approval_policy = CASE
+                        WHEN COALESCE(knowledge_auto_activate, TRUE) THEN 'approve_immediately'
+                        ELSE 'create_as_draft' END,
+                    knowledge_generation_pathway_overrides = %s::jsonb,
+                    knowledge_policy_migrated = TRUE
+                WHERE id = 1
+            """, (global_tokens, global_conf, global_time, json.dumps(overrides)))
+            logger.info("Migrated legacy Knowledge settings into unified generation policy")
 
         # ── One-time backfills (guarded by memory_settings flags; run once) ──
         # Backfill #2: activate existing draft knowledge. The new global
