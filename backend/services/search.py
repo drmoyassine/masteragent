@@ -286,10 +286,10 @@ async def search_knowledge_by_vector(
     try:
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
-            conditions, params = ["embedding IS NOT NULL", "visibility = 'shared'"], []
-            # Default to active-only so retired/draft records never reach agents.
-            if status:
-                conditions.append("status = %s"); params.append(status)
+            # These helpers back agent-facing semantic search. Knowledge that has
+            # been superseded by a consolidation must never leak through because a
+            # caller omitted (or deliberately relaxed) a status filter.
+            conditions, params = ["embedding IS NOT NULL", "visibility = 'shared'", "status = 'active'"], []
             if category:
                 conditions.append("category = %s"); params.append(category)
             if signal:
@@ -336,9 +336,9 @@ async def search_knowledge_by_fulltext(
     try:
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
-            conditions, params = ["visibility = 'shared'"], []
-            if status:
-                conditions.append("status = %s"); params.append(status)
+            # See vector search above: external/agent full-text search is always
+            # active-only. Admin history uses its own explicit queries instead.
+            conditions, params = ["visibility = 'shared'", "status = 'active'"], []
             if category:
                 conditions.append("category = %s"); params.append(category)
             if signal:
@@ -366,4 +366,3 @@ async def search_knowledge_by_fulltext(
     except Exception as e:
         logger.error(f"fulltext Knowledge search error: {e}")
         return []
-

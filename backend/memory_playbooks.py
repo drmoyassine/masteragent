@@ -409,10 +409,15 @@ async def _generate_skills_from_playbook(
         }
         # WS-4: extract governed facets (best-effort)
         metadata = await enrich_metadata_with_facets(metadata, sk_name, sk_proc, sk_trigger)
-        embedding_text = f"{sk_name}. {sk_trigger}"
+        # Canonical category-aware embedding (covers skill operational fields).
         embedding = None
         try:
-            embedding = await generate_embedding(embedding_text)
+            from memory_embedding import embed_knowledge_fields
+            embedding, _model = await embed_knowledge_fields(
+                name=sk_name, category="skill", content=sk_proc,
+                summary=sk_trigger, signals=playbook_data.get("signals", []),
+                tags=playbook_data.get("tags", []), metadata=metadata,
+            )
         except Exception:
             pass
 

@@ -58,6 +58,7 @@ import InteractionInspector from "@/components/memory/InteractionInspector";
 import MemoryInspector from "@/components/memory/MemoryInspector";
 import IntelligenceInspector from "@/components/memory/IntelligenceInspector";
 import KnowledgeInspector from "@/components/memory/KnowledgeInspector";
+import KnowledgeConsolidationDialog from "@/components/memory/KnowledgeConsolidationDialog";
 import { NewKnowledgeDialog, ImportSkillDialog } from "@/components/memory/KnowledgeDialogs";
 import FilterBar from "@/components/memory/FilterBar";
 import DataTablePagination from "@/components/memory/DataTablePagination";
@@ -127,6 +128,8 @@ export default function MemoryExplorerPage() {
   const [editingKnowledge, setEditingKnowledge] = useState(null);
   const [newKnowledge, setNewKnowledge] = useState({ name: "", category: "trade_knowledge", content: "", summary: "", tags: [], status: "draft" });
   const [showNewKnowledgeDialog, setShowNewKnowledgeDialog] = useState(false);
+  const [showConsolidationDialog, setShowConsolidationDialog] = useState(false);
+  const [consolidationIds, setConsolidationIds] = useState([]);
 
   // Inspector state
   const [editingInteraction, setEditingInteraction] = useState(null);
@@ -742,6 +745,11 @@ export default function MemoryExplorerPage() {
     }
   };
 
+  const handleConsolidateKnowledge = (ids) => {
+    setConsolidationIds(ids || selectedKnowledgeIds);
+    setShowConsolidationDialog(true);
+  };
+
   return (
     <div className="space-y-6" data-testid="memory-explorer-page">
       <div className="flex items-center justify-between">
@@ -866,6 +874,7 @@ export default function MemoryExplorerPage() {
             onApprove={handleApproveKnowledge}
             onDelete={handleDeleteKnowledge}
             onBulkDelete={handleBulkDeleteKnowledge}
+            onConsolidate={handleConsolidateKnowledge}
             knowledgeStatusFilter={knowledgeStatusFilter}
             setKnowledgeStatusFilter={changeStatusFilter}
             categoryFilter={categoryFilter}
@@ -939,6 +948,12 @@ export default function MemoryExplorerPage() {
             toast.error("Failed to record feedback");
           }
         }}
+      />
+      <KnowledgeConsolidationDialog
+        open={showConsolidationDialog}
+        onOpenChange={setShowConsolidationDialog}
+        selectedIds={consolidationIds}
+        onApplied={() => { clearKnowledgeSelection(); loadKnowledge(); }}
       />
     </div>
   );

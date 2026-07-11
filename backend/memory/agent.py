@@ -919,18 +919,19 @@ async def list_knowledge(
     category: Optional[str] = Query(None, description="skill | playbook | best_practices | lessons_learned | trade_knowledge"),
     facets: Optional[str] = Query(None, description='JSON object of governed facets, e.g. {"country":"Malaysia"}'),
     strict: bool = Query(False, description="True = hard-filter on facets; False (default) = ignore facets"),
-    status: str = Query("active"),
+    status: str = Query("active", description="Agent-facing knowledge is always active-only"),
     limit: int = Query(20, le=100),
     offset: int = Query(0),
     agent: dict = Depends(verify_agent_key)
 ):
     """List knowledge records. Knowledge is global (not entity-scoped), so
-    filtering is by category/signal/date and governed facets only."""
+    filtering is by category/signal/date and governed facets only. Retired and
+    draft records are administrator history, not agent-facing knowledge."""
+    if status != "active":
+        raise HTTPException(status_code=400, detail="Agent knowledge endpoints only expose active records")
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        conditions, params = ["visibility = 'shared'"], []
-        if status:
-            conditions.append("status = %s"); params.append(status)
+        conditions, params = ["visibility = 'shared'", "status = 'active'"], []
         if category:
             conditions.append("category = %s"); params.append(category)
         if signal:
@@ -1014,7 +1015,8 @@ async def get_knowledge(id: str, agent: dict = Depends(verify_agent_key)):
             SELECT id, source_intelligence_ids, signals, name, content, summary,
                    visibility, tags, category, metadata, quality_score, merge_count,
                    version, status, created_at, updated_at
-            FROM knowledge WHERE id = %s
+            FROM knowledge
+            WHERE id = %s AND status = 'active' AND (visibility = 'shared' OR visibility IS NULL)
         """, (id,))
         row = cursor.fetchone()
         if not row:

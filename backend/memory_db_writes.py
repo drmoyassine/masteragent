@@ -5,6 +5,7 @@ memory_tasks.py. Pgvector accepts NULL for the embedding column, so we
 always pass it as a single parameter.
 """
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -130,6 +131,18 @@ def insert_knowledge(
             tags=tags,
             version=version,
         )
+    # Stamp embedding provenance (model / dimensions / version / timestamp) so
+    # candidate discovery and the resumable backfill know how each record was
+    # embedded. Idempotent: a re-embed with the same vector re-stamps the same
+    # block. No-op when no embedding was produced.
+    if embedding:
+        try:
+            from memory_embedding import merge_embedding_metadata, current_embedding_model
+            metadata = merge_embedding_metadata(
+                metadata or {}, model=current_embedding_model(), vector=embedding
+            )
+        except Exception:
+            pass
     md = _json.dumps(metadata) if metadata else "{}"
     ai_ids = source_ai_interaction_ids or []
     with get_memory_db_context() as conn:
@@ -155,6 +168,46 @@ def insert_knowledge(
             extraction_confidence, evidence_breadth, outcome_signal,
             quality_score, status, version,
         ))
+
+    # Creation-time consolidation hook (opt-in, default off). Fire-and-forget:
+    # enqueues an async preview job so generation never waits on a consolidation
+    # LLM call. Only fires when knowledge_hygiene_creation_time_enabled=true.
+    _maybe_enqueue_creation_time_consolidation(knowledge_id, category, status)
+
+
+def _maybe_enqueue_creation_time_consolidation(knowledge_id: str, category: str, status: str) -> None:
+    """Enqueue a creation-time consolidation preview when the feature is enabled.
+
+    Non-blocking and best-effort: any failure to enqueue is logged and swallowed
+    so knowledge creation can never regress on a consolidation hiccup. The actual
+    candidate discovery + preview runs in the queue worker.
+    """
+    if status in ("draft", "retired") or not knowledge_id:
+        return
+    try:
+        from services.config_helpers import get_memory_settings
+        settings = get_memory_settings() or {}
+        if not settings.get("knowledge_hygiene_creation_time_enabled", False):
+            return
+        if not settings.get("knowledge_hygiene_enabled", True):
+            return
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            return
+        if loop is None or not loop.is_running():
+            return
+        from memory.queue import knowledge_queue
+        loop.create_task(knowledge_queue.add(
+            "creation_time_consolidation",
+            {"knowledge_id": knowledge_id, "category": category},
+            {"priority": 3},
+        ))
+    except Exception:
+        logging.getLogger(__name__).debug(
+            "creation-time consolidation enqueue skipped for %s", knowledge_id, exc_info=True
+        )
 
 
 def update_knowledge_quality(knowledge_id: str, quality_score: float) -> None:

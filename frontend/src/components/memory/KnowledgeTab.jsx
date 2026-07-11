@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Trash2, Check, Edit, Plus, Search, Download, Archive, ArchiveRestore, Pin } from "lucide-react";
+import { Trash2, Check, Edit, Plus, Search, Download, Archive, ArchiveRestore, Pin, GitMerge } from "lucide-react";
 import DataTablePagination from "./DataTablePagination";
 
 const SUBTABS = [
@@ -38,7 +38,7 @@ const CATEGORY_OPTIONS = [
 
 export default function KnowledgeTab({
   knowledge, selectedIds, toggleAll, toggleOne,
-  onEdit, onApprove, onDelete, onBulkDelete,
+  onEdit, onApprove, onDelete, onBulkDelete, onConsolidate,
   knowledgeStatusFilter, setKnowledgeStatusFilter,
   categoryFilter = "all", setCategoryFilter,
   tagSearch = "", setTagSearch,
@@ -47,6 +47,10 @@ export default function KnowledgeTab({
   page, pageSize, total, onPageChange, onPageSizeChange,
 }) {
   const showInstall = categoryFilter === "skill" || categoryFilter === "playbook";
+  const selectedRows = (knowledge || []).filter((k) => selectedIds.includes(k.id));
+  const selectedCategories = new Set(selectedRows.map((k) => k.category));
+  const sameCategory = selectedCategories.size === 1;
+  const canConsolidate = selectedIds.length >= 2 && sameCategory && !!onConsolidate;
   return (
     <Card>
       <CardHeader className="space-y-3">
@@ -59,6 +63,32 @@ export default function KnowledgeTab({
             {selectedIds.length > 0 && (
               <div className="flex gap-2 bg-accent px-4 py-1.5 rounded-md items-center border shadow-sm animate-in fade-in zoom-in-95 duration-200">
                 <span className="text-sm font-medium mr-2">{selectedIds.length} selected</span>
+                {onConsolidate && (
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={!canConsolidate}
+                            onClick={() => onConsolidate(selectedIds)}
+                          >
+                            <GitMerge className="w-4 h-4 mr-2" />
+                            Merge / Consolidate
+                          </Button>
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {selectedIds.length < 2
+                          ? "Select two or more records to consolidate."
+                          : !sameCategory
+                          ? "All selected records must share one category (cross-category merge is unsupported)."
+                          : "Generate a category-aware consolidation proposal."}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                )}
                 <Button variant="destructive" size="sm" onClick={onBulkDelete}>
                   <Trash2 className="w-4 h-4 mr-2" />
                   Delete

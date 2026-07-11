@@ -651,6 +651,24 @@ def _run_migrations(cursor):
         # One-time backfill guard flags (set TRUE after the matching backfill runs)
         ("knowledge_drafts_backfilled", "BOOLEAN DEFAULT FALSE"),
         ("knowledge_signals_lowercased", "BOOLEAN DEFAULT FALSE"),
+        # ── Knowledge hygiene & consolidation (candidate discovery + proposals) ──
+        # Embedding similarity only DISCOVERS + groups candidates; the merge
+        # decision always comes from the category-aware LLM proposal + review.
+        ("knowledge_hygiene_enabled", "BOOLEAN DEFAULT TRUE"),
+        ("knowledge_hygiene_enabled_categories", "JSONB DEFAULT '[\"best_practices\",\"lessons_learned\",\"trade_knowledge\",\"skill\",\"playbook\"]'::jsonb"),
+        ("knowledge_hygiene_similarity_threshold", "FLOAT DEFAULT 0.82"),
+        ("knowledge_hygiene_min_cluster_size", "INT DEFAULT 2"),
+        ("knowledge_hygiene_max_cluster_size", "INT DEFAULT 5"),
+        ("knowledge_hygiene_min_cluster_cohesion", "FLOAT DEFAULT 0.72"),
+        ("knowledge_hygiene_weak_link_threshold", "FLOAT DEFAULT 0.65"),
+        ("knowledge_hygiene_embedding_version", "INT DEFAULT 2"),
+        ("knowledge_hygiene_mode", "TEXT DEFAULT 'manual_only'"),
+        ("knowledge_hygiene_preview_ttl_minutes", "INT DEFAULT 60"),
+        ("knowledge_hygiene_min_auto_confidence", "FLOAT DEFAULT 0.90"),
+        ("knowledge_hygiene_contradiction_policy", "TEXT DEFAULT 'manual_review'"),
+        ("knowledge_hygiene_default_canonical_strategy", "TEXT DEFAULT 'update_existing'"),
+        ("knowledge_hygiene_creation_time_enabled", "BOOLEAN DEFAULT FALSE"),
+        ("knowledge_hygiene_category_policies", "JSONB DEFAULT '{\"best_practices\":\"manual_only\",\"lessons_learned\":\"manual_only\",\"trade_knowledge\":\"manual_only\",\"skill\":\"manual_only\",\"playbook\":\"manual_only\"}'::jsonb"),
     ]:
         cursor.execute(f"ALTER TABLE memory_settings ADD COLUMN IF NOT EXISTS {col} {col_def}")
 
@@ -856,6 +874,14 @@ def _run_migrations(cursor):
         ("version", "INT DEFAULT 1"),
         ("parent_id", "TEXT"),
         ("status", "TEXT DEFAULT 'confirmed'"),
+        # ── Knowledge hygiene / consolidation lineage ──────────────────────
+        # Retired sources keep all original fields and point to their canonical
+        # successor; recovery must survive later manual deletion, so these are
+        # plain TEXT (no FK to knowledge).
+        ("merged_into", "TEXT"),
+        ("merged_from", "TEXT[] NOT NULL DEFAULT '{}'"),
+        ("consolidation_event_id", "TEXT"),
+        ("consolidation_protected", "BOOLEAN NOT NULL DEFAULT FALSE"),
     ]
     for col, col_def in knowledge_cols:
         try:
@@ -870,6 +896,10 @@ def _run_migrations(cursor):
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_signals ON knowledge USING GIN (signals)")
         # GIN for JSONB containment filtering on metadata.facets (hard facet filter)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_metadata_gin ON knowledge USING GIN (metadata jsonb_path_ops)")
+        # Consolidation lineage lookups (admin "jump to successor" + audit trace)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_merged_into ON knowledge (merged_into)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_consolidation_event ON knowledge (consolidation_event_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_merged_from ON knowledge USING GIN (merged_from)")
     except Exception as e:
         logger.error(f"Failed to create knowledge indexes: {e}")
 
@@ -940,6 +970,165 @@ def _run_migrations(cursor):
             logger.error(f"Failed to add {col} to memory_entity_type_config: {e}")
 
 
+def _create_consolidation_schema(cursor):
+    """Knowledge hygiene run/cluster/preview/event + audit tables.
+
+    All additive (CREATE IF NOT EXISTS). The only foreign keys are the
+    cascade-cleanups on cluster→run, member→cluster, preview_source→preview,
+    and event_source→event. We deliberately do NOT FK audit/lineage tables to
+    ``knowledge`` (and not on ``knowledge.merged_into``) so recovery survives
+    later manual deletion of a knowledge row.
+    """
+    # 1. Hygiene run metadata
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS knowledge_hygiene_runs (
+            id                  TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            origin              TEXT,
+            mode                TEXT,
+            status              TEXT,
+            settings_snapshot   JSONB DEFAULT '{}',
+            embedding_version   INT,
+            categories          TEXT[] DEFAULT '{}',
+            records_scanned     INT DEFAULT 0,
+            clusters_found      INT DEFAULT 0,
+            proposals_created   INT DEFAULT 0,
+            applied_count       INT DEFAULT 0,
+            failed_count        INT DEFAULT 0,
+            error               TEXT,
+            started_at          TIMESTAMPTZ DEFAULT NOW(),
+            finished_at         TIMESTAMPTZ,
+            created_by          TEXT,
+            created_at          TIMESTAMPTZ DEFAULT NOW()
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_hygiene_runs_status ON knowledge_hygiene_runs (status, started_at DESC)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_hygiene_runs_origin ON knowledge_hygiene_runs (origin, created_at DESC)")
+
+    # 2. Candidate clusters discovered per run
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS knowledge_hygiene_clusters (
+            id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            run_id          TEXT REFERENCES knowledge_hygiene_runs(id) ON DELETE CASCADE,
+            category        TEXT,
+            member_ids      TEXT[] DEFAULT '{}',
+            centroid        vector,
+            min_similarity  FLOAT,
+            avg_similarity  FLOAT,
+            max_similarity  FLOAT,
+            cohesion        FLOAT,
+            weak_links      JSONB DEFAULT '[]',
+            split_reason    TEXT,
+            proposal_id     TEXT,
+            status          TEXT,
+            created_at      TIMESTAMPTZ DEFAULT NOW(),
+            updated_at      TIMESTAMPTZ DEFAULT NOW()
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_hygiene_clusters_run ON knowledge_hygiene_clusters (run_id, category)")
+
+    # 3. Per-member cluster detail
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS knowledge_hygiene_cluster_members (
+            cluster_id              TEXT REFERENCES knowledge_hygiene_clusters(id) ON DELETE CASCADE,
+            knowledge_id            TEXT,
+            run_id                  TEXT,
+            similarity_to_centroid  FLOAT,
+            min_member_similarity   FLOAT,
+            role                    TEXT,
+            decision_reason         TEXT,
+            PRIMARY KEY (cluster_id, knowledge_id)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_hygiene_members_kid ON knowledge_hygiene_cluster_members (knowledge_id)")
+
+    # 4. Consolidation previews (non-mutating LLM proposals)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS knowledge_consolidation_previews (
+            id                  TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            origin              TEXT,
+            actor_type          TEXT,
+            actor_id            TEXT,
+            category            TEXT,
+            state               TEXT DEFAULT 'created',
+            source_ids          TEXT[] DEFAULT '{}',
+            source_snapshot     JSONB DEFAULT '{}',
+            metrics             JSONB DEFAULT '{}',
+            options             JSONB DEFAULT '{}',
+            settings_snapshot   JSONB DEFAULT '{}',
+            model_provider      TEXT,
+            model_name          TEXT,
+            prompt_version      TEXT,
+            raw_response        JSONB,
+            proposal            JSONB,
+            validation_errors   JSONB DEFAULT '[]',
+            expires_at          TIMESTAMPTZ,
+            created_at          TIMESTAMPTZ DEFAULT NOW(),
+            updated_at          TIMESTAMPTZ DEFAULT NOW(),
+            applied_event_id    TEXT
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_consolidation_previews_state ON knowledge_consolidation_previews (state, expires_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_consolidation_previews_sources ON knowledge_consolidation_previews USING GIN (source_ids)")
+
+    # 5. Per-source version snapshot for stale-preview detection
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS knowledge_consolidation_preview_sources (
+            preview_id      TEXT REFERENCES knowledge_consolidation_previews(id) ON DELETE CASCADE,
+            knowledge_id    TEXT,
+            source_version  INT,
+            source_updated_at TIMESTAMPTZ,
+            source_status   TEXT,
+            source_snapshot JSONB DEFAULT '{}',
+            PRIMARY KEY (preview_id, knowledge_id)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_consolidation_preview_sources_kid ON knowledge_consolidation_preview_sources (knowledge_id)")
+
+    # 6. Applied consolidation events (audit + reversal)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS knowledge_consolidation_events (
+            id                      TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            preview_id              TEXT,
+            action                  TEXT,
+            origin                  TEXT,
+            actor_type              TEXT,
+            actor_id                TEXT,
+            category                TEXT,
+            canonical_id            TEXT,
+            canonical_strategy      TEXT,
+            model_provider          TEXT,
+            model_name              TEXT,
+            prompt_version          TEXT,
+            similarity_threshold    FLOAT,
+            settings_snapshot       JSONB DEFAULT '{}',
+            proposed_output         JSONB DEFAULT '{}',
+            approved_output         JSONB DEFAULT '{}',
+            user_edits              JSONB DEFAULT '{}',
+            warnings                JSONB DEFAULT '[]',
+            contradictions          JSONB DEFAULT '[]',
+            reversed_event_id       TEXT,
+            created_at              TIMESTAMPTZ DEFAULT NOW()
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_consolidation_events_canonical ON knowledge_consolidation_events (canonical_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_consolidation_events_preview ON knowledge_consolidation_events (preview_id)")
+
+    # 7. Per-source original snapshot + traceability for each event
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS knowledge_consolidation_event_sources (
+            event_id            TEXT REFERENCES knowledge_consolidation_events(id) ON DELETE CASCADE,
+            knowledge_id        TEXT,
+            role                TEXT,
+            original_snapshot   JSONB DEFAULT '{}',
+            source_traceability JSONB DEFAULT '{}',
+            merged_into         TEXT,
+            created_at          TIMESTAMPTZ DEFAULT NOW(),
+            PRIMARY KEY (event_id, knowledge_id)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_consolidation_event_sources_kid ON knowledge_consolidation_event_sources (knowledge_id)")
+
+
 def init_memory_db():
     """Initialize all memory system tables in PostgreSQL. Idempotent."""
     with get_memory_db_context() as conn:
@@ -976,6 +1165,7 @@ def init_memory_db():
         _create_interaction_tables(cursor)
         _create_memory_tier_tables(cursor)
         _run_migrations(cursor)
+        _create_consolidation_schema(cursor)
 
         # Operational hardening migrations are additive and safe on existing
         # production tables.
@@ -1194,6 +1384,37 @@ def _seed_defaults():
                     SET inline_system_prompt = %s
                     WHERE task_type = %s AND (inline_system_prompt IS NULL OR inline_system_prompt = '')
                 """, (pb_prompt, pb_task))
+
+        # Knowledge consolidation LLM config — same provider/model as
+        # knowledge_generation (credentials are NOT copied; resolved via the
+        # shared provider row). Powers the category-aware consolidation proposal.
+        try:
+            from memory_consolidation_prompts import CONSOLIDATION_BASE_PROMPT
+        except Exception:
+            CONSOLIDATION_BASE_PROMPT = ""
+        cursor.execute("""
+            INSERT INTO memory_llm_configs
+                (task_type, provider_id, model_name, is_active, pipeline_stage, execution_order, inline_system_prompt, inline_schema)
+            SELECT 'knowledge_consolidation',
+                   COALESCE(
+                       (SELECT provider_id FROM memory_llm_configs WHERE task_type = 'knowledge_generation' AND is_active = TRUE LIMIT 1),
+                       (SELECT id FROM memory_llm_providers WHERE provider = 'openai' LIMIT 1)
+                   ),
+                   COALESCE(
+                       (SELECT model_name FROM memory_llm_configs WHERE task_type = 'knowledge_generation' AND is_active = TRUE LIMIT 1),
+                       'gpt-4o-mini'
+                   ),
+                   TRUE, 'knowledge', 5, %s, ''
+            WHERE NOT EXISTS (
+                SELECT 1 FROM memory_llm_configs WHERE task_type = 'knowledge_consolidation'
+            )
+        """, (CONSOLIDATION_BASE_PROMPT,))
+        if CONSOLIDATION_BASE_PROMPT:
+            cursor.execute("""
+                UPDATE memory_llm_configs
+                SET inline_system_prompt = %s
+                WHERE task_type = 'knowledge_consolidation' AND (inline_system_prompt IS NULL OR inline_system_prompt = '')
+            """, (CONSOLIDATION_BASE_PROMPT,))
 
 
         # Default system prompts

@@ -152,21 +152,39 @@ async def refine_or_increment_merge(
 
         embedding = None
         try:
-            embedding = await generate_embedding(f"{row.get('name','')}. {refined_summary or refined_content}")
+            from memory_embedding import embed_knowledge_fields
+            embedding, _model = await embed_knowledge_fields(
+                name=row.get("name", ""), category=category,
+                content=refined_content, summary=refined_summary,
+                signals=row.get("signals") or [], tags=row.get("tags") or [],
+                metadata=metadata,
+            )
         except Exception:
             pass
 
         now = datetime.now(timezone.utc).isoformat()
+        # Stamp embedding provenance onto metadata so the refined record stays
+        # version-compatible for candidate discovery.
+        stamped_metadata = metadata
+        if embedding is not None:
+            try:
+                from memory_embedding import merge_embedding_metadata
+                stamped_metadata = merge_embedding_metadata(
+                    metadata or {}, model=_model, vector=embedding
+                )
+            except Exception:
+                stamped_metadata = metadata
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
             if embedding is not None:
                 cursor.execute("""
                     UPDATE knowledge
-                    SET content = %s, summary = %s, embedding = %s,
+                    SET content = %s, summary = %s, embedding = %s, metadata = %s,
                         version = %s, merge_count = merge_count + 1,
                         last_merged_at = %s, updated_at = %s
                     WHERE id = %s
-                """, (stored_content, refined_summary, embedding, new_version, now, now, existing_id))
+                """, (stored_content, refined_summary, embedding, _json.dumps(stamped_metadata),
+                      new_version, now, now, existing_id))
             else:
                 cursor.execute("""
                     UPDATE knowledge

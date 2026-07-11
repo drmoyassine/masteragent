@@ -245,6 +245,24 @@ class MemorySettingsUpdate(BaseModel):
     # Knowledge auto-activation (global dial) + creation-time dedup guard
     knowledge_auto_activate: Optional[bool] = True
     knowledge_creation_dedup_enabled: Optional[bool] = True
+    # ── Knowledge hygiene & consolidation ───────────────────────────────
+    # Embedding similarity discovers+groups candidates only; merge decisions
+    # come from category-aware LLM proposals + review policy.
+    knowledge_hygiene_enabled: Optional[bool] = True
+    knowledge_hygiene_enabled_categories: Optional[List[str]] = None
+    knowledge_hygiene_similarity_threshold: Optional[float] = 0.82
+    knowledge_hygiene_min_cluster_size: Optional[int] = 2
+    knowledge_hygiene_max_cluster_size: Optional[int] = 5
+    knowledge_hygiene_min_cluster_cohesion: Optional[float] = 0.72
+    knowledge_hygiene_weak_link_threshold: Optional[float] = 0.65
+    knowledge_hygiene_embedding_version: Optional[int] = 2
+    knowledge_hygiene_mode: Optional[str] = "manual_only"
+    knowledge_hygiene_preview_ttl_minutes: Optional[int] = 60
+    knowledge_hygiene_min_auto_confidence: Optional[float] = 0.90
+    knowledge_hygiene_contradiction_policy: Optional[str] = "manual_review"
+    knowledge_hygiene_default_canonical_strategy: Optional[str] = "update_existing"
+    knowledge_hygiene_creation_time_enabled: Optional[bool] = False
+    knowledge_hygiene_category_policies: Optional[Dict[str, str]] = None
 
 class MemorySettingsResponse(BaseModel):
     chunk_size: int = 400
@@ -268,6 +286,28 @@ class MemorySettingsResponse(BaseModel):
     playbook_extraction_evidence_threshold: int = 20
     knowledge_auto_activate: bool = True
     knowledge_creation_dedup_enabled: bool = True
+    # Knowledge hygiene & consolidation
+    knowledge_hygiene_enabled: bool = True
+    knowledge_hygiene_enabled_categories: List[str] = ["best_practices", "lessons_learned", "trade_knowledge", "skill", "playbook"]
+    knowledge_hygiene_similarity_threshold: float = 0.82
+    knowledge_hygiene_min_cluster_size: int = 2
+    knowledge_hygiene_max_cluster_size: int = 5
+    knowledge_hygiene_min_cluster_cohesion: float = 0.72
+    knowledge_hygiene_weak_link_threshold: float = 0.65
+    knowledge_hygiene_embedding_version: int = 2
+    knowledge_hygiene_mode: str = "manual_only"
+    knowledge_hygiene_preview_ttl_minutes: int = 60
+    knowledge_hygiene_min_auto_confidence: float = 0.90
+    knowledge_hygiene_contradiction_policy: str = "manual_review"
+    knowledge_hygiene_default_canonical_strategy: str = "update_existing"
+    knowledge_hygiene_creation_time_enabled: bool = False
+    knowledge_hygiene_category_policies: Dict[str, str] = {
+        "best_practices": "manual_only",
+        "lessons_learned": "manual_only",
+        "trade_knowledge": "manual_only",
+        "skill": "manual_only",
+        "playbook": "manual_only",
+    }
 
 # ============================================
 # Tier 0: Interaction Models
@@ -683,6 +723,46 @@ class AdminInstruction(BaseModel):
     category: Optional[str] = None  # for knowledge targets
     entity_type: Optional[str] = None
     auto_activate: bool = False
+
+
+# ============================================
+# Knowledge Hygiene & Consolidation
+# ============================================
+
+class ConsolidationOptions(BaseModel):
+    canonical_strategy: Optional[str] = "update_existing"  # update_existing | create_new
+    canonical_target_id: Optional[str] = None  # selected source id (update_existing)
+
+
+class CanonicalFields(BaseModel):
+    """User-editable canonical output fields validated before apply."""
+    name: str
+    summary: Optional[str] = ""
+    content: str
+    signals: Optional[List[str]] = []
+    tags: Optional[List[str]] = []
+    metadata: Optional[Dict[str, Any]] = {}
+
+
+class ConsolidationPreviewRequest(BaseModel):
+    knowledge_ids: List[str]
+    origin: str = "manual"  # manual | scheduled | admin | creation_time
+    options: Optional[ConsolidationOptions] = None
+
+
+class ConsolidationApplyRequest(BaseModel):
+    preview_id: str
+    canonical_strategy: str = "update_existing"  # update_existing | create_new
+    canonical_target_id: Optional[str] = None
+    approved_canonical: CanonicalFields
+    actor_type: Optional[str] = "admin"
+    actor_id: Optional[str] = None
+
+
+class ConsolidationAnalyzeRequest(BaseModel):
+    """Trigger an automated hygiene run (analysis_only / proposal_only)."""
+    mode: Optional[str] = None  # overrides settings.knowledge_hygiene_mode for this run
+    category: Optional[str] = None
 
 
 

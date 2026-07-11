@@ -177,7 +177,6 @@ export const triggerMemoryGeneration = (includeToday = false) => api.post('/memo
 export const triggerIntelligenceCheck = () => api.post('/memory/trigger/run-intelligence-check');
 export const triggerKnowledgeCheck = (drain = false) => api.post('/memory/trigger/run-knowledge-check', null, { params: { drain } });
 export const triggerPlaybookExtraction = () => api.post('/memory/trigger/extract-playbooks');
-export const triggerConsolidation = () => api.post('/memory/trigger/run-consolidation');
 export const reprocessIntelligence = (intelligenceIds) => api.post('/memory/trigger/reprocess-intelligence', { intelligence_ids: intelligenceIds });
 export const triggerBackfillProfiles = () => api.post('/memory/trigger/backfill-profiles');
 
@@ -198,6 +197,21 @@ export const getKnowledgeFacets = (params) => api.get('/memory/knowledge/facets'
 export const triggerBackfillFacets = () => api.post('/memory/trigger/backfill-facets');
 export const triggerReflectTelemetry = (reflectionDate) => api.post('/memory/trigger/reflect-telemetry', null, { params: reflectionDate ? { reflection_date: reflectionDate } : {} });
 export const getMemoryStats = () => api.get('/memory/admin/stats');
+
+// Knowledge Hygiene & Consolidation - Admin UI
+// Candidate similarity only DISCOVERS related records; merge decisions come
+// from category-aware LLM proposals + admin review. Preview never mutates.
+export const consolidationPreview = (data) => api.post('/memory/admin/knowledge/consolidations/preview', data);
+export const getConsolidationPreview = (previewId) => api.get(`/memory/admin/knowledge/consolidations/previews/${previewId}`);
+export const regenerateConsolidationPreview = (previewId) => api.post(`/memory/admin/knowledge/consolidations/previews/${previewId}/regenerate`);
+export const applyConsolidation = (data) => api.post('/memory/admin/knowledge/consolidations/apply', data);
+export const getConsolidationEvent = (eventId) => api.get(`/memory/admin/knowledge/consolidations/events/${eventId}`);
+export const reverseConsolidationEvent = (eventId) => api.post(`/memory/admin/knowledge/consolidations/events/${eventId}/reverse`);
+export const getConsolidationLineage = (knowledgeId) => api.get(`/memory/admin/knowledge/consolidations/lineage/${knowledgeId}`);
+export const analyzeHygieneNow = (data) => api.post('/memory/admin/knowledge/consolidations/analyze', data);
+export const getHygieneRun = (runId) => api.get(`/memory/admin/knowledge/hygiene-runs/${runId}`);
+export const getEmbeddingCoverage = () => api.get('/memory/admin/knowledge/consolidations/embedding-coverage');
+export const backfillEmbeddings = () => api.post('/memory/admin/knowledge/consolidations/backfill-embeddings');
 
 // Outbound Webhooks - Admin UI
 export const getOutboundWebhooks = () => api.get('/memory/outbound-webhooks');

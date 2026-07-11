@@ -147,6 +147,7 @@ async def fetch_prior_knowledge_semantic(
                 FROM knowledge
                 WHERE embedding IS NOT NULL
                   AND content IS NOT NULL AND LENGTH(TRIM(content)) > 10
+                  AND status = 'active'
                 ORDER BY embedding <=> %s::vector LIMIT %s
             """, (str(search_emb), count))
             rows = [dict(r) for r in cursor.fetchall()]

@@ -30,6 +30,7 @@ from memory_models import (
     OutboundWebhookCreate, OutboundWebhookUpdate, OutboundWebhookResponse,
     VisionWebhookCreate, VisionWebhookUpdate,
     AdminInstruction, PlaybookFeedback,
+    ConsolidationPreviewRequest, ConsolidationApplyRequest, ConsolidationAnalyzeRequest,
 )
 from memory_services import (
     generate_embedding, search_memories_by_vector,
@@ -438,6 +439,178 @@ async def bulk_delete_knowledge(body: BulkKnowledgeDelete, admin: dict = Depends
         cursor.execute("DELETE FROM knowledge WHERE id = ANY(%s)", (body.knowledge_ids,))
     return {"deleted": len(body.knowledge_ids)}
 
+
+# ============================================================
+# KNOWLEDGE HYGIENE & CONSOLIDATION
+# ============================================================
+
+def _consolidation_actor(admin: dict) -> tuple:
+    """Resolve (actor_type, actor_id) from the admin dependency."""
+    aid = None
+    if isinstance(admin, dict):
+        aid = admin.get("id") or admin.get("user_id") or admin.get("email")
+    return ("admin", aid)
+
+
+def _raise_consolidation_error(exc) -> None:
+    """Map a ConsolidationError to an HTTPException with its status code."""
+    status = getattr(exc, "status", 409) or 409
+    detail = f"{getattr(exc, 'code', 'error')}: {exc}"
+    raise HTTPException(status_code=status, detail=detail)
+
+
+@admin_crud.post("/knowledge/consolidations/preview")
+async def consolidation_preview(
+    body: ConsolidationPreviewRequest, admin: dict = Depends(require_admin_auth)
+):
+    """Synchronously create a non-mutating consolidation preview for 2+ same-category ids."""
+    from memory_consolidation_service import preview
+    actor_type, actor_id = _consolidation_actor(admin)
+    try:
+        return await preview(
+            knowledge_ids=body.knowledge_ids, origin=body.origin or "manual",
+            options=(body.options.model_dump() if body.options else None),
+            actor_type=actor_type, actor_id=actor_id,
+        )
+    except Exception as exc:
+        if hasattr(exc, "code"):
+            _raise_consolidation_error(exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@admin_crud.get("/knowledge/consolidations/previews/{preview_id}")
+async def consolidation_get_preview(preview_id: str, admin: dict = Depends(require_admin_auth)):
+    """Return a preview with source snapshots, metrics, and proposal."""
+    from memory_consolidation_service import get_preview
+    try:
+        return get_preview(preview_id)
+    except Exception as exc:
+        if hasattr(exc, "code"):
+            _raise_consolidation_error(exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@admin_crud.post("/knowledge/consolidations/previews/{preview_id}/regenerate")
+async def consolidation_regenerate(preview_id: str, admin: dict = Depends(require_admin_auth)):
+    """Expire the old preview and synchronously create a fresh one from current sources."""
+    from memory_consolidation_service import regenerate
+    actor_type, actor_id = _consolidation_actor(admin)
+    try:
+        return await regenerate(preview_id=preview_id, actor_type=actor_type, actor_id=actor_id)
+    except Exception as exc:
+        if hasattr(exc, "code"):
+            _raise_consolidation_error(exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@admin_crud.post("/knowledge/consolidations/apply")
+async def consolidation_apply(body: ConsolidationApplyRequest, admin: dict = Depends(require_admin_auth)):
+    """Apply an approved preview transactionally."""
+    from memory_consolidation_service import apply
+    actor_type, actor_id = _consolidation_actor(admin)
+    try:
+        return await apply(
+            preview_id=body.preview_id,
+            approved_canonical=body.approved_canonical.model_dump(),
+            canonical_strategy=body.canonical_strategy,
+            canonical_target_id=body.canonical_target_id,
+            actor_type=body.actor_type or actor_type, actor_id=body.actor_id or actor_id,
+        )
+    except Exception as exc:
+        if hasattr(exc, "code"):
+            _raise_consolidation_error(exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@admin_crud.get("/knowledge/consolidations/events/{event_id}")
+async def consolidation_event_detail(event_id: str, admin: dict = Depends(require_admin_auth)):
+    """Return full lineage/audit detail for a consolidation event."""
+    from memory_consolidation_service import get_event
+    try:
+        return get_event(event_id)
+    except Exception as exc:
+        if hasattr(exc, "code"):
+            _raise_consolidation_error(exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@admin_crud.post("/knowledge/consolidations/events/{event_id}/reverse")
+async def consolidation_reverse(event_id: str, admin: dict = Depends(require_admin_auth)):
+    """Reverse an applied event when dependency validation permits."""
+    from memory_consolidation_service import reverse
+    actor_type, actor_id = _consolidation_actor(admin)
+    try:
+        return reverse(event_id, actor_type=actor_type, actor_id=actor_id)
+    except Exception as exc:
+        if hasattr(exc, "code"):
+            _raise_consolidation_error(exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@admin_crud.get("/knowledge/consolidations/lineage/{knowledge_id}")
+async def consolidation_lineage(knowledge_id: str, admin: dict = Depends(require_admin_auth)):
+    """Lineage (successor / predecessors / event) for the lineage panel."""
+    from memory_consolidation_service import get_lineage
+    try:
+        return get_lineage(knowledge_id)
+    except Exception as exc:
+        if hasattr(exc, "code"):
+            _raise_consolidation_error(exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@admin_crud.post("/knowledge/consolidations/analyze")
+async def consolidation_analyze(body: ConsolidationAnalyzeRequest, admin: dict = Depends(require_admin_auth)):
+    """Create the hygiene run row and queue the analysis/proposal job. Returns 202."""
+    from memory.queue import knowledge_queue
+    from memory_consolidation_repository import create_hygiene_run
+    from services.config_helpers import get_memory_settings
+    settings = get_memory_settings() or {}
+    mode = body.mode or settings.get("knowledge_hygiene_mode", "manual_only")
+    categories = settings.get("knowledge_hygiene_enabled_categories") or [
+        "best_practices", "lessons_learned", "trade_knowledge", "skill", "playbook"
+    ]
+    if body.category:
+        categories = [body.category]
+    run_id = create_hygiene_run(
+        origin="admin", mode=mode, settings_snapshot={k: settings.get(k) for k in (
+            "knowledge_hygiene_similarity_threshold", "knowledge_hygiene_min_cluster_size",
+            "knowledge_hygiene_max_cluster_size", "knowledge_hygiene_min_cluster_cohesion",
+            "knowledge_hygiene_mode")},
+        embedding_version=int(settings.get("knowledge_hygiene_embedding_version", 2)),
+        categories=categories, created_by=(_consolidation_actor(admin))[1],
+    )
+    await knowledge_queue.add(
+        "knowledge_hygiene_run",
+        {"run_id": run_id, "mode": mode, "category": body.category, "origin": "admin"},
+        {"priority": 2},
+    )
+    return {"run_id": run_id, "status": "queued", "mode": mode}
+
+
+@admin_crud.get("/knowledge/hygiene-runs/{run_id}")
+async def hygiene_run_detail(run_id: str, admin: dict = Depends(require_admin_auth)):
+    """Return a hygiene run with its clusters and members."""
+    from memory_consolidation_repository import load_hygiene_run, load_hygiene_clusters
+    run = load_hygiene_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Hygiene run not found")
+    return {"run": run, "clusters": load_hygiene_clusters(run_id)}
+
+
+@admin_crud.get("/knowledge/consolidations/embedding-coverage")
+async def embedding_coverage(admin: dict = Depends(require_admin_auth)):
+    """Embedding-version coverage gauge for the settings UI."""
+    from memory_embedding_backfill import preview_backfill
+    return preview_backfill()
+
+
+@admin_crud.post("/knowledge/consolidations/backfill-embeddings")
+async def backfill_embeddings(admin: dict = Depends(require_admin_auth)):
+    """Queue the resumable embedding backfill job. Returns 202."""
+    from memory.queue import knowledge_queue
+    await knowledge_queue.add("knowledge_embedding_backfill", {}, {"priority": 3})
+    return {"status": "queued"}
 
 
 # ============================================================
@@ -1738,7 +1911,11 @@ async def import_skill_md(body: SkillImportBody, admin: dict = Depends(require_a
 
     embedding = None
     try:
-        embedding = await generate_embedding(f"{parsed['name']}. {parsed['description']}")
+        from memory_embedding import embed_knowledge_fields
+        embedding, _model = await embed_knowledge_fields(
+            name=parsed["name"], category=body.category,
+            content=parsed["body"], summary=parsed["description"],
+        )
     except Exception as e:
         logger.warning(f"Skill import embedding failed: {e}")
 
