@@ -109,3 +109,16 @@ def test_skill_contract_renders_operational_sections():
     assert "## Safety requirements" in content
     assert parse_skill_md(content)["name"] == "verify-visa-document"
     assert validate_skill_md(content, package_name="verify-visa-document")["name"] == "verify-visa-document"
+
+
+def test_governed_facet_settings_survive_settings_response_serialization():
+    """A settings reload must return facet configuration after a successful save."""
+    from memory_models import MemorySettingsResponse
+
+    schema = [{"key": "destination_country", "label": "Destination Country"}]
+    result = MemorySettingsResponse(
+        knowledge_facets_schema=schema,
+        profile_facet_map={"destination_country": "intended_study_country"},
+    )
+    assert result.knowledge_facets_schema == schema
+    assert result.profile_facet_map == {"destination_country": "intended_study_country"}

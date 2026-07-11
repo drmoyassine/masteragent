@@ -6,9 +6,9 @@ legacy rows with no provenance block at all). It never mutates content, status,
 or any non-embedding field, so it is safe to run against a live production
 table and safe to re-run (idempotent).
 
-Batched (default 50) with per-record error capture so a single bad record
-never aborts the run. A queue worker calls ``run_embedding_backfill`` and
-records the processed/succeeded/failed counts on the hygiene run row.
+Uses the provider's native multi-input embedding API in bounded groups. A
+failed group is recorded and skipped so the rest of the run can finish; it is
+safe to retry only those records in a later run.
 """
 from __future__ import annotations
 
@@ -20,10 +20,15 @@ from core.storage import get_memory_db_context
 from memory_embedding import (
     EMBEDDING_VERSION,
     current_embedding_model,
-    embed_knowledge_record,
+    merge_embedding_metadata,
+    serialize_knowledge_for_embedding,
 )
 
 logger = logging.getLogger(__name__)
+
+# Modest by design: this removes per-record HTTP overhead while keeping
+# payloads safe for long playbook and skill records.
+EMBEDDING_API_BATCH_SIZE = 25
 
 
 def _configured_version(settings: Optional[Dict[str, Any]] = None) -> int:
@@ -99,7 +104,10 @@ async def run_embedding_backfill(
     processed = succeeded = failed = 0
     batches = 0
     seen = 0
-    attempted_ids: List[str] = []
+    # Successful records no longer satisfy the stale query. Keep only failed
+    # ids out of later selections; retaining every attempted id made the SQL
+    # parameter grow throughout large production backfills.
+    failed_ids: List[str] = []
 
     while True:
         if max_records is not None and seen >= max_records:
@@ -108,28 +116,31 @@ async def run_embedding_backfill(
         if max_records is not None:
             remaining = max_records - seen
         this_batch = min(batch_size, remaining) if remaining is not None else batch_size
+        this_batch = min(this_batch, EMBEDDING_API_BATCH_SIZE)
 
-        rows = _select_stale_rows(this_batch, cv, configured_model, attempted_ids)
+        rows = _select_stale_rows(this_batch, cv, configured_model, failed_ids)
         if not rows:
             break
 
-        for row in rows:
-            processed += 1
-            seen += 1
-            attempted_ids.append(row["id"])
-            try:
-                vector, _model, updated_metadata = await embed_knowledge_record(row, version=cv)
-                if not vector:
-                    failed += 1
-                    continue
-                if _apply_embedding_update(row["id"], vector, updated_metadata, cv, configured_model):
-                    succeeded += 1
-                else:
-                    # A concurrent writer made the row current or retired it.
-                    logger.info("Embedding backfill skipped concurrently changed row %s", row["id"])
-            except Exception as exc:  # never abort the whole run on one record
-                failed += 1
-                logger.warning("Embedding backfill failed for %s: %s", row.get("id"), exc)
+        processed += len(rows)
+        seen += len(rows)
+        try:
+            vectors = await _embed_batch([serialize_knowledge_for_embedding(row) for row in rows])
+            with get_memory_db_context() as conn:
+                cursor = conn.cursor()
+                for row, vector in zip(rows, vectors):
+                    metadata = merge_embedding_metadata(
+                        row.get("metadata"), model=configured_model, vector=vector, version=cv
+                    )
+                    if _apply_embedding_update(row["id"], vector, metadata, cv, configured_model, cursor=cursor):
+                        succeeded += 1
+                    else:
+                        # A concurrent writer made the row current or retired it.
+                        logger.info("Embedding backfill skipped concurrently changed row %s", row["id"])
+        except Exception as exc:  # never abort the complete run on one bad batch
+            failed += len(rows)
+            failed_ids.extend(row["id"] for row in rows)
+            logger.warning("Knowledge embedding backfill batch failed for %d records: %s", len(rows), exc)
 
         batches += 1
         if len(rows) < this_batch:
@@ -150,7 +161,6 @@ async def run_embedding_backfill(
 
 async def _backfill_source_tiers(*, batch_size: int, max_records: Optional[int]) -> Dict[str, Dict[str, int]]:
     """Persist missing/stale embeddings for tiers 0–2 using their canonical text."""
-    from memory_services import generate_embedding
     model = current_embedding_model()
     specs = {
         "interactions": ("content", "timestamp"),
@@ -160,9 +170,10 @@ async def _backfill_source_tiers(*, batch_size: int, max_records: Optional[int])
     results: Dict[str, Dict[str, int]] = {}
     for table, (text_expr, order_col) in specs.items():
         processed = succeeded = failed = 0
-        attempted: set[str] = set()
+        failed_ids: set[str] = set()
         while max_records is None or processed < max_records:
             limit = min(batch_size, max_records - processed) if max_records is not None else batch_size
+            limit = min(limit, EMBEDDING_API_BATCH_SIZE)
             with get_memory_db_context() as conn:
                 cur = conn.cursor()
                 cur.execute(f"""
@@ -171,27 +182,28 @@ async def _backfill_source_tiers(*, batch_size: int, max_records: Optional[int])
                       AND (embedding IS NULL OR embedding_model IS DISTINCT FROM %s
                            OR embedding_dimensions IS DISTINCT FROM vector_dims(embedding))
                     ORDER BY {order_col} ASC, id ASC LIMIT %s
-                """, (list(attempted), model, limit))
+                """, (list(failed_ids), model, limit))
                 rows = [dict(r) for r in cur.fetchall()]
             if not rows:
                 break
-            for row in rows:
-                attempted.add(row["id"]); processed += 1
-                try:
-                    vector = await generate_embedding(str(row.get("embedding_text") or ""))
-                    if not vector:
-                        failed += 1; continue
-                    with get_memory_db_context() as conn:
-                        cur = conn.cursor()
+            processed += len(rows)
+            try:
+                vectors = await _embed_batch([str(row.get("embedding_text") or "") for row in rows])
+                with get_memory_db_context() as conn:
+                    cur = conn.cursor()
+                    for row, vector in zip(rows, vectors):
                         cur.execute(f"""
                             UPDATE {table} SET embedding=%s::vector,embedding_model=%s,
                                 embedding_version=1,embedding_dimensions=%s,embedded_at=NOW()
                             WHERE id=%s
-                        """, (vector, model, len(vector), row["id"]))
-                    succeeded += 1
-                except Exception as exc:
-                    failed += 1
-                    logger.warning("%s embedding backfill failed for %s: %s", table, row["id"], exc)
+                              AND (embedding IS NULL OR embedding_model IS DISTINCT FROM %s
+                                   OR embedding_dimensions IS DISTINCT FROM vector_dims(embedding))
+                        """, (vector, model, len(vector), row["id"], model))
+                        succeeded += int(cur.rowcount == 1)
+            except Exception as exc:
+                failed += len(rows)
+                failed_ids.update(row["id"] for row in rows)
+                logger.warning("%s embedding backfill batch failed for %d records: %s", table, len(rows), exc)
             if len(rows) < limit:
                 break
         results[table] = {"processed": processed, "succeeded": succeeded, "failed": failed}
@@ -204,6 +216,7 @@ def _apply_embedding_update(
     metadata: Dict[str, Any],
     version: int,
     configured_model: str,
+    cursor=None,
 ) -> bool:
     """Persist the new embedding + stamped metadata under a version guard.
 
@@ -211,11 +224,23 @@ def _apply_embedding_update(
     version, so a concurrent consolidation that retired or re-versioned the
     row wins instead of being clobbered.
     """
-    md = json.dumps(metadata) if metadata else "{}"
+    if cursor is not None:
+        return _apply_embedding_update_with_cursor(
+            cursor, knowledge_id, vector, metadata, version, configured_model
+        )
     with get_memory_db_context() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            """
+        return _apply_embedding_update_with_cursor(
+            conn.cursor(), knowledge_id, vector, metadata, version, configured_model
+        )
+
+
+def _apply_embedding_update_with_cursor(
+    cursor, knowledge_id: str, vector: List[float], metadata: Dict[str, Any],
+    version: int, configured_model: str,
+) -> bool:
+    """Conditional update shared by one-record and batched writers."""
+    cursor.execute(
+        """
             UPDATE knowledge
             SET embedding = %s,
                 embedding_model = %s,
@@ -235,12 +260,24 @@ def _apply_embedding_update(
                  OR COALESCE(metadata->'embedding'->>'model', '') <> %s
                  OR metadata->'embedding'->>'dimensions' IS DISTINCT FROM vector_dims(embedding)::text
               )
-            """,
-            (vector, configured_model, version, len(vector),
-             json.dumps(metadata.get("embedding") or {}), knowledge_id,
-             str(version), configured_model or ""),
-        )
-        return cursor.rowcount == 1
+        """,
+        (vector, configured_model, version, len(vector),
+         json.dumps(metadata.get("embedding") or {}), knowledge_id,
+         str(version), configured_model or ""),
+    )
+    return cursor.rowcount == 1
+
+
+async def _embed_batch(texts: List[str]) -> List[List[float]]:
+    """Embed a bounded group using the provider's native multi-input API."""
+    from memory_services import generate_embeddings_batch
+
+    if not texts:
+        return []
+    vectors = await generate_embeddings_batch(texts)
+    if len(vectors) != len(texts):
+        raise RuntimeError(f"Expected {len(texts)} embedding vectors, got {len(vectors)}")
+    return vectors
 
 
 def preview_backfill(configured_version: Optional[int] = None) -> Dict[str, Any]:

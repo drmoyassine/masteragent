@@ -61,7 +61,15 @@ async def generate_embeddings_batch(texts: List[str]) -> List[List[float]]:
                 json={"model": model, "input": texts},
             )
             if response.status_code == 200:
-                return [item["embedding"] for item in response.json()["data"]]
+                # Pair vectors to input rows by the provider's explicit index,
+                # rather than assuming response ordering.
+                data = sorted(response.json().get("data", []), key=lambda item: item.get("index", 0))
+                vectors = [item["embedding"] for item in data]
+                if len(vectors) != len(texts):
+                    raise RuntimeError(
+                        f"Batch embedding response count mismatch: expected {len(texts)}, got {len(vectors)}"
+                    )
+                return vectors
             logger.error(f"Batch embedding failed: {response.status_code}")
             raise RuntimeError(f"Batch embedding failed: {response.status_code} - {response.text}")
     except Exception as e:

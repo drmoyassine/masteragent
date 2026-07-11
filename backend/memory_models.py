@@ -343,6 +343,13 @@ class MemorySettingsResponse(BaseModel):
     playbook_extraction_evidence_threshold: int = 20
     knowledge_auto_activate: bool = True
     knowledge_creation_dedup_enabled: bool = True
+    # Governed facet settings must be returned as well as accepted by the
+    # update model. Without these fields a successful save appeared empty on
+    # the next settings reload.
+    context_knowledge_mode: str = "full"
+    facet_extraction_enabled: bool = True
+    knowledge_facets_schema: Optional[List[Dict[str, Any]]] = None
+    profile_facet_map: Optional[Dict[str, Any]] = None
     # Knowledge hygiene & consolidation
     knowledge_hygiene_enabled: bool = True
     knowledge_hygiene_enabled_categories: List[str] = ["best_practices", "lessons_learned", "trade_knowledge", "skill", "playbook"]
