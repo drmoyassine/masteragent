@@ -1899,11 +1899,12 @@ _KNOWLEDGE_EXPORT_COLS = "name, category, content, summary, metadata, signals, t
 
 @admin_crud.get("/knowledge/{knowledge_id}/skill.md")
 async def export_skill_md(knowledge_id: str, auth: dict = Depends(require_admin_or_agent)):
-    """Export a single knowledge record as a standalone markdown document.
+    """Export one record as standalone Markdown.
 
-    skill/playbook render as agent-skills-standard SKILL.md (stored verbatim, or
-    rendered on the fly for legacy records); declarative categories render as a
-    memory-file-style document. All fields are relational so rendering is lossless."""
+    Use the Knowledge Pack endpoint for a portable Agent Skills package layout;
+    this single-file convenience export cannot provide the required parent
+    directory relationship for a complete ``<slug>/SKILL.md`` package.
+    """
     from fastapi.responses import PlainTextResponse
     from memory_skill_md import render_any_knowledge_md, slugify, SKILL_MD_CATEGORIES
 
@@ -1931,10 +1932,12 @@ async def export_knowledge_pack(
     status: str = Query("active", description="active | draft | retired | all"),
     auth: dict = Depends(require_admin_or_agent),
 ):
-    """Export the knowledge base as a memory-file 'knowledge pack' zip:
-    an INDEX.md (one line per record) plus one markdown file per record.
-    Drops directly into a Claude Code memory directory, an AGENTS.md-style docs
-    folder, or a git repo. skill/playbook files are SKILL.md-standard."""
+    """Export Knowledge Markdown plus portable skill/playbook packages.
+
+    Skill and playbook entries are exported as ``<slug>/SKILL.md`` so the
+    frontmatter name matches the package directory required by Agent Skills.
+    Declarative records remain ordinary Knowledge Markdown files.
+    """
     import io
     import zipfile
     from fastapi.responses import StreamingResponse
@@ -1964,7 +1967,11 @@ async def export_knowledge_pack(
             base = slugify(row.get("name") or "unnamed")
             # De-collide filenames within the pack
             seen_names[base] = seen_names.get(base, 0) + 1
-            fname = f"{cat}/{base}.md" if seen_names[base] == 1 else f"{cat}/{base}-{seen_names[base]}.md"
+            package_name = base if seen_names[base] == 1 else f"{base}-{seen_names[base]}"
+            if cat in SKILL_MD_CATEGORIES:
+                fname = f"{cat}/{package_name}/SKILL.md"
+            else:
+                fname = f"{cat}/{package_name}.md"
             zf.writestr(fname, render_any_knowledge_md(row))
             hook = (row.get("summary") or "").strip().replace("\n", " ")[:120]
             index_lines.append(f"- [{row.get('name')}]({fname}) — {hook}")
@@ -1992,13 +1999,13 @@ async def import_skill_md(body: SkillImportBody, admin: dict = Depends(require_a
     marketplace) as a knowledge record. The document is stored verbatim in the
     content column; frontmatter name/description populate name/summary.
     Consolidation is intentionally deferred to the shared hygiene preview/apply service."""
-    from memory_skill_md import SKILL_MD_CATEGORIES, parse_skill_md
+    from memory_skill_md import SKILL_MD_CATEGORIES, validate_skill_md
     from memory_db_writes import insert_knowledge
 
     if body.category not in SKILL_MD_CATEGORIES:
         raise HTTPException(status_code=400, detail="category must be 'skill' or 'playbook'")
     try:
-        parsed = parse_skill_md(body.skill_md)
+        parsed = validate_skill_md(body.skill_md)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 

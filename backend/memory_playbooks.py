@@ -25,34 +25,33 @@ logger = logging.getLogger(__name__)
 # so they are admin-editable. The generation functions read the node prompt via
 # get_task_system_prompt() and fall back to these constants if no node/empty prompt.
 _PLAYBOOK_GEN_PROMPT = (
-    "You are a procedural knowledge extractor for a CRM memory system.\n\n"
+    "You are a procedural knowledge extractor for an agent harness.\n\n"
     "You are given a cluster of intelligence signals that were independently observed "
     "across {entity_count} different {entity_type} entities, along with AI agent telemetry "
     "from the interactions where these signals appeared.\n\n"
-    "RULES:\n"
-    "- Extract 3-7 concrete, ordered action steps\n"
-    "- Steps must be actionable (start with a verb)\n"
-    "- Steps must be generalizable (no specific entity names)\n"
-    "- Include trigger conditions: what keywords/phrases indicate this playbook applies\n"
-    "- Name the playbook descriptively\n\n"
-    'Return JSON: {"name": "...", "description": "...", "signal_type": "...", '
-    '"trigger_conditions": ["..."], "steps": [{"order": 1, "action": "..."}], '
-    '"tags": ["..."], "confidence": 0.0-1.0}'
+    "Return no output only when no coherent reusable procedure is supported. Do not invent "
+    "steps, roles, permissions, tools, deadlines, or outcomes. Preserve qualifications and "
+    "surface uncertainty rather than forcing a procedure. Steps must be ordered, actionable, "
+    "and generalizable; use the minimum number needed for an executable procedure.\n\n"
+    "Return ONLY JSON with schema_version='knowledge-generation-v2' and: name, description, "
+    "purpose, expected_outcome, signal_type, trigger_conditions, prerequisites, required_inputs, "
+    "responsible_roles, tools, steps:[{order,action}], branches, escalation_rules, "
+    "failure_conditions, rollback, safety_requirements, completion_criteria, exit_conditions, "
+    "signals, tags, facets, qualifications, contradictions, source_support, confidence."
 )
 
 _SKILL_GEN_PROMPT = (
-    "You are a skill extractor for a CRM memory system.\n\n"
+    "You are a skill extractor for an agent harness.\n\n"
     "Given a playbook's ordered steps, identify 1-3 distinct reusable capabilities (skills) "
     "that the agent needs to execute these steps. Each skill should be a discrete, composable ability.\n\n"
-    "For each skill return:\n"
-    '- "name": short descriptive name (will be slugified to lowercase-hyphens)\n'
-    '- "skill_type": "soft" (behavioral) or "hard" (technical)\n'
-    '- "trigger_desc": 1-2 sentences stating BOTH what this skill does AND when to use it '
-    "(this becomes the skill's discovery description that an agent reads to decide whether "
-    "to activate it — make it self-contained, max 1024 characters)\n"
-    '- "procedure": how to execute (natural language)\n\n'
-    'Return JSON array: [{"name": "...", "skill_type": "...", "trigger_desc": "...", '
-    '"procedure": "...", "confidence": 0.0-1.0, "facets": {}}]'
+    "A skill is an operational contract, not a label. Do not name a tool, permission, or "
+    "environment unless the source supports it; naming one never grants it.\n\n"
+    "Return ONLY a JSON array. Each object has schema_version='knowledge-generation-v2', name, "
+    "skill_type, summary, purpose, trigger_desc, procedure, inputs, outputs, tools, prerequisites, "
+    "permissions, environments, agent_types, side_effects, failure_conditions, recovery, "
+    "safety_requirements, examples, edge_cases, signals, tags, facets, qualifications, "
+    "contradictions, source_support, confidence. trigger_desc must state both what the skill does "
+    "and concrete contexts/keywords for when to use it."
 )
 
 
@@ -315,6 +314,14 @@ async def _process_cluster(
         _mark_processed(processed_ids)
         return
 
+    try:
+        from memory_generation_contracts import validate_playbook
+        playbook_data = validate_playbook(playbook_data).model_dump()
+    except ValueError as exc:
+        logger.warning("Rejected invalid playbook output: %s", exc)
+        _mark_processed(processed_ids)
+        return
+
     confidence = playbook_data.get("confidence", 0.5)
     if confidence < confidence_min:
         logger.info(f"Playbook confidence {confidence} below threshold {confidence_min} — skipping")
@@ -338,7 +345,23 @@ async def _process_cluster(
         "entity_type": entity_type,
         "signal_type": playbook_data.get("signal_type"),
         "trigger_conditions": playbook_data.get("trigger_conditions", []),
+        "purpose": playbook_data.get("purpose", ""),
+        "expected_outcome": playbook_data.get("expected_outcome", ""),
+        "prerequisites": playbook_data.get("prerequisites", []),
+        "required_inputs": playbook_data.get("required_inputs", []),
+        "responsible_roles": playbook_data.get("responsible_roles", []),
+        "tools": playbook_data.get("tools", []),
         "steps": playbook_data.get("steps", []),
+        "branches": playbook_data.get("branches", []),
+        "escalation_rules": playbook_data.get("escalation_rules", []),
+        "failure_conditions": playbook_data.get("failure_conditions", []),
+        "rollback": playbook_data.get("rollback", []),
+        "safety_requirements": playbook_data.get("safety_requirements", []),
+        "completion_criteria": playbook_data.get("completion_criteria", []),
+        "exit_conditions": playbook_data.get("exit_conditions", []),
+        "qualifications": playbook_data.get("qualifications", []),
+        "contradictions": playbook_data.get("contradictions", []),
+        "source_support": playbook_data.get("source_support", []),
         "skill_ids": [],
     }
     facets, facet_state = validate_generated_facets(playbook_data.get("facets") or {})
@@ -452,6 +475,12 @@ async def _generate_skills_from_playbook(
         "skill_extraction", settings=get_memory_settings() or {}, entity_config=config,
     )["values"]
     for skill_data in skills[:5]:
+        try:
+            from memory_generation_contracts import validate_skill
+            skill_data = validate_skill(skill_data).model_dump()
+        except ValueError as exc:
+            logger.warning("Rejected invalid skill output: %s", exc)
+            continue
         confidence = float(skill_data.get("confidence") or 0.0)
         if confidence < float(skill_policy["min_confidence"]):
             continue
@@ -463,6 +492,23 @@ async def _generate_skills_from_playbook(
             "skill_type": skill_data.get("skill_type", "hard"),
             "trigger_desc": sk_trigger,
             "procedure": sk_proc,
+            "purpose": skill_data.get("purpose", ""),
+            "inputs": skill_data.get("inputs", []),
+            "outputs": skill_data.get("outputs", []),
+            "tools": skill_data.get("tools", []),
+            "prerequisites": skill_data.get("prerequisites", []),
+            "permissions": skill_data.get("permissions", []),
+            "environments": skill_data.get("environments", []),
+            "agent_types": skill_data.get("agent_types", []),
+            "side_effects": skill_data.get("side_effects", []),
+            "failure_conditions": skill_data.get("failure_conditions", []),
+            "recovery": skill_data.get("recovery", []),
+            "safety_requirements": skill_data.get("safety_requirements", []),
+            "examples": skill_data.get("examples", []),
+            "edge_cases": skill_data.get("edge_cases", []),
+            "qualifications": skill_data.get("qualifications", []),
+            "contradictions": skill_data.get("contradictions", []),
+            "source_support": skill_data.get("source_support", []),
             "entity_types": [entity_type],
             "playbook_ids": [playbook_id],
         }

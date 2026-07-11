@@ -36,6 +36,12 @@ def resolve_generation_policy(
     entity_config = entity_config or {}
     pathway_values = (settings.get("knowledge_generation_pathway_overrides") or {}).get(pathway) or {}
     entity_values = (entity_config.get("knowledge_generation_overrides") or {}).get(pathway) or {}
+    # Legacy declarative threshold remains a read-compatible fallback until all
+    # production entity configs have been migrated to the canonical JSONB map.
+    if pathway == "declarative_knowledge" and entity_values.get("evidence_threshold") is None:
+        legacy_threshold = entity_config.get("knowledge_extraction_threshold")
+        if legacy_threshold is not None:
+            entity_values = {**entity_values, "evidence_threshold": legacy_threshold}
     values: Dict[str, Any] = {}
     sources: Dict[str, str] = {}
     for field, (global_key, default) in GLOBAL_FIELDS.items():

@@ -12,6 +12,7 @@ This is the authoritative feature list for the next retrieval/activation initiat
 | Document | Classification | Action |
 |---|---|---|
 | `features_list.md` | Next feature roadmap | Implement after Knowledge pipeline production activation |
+| `plans/knowledge-settings-follow-up-fixes.md` | Active locked fixes for the shipped Knowledge settings UI | Implement in the next fixes batch |
 | `plans/archived/pairwise-to-clustering-knowledge-hygiene-plan.md` | Implemented Knowledge Hygiene specification | Historical reference only |
 | `plans/archived/knowledge-hygiene-delivery-report.md` | Implemented Knowledge Hygiene delivery | Historical reference only |
 | `plans/archived/knowledge-settings-and-pipeline-refactor-implementation-plan.md` | Implemented settings/pipeline specification | Historical reference only |

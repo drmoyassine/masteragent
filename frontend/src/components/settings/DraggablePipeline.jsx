@@ -15,7 +15,7 @@ import {
   useSortable
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVertical, Plus, GraduationCap, Sparkles, Brain, Scissors, EyeOff, ArrowRight } from "lucide-react";
+import { GripVertical, Plus, GraduationCap, Sparkles, Brain, Scissors, EyeOff, ArrowRight, CircleHelp } from "lucide-react";
 import { InlineTaskConfigAccordion } from "./InlineTaskConfigAccordion";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -33,6 +33,11 @@ import {
 import { TASK_TYPE_LABELS } from "@/components/settings/LLMProviderSettings";
 import api from "@/lib/api";
 import { toast } from "sonner";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+
+function OverrideLabel({ children, help }) {
+  return <div className="flex items-center gap-1"><Label className="text-[10px]">{children}</Label><TooltipProvider delayDuration={120}><Tooltip><TooltipTrigger asChild><button type="button" aria-label={`Help: ${children}`} className="text-muted-foreground hover:text-foreground"><CircleHelp className="h-3 w-3" /></button></TooltipTrigger><TooltipContent className="max-w-xs text-xs">{help}</TooltipContent></Tooltip></TooltipProvider></div>;
+}
 
 // Knowledge-stage pathways are NOT a sequential pipeline — each is an independent
 // producer that picks its node by task_type. This metadata makes each pathway's
@@ -80,7 +85,16 @@ function EntityPathwayOverrides({ entityTypes, pathwayKey }) {
     await Promise.all(entityTypes.map(async (entity) => {
       try {
         const { data } = await api.get(`/memory/entity-type-config/${entity.name}`);
-        next[entity.name] = data.knowledge_generation_overrides || {};
+        const overrides = data.knowledge_generation_overrides || {};
+        if (pathwayKey === "declarative_knowledge" &&
+            overrides?.declarative_knowledge?.evidence_threshold === undefined &&
+            data.knowledge_extraction_threshold != null) {
+          overrides.declarative_knowledge = {
+            ...(overrides.declarative_knowledge || {}),
+            evidence_threshold: data.knowledge_extraction_threshold,
+          };
+        }
+        next[entity.name] = overrides;
       } catch { next[entity.name] = {}; }
     }));
     setConfigs(next); setLoading(false);
@@ -100,10 +114,18 @@ function EntityPathwayOverrides({ entityTypes, pathwayKey }) {
     <details className="mt-3 rounded-md border bg-muted/10" onToggle={(e) => e.currentTarget.open && !Object.keys(configs).length && load()}>
       <summary className="cursor-pointer px-3 py-2 text-[11px] font-semibold">Entity-specific overrides</summary>
       <div className="border-t p-3 space-y-2">
+        {!loading && <div className={`grid gap-2 text-[10px] text-muted-foreground ${pathwayKey === "declarative_knowledge" ? "grid-cols-[1.2fr_1fr_1fr_1fr_1fr]" : "grid-cols-[1.2fr_1fr_1fr_1fr]"}`}>
+          <span>Entity type</span>
+          {pathwayKey === "declarative_knowledge" && <OverrideLabel help="Overrides the evidence count only for this entity type's Declarative Knowledge pathway. It wins over pathway and global values.">Evidence</OverrideLabel>}
+          <OverrideLabel help="Overrides confidence only for this entity type and pathway. It wins over pathway and global values.">Confidence</OverrideLabel>
+          <OverrideLabel help="Overrides output tokens only for this entity type and pathway. It wins over pathway and global values.">Tokens</OverrideLabel>
+          <OverrideLabel help="Overrides the approval policy only for this entity type and pathway. It wins over pathway and global values.">Approval</OverrideLabel>
+        </div>}
         {loading ? <p className="text-xs text-muted-foreground">Loading…</p> : (entityTypes || []).map((entity) => {
           const current = (configs[entity.name] || {})[pathwayKey] || {};
-          return <div key={entity.name} className="grid grid-cols-[1.2fr_1fr_1fr_1fr] gap-2 items-center">
+          return <div key={entity.name} className={`grid gap-2 items-center ${pathwayKey === "declarative_knowledge" ? "grid-cols-[1.2fr_1fr_1fr_1fr_1fr]" : "grid-cols-[1.2fr_1fr_1fr_1fr]"}`}>
             <span className="text-xs capitalize">{entity.icon || "📦"} {entity.name}</span>
+            {pathwayKey === "declarative_knowledge" && <Input className="h-7 text-[11px]" type="number" min="1" placeholder="Global evidence" value={current.evidence_threshold ?? ""} onChange={(e) => save(entity.name, "evidence_threshold", e.target.value === "" ? "" : Number(e.target.value))} />}
             <Input className="h-7 text-[11px]" type="number" min="0" max="1" step="0.05" placeholder="Global confidence" value={current.min_confidence ?? ""} onChange={(e) => save(entity.name, "min_confidence", e.target.value === "" ? "" : Number(e.target.value))} />
             <Input className="h-7 text-[11px]" type="number" min="256" max="8000" placeholder="Global tokens" value={current.max_tokens ?? ""} onChange={(e) => save(entity.name, "max_tokens", e.target.value === "" ? "" : Number(e.target.value))} />
             <Select value={current.approval_policy || "inherit"} onValueChange={(v) => save(entity.name, "approval_policy", v)}><SelectTrigger className="h-7 text-[11px]"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="inherit">Global approval</SelectItem><SelectItem value="approve_immediately">Approved</SelectItem><SelectItem value="create_as_draft">Draft</SelectItem></SelectContent></Select>
@@ -390,7 +412,7 @@ export function KnowledgePathways({
                   <div className="text-[11px] font-semibold mb-2">Pathway overrides</div>
                   <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                     <div className="space-y-1">
-                      <Label className="text-[10px]">Enabled</Label>
+                      <OverrideLabel help="Overrides the global enabled switch for this pathway only.">Enabled</OverrideLabel>
                       <Select value={overrides.enabled === undefined ? "inherit" : String(overrides.enabled)}
                         onValueChange={(v) => setOverride("enabled", v === "inherit" ? v : v === "true")}>
                         <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
@@ -398,19 +420,19 @@ export function KnowledgePathways({
                       </Select>
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-[10px]">Minimum confidence</Label>
+                      <OverrideLabel help="Overrides the global minimum generation confidence for this pathway. It is not a similarity score.">Minimum confidence</OverrideLabel>
                       <Input className="h-8 text-xs" type="number" min="0" max="1" step="0.05"
                         placeholder="Use global" value={overrides.min_confidence ?? ""}
                         onChange={(e) => setOverride("min_confidence", e.target.value === "" ? "" : Number(e.target.value))} />
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-[10px]">Max tokens</Label>
+                      <OverrideLabel help="Overrides the global maximum response length for this pathway.">Max tokens</OverrideLabel>
                       <Input className="h-8 text-xs" type="number" min="256" max="8000"
                         placeholder="Use global" value={overrides.max_tokens ?? ""}
                         onChange={(e) => setOverride("max_tokens", e.target.value === "" ? "" : Number(e.target.value))} />
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-[10px]">Approval policy</Label>
+                      <OverrideLabel help="Overrides whether records from this pathway begin as Approved or Draft.">Approval policy</OverrideLabel>
                       <Select value={overrides.approval_policy || "inherit"} onValueChange={(v) => setOverride("approval_policy", v)}>
                         <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                         <SelectContent><SelectItem value="inherit">Use global</SelectItem><SelectItem value="approve_immediately">Approved</SelectItem><SelectItem value="create_as_draft">Draft</SelectItem></SelectContent>

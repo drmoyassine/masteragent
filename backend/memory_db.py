@@ -1396,6 +1396,21 @@ def _seed_defaults():
             """, (global_tokens, global_conf, global_time, json.dumps(overrides)))
             logger.info("Migrated legacy Knowledge settings into unified generation policy")
 
+        # Per-entity threshold migration is independent of the global settings
+        # flag because entity types may be created or imported later. Preserve
+        # the legacy value as a compatibility field but make the canonical
+        # declarative-pathway override explicit exactly once.
+        cursor.execute("""
+            UPDATE memory_entity_type_config
+            SET knowledge_generation_overrides = jsonb_set(
+                COALESCE(knowledge_generation_overrides, '{}'::jsonb),
+                '{declarative_knowledge,evidence_threshold}',
+                to_jsonb(knowledge_extraction_threshold), true
+            )
+            WHERE knowledge_extraction_threshold IS NOT NULL
+              AND COALESCE(knowledge_generation_overrides #>> '{declarative_knowledge,evidence_threshold}', '') = ''
+        """)
+
         # ── One-time backfills (guarded by memory_settings flags; run once) ──
         # Backfill #2: activate existing draft knowledge. The new global
         # knowledge_auto_activate dial defaults True, so historical drafts (the 94
@@ -1495,7 +1510,7 @@ def _seed_defaults():
                  ""),
                 ("pii_scrubbing", "zendata", "", "knowledge", 0, "", ""),
                 ("knowledge_generation", "openai", "gpt-4o-mini", "knowledge", 1,
-                 "You are an AI knowledge curator. The following are de-identified intelligence from multiple interactions. Synthesize them into a single generalizable Knowledge item — a durable, reusable piece of knowledge applicable beyond any specific entity. Remove all specific names.\n\nFocus on these knowledge signals:\n\n{{ knowledge_signals }}\n\nReturn JSON: {\"name\": \"...\", \"category\": \"...\", \"content\": \"...\", \"summary\": \"...\", \"tags\": [...]}\ncategory must be one of:\n- best_practices: Behavioral rules (Dos and Don'ts) proven to work through experience\n- lessons_learned: Specific negative outcomes with root-cause analysis — what went wrong and why\n- trade_knowledge: Domain-specific procedural, regulatory, or technical facts (default)\n\ntags: Freeform domain labels (e.g., \"sales\", \"risk\", \"visa\", \"objection-handling\"). Use 1-3 tags.",
+                 "You are a knowledge curator for an agent harness. The input is de-identified intelligence from multiple interactions. Produce one durable, reusable Knowledge item only when the sources support it; otherwise return a no_candidate decision. Remove specific names and never invent facts, deadlines, qualifications, jurisdictions, or facet values. Preserve conditions, exceptions, causal context, scope, and unresolved contradictions. Never turn separate incidents into one fabricated lesson.\n\nFocus on these knowledge signals:\n\n{{ knowledge_signals }}\n\nReturn ONLY JSON with schema_version='knowledge-generation-v2', decision ('create'|'no_candidate'), name, category, summary, content, signals, tags, facets, confidence, qualifications, contradictions, source_support. category must be one of best_practices, lessons_learned, trade_knowledge. For best_practices preserve recommendations, conditions and exceptions. For lessons_learned preserve causal context and incident distinctions. For trade_knowledge preserve jurisdiction, institution, product, intake, and environmental distinctions when explicitly supported.",
                  ""),
                  ("summarization", "openai", "gpt-4o-mini", "intelligence", -1,
                  "Summarize this in 1-2 sentences:\n\n{{text}}",

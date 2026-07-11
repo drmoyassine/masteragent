@@ -2,6 +2,8 @@
 import memory_evidence_service as evidence
 from memory_generation_policy import approval_status, resolve_generation_policy
 from memory_quality import calculate_quality_v2
+from memory_generation_contracts import validate_declarative, validate_skill
+from memory_skill_md import parse_skill_md, render_skill_md, validate_skill_md
 
 
 def test_generation_policy_precedence():
@@ -22,6 +24,16 @@ def test_generation_policy_precedence():
     assert result["sources"]["max_tokens"] == "pathway"
     assert result["values"]["min_confidence"] == 0.8
     assert result["sources"]["min_confidence"] == "entity"
+
+
+def test_legacy_entity_threshold_remains_declarative_compatible():
+    result = resolve_generation_policy(
+        "declarative_knowledge",
+        settings={"knowledge_generation_evidence_threshold": 5},
+        entity_config={"knowledge_extraction_threshold": 3},
+    )
+    assert result["values"]["evidence_threshold"] == 3
+    assert result["sources"]["evidence_threshold"] == "entity"
 
 
 def test_approval_names_map_to_stored_statuses():
@@ -73,3 +85,27 @@ def test_source_similarity_routes_before_generation(monkeypatch):
     assert result["route"] == "evidence_link"
     assert result["canonical_knowledge_id"] == "canonical-1"
     assert result["metrics"]["aggregate_similarity"] == 1.0
+
+
+def test_declarative_contract_supports_explicit_no_candidate():
+    candidate = validate_declarative({"decision": "no_candidate", "confidence": 0.9})
+    assert candidate.decision == "no_candidate"
+
+
+def test_skill_contract_renders_operational_sections():
+    skill = validate_skill({
+        "name": "verify-visa-document", "trigger_desc": "Verify visa documents when preparing a student visa submission.",
+        "procedure": "Check each document against the current checklist.", "confidence": 0.9,
+        "inputs": ["Student documents"], "outputs": ["Verified checklist"],
+        "tools": ["CRM document store"], "permissions": ["Read student documents"],
+        "failure_conditions": ["A required document is missing"],
+        "safety_requirements": ["Do not submit documents without human review"],
+    })
+    content = render_skill_md(
+        name=skill.name, category="skill", description=skill.trigger_desc,
+        body=skill.procedure, metadata=skill.model_dump(),
+    )
+    assert "## Inputs" in content
+    assert "## Safety requirements" in content
+    assert parse_skill_md(content)["name"] == "verify-visa-document"
+    assert validate_skill_md(content, package_name="verify-visa-document")["name"] == "verify-visa-document"

@@ -228,8 +228,11 @@ async def generate_knowledge_from_intelligence(intelligence: list) -> int:
     })
     system_prompt += "\n\n" + facet_prompt_instructions()
     system_prompt += (
-        "\nReturn confidence as a number from 0 to 1. Return governed facets in "
-        "metadata.facets using the supplied schema."
+        "\nReturn ONLY JSON using schema_version='knowledge-generation-v2'. Include decision "
+        "(create|no_candidate), name, category, summary, content, signals, tags, facets, confidence, "
+        "qualifications, contradictions, and source_support. Preserve conditions, exceptions, causal "
+        "context, jurisdiction, intake, and scope when explicitly supported. Never merge separate "
+        "incidents into one fabricated lesson or infer unsupported facet values."
     )
 
     try:
@@ -244,6 +247,17 @@ async def generate_knowledge_from_intelligence(intelligence: list) -> int:
     except Exception as e:
         logger.error(f"Knowledge generation LLM call failed: {e}")
         return 0
+
+    try:
+        from memory_generation_contracts import validate_declarative
+        candidate = validate_declarative(result)
+    except ValueError as exc:
+        logger.warning("Rejected invalid declarative Knowledge output: %s", exc)
+        return 0
+    if candidate.decision == "no_candidate":
+        log_pipeline_run("knowledge_generation", "skipped", reason_code="no_candidate")
+        return 0
+    result = candidate.model_dump()
 
     name = result.get("name", "Unnamed Knowledge")
     category = result.get("category", "trade_knowledge")

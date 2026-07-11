@@ -3,7 +3,7 @@ import {
     Clock, Play, ShieldAlert, Shield, Zap, GraduationCap, Brain,
     Layers, Scissors, FileText, Eye, AlertCircle, CheckCircle2,
     Edit2, Cpu, Sparkles, BarChart3, Image as ImageIcon, ChevronDown, Settings,
-    Plus, X, GitMerge, Search
+    Plus, X, GitMerge, Search, CircleHelp
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
@@ -284,6 +284,7 @@ import { InlineTaskConfigAccordion } from "./InlineTaskConfigAccordion";
 import { DraggablePipeline, KnowledgePathways } from "./DraggablePipeline";
 import { OutboundWebhooksSettings } from "./OutboundWebhooksSettings";
 import { VisionWebhooksSettings } from "./VisionWebhooksSettings";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 // â”€â”€â”€ Prompt Structure Preview â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function PromptStructurePreview({ sections }) {
@@ -1724,6 +1725,47 @@ export function MemorySettings({
     );
 }
 
+const KNOWLEDGE_SETTING_HELP = {
+    generation_enabled: "Turns all scheduled and threshold-driven Knowledge generation on or off. Existing Knowledge is not changed.",
+    generation_time: "UTC time for the single daily run of all enabled Knowledge pathways.",
+    evidence_threshold: "Minimum source evidence required before a pathway may generate Knowledge. Higher values wait for more evidence; lower values generate sooner.",
+    minimum_confidence: "Minimum confidence reported by the generation model before a candidate is accepted. This is not a similarity score or a quality score.",
+    maximum_tokens: "Maximum response length available to a generation model. Increase only when valid structured responses are being truncated.",
+    approval_policy: "Approved records can be retrieved by agents. Draft records remain stored but are excluded from normal agent retrieval until reviewed.",
+    facet_schema: "Shared governed keys that the generation model may populate in its primary response. A facet is added only when the evidence explicitly supports it.",
+    profile_map: "Retrieval-only mapping from entity-profile fields to governed facets. Profile matches boost ranking; they do not exclude Knowledge.",
+    max_matches: "Maximum ordinary Knowledge index entries returned in context. Always-on records are injected separately in full.",
+    relevance_floor: "Minimum semantic relevance for ordinary retrieval. Zero ranks candidates without excluding them; a positive value excludes records without compatible embeddings.",
+    hygiene_enabled: "Enables candidate discovery and consolidation proposals. Similarity discovers related records; it never independently performs a merge.",
+    hygiene_mode: "Controls whether hygiene only analyzes, creates proposals, requires manual approval, or may auto-apply under strict policy gates.",
+    candidate_similarity: "Embedding similarity used to draw candidate relationships. It does not decide whether records should consolidate.",
+    evidence_routing: "Uses source embeddings before an expensive generation call. Very high similarity can link evidence; moderate similarity can request an LLM revision assessment.",
+    evidence_mode: "Analysis only records routing recommendations without changing Knowledge. Enforced applies the allowed evidence-link or revision route.",
+    evidence_low: "Lower bound for a related-evidence match. At or above this value, enforced mode asks the LLM whether an existing canonical record needs revision.",
+    evidence_high: "Very-high evidence match threshold. At or above this value, enforced mode may link evidence to one existing canonical record without generating another record.",
+    evidence_coverage: "Share of source items that must meet the very-high threshold before evidence can be linked automatically.",
+    cluster_min: "Smallest number of Knowledge records that can form a consolidation candidate cluster.",
+    cluster_max: "Largest automatically handled cluster. Larger connected components are split or sent for review to avoid weak chains combining a broad topic.",
+    cohesion: "Minimum average similarity within a cluster. It guards against transitively connected but incoherent groups.",
+    weak_link: "Similarity below which a graph edge is treated as weak during cluster splitting.",
+    preview_ttl: "How long a non-mutating consolidation preview remains valid before source changes require regeneration.",
+    auto_confidence: "Minimum LLM consolidation confidence required before an automatic policy may apply a proposal. It is never the only safety gate.",
+    contradiction_policy: "How unresolved contradictions affect consolidation. Manual review is the safest production default.",
+    canonical_strategy: "Default for approved consolidations: update one selected source or create a new canonical record and retire every source.",
+    embedding_version: "Embedding serialization version used for candidate comparison. Change only with a planned backfill and calibration.",
+    creation_time: "After creating eligible Knowledge, enqueue the shared non-mutating hygiene preview. It does not directly merge records.",
+    consolidation_categories: "Choose which Knowledge categories participate in automated candidate discovery. Categories are never automatically consolidated across one another.",
+    category_automation: "Per-category safety gate. A category remains manual until explicitly allowed, even if the global hygiene mode is automatic.",
+};
+
+function SettingLabel({ children, help, className = "text-xs" }) {
+    const text = KNOWLEDGE_SETTING_HELP[help] || help;
+    return <div className="flex items-center gap-1">
+        <Label className={className}>{children}</Label>
+        {text && <TooltipProvider delayDuration={120}><Tooltip><TooltipTrigger asChild><button type="button" aria-label={`Help: ${children}`} className="text-muted-foreground hover:text-foreground"><CircleHelp className="h-3.5 w-3.5" /></button></TooltipTrigger><TooltipContent className="max-w-xs text-xs leading-relaxed">{text}</TooltipContent></Tooltip></TooltipProvider>}
+    </div>;
+}
+
 // Simplified Knowledge settings: generation, maintenance, and retrieval only.
 function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, onDeleteConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, entityTypes }) {
     const publicPipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "knowledge").sort((a,b) => a.execution_order - b.execution_order);
@@ -1766,15 +1808,14 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                     <Card>
                         <CardHeader><CardTitle className="text-base">Global generation controls</CardTitle><CardDescription>Defaults shared by every generation pathway. A pathway override applies only where shown below.</CardDescription></CardHeader>
                         <CardContent className="space-y-4">
-                            <div className="flex items-center justify-between"><div><Label>Generation enabled</Label><p className="text-[11px] text-muted-foreground">Master switch for scheduled and threshold-driven generation.</p></div><Switch checked={settings.knowledge_generation_enabled ?? true} onCheckedChange={(v) => onUpdateSettings("knowledge_generation_enabled", v)} /></div>
+                            <div className="flex items-center justify-between"><div><SettingLabel help="generation_enabled">Generation enabled</SettingLabel><p className="text-[11px] text-muted-foreground">Master switch for scheduled and threshold-driven generation.</p></div><Switch checked={settings.knowledge_generation_enabled ?? true} onCheckedChange={(v) => onUpdateSettings("knowledge_generation_enabled", v)} /></div>
                             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                                <div className="space-y-1"><Label className="text-xs">Daily run time (UTC)</Label><Input type="time" value={settings.knowledge_generation_time || "03:00"} onChange={(e) => onUpdateSettings("knowledge_generation_time", e.target.value)} /></div>
-                                <div className="space-y-1"><Label className="text-xs">Evidence threshold</Label><Input type="number" min="1" value={settings.knowledge_generation_evidence_threshold ?? 5} onChange={(e) => onUpdateSettings("knowledge_generation_evidence_threshold", Number(e.target.value) || 1)} /></div>
-                                <div className="space-y-1"><Label className="text-xs">Minimum confidence</Label><Input type="number" min="0" max="1" step="0.05" value={settings.knowledge_generation_min_confidence ?? 0.6} onChange={(e) => onUpdateSettings("knowledge_generation_min_confidence", Number(e.target.value))} /></div>
-                                <div className="space-y-1"><Label className="text-xs">Maximum output tokens</Label><Input type="number" min="256" max="8000" value={settings.knowledge_generation_max_tokens ?? 1200} onChange={(e) => onUpdateSettings("knowledge_generation_max_tokens", Number(e.target.value) || 1200)} /></div>
+                                <div className="space-y-1"><SettingLabel help="generation_time">Daily run time (UTC)</SettingLabel><Input type="time" value={settings.knowledge_generation_time || "03:00"} onChange={(e) => onUpdateSettings("knowledge_generation_time", e.target.value)} /></div>
+                                <div className="space-y-1"><SettingLabel help="evidence_threshold">Evidence threshold</SettingLabel><Input type="number" min="1" value={settings.knowledge_generation_evidence_threshold ?? 5} onChange={(e) => onUpdateSettings("knowledge_generation_evidence_threshold", Number(e.target.value) || 1)} /></div>
+                                <div className="space-y-1"><SettingLabel help="minimum_confidence">Minimum confidence</SettingLabel><Input type="number" min="0" max="1" step="0.05" value={settings.knowledge_generation_min_confidence ?? 0.6} onChange={(e) => onUpdateSettings("knowledge_generation_min_confidence", Number(e.target.value))} /></div>
+                                <div className="space-y-1"><SettingLabel help="maximum_tokens">Maximum output tokens</SettingLabel><Input type="number" min="256" max="8000" value={settings.knowledge_generation_max_tokens ?? 1200} onChange={(e) => onUpdateSettings("knowledge_generation_max_tokens", Number(e.target.value) || 1200)} /></div>
                             </div>
-                            <div className="max-w-sm space-y-1"><Label className="text-xs">Activation policy</Label><Select value={settings.knowledge_generation_approval_policy || "approve_immediately"} onValueChange={(v) => onUpdateSettings("knowledge_generation_approval_policy", v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="approve_immediately">Create as Approved</SelectItem><SelectItem value="create_as_draft">Create as Draft</SelectItem></SelectContent></Select><p className="text-[10px] text-muted-foreground">Approved records may be retrieved by agents. Draft records require review.</p></div>
-                            <div className="border-t pt-4"><Label className="text-xs">Entity-specific evidence threshold overrides</Label><div className="mt-2"><ThresholdOverridesTable entityTypes={entityTypes} overrideKey="knowledge_extraction_threshold" globalFallback={settings.knowledge_generation_evidence_threshold ?? 5} /></div></div>
+                            <div className="max-w-sm space-y-1"><SettingLabel help="approval_policy">Activation policy</SettingLabel><Select value={settings.knowledge_generation_approval_policy || "approve_immediately"} onValueChange={(v) => onUpdateSettings("knowledge_generation_approval_policy", v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="approve_immediately">Create as Approved</SelectItem><SelectItem value="create_as_draft">Create as Draft</SelectItem></SelectContent></Select><p className="text-[10px] text-muted-foreground">Approved records may be retrieved by agents. Draft records require review.</p></div>
                         </CardContent>
                     </Card>
 
@@ -1786,21 +1827,22 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                         </CardContent>
                     </Card>
 
+                    <Card><CardHeader><CardTitle className="text-base">Governed facets</CardTitle><CardDescription>Defines the shared facet keys the generation model may populate in its primary response. It is not a retrieval-only setting.</CardDescription></CardHeader><CardContent><div className="space-y-2"><div className="flex justify-between"><SettingLabel help="facet_schema">Facet schema</SettingLabel><Button size="sm" variant="ghost" onClick={() => saveJson("knowledge_facets_schema", facetsSchemaText)}>Save</Button></div><textarea className="w-full h-48 rounded-md border bg-background p-2 text-xs font-mono" value={facetsSchemaText} onChange={(e) => setFacetsSchemaText(e.target.value)} /><p className="text-[10px] text-muted-foreground">Only explicitly supported values are stored. Example: <code>"intake": "September 2026"</code>.</p></div></CardContent></Card>
                     <Card className="border-dashed bg-muted/20"><CardHeader><CardTitle className="text-base">Knowledge Generation Pathways</CardTitle><CardDescription>Each independent pathway contains its own overrides, prompt, provider, and model.</CardDescription></CardHeader><CardContent><KnowledgePathways pipelineConfigs={publicPipelineNodes} llmProviders={llmProviders} onSaveConfig={onSaveConfig} onDeleteConfig={onDeleteConfig} modelLists={modelLists} fetchingModels={fetchingModels} fetchErrors={fetchErrors} onFetchModels={onFetchModels} settings={settings} onUpdateSettings={onUpdateSettings} entityTypes={entityTypes} /></CardContent></Card>
                 </TabsContent>
 
                 <TabsContent value="maintenance" className="space-y-5 mt-5">
                     <KnowledgeHygieneCard settings={settings} onUpdateSettings={onUpdateSettings} />
                     <Card><CardHeader><CardTitle className="text-base">Pre-generation evidence routing</CardTitle><CardDescription>Uses persisted source embeddings before an expensive generation call. Similarity discovers the route; the LLM decides whether moderate matches revise an existing record.</CardDescription></CardHeader><CardContent className="space-y-4">
-                        <div className="flex items-center justify-between"><div><Label>Evidence routing enabled</Label><p className="text-[10px] text-muted-foreground">Applies to declarative, telemetry, playbook, and skill pathways.</p></div><Switch checked={settings.knowledge_evidence_routing_enabled ?? true} onCheckedChange={(v) => onUpdateSettings("knowledge_evidence_routing_enabled", v)} /></div>
-                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4"><div className="space-y-1"><Label className="text-xs">Mode</Label><Select value={settings.knowledge_evidence_routing_mode || "analysis_only"} onValueChange={(v) => onUpdateSettings("knowledge_evidence_routing_mode", v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="analysis_only">Analysis only</SelectItem><SelectItem value="enforced">Enforced</SelectItem></SelectContent></Select></div><div className="space-y-1"><Label className="text-xs">Moderate from</Label><Input type="number" min="0" max="1" step="0.01" value={settings.knowledge_evidence_low_threshold ?? 0.78} onChange={(e) => onUpdateSettings("knowledge_evidence_low_threshold", Number(e.target.value))} /></div><div className="space-y-1"><Label className="text-xs">Very high from</Label><Input type="number" min="0" max="1" step="0.01" value={settings.knowledge_evidence_high_threshold ?? 0.95} onChange={(e) => onUpdateSettings("knowledge_evidence_high_threshold", Number(e.target.value))} /></div><div className="space-y-1"><Label className="text-xs">High-match coverage</Label><Input type="number" min="0" max="1" step="0.05" value={settings.knowledge_evidence_high_coverage ?? 0.9} onChange={(e) => onUpdateSettings("knowledge_evidence_high_coverage", Number(e.target.value))} /></div></div>
+                        <div className="flex items-center justify-between"><div><SettingLabel help="evidence_routing">Evidence routing enabled</SettingLabel><p className="text-[10px] text-muted-foreground">Applies to declarative, telemetry, playbook, and skill pathways.</p></div><Switch checked={settings.knowledge_evidence_routing_enabled ?? true} onCheckedChange={(v) => onUpdateSettings("knowledge_evidence_routing_enabled", v)} /></div>
+                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4"><div className="space-y-1"><SettingLabel help="evidence_mode">Mode</SettingLabel><Select value={settings.knowledge_evidence_routing_mode || "analysis_only"} onValueChange={(v) => onUpdateSettings("knowledge_evidence_routing_mode", v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="analysis_only">Analysis only</SelectItem><SelectItem value="enforced">Enforced</SelectItem></SelectContent></Select></div><div className="space-y-1"><SettingLabel help="evidence_low">Moderate from</SettingLabel><Input type="number" min="0" max="1" step="0.01" value={settings.knowledge_evidence_low_threshold ?? 0.78} onChange={(e) => onUpdateSettings("knowledge_evidence_low_threshold", Number(e.target.value))} /></div><div className="space-y-1"><SettingLabel help="evidence_high">Very high from</SettingLabel><Input type="number" min="0" max="1" step="0.01" value={settings.knowledge_evidence_high_threshold ?? 0.95} onChange={(e) => onUpdateSettings("knowledge_evidence_high_threshold", Number(e.target.value))} /></div><div className="space-y-1"><SettingLabel help="evidence_coverage">High-match coverage</SettingLabel><Input type="number" min="0" max="1" step="0.05" value={settings.knowledge_evidence_high_coverage ?? 0.9} onChange={(e) => onUpdateSettings("knowledge_evidence_high_coverage", Number(e.target.value))} /></div></div>
                     </CardContent></Card>
                     <Card><CardHeader><CardTitle className="text-base">Maintenance actions</CardTitle><CardDescription>Occasional repair and export tools. Consolidation analysis and application remain proposal-and-review based.</CardDescription></CardHeader><CardContent className="flex gap-2 flex-wrap"><Button variant="outline" onClick={() => run("facets", triggerBackfillFacets, "Facet backfill queued")} disabled={!!triggering}><Sparkles className="w-4 h-4 mr-2" />Backfill facets</Button><Button variant="outline" onClick={() => run("export", async () => { const res = await exportKnowledgePack({ status: "active" }); const url = URL.createObjectURL(new Blob([res.data])); const a = document.createElement("a"); a.href=url; a.download="knowledge-pack.zip"; a.click(); URL.revokeObjectURL(url); }, "Knowledge pack exported")} disabled={!!triggering}><FileText className="w-4 h-4 mr-2" />Export approved knowledge</Button></CardContent></Card>
                 </TabsContent>
 
                 <TabsContent value="retrieval" className="space-y-5 mt-5">
-                    <Card><CardHeader><CardTitle className="text-base">Context retrieval</CardTitle><CardDescription>Always-on records are injected in full. All other matches are compact index entries that agents retrieve in full only when needed.</CardDescription></CardHeader><CardContent className="grid grid-cols-2 gap-4"><div className="space-y-1"><Label className="text-xs">Maximum matched records</Label><Input type="number" min="1" max="100" value={settings.context_knowledge_count ?? 30} onChange={(e) => onUpdateSettings("context_knowledge_count", Number(e.target.value) || 30)} /></div><div className="space-y-1"><Label className="text-xs">Relevance floor</Label><Input type="number" min="0" max="1" step="0.05" value={settings.context_knowledge_min_similarity ?? 0} onChange={(e) => onUpdateSettings("context_knowledge_min_similarity", Number(e.target.value))} /><p className="text-[10px] text-muted-foreground">0 ranks without excluding. Above 0, records without compatible embeddings are excluded.</p></div></CardContent></Card>
-                    <Card><CardHeader><CardTitle className="text-base">Governed facets</CardTitle><CardDescription>Explicit request facets are hard filters. Profile-derived facets only boost ranking and never remove otherwise relevant knowledge.</CardDescription></CardHeader><CardContent className="grid grid-cols-1 lg:grid-cols-2 gap-4"><div className="space-y-2"><div className="flex justify-between"><Label className="text-xs">Facet schema</Label><Button size="sm" variant="ghost" onClick={() => saveJson("knowledge_facets_schema", facetsSchemaText)}>Save</Button></div><textarea className="w-full h-48 rounded-md border bg-background p-2 text-xs font-mono" value={facetsSchemaText} onChange={(e) => setFacetsSchemaText(e.target.value)} /></div><div className="space-y-2"><div className="flex justify-between"><Label className="text-xs">Profile-to-facet map</Label><Button size="sm" variant="ghost" onClick={() => saveJson("profile_facet_map", profileMapText)}>Save</Button></div><textarea className="w-full h-48 rounded-md border bg-background p-2 text-xs font-mono" value={profileMapText} onChange={(e) => setProfileMapText(e.target.value)} /></div></CardContent></Card>
+                    <Card><CardHeader><CardTitle className="text-base">Context retrieval</CardTitle><CardDescription>Always-on records are injected in full. All other matches are compact index entries that agents retrieve in full only when needed.</CardDescription></CardHeader><CardContent className="grid grid-cols-2 gap-4"><div className="space-y-1"><SettingLabel help="max_matches">Maximum matched records</SettingLabel><Input type="number" min="1" max="100" value={settings.context_knowledge_count ?? 30} onChange={(e) => onUpdateSettings("context_knowledge_count", Number(e.target.value) || 30)} /></div><div className="space-y-1"><SettingLabel help="relevance_floor">Relevance floor</SettingLabel><Input type="number" min="0" max="1" step="0.05" value={settings.context_knowledge_min_similarity ?? 0} onChange={(e) => onUpdateSettings("context_knowledge_min_similarity", Number(e.target.value))} /><p className="text-[10px] text-muted-foreground">0 ranks without excluding. Above 0, records without compatible embeddings are excluded.</p></div></CardContent></Card>
+                    <Card><CardHeader><CardTitle className="text-base">Profile-derived facet ranking</CardTitle><CardDescription>Maps entity profile fields to generated facets. Matching values boost ranking and never remove otherwise relevant Knowledge.</CardDescription></CardHeader><CardContent><div className="space-y-2"><div className="flex justify-between"><SettingLabel help="profile_map">Profile-to-facet map</SettingLabel><Button size="sm" variant="ghost" onClick={() => saveJson("profile_facet_map", profileMapText)}>Save</Button></div><textarea className="w-full h-48 rounded-md border bg-background p-2 text-xs font-mono" value={profileMapText} onChange={(e) => setProfileMapText(e.target.value)} /></div></CardContent></Card>
                 </TabsContent>
             </Tabs>
         </div>
@@ -1863,7 +1905,7 @@ function KnowledgeHygieneCard({ settings, onUpdateSettings }) {
             <CardContent className="space-y-5">
                 <div className="flex items-center justify-between">
                     <div className="space-y-0.5 pr-4">
-                        <Label className="text-xs font-mono">Knowledge hygiene enabled</Label>
+                        <SettingLabel help="hygiene_enabled" className="text-xs font-mono">Knowledge hygiene enabled</SettingLabel>
                         <p className="text-[10px] text-muted-foreground">Master switch for candidate discovery + proposals.</p>
                     </div>
                     <Switch
@@ -1874,7 +1916,7 @@ function KnowledgeHygieneCard({ settings, onUpdateSettings }) {
 
                 <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">
-                        <Label className="text-xs font-mono">Mode</Label>
+                        <SettingLabel help="hygiene_mode" className="text-xs font-mono">Mode</SettingLabel>
                         <Select value={settings.knowledge_hygiene_mode || "manual_only"} onValueChange={(v) => onUpdateSettings("knowledge_hygiene_mode", v)}>
                             <SelectTrigger><SelectValue /></SelectTrigger>
                             <SelectContent>
@@ -1888,7 +1930,7 @@ function KnowledgeHygieneCard({ settings, onUpdateSettings }) {
                         <p className="text-[10px] text-muted-foreground">Auto modes apply only when policy gates pass (high confidence, no contradictions). Start manual.</p>
                     </div>
                     <div className="space-y-1">
-                        <Label className="text-xs font-mono">Candidate similarity</Label>
+                        <SettingLabel help="candidate_similarity" className="text-xs font-mono">Candidate similarity</SettingLabel>
                         <Input type="number" step="0.01" min="0" max="1"
                             value={settings.knowledge_hygiene_similarity_threshold ?? 0.82}
                             onChange={(e) => onUpdateSettings("knowledge_hygiene_similarity_threshold", Number(e.target.value))} />
@@ -1898,22 +1940,22 @@ function KnowledgeHygieneCard({ settings, onUpdateSettings }) {
 
                 <div className="grid grid-cols-4 gap-3">
                     <div className="space-y-1">
-                        <Label className="text-xs font-mono">Min cluster</Label>
+                        <SettingLabel help="cluster_min" className="text-xs font-mono">Min cluster</SettingLabel>
                         <Input type="number" min="2" value={settings.knowledge_hygiene_min_cluster_size ?? 2}
                             onChange={(e) => onUpdateSettings("knowledge_hygiene_min_cluster_size", parseInt(e.target.value) || 2)} />
                     </div>
                     <div className="space-y-1">
-                        <Label className="text-xs font-mono">Max cluster</Label>
+                        <SettingLabel help="cluster_max" className="text-xs font-mono">Max cluster</SettingLabel>
                         <Input type="number" min="2" max="20" value={settings.knowledge_hygiene_max_cluster_size ?? 5}
                             onChange={(e) => onUpdateSettings("knowledge_hygiene_max_cluster_size", parseInt(e.target.value) || 5)} />
                     </div>
                     <div className="space-y-1">
-                        <Label className="text-xs font-mono">Min cohesion</Label>
+                        <SettingLabel help="cohesion" className="text-xs font-mono">Min cohesion</SettingLabel>
                         <Input type="number" step="0.01" min="0" max="1" value={settings.knowledge_hygiene_min_cluster_cohesion ?? 0.72}
                             onChange={(e) => onUpdateSettings("knowledge_hygiene_min_cluster_cohesion", Number(e.target.value))} />
                     </div>
                     <div className="space-y-1">
-                        <Label className="text-xs font-mono">Weak-link</Label>
+                        <SettingLabel help="weak_link" className="text-xs font-mono">Weak-link</SettingLabel>
                         <Input type="number" step="0.01" min="0" max="1" value={settings.knowledge_hygiene_weak_link_threshold ?? 0.65}
                             onChange={(e) => onUpdateSettings("knowledge_hygiene_weak_link_threshold", Number(e.target.value))} />
                     </div>
@@ -1921,17 +1963,17 @@ function KnowledgeHygieneCard({ settings, onUpdateSettings }) {
 
                 <div className="grid grid-cols-3 gap-4">
                     <div className="space-y-1">
-                        <Label className="text-xs font-mono">Preview TTL (min)</Label>
+                        <SettingLabel help="preview_ttl" className="text-xs font-mono">Preview TTL (min)</SettingLabel>
                         <Input type="number" min="5" max="1440" value={settings.knowledge_hygiene_preview_ttl_minutes ?? 60}
                             onChange={(e) => onUpdateSettings("knowledge_hygiene_preview_ttl_minutes", parseInt(e.target.value) || 60)} />
                     </div>
                     <div className="space-y-1">
-                        <Label className="text-xs font-mono">Min auto-confidence</Label>
+                        <SettingLabel help="auto_confidence" className="text-xs font-mono">Min auto-confidence</SettingLabel>
                         <Input type="number" step="0.01" min="0" max="1" value={settings.knowledge_hygiene_min_auto_confidence ?? 0.9}
                             onChange={(e) => onUpdateSettings("knowledge_hygiene_min_auto_confidence", Number(e.target.value))} />
                     </div>
                     <div className="space-y-1">
-                        <Label className="text-xs font-mono">Contradiction policy</Label>
+                        <SettingLabel help="contradiction_policy" className="text-xs font-mono">Contradiction policy</SettingLabel>
                         <Select value={settings.knowledge_hygiene_contradiction_policy || "manual_review"} onValueChange={(v) => onUpdateSettings("knowledge_hygiene_contradiction_policy", v)}>
                             <SelectTrigger><SelectValue /></SelectTrigger>
                             <SelectContent>
@@ -1944,7 +1986,7 @@ function KnowledgeHygieneCard({ settings, onUpdateSettings }) {
                 </div>
 
                 <div className="space-y-1">
-                    <Label className="text-xs font-mono">Categories enabled for consolidation</Label>
+                    <SettingLabel help="consolidation_categories" className="text-xs font-mono">Categories enabled for consolidation</SettingLabel>
                     <div className="flex flex-wrap gap-2 mt-1">
                         {CATEGORIES.map((cat) => (
                             <Badge key={cat} variant={enabledCats.includes(cat) ? "default" : "outline"} className="cursor-pointer" onClick={() => toggleCategory(cat)}>
@@ -1956,7 +1998,7 @@ function KnowledgeHygieneCard({ settings, onUpdateSettings }) {
 
                 <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">
-                        <Label className="text-xs font-mono">Default canonical strategy</Label>
+                        <SettingLabel help="canonical_strategy" className="text-xs font-mono">Default canonical strategy</SettingLabel>
                         <Select
                             value={settings.knowledge_hygiene_default_canonical_strategy || "update_existing"}
                             onValueChange={(v) => onUpdateSettings("knowledge_hygiene_default_canonical_strategy", v)}
@@ -1969,7 +2011,7 @@ function KnowledgeHygieneCard({ settings, onUpdateSettings }) {
                         </Select>
                     </div>
                     <div className="space-y-1">
-                        <Label className="text-xs font-mono">Embedding version</Label>
+                        <SettingLabel help="embedding_version" className="text-xs font-mono">Embedding version</SettingLabel>
                         <Input type="number" min="1"
                             value={settings.knowledge_hygiene_embedding_version ?? 2}
                             onChange={(e) => onUpdateSettings("knowledge_hygiene_embedding_version", parseInt(e.target.value) || 1)} />
@@ -1977,7 +2019,7 @@ function KnowledgeHygieneCard({ settings, onUpdateSettings }) {
                 </div>
 
                 <div className="space-y-2">
-                    <Label className="text-xs font-mono">Category automation policies</Label>
+                    <SettingLabel help="category_automation" className="text-xs font-mono">Category automation policies</SettingLabel>
                     <p className="text-[10px] text-muted-foreground">A category remains manual until explicitly enabled, even when the global mode is automatic.</p>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                         {CATEGORIES.map((cat) => (
@@ -2014,7 +2056,7 @@ function KnowledgeHygieneCard({ settings, onUpdateSettings }) {
 
                 <div className="flex items-center justify-between border-t pt-4">
                     <div className="space-y-0.5 pr-4">
-                        <Label className="text-xs font-mono">Creation-time consolidation</Label>
+                        <SettingLabel help="creation_time" className="text-xs font-mono">Creation-time consolidation</SettingLabel>
                         <p className="text-[10px] text-muted-foreground">When a new record matches candidates, enqueue a preview async. Off until calibrated.</p>
                     </div>
                     <Switch

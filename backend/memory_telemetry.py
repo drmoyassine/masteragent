@@ -48,14 +48,20 @@ _REFLECTION_SYSTEM_PROMPT = (
     "- lessons_learned: something that went wrong + why\n"
     "- trade_knowledge: a durable fact discovered mid-action (e.g. a tool returned a rule/requirement)\n\n"
     "Generalize: strip specific names/IDs. Each learning needs a self-contained description stating "
-    "WHAT it is and WHEN to use it.\n\n"
+    "WHAT it is and WHEN to use it. Internal thoughts alone are not durable trade knowledge unless "
+    "corroborated by tool output, outcome evidence, or another reliable source.\n\n"
     'Return ONLY a JSON array (empty [] if nothing reusable): '
     '[{"target": "skill|playbook|best_practices|lessons_learned|trade_knowledge", '
     '"name": "...", "summary": "what it is and when to use it (<=1024 chars)", '
-    '"content": "the full reusable learning; for playbook include ordered steps", '
-    '"skill_type": "soft|hard" (only for skill), '
-    '"steps": [{"order": 1, "action": "..."}] (only for playbook), '
-    '"confidence": 0.0-1.0}]'
+    '"content": "the full reusable learning", "signals": [], "tags": [], "facets": {}, '
+    '"qualifications": [], "contradictions": [], "source_support": [], '
+    '"skill_type": "soft|hard" (only for skill), "trigger_desc": "...", "procedure": "...", '
+    '"inputs": [], "outputs": [], "tools": [], "prerequisites": [], "permissions": [], '
+    '"environments": [], "agent_types": [], "side_effects": [], "failure_conditions": [], '
+    '"recovery": [], "safety_requirements": [] (skill only), '
+    '"trigger_conditions": [], "steps": [{"order": 1, "action": "..."}], "branches": [], '
+    '"escalation_rules": [], "rollback": [], "completion_criteria": [], "exit_conditions": [] '
+    '(playbook only), "confidence": 0.0-1.0, "schema_version": "knowledge-generation-v2"}]'
 )
 
 
@@ -201,6 +207,13 @@ async def _reflect_entity_day(entity_type: str, entity_id: str, day: str, confid
     for c in candidates[:5]:
         if not isinstance(c, dict):
             continue
+        try:
+            from memory_generation_contracts import validate_telemetry_candidate
+            c = validate_telemetry_candidate(c).model_dump()
+            c["target"] = c.get("target") or c.get("category")
+        except ValueError as exc:
+            logger.warning("Rejected invalid telemetry Knowledge candidate: %s", exc)
+            continue
         target = (c.get("target") or "").strip()
         if target not in _VALID_TARGETS:
             continue
@@ -226,12 +239,24 @@ async def _reflect_entity_day(entity_type: str, entity_id: str, day: str, confid
 
         metadata = {}
         if target == "skill":
-            metadata = {"skill_type": c.get("skill_type", "hard"), "trigger_desc": summary,
-                        "procedure": content, "entity_types": [entity_type], "playbook_ids": []}
+            metadata = {"skill_type": c.get("skill_type", "hard"), "trigger_desc": c.get("trigger_desc") or summary,
+                        "procedure": c.get("procedure") or content, "purpose": c.get("purpose", ""),
+                        "inputs": c.get("inputs", []), "outputs": c.get("outputs", []), "tools": c.get("tools", []),
+                        "prerequisites": c.get("prerequisites", []), "permissions": c.get("permissions", []),
+                        "environments": c.get("environments", []), "agent_types": c.get("agent_types", []),
+                        "side_effects": c.get("side_effects", []), "failure_conditions": c.get("failure_conditions", []),
+                        "recovery": c.get("recovery", []), "safety_requirements": c.get("safety_requirements", []),
+                        "entity_types": [entity_type], "playbook_ids": []}
         elif target == "playbook":
             metadata = {"entity_type": entity_type, "signal_type": None,
                         "trigger_conditions": c.get("trigger_conditions", []),
-                        "steps": c.get("steps", []), "skill_ids": []}
+                        "steps": c.get("steps", []), "purpose": c.get("purpose", ""),
+                        "expected_outcome": c.get("expected_outcome", ""), "prerequisites": c.get("prerequisites", []),
+                        "required_inputs": c.get("required_inputs", []), "responsible_roles": c.get("responsible_roles", []),
+                        "tools": c.get("tools", []), "branches": c.get("branches", []),
+                        "escalation_rules": c.get("escalation_rules", []), "failure_conditions": c.get("failure_conditions", []),
+                        "rollback": c.get("rollback", []), "safety_requirements": c.get("safety_requirements", []),
+                        "completion_criteria": c.get("completion_criteria", []), "exit_conditions": c.get("exit_conditions", []), "skill_ids": []}
 
         facets, facet_state = validate_generated_facets(c.get("facets") or {})
         metadata["facets"] = facets

@@ -59,15 +59,28 @@ def render_skill_md(
         "---",
         f"name: {slugify(name)}",
         f"description: {_yaml_escape(description)}",
+    ]
+    # These are optional Agent Skills frontmatter fields. They are emitted only
+    # from explicitly governed metadata; merely mentioning a tool in a skill
+    # body does not create an allowed-tools grant.
+    compatibility = str(metadata.get("compatibility") or "").strip()
+    if compatibility:
+        lines.append(f"compatibility: {_yaml_escape(compatibility[:500])}")
+    allowed_tools = [str(tool).strip() for tool in (metadata.get("allowed_tools") or []) if str(tool).strip()]
+    if allowed_tools:
+        lines.append(f"allowed-tools: {_yaml_escape(' '.join(allowed_tools))}")
+    lines.extend([
         "metadata:",
         "  source: masteragent",
         f"  category: {category}",
         f"  version: {int(version or 1)}",
-    ]
+    ])
+    # Agent Skills metadata is a string key/value map. Structured arrays stay
+    # authoritative in the Knowledge database; export a portable string view.
     if signals:
-        lines.append(f"  signals: [{', '.join(_yaml_escape(s) for s in signals if s)}]")
+        lines.append(f"  signals: {_yaml_escape(', '.join(str(s) for s in signals if s))}")
     if tags:
-        lines.append(f"  tags: [{', '.join(_yaml_escape(t) for t in tags if t)}]")
+        lines.append(f"  tags: {_yaml_escape(', '.join(str(t) for t in tags if t))}")
     if category == "skill" and metadata.get("skill_type"):
         lines.append(f"  skill_type: {metadata['skill_type']}")
     lines.append("---")
@@ -75,7 +88,19 @@ def render_skill_md(
     lines.append(f"# {(name or 'Unnamed').strip()}")
     lines.append("")
 
+    def _list_section(title: str, values) -> None:
+        values = [str(v).strip() for v in (values or []) if str(v).strip()]
+        if not values:
+            return
+        lines.extend([f"## {title}", ""])
+        lines.extend(f"- {value}" for value in values)
+        lines.append("")
+
     if category == "playbook":
+        if metadata.get("purpose"):
+            lines.extend(["## Purpose", "", str(metadata["purpose"]).strip(), ""])
+        if metadata.get("expected_outcome"):
+            lines.extend(["## Expected outcome", "", str(metadata["expected_outcome"]).strip(), ""])
         if body:
             lines.append(body.strip())
             lines.append("")
@@ -86,6 +111,10 @@ def render_skill_md(
             for t in triggers:
                 lines.append(f"- {t}")
             lines.append("")
+        _list_section("Prerequisites", metadata.get("prerequisites"))
+        _list_section("Required inputs", metadata.get("required_inputs"))
+        _list_section("Responsible roles", metadata.get("responsible_roles"))
+        _list_section("Tools and integrations", metadata.get("tools"))
         steps = metadata.get("steps") or []
         if steps:
             lines.append("## Steps")
@@ -94,7 +123,16 @@ def render_skill_md(
                 action = s.get("action", "") if isinstance(s, dict) else str(s)
                 lines.append(f"{s.get('order', '')}. {action}" if isinstance(s, dict) and s.get("order") else f"- {action}")
             lines.append("")
+        _list_section("Branches and decisions", metadata.get("branches"))
+        _list_section("Escalation", metadata.get("escalation_rules"))
+        _list_section("Failure conditions", metadata.get("failure_conditions"))
+        _list_section("Rollback and recovery", metadata.get("rollback"))
+        _list_section("Safety requirements", metadata.get("safety_requirements"))
+        _list_section("Completion criteria", metadata.get("completion_criteria"))
+        _list_section("Exit conditions", metadata.get("exit_conditions"))
     else:  # skill
+        if metadata.get("purpose"):
+            lines.extend(["## Purpose", "", str(metadata["purpose"]).strip(), ""])
         trigger_desc = metadata.get("trigger_desc") or ""
         if trigger_desc and trigger_desc.strip() != description:
             lines.append("## When to use")
@@ -107,6 +145,18 @@ def render_skill_md(
             lines.append("")
             lines.append(procedure.strip())
             lines.append("")
+        _list_section("Inputs", metadata.get("inputs"))
+        _list_section("Outputs", metadata.get("outputs"))
+        _list_section("Prerequisites", metadata.get("prerequisites"))
+        _list_section("Tools and integrations", metadata.get("tools"))
+        _list_section("Permissions", metadata.get("permissions"))
+        _list_section("Applicable environments", metadata.get("environments"))
+        _list_section("Side effects", metadata.get("side_effects"))
+        _list_section("Failure conditions", metadata.get("failure_conditions"))
+        _list_section("Recovery", metadata.get("recovery"))
+        _list_section("Safety requirements", metadata.get("safety_requirements"))
+        _list_section("Examples", metadata.get("examples"))
+        _list_section("Edge cases", metadata.get("edge_cases"))
 
     return "\n".join(lines).rstrip() + "\n"
 
@@ -233,5 +283,22 @@ def parse_skill_md(text: str) -> dict:
         raise ValueError("SKILL.md missing required frontmatter field: name")
     if not description:
         raise ValueError("SKILL.md missing required frontmatter field: description")
+    if len(name) > 64 or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name):
+        raise ValueError("SKILL.md name must use lowercase letters, numbers, and single hyphens (max 64 chars)")
+    if len(description) > 1024:
+        raise ValueError("SKILL.md description must be 1024 characters or fewer")
 
     return {"name": name, "description": description, "body": body, "meta": fields}
+
+
+def validate_skill_md(text: str, package_name: Optional[str] = None) -> dict:
+    """Validate the portable single-file Agent Skills subset we support.
+
+    This is an equivalent in-process guard for generated/imported documents.
+    A deployment may additionally run the external ``skills-ref validate`` tool,
+    but generation and import must remain safe when that optional CLI is absent.
+    """
+    parsed = parse_skill_md(text)
+    if package_name is not None and parsed["name"] != package_name:
+        raise ValueError("SKILL.md name must match its package directory")
+    return parsed
