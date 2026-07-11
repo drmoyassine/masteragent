@@ -1751,7 +1751,7 @@ function KnowledgeHygieneCard({ settings, onUpdateSettings }) {
     const runAnalyze = async () => {
         setBusy(true);
         try {
-            const { data } = await analyzeHygieneNow({ mode: settings.knowledge_hygiene_mode || "manual_only" });
+            const { data } = await analyzeHygieneNow({ mode: "analysis_only" });
             toast.success(`Hygiene run queued (run ${data.run_id?.slice(0, 8)}…)`);
         } catch (e) { toast.error("Failed to start hygiene run"); }
         finally { setBusy(false); }
@@ -1808,7 +1808,7 @@ function KnowledgeHygieneCard({ settings, onUpdateSettings }) {
                         <Label className="text-xs font-mono">Candidate similarity</Label>
                         <Input type="number" step="0.01" min="0" max="1"
                             value={settings.knowledge_hygiene_similarity_threshold ?? 0.82}
-                            onChange={(e) => onUpdateSettings("knowledge_hygiene_similarity_threshold", parseFloat(e.target.value) || 0.82)} />
+                            onChange={(e) => onUpdateSettings("knowledge_hygiene_similarity_threshold", Number(e.target.value))} />
                         <p className="text-[10px] text-muted-foreground">0–1 edge threshold for grouping candidates. Finds related records; does NOT decide merges.</p>
                     </div>
                 </div>
@@ -1827,12 +1827,12 @@ function KnowledgeHygieneCard({ settings, onUpdateSettings }) {
                     <div className="space-y-1">
                         <Label className="text-xs font-mono">Min cohesion</Label>
                         <Input type="number" step="0.01" min="0" max="1" value={settings.knowledge_hygiene_min_cluster_cohesion ?? 0.72}
-                            onChange={(e) => onUpdateSettings("knowledge_hygiene_min_cluster_cohesion", parseFloat(e.target.value) || 0.72)} />
+                            onChange={(e) => onUpdateSettings("knowledge_hygiene_min_cluster_cohesion", Number(e.target.value))} />
                     </div>
                     <div className="space-y-1">
                         <Label className="text-xs font-mono">Weak-link</Label>
                         <Input type="number" step="0.01" min="0" max="1" value={settings.knowledge_hygiene_weak_link_threshold ?? 0.65}
-                            onChange={(e) => onUpdateSettings("knowledge_hygiene_weak_link_threshold", parseFloat(e.target.value) || 0.65)} />
+                            onChange={(e) => onUpdateSettings("knowledge_hygiene_weak_link_threshold", Number(e.target.value))} />
                     </div>
                 </div>
 
@@ -1845,7 +1845,7 @@ function KnowledgeHygieneCard({ settings, onUpdateSettings }) {
                     <div className="space-y-1">
                         <Label className="text-xs font-mono">Min auto-confidence</Label>
                         <Input type="number" step="0.01" min="0" max="1" value={settings.knowledge_hygiene_min_auto_confidence ?? 0.9}
-                            onChange={(e) => onUpdateSettings("knowledge_hygiene_min_auto_confidence", parseFloat(e.target.value) || 0.9)} />
+                            onChange={(e) => onUpdateSettings("knowledge_hygiene_min_auto_confidence", Number(e.target.value))} />
                     </div>
                     <div className="space-y-1">
                         <Label className="text-xs font-mono">Contradiction policy</Label>
@@ -1867,6 +1867,51 @@ function KnowledgeHygieneCard({ settings, onUpdateSettings }) {
                             <Badge key={cat} variant={enabledCats.includes(cat) ? "default" : "outline"} className="cursor-pointer" onClick={() => toggleCategory(cat)}>
                                 {cat.replace(/_/g, " ")}
                             </Badge>
+                        ))}
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                        <Label className="text-xs font-mono">Default canonical strategy</Label>
+                        <Select
+                            value={settings.knowledge_hygiene_default_canonical_strategy || "update_existing"}
+                            onValueChange={(v) => onUpdateSettings("knowledge_hygiene_default_canonical_strategy", v)}
+                        >
+                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="update_existing">Update selected canonical</SelectItem>
+                                <SelectItem value="create_new">Create new canonical</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div className="space-y-1">
+                        <Label className="text-xs font-mono">Embedding version</Label>
+                        <Input type="number" min="1"
+                            value={settings.knowledge_hygiene_embedding_version ?? 2}
+                            onChange={(e) => onUpdateSettings("knowledge_hygiene_embedding_version", parseInt(e.target.value) || 1)} />
+                    </div>
+                </div>
+
+                <div className="space-y-2">
+                    <Label className="text-xs font-mono">Category automation policies</Label>
+                    <p className="text-[10px] text-muted-foreground">A category remains manual until explicitly enabled, even when the global mode is automatic.</p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        {CATEGORIES.map((cat) => (
+                            <div key={cat} className="flex items-center justify-between gap-2 rounded-md border p-2">
+                                <span className="text-xs">{cat.replace(/_/g, " ")}</span>
+                                <Select
+                                    value={catPolicies[cat] || "manual_only"}
+                                    onValueChange={(v) => onUpdateSettings("knowledge_hygiene_category_policies", { ...catPolicies, [cat]: v })}
+                                >
+                                    <SelectTrigger className="w-[165px] h-8"><SelectValue /></SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="manual_only">Manual only</SelectItem>
+                                        <SelectItem value="auto_conservative">Auto conservative</SelectItem>
+                                        <SelectItem value="auto_synthesis">Auto synthesis</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
                         ))}
                     </div>
                 </div>
@@ -1899,7 +1944,7 @@ function KnowledgeHygieneCard({ settings, onUpdateSettings }) {
                     <Button size="sm" onClick={runAnalyze} disabled={busy || settings.knowledge_hygiene_enabled === false}>
                         <Search className="w-4 h-4 mr-2" /> Analyze now
                     </Button>
-                    <p className="text-[10px] text-muted-foreground self-center">Runs candidate discovery + proposals in the selected mode without forcing any merge.</p>
+                    <p className="text-[10px] text-muted-foreground self-center">Runs candidate discovery and metrics only. It never generates or applies a merge.</p>
                 </div>
             </CardContent>
         </Card>

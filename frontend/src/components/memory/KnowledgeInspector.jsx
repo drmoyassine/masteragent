@@ -19,7 +19,7 @@ const CATEGORY_COLORS = {
   playbook: "bg-rose-100 text-rose-800 dark:bg-rose-900 dark:text-rose-300",
 };
 
-export default function KnowledgeInspector({ editingKnowledge, setEditingKnowledge, onUpdate, onApprove, onDelete, onFeedback }) {
+export default function KnowledgeInspector({ editingKnowledge, setEditingKnowledge, onUpdate, onApprove, onDelete, onFeedback, onOpenKnowledge }) {
   const [newTag, setNewTag] = useState("");
 
   if (!editingKnowledge) return null;
@@ -318,11 +318,11 @@ export default function KnowledgeInspector({ editingKnowledge, setEditingKnowled
             )}
 
             {/* Consolidation lineage (canonical + retired records) */}
-            <KnowledgeLineagePanel knowledgeId={editingKnowledge.id} status={editingKnowledge.status} />
+            <KnowledgeLineagePanel knowledgeId={editingKnowledge.id} onOpenKnowledge={onOpenKnowledge} />
           </div>
         </ScrollArea>
         <DialogFooter className="mt-4 sm:justify-between">
-          <Button variant="destructive" onClick={onDelete} disabled={!editingKnowledge}>
+          <Button variant="destructive" onClick={() => onDelete(editingKnowledge.id)} disabled={!editingKnowledge}>
             <Trash2 className="w-4 h-4 mr-2" /> Delete
           </Button>
           <div className="flex gap-2">

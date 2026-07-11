@@ -57,7 +57,7 @@ All six work packages (PR 1–6) are implemented in one continuous delivery. The
 `KnowledgeTab.jsx` (multi-select Merge/Consolidate action, 2+ same-category), `KnowledgeInspector.jsx` (lineage panel), `MemorySettings.jsx` (full hygiene card + embedding coverage + Analyze now / Backfill), `MemoryExplorerPage.jsx` (dialog state wiring), `lib/api.js` (11 endpoints).
 
 ### 1.5 Tests (1 new file)
-`backend/tests/test_knowledge_consolidation.py` — **56 pure unit tests**.
+`backend/tests/test_knowledge_consolidation.py` — **62 pure unit tests** after post-delivery QA hardening.
 
 ---
 
@@ -144,7 +144,7 @@ Run from repo root with the plan's §18.2 commands.
 | Check | Command | Result |
 |---|---|---|
 | Backend syntax | `python -m compileall backend` | ✅ clean |
-| New unit suite | `python -m pytest backend/tests/test_knowledge_consolidation.py` | ✅ **56 passed** |
+| New unit suite | `python -m pytest backend/tests/test_knowledge_consolidation.py` | ✅ **62 passed** |
 | Frontend tests | `npm test -- --watchAll=false` | ✅ 2 passed |
 | Frontend build | `CI=true npm run build` | ✅ compiled successfully |
 | Compose validate | `docker compose config --quiet` | ✅ OK |
@@ -214,3 +214,41 @@ The coding agent does **not** claim production activation. It leaves a single de
 - The weekly schedule still queues `run_consolidation`, which now does hygiene discovery (gated) + decay + quality recompute. `_refine_playbook` is retained as inert dead code (no callers) — safe to remove in a later cleanup.
 - Centroid vectors are stored best-effort on `knowledge_hygiene_clusters.centroid`; the operative grouping metrics are cohesion + member-to-centroid similarities (centroid persistence is an optimization for future automated/creation-time candidate lookup).
 - Category-specific automation policies are surfaced in settings; per-category tuning can be calibrated against dry-run data before any auto mode is enabled.
+
+---
+
+## 11. Post-delivery critical review and hardening
+
+A second implementation-level review found defects that the original delivery tests did not exercise. They are fixed in the working tree covered by this report; the original PR commit alone should not be promoted without these hardening changes.
+
+### Correctness and data integrity fixes
+
+- Audit snapshots now serialize database timestamps and vector values reliably.
+- Canonical records now retain their consolidation event ID and operational skill/playbook representation on both canonical strategies.
+- Reversal restores the complete pre-merge record state, including provenance, evidence, tags, signals, embedding, status, lineage, and governed metadata. It rejects missing dependencies and canonicals edited after consolidation.
+- Apply locks the preview and accepts only a current `ready` preview. Applied previews cannot be regenerated or reapplied.
+- Embedding backfill selects stale rows in SQL by version, model, and dimensions, cannot stop early behind a page of current rows, and cannot loop forever on one failed row.
+- Automated eligibility no longer treats the candidate-discovery similarity threshold as a merge threshold.
+- Clustering split decisions are deterministic and evaluate true all-pairs cohesion instead of only surviving graph edges.
+- Manual similarity metrics are flattened consistently for prompts, UI display, and automated gates; the previous nested shape could incorrectly read cohesion as zero.
+- Every discovered group is auditable; acceptable manual-review groups may receive proposals but never auto-apply.
+
+### Safety and security fixes
+
+- Manual requests cannot spoof consolidation origin or audit actor identity; the authenticated administrator is authoritative.
+- The Analyze action is explicitly non-destructive and cannot submit an automatic-apply mode.
+- Automatic application requires explicit queue authorization in addition to mode, category policy, confidence, contradiction policy, and deterministic gates.
+- Consolidated sources and canonicals cannot be edited or hard-deleted through ordinary admin/agent mutation endpoints in ways that destroy reversible lineage. Reversal is the required lifecycle operation.
+- Settings and request payloads now enforce ranges, enums, category allowlists, same-category selection, and cluster-size consistency.
+- Failed admin queue submission marks the hygiene run failed instead of leaving a permanently running audit row. Scheduled discovery failures propagate to queue retry/dead-letter handling after safe maintenance completes.
+
+### Product and UI fixes
+
+- The manual workflow shows source metrics before incurring an LLM call, supports proposal regeneration, editable canonical metadata, and navigation from a retired source to its canonical successor.
+- Category-specific automation policies, canonical strategy, and embedding version are visible in settings.
+- Zero is now a valid UI value for configurable 0–1 thresholds.
+- Active canonical events can be reversed from the lineage panel; failed proposals cannot advance to apply.
+
+### Added regression coverage
+
+The focused suite now has 62 passing tests, adding explicit checks for settings validation, nested-metric normalization, audit serialization, warning-enabled synthesis policy, and conservative contradiction blocking. The optimized frontend production build also compiles successfully after these changes.

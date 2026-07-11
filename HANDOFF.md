@@ -13,7 +13,7 @@ source of truth, Redis/BullMQ handles processing, and the React SPA provides the
 - `ALLOW_PUBLIC_SIGNUP=true` preserves signup; registered users are not administrators.
 - `STRICT_STARTUP_VALIDATION=false` warns rather than aborting on legacy secrets.
 
-See `docs/production-hardening-rollout.md` before deployment.
+The completed rollout guide is archived at `docs/plans/archived/production-hardening-rollout.md`.
 
 ## Validation baseline
 

@@ -12,7 +12,7 @@ import { toast } from "sonner";
  *  - retired records: the successor (merged_into) it points to
  * Admins can reverse an applied event from here (dependency-validated).
  */
-export default function KnowledgeLineagePanel({ knowledgeId, status }) {
+export default function KnowledgeLineagePanel({ knowledgeId, onOpenKnowledge }) {
   const [lineage, setLineage] = useState(null);
   const [loading, setLoading] = useState(false);
   const [reversing, setReversing] = useState(false);
@@ -35,7 +35,7 @@ export default function KnowledgeLineagePanel({ knowledgeId, status }) {
   if (!hasLineage) return null;
 
   const event = lineage.event || {};
-  const canReverse = !!lineage.consolidation_event_id && status !== "active";
+  const canReverse = !!lineage.consolidation_event_id && event.action === "apply" && !event.reversed_event_id;
 
   async function handleReverse() {
     if (!lineage.consolidation_event_id) return;
@@ -61,7 +61,9 @@ export default function KnowledgeLineagePanel({ knowledgeId, status }) {
           <div className="flex items-center gap-1 mt-1">
             <code className="font-mono">{lineage.merged_into.slice(0, 12)}…</code>
             <ArrowRight className="w-3 h-3" />
-            <Badge variant="outline">retired</Badge>
+            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => onOpenKnowledge?.(lineage.merged_into)}>
+              Open canonical
+            </Button>
           </div>
         </div>
       )}

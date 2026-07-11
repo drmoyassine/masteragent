@@ -115,7 +115,11 @@ async def _process_bulk_job(job: Job, token: str):
             from services.config_helpers import get_memory_settings
             _hsettings = get_memory_settings() or {}
             _mode = job.data.get("mode") or _hsettings.get("knowledge_hygiene_mode", "manual_only")
-            _auto = _mode in ("auto_conservative", "auto_synthesis") and _hsettings.get("knowledge_hygiene_enabled", True)
+            _auto = (
+                bool(job.data.get("allow_auto_apply", False))
+                and _mode in ("auto_conservative", "auto_synthesis")
+                and _hsettings.get("knowledge_hygiene_enabled", True)
+            )
             await discover_and_propose(
                 run_id=job.data.get("run_id"),
                 origin=job.data.get("origin") or "scheduled",

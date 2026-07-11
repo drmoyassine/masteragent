@@ -137,18 +137,12 @@ def _size_split(
         subgroup = [remaining.pop(0)]  # lowest-ID seed
         while len(subgroup) < max_size and remaining:
             # pick the remaining member with the highest avg sim to the subgroup
-            best = max(remaining, key=lambda c: (avg_sim(c, subgroup), -ord_key(c)))
-            # max() picks the highest avg_sim; tie-break lowest ID via the negated key
+            best = sorted(remaining, key=lambda c: (-avg_sim(c, subgroup), c))[0]
             remaining.remove(best)
             subgroup.append(best)
         subgroup.sort()
         subgroups.append(subgroup)
     return subgroups
-
-
-def ord_key(s: str) -> int:
-    """Stable scalar tie-breaker for member IDs (first char then full string)."""
-    return ord(s[0]) if s else 0
 
 
 def _resolve_component(
@@ -179,14 +173,18 @@ def _resolve_component(
         for c in comps:
             # Only flag cohesion/weak-link failures of in-bounds (≤ max) components.
             if 1 < len(c) <= max_size and not _passes_quality(
-                c, working, vectors,
+                c, pair_all, vectors,
                 min_cohesion=min_cohesion, weak_link_threshold=weak_link_threshold,
             ):
                 failing = c
                 break
         if failing is None or not working:
             break
-        lowest = min(working, key=lambda e: (e[2], e[0], e[1]))
+        failing_set = set(failing)
+        failing_edges = [e for e in working if e[0] in failing_set and e[1] in failing_set]
+        if not failing_edges:
+            break
+        lowest = min(failing_edges, key=lambda e: (e[2], e[0], e[1]))
         working.remove(lowest)
 
     final_comps = connected_components(comp_ids, working)
@@ -200,7 +198,7 @@ def _resolve_component(
             for subgroup in _size_split(members, working, max_size):
                 result.append(_make_group(subgroup, pair_all, vectors, "manual_review", "size_forced",
                                           weak_link_threshold=weak_link_threshold))
-        elif _passes_quality(c, working, vectors, min_cohesion=min_cohesion,
+        elif _passes_quality(c, pair_all, vectors, min_cohesion=min_cohesion,
                              weak_link_threshold=weak_link_threshold):
             result.append(_make_group(members, pair_all, vectors, "accepted", None,
                                       weak_link_threshold=weak_link_threshold))
@@ -295,7 +293,9 @@ def _with_category(group: Dict[str, Any], category: str) -> Dict[str, Any]:
     return g
 
 
-def manual_group_metrics(records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+def manual_group_metrics(
+    records: Sequence[Dict[str, Any]], *, weak_link_threshold: float = 0.65
+) -> Dict[str, Any]:
     """Metrics for a manually-selected set (single category, never rejected).
 
     Reports pairwise min/mean/max, cohesion, per-member centroid similarity,
@@ -306,10 +306,12 @@ def manual_group_metrics(records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     pair_all = pairwise_similarities(vectors)
     members = sorted(vectors.keys())
     metrics = _metrics_for(members, pair_all, vectors)
+    metrics["weak_links"] = _weak_links_of(members, vectors, weak_link_threshold) if len(members) > 1 else []
     return {
         "category": (records[0].get("category") if records else None),
-        "member_ids": members,
-        "size": len(members),
+        "member_ids": sorted(r.get("id") for r in records if r.get("id")),
+        "embedding_member_ids": members,
+        "size": len(records),
         "status": "manual",
         "split_reason": None,
         "metrics": metrics,
@@ -318,5 +320,5 @@ def manual_group_metrics(records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def accepted_proposal_groups(groups: Sequence[Dict[str, Any]], min_size: int) -> List[Dict[str, Any]]:
-    """Filter to groups eligible for an LLM proposal: accepted and ≥ min_size."""
+    """Groups accepted for automatic-policy consideration."""
     return [g for g in groups if g.get("status") == "accepted" and g.get("size", 0) >= min_size]

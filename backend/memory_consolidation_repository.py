@@ -40,7 +40,21 @@ def _now() -> str:
 
 
 def _json(value: Any) -> str:
-    return json.dumps(value) if value is not None else None
+    return json.dumps(value, default=_json_default) if value is not None else None
+
+
+def _json_default(value: Any):
+    """Serialize DB-native values used in immutable audit snapshots."""
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc).isoformat()
+    if isinstance(value, (set, frozenset, tuple)):
+        return list(value)
+    if hasattr(value, "tolist"):
+        return value.tolist()
+    try:
+        return list(value)
+    except (TypeError, ValueError):
+        return str(value)
 
 
 # ─── knowledge reads ─────────────────────────────────────────────────────────
@@ -537,12 +551,14 @@ def apply_consolidation(
         cur.execute("SELECT pg_advisory_xact_lock(hashtext('masteragent_knowledge_consolidation'))")
 
         # 2. Re-read preview under lock to confirm it is still applyable.
-        cur.execute("SELECT state, expires_at FROM knowledge_consolidation_previews WHERE id = %s", (preview_id,))
+        cur.execute("SELECT state, expires_at FROM knowledge_consolidation_previews WHERE id = %s FOR UPDATE", (preview_id,))
         prow = cur.fetchone()
         if not prow:
             raise ConsolidationError("missing_preview", "Preview not found", 404)
         if prow["state"] == "applied":
             raise ConsolidationError("already_applied", "Preview was already applied", 409)
+        if prow["state"] != "ready":
+            raise ConsolidationError("invalid_preview", f"Preview is not applyable (state={prow['state']})", 409)
         if prow["expires_at"] is not None and prow["expires_at"] <= datetime.now(timezone.utc):
             raise ConsolidationError("expired", "Preview has expired", 410)
 
@@ -588,12 +604,9 @@ def apply_consolidation(
         # 6. Stamp embedding provenance onto canonical metadata.
         canonical_meta = payload["metadata"]
         if embedding:
-            try:
-                from memory_embedding import merge_embedding_metadata
-                canonical_meta = merge_embedding_metadata(canonical_meta, model=embedding_model, vector=embedding)
-                payload["metadata"] = canonical_meta
-            except Exception:
-                pass
+            from memory_embedding import merge_embedding_metadata
+            canonical_meta = merge_embedding_metadata(canonical_meta, model=embedding_model, vector=embedding)
+            payload["metadata"] = canonical_meta
 
         now = _now()
 
@@ -601,11 +614,11 @@ def apply_consolidation(
         if canonical_strategy == "update_existing":
             canonical_id = canonical_target_id
             absorbed_ids = [i for i in source_ids if i != canonical_id]
-            _update_canonical(cur, canonical_id, payload, embedding, now)
+            _update_canonical(cur, canonical_id, payload, embedding, event_id, now)
         else:
             canonical_id = str(uuid.uuid4())
             absorbed_ids = list(source_ids)
-            _insert_canonical(cur, canonical_id, category, payload, embedding, now)
+            _insert_canonical(cur, canonical_id, category, payload, embedding, event_id, now)
 
         # 8. Insert the audit event + per-source snapshots.
         cur.execute(
@@ -665,7 +678,26 @@ def apply_consolidation(
     return event_id
 
 
-def _update_canonical(cur, canonical_id: str, payload: Dict[str, Any], embedding, now: str) -> None:
+def _render_operational_content(category: str, payload: Dict[str, Any]) -> str:
+    from memory_skill_md import SKILL_MD_CATEGORIES, is_skill_md, render_skill_md
+    content = payload["content"]
+    if category in SKILL_MD_CATEGORIES and not is_skill_md(content):
+        return render_skill_md(
+            name=payload["name"], category=category,
+            description=payload["summary"] or content, body=content,
+            metadata=payload["metadata"], signals=payload["signals"],
+            tags=payload["tags"], version=payload["version"],
+        )
+    return content
+
+
+def _update_canonical(cur, canonical_id: str, payload: Dict[str, Any], embedding, event_id: str, now: str) -> None:
+    category = payload.get("category")
+    if not category:
+        cur.execute("SELECT category FROM knowledge WHERE id = %s", (canonical_id,))
+        row = cur.fetchone()
+        category = row["category"] if row else "trade_knowledge"
+    content = _render_operational_content(category, payload)
     cur.execute(
         """
         UPDATE knowledge
@@ -673,49 +705,44 @@ def _update_canonical(cur, canonical_id: str, payload: Dict[str, Any], embedding
             metadata = %s, embedding = COALESCE(%s, embedding),
             source_intelligence_ids = %s, source_ai_interaction_ids = %s,
             merged_from = %s, merge_count = %s, evidence_breadth = %s,
-            version = %s, last_merged_at = %s, updated_at = %s
+            version = %s, consolidation_event_id = %s,
+            last_merged_at = %s, updated_at = %s
         WHERE id = %s
         """,
-        (payload["name"], payload["summary"], payload["content"], payload["signals"],
+        (payload["name"], payload["summary"], content, payload["signals"],
          payload["tags"], _json(payload["metadata"]), list(embedding) if embedding else None,
          payload["source_intelligence_ids"], payload["source_ai_interaction_ids"],
          payload["merged_from"], payload["merge_count"], payload["evidence_breadth"],
-         payload["version"], now, now, canonical_id),
+         payload["version"], event_id, now, now, canonical_id),
     )
 
 
-def _insert_canonical(cur, canonical_id: str, category: str, payload: Dict[str, Any], embedding, now: str) -> None:
-    from memory_skill_md import SKILL_MD_CATEGORIES, is_skill_md, render_skill_md
-    content = payload["content"]
-    if category in SKILL_MD_CATEGORIES and not is_skill_md(content):
-        content = render_skill_md(
-            name=payload["name"], category=category,
-            description=payload["summary"] or content, body=content,
-            metadata=payload["metadata"], signals=payload["signals"],
-            tags=payload["tags"], version=payload["version"],
-        )
+def _insert_canonical(cur, canonical_id: str, category: str, payload: Dict[str, Any], embedding, event_id: str, now: str) -> None:
+    content = _render_operational_content(category, payload)
     cur.execute(
         """
         INSERT INTO knowledge (
             id, source_intelligence_ids, signals, name, content, summary, embedding,
             visibility, tags, category, metadata, status, merge_count, evidence_breadth,
-            source_ai_interaction_ids, merged_from, version, consolidation_event_id,
+            source_ai_interaction_ids, source_pathway, merged_from, version, consolidation_event_id,
             created_at, updated_at
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (canonical_id, payload["source_intelligence_ids"], payload["signals"], payload["name"],
          content, payload["summary"], list(embedding) if embedding else None,
          payload["visibility"], payload["tags"], category, _json(payload["metadata"]),
          payload["status"], payload["merge_count"], payload["evidence_breadth"],
-         payload["source_ai_interaction_ids"], payload["merged_from"], payload["version"],
-         None, now, now),
+         payload["source_ai_interaction_ids"], "consolidated", payload["merged_from"], payload["version"],
+         event_id, now, now),
     )
 
 
 def _snapshot_row(row: Dict[str, Any]) -> Dict[str, Any]:
-    """A serializable original-state snapshot for the audit row (no embedding)."""
+    """A serializable, reversal-complete original-state snapshot."""
     out = dict(row)
-    out.pop("embedding", None)
+    embedding = out.get("embedding")
+    if embedding is not None:
+        out["embedding"] = _json_default(embedding)
     return out
 
 
@@ -778,6 +805,30 @@ def reverse_event(event_id: str, *, actor_type: str, actor_id: Optional[str], or
         sources = load_event_sources(event_id)
         affected_ids = [s["knowledge_id"] for s in sources] + [canonical_id]
 
+        cur.execute(
+            "SELECT id, updated_at FROM knowledge WHERE id = ANY(%s) FOR UPDATE",
+            (affected_ids,),
+        )
+        current_rows = [dict(r) for r in cur.fetchall()]
+        current_ids = {r["id"] for r in current_rows}
+        missing_ids = sorted(set(affected_ids) - current_ids)
+        if missing_ids:
+            raise ConsolidationError(
+                "dependency_conflict",
+                f"Cannot reverse because affected knowledge was deleted: {missing_ids}",
+                409,
+            )
+        event_created = event.get("created_at")
+        for row in current_rows:
+            if row["id"] != canonical_id or event_created is None or row.get("updated_at") is None:
+                continue
+            if row["updated_at"] > event_created:
+                raise ConsolidationError(
+                    "dependency_conflict",
+                    "The canonical record was edited after consolidation; review it before reversal",
+                    409,
+                )
+
         # Dependency guard: none of the affected records may have participated in
         # a later consolidation (as source or canonical).
         cur.execute(
@@ -824,39 +875,13 @@ def reverse_event(event_id: str, *, actor_type: str, actor_id: Optional[str], or
                     target_snap = snap
                     break
             if target_snap:
-                cur.execute(
-                    """
-                    UPDATE knowledge
-                    SET name = %s, summary = %s, content = %s, metadata = %s,
-                        version = %s, status = %s, updated_at = %s
-                    WHERE id = %s
-                    """,
-                    (target_snap.get("name"), target_snap.get("summary"), target_snap.get("content"),
-                     _json(target_snap.get("metadata")), target_snap.get("version"),
-                     target_snap.get("status") or "active", now, canonical_id),
-                )
-            # Clear lineage pointers on the canonical target.
-            cur.execute(
-                """
-                UPDATE knowledge SET consolidation_event_id = %s, updated_at = %s
-                WHERE id = %s
-                """,
-                (reversed_id, now, canonical_id),
-            )
+                _restore_knowledge_snapshot(cur, canonical_id, target_snap, now)
 
         # Restore every absorbed source to active.
         for s in sources:
             if s.get("role") == "absorbed":
                 sid = s["knowledge_id"]
-                cur.execute(
-                    """
-                    UPDATE knowledge
-                    SET status = 'active', merged_into = NULL,
-                        consolidation_event_id = NULL, updated_at = %s
-                    WHERE id = %s
-                    """,
-                    (now, sid),
-                )
+                _restore_knowledge_snapshot(cur, sid, s.get("original_snapshot") or {}, now)
 
         # Record the reversal event (audit; original event kept intact).
         cur.execute(
@@ -875,3 +900,40 @@ def reverse_event(event_id: str, *, actor_type: str, actor_id: Optional[str], or
         )
 
     return reversed_id
+
+
+def _restore_knowledge_snapshot(cur, knowledge_id: str, snap: Dict[str, Any], now: str) -> None:
+    """Restore every mutable knowledge field captured before consolidation."""
+    cur.execute(
+        """
+        UPDATE knowledge
+        SET source_intelligence_ids = %s, signals = %s, name = %s,
+            content = %s, summary = %s, embedding = %s, visibility = %s,
+            tags = %s, category = %s, metadata = %s, status = %s,
+            quality_score = %s, merge_count = %s, last_merged_at = %s,
+            evidence_breadth = %s, outcome_signal = %s,
+            extraction_confidence = %s, source_pathway = %s,
+            source_ai_interaction_ids = %s, success_count = %s,
+            failure_count = %s, feedback_notes = %s, version = %s,
+            parent_id = %s, merged_into = %s, merged_from = %s,
+            consolidation_event_id = %s, consolidation_protected = %s,
+            updated_at = %s
+        WHERE id = %s
+        """,
+        (
+            snap.get("source_intelligence_ids") or [], snap.get("signals") or [],
+            snap.get("name"), snap.get("content"), snap.get("summary"),
+            snap.get("embedding"), snap.get("visibility"), snap.get("tags") or [],
+            snap.get("category"), _json(snap.get("metadata") or {}),
+            snap.get("status") or "active", snap.get("quality_score"),
+            snap.get("merge_count") or 0, snap.get("last_merged_at"),
+            snap.get("evidence_breadth") or 1, snap.get("outcome_signal") or 0.0,
+            snap.get("extraction_confidence") if snap.get("extraction_confidence") is not None else 0.5,
+            snap.get("source_pathway") or "experiential",
+            snap.get("source_ai_interaction_ids") or [], snap.get("success_count") or 0,
+            snap.get("failure_count") or 0, _json(snap.get("feedback_notes") or []),
+            snap.get("version") or 1, snap.get("parent_id"), snap.get("merged_into"),
+            snap.get("merged_from") or [], snap.get("consolidation_event_id"),
+            bool(snap.get("consolidation_protected", False)), now, knowledge_id,
+        ),
+    )

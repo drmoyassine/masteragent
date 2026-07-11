@@ -19,8 +19,8 @@ from typing import Any, Dict, List, Optional
 from core.storage import get_memory_db_context
 from memory_embedding import (
     EMBEDDING_VERSION,
+    current_embedding_model,
     embed_knowledge_record,
-    get_embedding_version,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,7 +39,12 @@ def _configured_version(settings: Optional[Dict[str, Any]] = None) -> int:
         return EMBEDDING_VERSION
 
 
-def _select_stale_rows(batch_size: int, configured_version: int, offset: int = 0) -> List[Dict[str, Any]]:
+def _select_stale_rows(
+    batch_size: int,
+    configured_version: int,
+    configured_model: str,
+    exclude_ids: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
     """Active records whose embedding version is missing/stale, oldest first.
 
     A row is stale when it has no embedding, or its recorded version differs
@@ -47,29 +52,27 @@ def _select_stale_rows(batch_size: int, configured_version: int, offset: int = 0
     """
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        # metadata.embedding is JSONB; records without the block or with a
-        # different version are candidates.
+        # Filter stale records in SQL. Filtering only after LIMIT would stop
+        # early whenever the first page happened to contain current records.
         cursor.execute(
             """
-            SELECT id, name, category, content, summary, signals, tags, metadata,
-                   (metadata->'embedding'->>'version')::int AS emb_version
+            SELECT id, name, category, content, summary, signals, tags, metadata
             FROM knowledge
             WHERE status = 'active'
               AND category IN ('best_practices','lessons_learned','trade_knowledge','skill','playbook')
+              AND NOT (id = ANY(%s))
+              AND (
+                    embedding IS NULL
+                 OR COALESCE(metadata->'embedding'->>'version', '1') <> %s
+                 OR COALESCE(metadata->'embedding'->>'model', '') <> %s
+                 OR metadata->'embedding'->>'dimensions' IS DISTINCT FROM vector_dims(embedding)::text
+              )
             ORDER BY created_at ASC, id ASC
-            LIMIT %s OFFSET %s
+            LIMIT %s
             """,
-            (batch_size, offset),
+            (exclude_ids or [], str(configured_version), configured_model or "", batch_size),
         )
-        rows = [dict(r) for r in cursor.fetchall()]
-    stale: List[Dict[str, Any]] = []
-    for row in rows:
-        version = row.get("emb_version")
-        if version is None:
-            version = get_embedding_version(row)
-        if version != configured_version:
-            stale.append(row)
-    return stale
+        return [dict(r) for r in cursor.fetchall()]
 
 
 async def run_embedding_backfill(
@@ -92,9 +95,11 @@ async def run_embedding_backfill(
     backfill or consolidation cannot clobber a newer embedding.
     """
     cv = configured_version if configured_version is not None else _configured_version(settings)
+    configured_model = current_embedding_model()
     processed = succeeded = failed = 0
     batches = 0
     seen = 0
+    attempted_ids: List[str] = []
 
     while True:
         if max_records is not None and seen >= max_records:
@@ -104,20 +109,24 @@ async def run_embedding_backfill(
             remaining = max_records - seen
         this_batch = min(batch_size, remaining) if remaining is not None else batch_size
 
-        rows = _select_stale_rows(this_batch, cv, offset=0)
+        rows = _select_stale_rows(this_batch, cv, configured_model, attempted_ids)
         if not rows:
             break
 
         for row in rows:
             processed += 1
             seen += 1
+            attempted_ids.append(row["id"])
             try:
                 vector, _model, updated_metadata = await embed_knowledge_record(row, version=cv)
                 if not vector:
                     failed += 1
                     continue
-                _apply_embedding_update(row["id"], vector, updated_metadata, cv)
-                succeeded += 1
+                if _apply_embedding_update(row["id"], vector, updated_metadata, cv, configured_model):
+                    succeeded += 1
+                else:
+                    # A concurrent writer made the row current or retired it.
+                    logger.info("Embedding backfill skipped concurrently changed row %s", row["id"])
             except Exception as exc:  # never abort the whole run on one record
                 failed += 1
                 logger.warning("Embedding backfill failed for %s: %s", row.get("id"), exc)
@@ -137,7 +146,13 @@ async def run_embedding_backfill(
     return counts
 
 
-def _apply_embedding_update(knowledge_id: str, vector: List[float], metadata: Dict[str, Any], version: int) -> None:
+def _apply_embedding_update(
+    knowledge_id: str,
+    vector: List[float],
+    metadata: Dict[str, Any],
+    version: int,
+    configured_model: str,
+) -> bool:
     """Persist the new embedding + stamped metadata under a version guard.
 
     The UPDATE is conditional on the row still being stale at the configured
@@ -159,10 +174,17 @@ def _apply_embedding_update(knowledge_id: str, vector: List[float], metadata: Di
                 updated_at = NOW()
             WHERE id = %s
               AND status = 'active'
-              AND COALESCE((metadata->'embedding'->>'version')::int, 1) <> %s
+              AND (
+                    embedding IS NULL
+                 OR COALESCE(metadata->'embedding'->>'version', '1') <> %s
+                 OR COALESCE(metadata->'embedding'->>'model', '') <> %s
+                 OR metadata->'embedding'->>'dimensions' IS DISTINCT FROM vector_dims(embedding)::text
+              )
             """,
-            (vector, json.dumps(metadata.get("embedding") or {}), knowledge_id, version),
+            (vector, json.dumps(metadata.get("embedding") or {}), knowledge_id,
+             str(version), configured_model or ""),
         )
+        return cursor.rowcount == 1
 
 
 def preview_backfill(configured_version: Optional[int] = None) -> Dict[str, Any]:
@@ -172,19 +194,26 @@ def preview_backfill(configured_version: Optional[int] = None) -> Dict[str, Any]
     kicks off the backfill.
     """
     cv = configured_version if configured_version is not None else _configured_version()
+    configured_model = current_embedding_model()
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute(
             """
             SELECT
               COUNT(*) AS total,
-              COUNT(*) FILTER (WHERE COALESCE((metadata->'embedding'->>'version')::int, 1) = %s) AS current,
-              COUNT(*) FILTER (WHERE COALESCE((metadata->'embedding'->>'version')::int, 1) <> %s) AS stale
+              COUNT(*) FILTER (WHERE embedding IS NOT NULL
+                 AND COALESCE(metadata->'embedding'->>'version', '1') = %s
+                 AND COALESCE(metadata->'embedding'->>'model', '') = %s
+                 AND metadata->'embedding'->>'dimensions' IS NOT DISTINCT FROM vector_dims(embedding)::text) AS current,
+              COUNT(*) FILTER (WHERE embedding IS NULL
+                 OR COALESCE(metadata->'embedding'->>'version', '1') <> %s
+                 OR COALESCE(metadata->'embedding'->>'model', '') <> %s
+                 OR metadata->'embedding'->>'dimensions' IS DISTINCT FROM vector_dims(embedding)::text) AS stale
             FROM knowledge
             WHERE status = 'active'
               AND category IN ('best_practices','lessons_learned','trade_knowledge','skill','playbook')
             """,
-            (cv, cv),
+            (str(cv), configured_model or "", str(cv), configured_model or ""),
         )
         row = cursor.fetchone() or {}
     total = int(row.get("total") or 0)

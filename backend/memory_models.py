@@ -2,7 +2,7 @@
 import json
 import uuid
 from datetime import datetime, timezone
-from typing import Optional, List, Dict, Any, Union
+from typing import Optional, List, Dict, Any, Union, Literal
 from pydantic import BaseModel, Field
 from pydantic import model_validator
 from enum import Enum
@@ -250,19 +250,40 @@ class MemorySettingsUpdate(BaseModel):
     # come from category-aware LLM proposals + review policy.
     knowledge_hygiene_enabled: Optional[bool] = True
     knowledge_hygiene_enabled_categories: Optional[List[str]] = None
-    knowledge_hygiene_similarity_threshold: Optional[float] = 0.82
-    knowledge_hygiene_min_cluster_size: Optional[int] = 2
-    knowledge_hygiene_max_cluster_size: Optional[int] = 5
-    knowledge_hygiene_min_cluster_cohesion: Optional[float] = 0.72
-    knowledge_hygiene_weak_link_threshold: Optional[float] = 0.65
-    knowledge_hygiene_embedding_version: Optional[int] = 2
-    knowledge_hygiene_mode: Optional[str] = "manual_only"
-    knowledge_hygiene_preview_ttl_minutes: Optional[int] = 60
-    knowledge_hygiene_min_auto_confidence: Optional[float] = 0.90
-    knowledge_hygiene_contradiction_policy: Optional[str] = "manual_review"
-    knowledge_hygiene_default_canonical_strategy: Optional[str] = "update_existing"
+    knowledge_hygiene_similarity_threshold: Optional[float] = Field(0.82, ge=0, le=1)
+    knowledge_hygiene_min_cluster_size: Optional[int] = Field(2, ge=2, le=20)
+    knowledge_hygiene_max_cluster_size: Optional[int] = Field(5, ge=2, le=20)
+    knowledge_hygiene_min_cluster_cohesion: Optional[float] = Field(0.72, ge=0, le=1)
+    knowledge_hygiene_weak_link_threshold: Optional[float] = Field(0.65, ge=0, le=1)
+    knowledge_hygiene_embedding_version: Optional[int] = Field(2, ge=1)
+    knowledge_hygiene_mode: Optional[Literal["analysis_only", "proposal_only", "manual_only", "auto_conservative", "auto_synthesis"]] = "manual_only"
+    knowledge_hygiene_preview_ttl_minutes: Optional[int] = Field(60, ge=5, le=1440)
+    knowledge_hygiene_min_auto_confidence: Optional[float] = Field(0.90, ge=0, le=1)
+    knowledge_hygiene_contradiction_policy: Optional[Literal["manual_review", "keep_separate", "warn_and_merge"]] = "manual_review"
+    knowledge_hygiene_default_canonical_strategy: Optional[Literal["update_existing", "create_new"]] = "update_existing"
     knowledge_hygiene_creation_time_enabled: Optional[bool] = False
     knowledge_hygiene_category_policies: Optional[Dict[str, str]] = None
+
+    @model_validator(mode="after")
+    def validate_hygiene_settings(self):
+        if (
+            self.knowledge_hygiene_min_cluster_size is not None
+            and self.knowledge_hygiene_max_cluster_size is not None
+            and self.knowledge_hygiene_min_cluster_size > self.knowledge_hygiene_max_cluster_size
+        ):
+            raise ValueError("knowledge_hygiene_min_cluster_size cannot exceed max_cluster_size")
+        allowed_categories = {"best_practices", "lessons_learned", "trade_knowledge", "skill", "playbook"}
+        if self.knowledge_hygiene_enabled_categories is not None:
+            invalid = set(self.knowledge_hygiene_enabled_categories) - allowed_categories
+            if invalid:
+                raise ValueError(f"Unsupported knowledge hygiene categories: {sorted(invalid)}")
+        allowed_policies = {"manual_only", "auto_conservative", "auto_synthesis"}
+        if self.knowledge_hygiene_category_policies is not None:
+            invalid_keys = set(self.knowledge_hygiene_category_policies) - allowed_categories
+            invalid_values = set(self.knowledge_hygiene_category_policies.values()) - allowed_policies
+            if invalid_keys or invalid_values:
+                raise ValueError("Invalid knowledge_hygiene_category_policies")
+        return self
 
 class MemorySettingsResponse(BaseModel):
     chunk_size: int = 400
@@ -730,39 +751,37 @@ class AdminInstruction(BaseModel):
 # ============================================
 
 class ConsolidationOptions(BaseModel):
-    canonical_strategy: Optional[str] = "update_existing"  # update_existing | create_new
+    canonical_strategy: Optional[Literal["update_existing", "create_new"]] = "update_existing"
     canonical_target_id: Optional[str] = None  # selected source id (update_existing)
 
 
 class CanonicalFields(BaseModel):
     """User-editable canonical output fields validated before apply."""
-    name: str
+    name: str = Field(min_length=1)
     summary: Optional[str] = ""
-    content: str
-    signals: Optional[List[str]] = []
-    tags: Optional[List[str]] = []
-    metadata: Optional[Dict[str, Any]] = {}
+    content: str = Field(min_length=1)
+    signals: Optional[List[str]] = Field(default_factory=list)
+    tags: Optional[List[str]] = Field(default_factory=list)
+    metadata: Optional[Dict[str, Any]] = Field(default_factory=dict)
 
 
 class ConsolidationPreviewRequest(BaseModel):
-    knowledge_ids: List[str]
-    origin: str = "manual"  # manual | scheduled | admin | creation_time
+    knowledge_ids: List[str] = Field(min_length=2)
+    origin: Literal["manual"] = "manual"
     options: Optional[ConsolidationOptions] = None
 
 
 class ConsolidationApplyRequest(BaseModel):
     preview_id: str
-    canonical_strategy: str = "update_existing"  # update_existing | create_new
+    canonical_strategy: Literal["update_existing", "create_new"] = "update_existing"
     canonical_target_id: Optional[str] = None
     approved_canonical: CanonicalFields
-    actor_type: Optional[str] = "admin"
-    actor_id: Optional[str] = None
 
 
 class ConsolidationAnalyzeRequest(BaseModel):
     """Trigger an automated hygiene run (analysis_only / proposal_only)."""
-    mode: Optional[str] = None  # overrides settings.knowledge_hygiene_mode for this run
-    category: Optional[str] = None
+    mode: Optional[Literal["analysis_only", "proposal_only", "manual_only"]] = None
+    category: Optional[Literal["best_practices", "lessons_learned", "trade_knowledge", "skill", "playbook"]] = None
 
 
 

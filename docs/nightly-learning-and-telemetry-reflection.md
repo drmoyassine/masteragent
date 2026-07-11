@@ -14,7 +14,7 @@
 >   from a misleading ordered "pipeline" into **pathway cards**.
 > - For the current authoritative spec, see [generation-settings-reference.md](generation-settings-reference.md).
 >
-> Companion: [knowledge-to-context-retrieval-report.md](knowledge-to-context-retrieval-report.md), [knowledge-pipeline-map.md](knowledge-pipeline-map.md).
+> Companion: [knowledge-to-context-retrieval-report.md](plans/archived/knowledge-to-context-retrieval-report.md), [knowledge-pipeline-map.md](knowledge-pipeline-map.md).
 
 ---
 

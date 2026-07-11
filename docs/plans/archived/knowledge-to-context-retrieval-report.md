@@ -1,11 +1,13 @@
 # Knowledge → Context Injection: Lifecycle & Retrieval Report
 
+> **Roadmap note (2026-07-11):** Parts 1–2.1 describe shipped behavior. The remaining Retrieval Recipe work in Parts 2.2–2.5 is consolidated and superseded by [features_list.md](../../features_list.md). Do not implement both documents independently.
+
 > **Created**: 2026-07-06. Source-of-truth walkthrough of how a knowledge index item
 > (`{id, name, category, signals, summary, facets}`) is **created** (all pathways,
 > including AI-telemetry → playbooks/skills) and **retrieved** into agent context,
 > step by step, plus a design for making the retrieval pipeline configurable in the UI.
 >
-> Companion docs: [knowledge-pipeline-map.md](knowledge-pipeline-map.md),
+> Companion docs: [knowledge-pipeline-map.md](../../knowledge-pipeline-map.md),
 > [knowledge-precontext-retrieval-plan.md](knowledge-precontext-retrieval-plan.md),
 > [sprint2.5-delivery-report.md](sprint2.5-delivery-report.md).
 

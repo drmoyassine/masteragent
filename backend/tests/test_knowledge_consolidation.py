@@ -226,8 +226,8 @@ class TestEmbeddingSerialization:
         assert stamped["embedding"]["dimensions"] == 2
 
     def test_version_compat(self):
-        r = {"embedding": [0.1], "metadata": {"embedding": {"version": 2}}}
-        assert is_embedding_compatible(r, 2) is True
+        r = {"embedding": [0.1], "metadata": {"embedding": {"version": 2, "dimensions": 1, "model": "test"}}}
+        assert is_embedding_compatible(r, 2, "test") is True
         assert is_embedding_compatible(r, 3) is False
         assert is_embedding_compatible({"embedding": None, "metadata": {}}, 2) is False
         # legacy row without block → version 1
@@ -363,6 +363,34 @@ class TestPolicyGating:
                     "knowledge_hygiene_category_policies": {"trade_knowledge": "manual_only"}}
         assert _policy_allows_apply(_proposal(confidence=0.99), "trade_knowledge", settings) is False
 
+    def test_auto_synthesis_allows_warnings_only_under_explicit_policy(self):
+        from memory_consolidation_service import _policy_allows_apply
+        settings = {
+            "knowledge_hygiene_mode": "auto_synthesis",
+            "knowledge_hygiene_min_auto_confidence": 0.9,
+            "knowledge_hygiene_contradiction_policy": "warn_and_merge",
+        }
+        proposal = _proposal(
+            recommendation="merge_with_warnings",
+            confidence=0.95,
+            contradictions=["Sources disagree about an environmental limit"],
+        )
+        assert _policy_allows_apply(proposal, "trade_knowledge", settings) is True
+
+    def test_auto_conservative_never_applies_unresolved_contradictions(self):
+        from memory_consolidation_service import _policy_allows_apply
+        settings = {
+            "knowledge_hygiene_mode": "auto_conservative",
+            "knowledge_hygiene_min_auto_confidence": 0.9,
+            "knowledge_hygiene_contradiction_policy": "warn_and_merge",
+        }
+        proposal = _proposal(
+            recommendation="merge",
+            confidence=0.99,
+            contradictions=["Conflict"],
+        )
+        assert _policy_allows_apply(proposal, "trade_knowledge", settings) is False
+
 
 # ─── settings models ─────────────────────────────────────────────────────────
 
@@ -390,6 +418,25 @@ class TestSettingsModels:
         assert r.knowledge_hygiene_mode == "manual_only"
         assert r.knowledge_hygiene_creation_time_enabled is False
         assert len(r.knowledge_hygiene_enabled_categories) == 5
+
+    def test_rejects_invalid_hygiene_ranges_and_cluster_order(self):
+        from pydantic import ValidationError
+        from memory_models import MemorySettingsUpdate
+        with pytest.raises(ValidationError):
+            MemorySettingsUpdate(knowledge_hygiene_similarity_threshold=1.01)
+        with pytest.raises(ValidationError):
+            MemorySettingsUpdate(
+                knowledge_hygiene_min_cluster_size=6,
+                knowledge_hygiene_max_cluster_size=5,
+            )
+
+    def test_rejects_unknown_hygiene_category_policy(self):
+        from pydantic import ValidationError
+        from memory_models import MemorySettingsUpdate
+        with pytest.raises(ValidationError):
+            MemorySettingsUpdate(
+                knowledge_hygiene_category_policies={"unknown": "auto_synthesis"},
+            )
 
 
 # ─── request models + error codes ────────────────────────────────────────────
@@ -492,6 +539,34 @@ class TestRepositoryHelpers:
     def test_distinct_ids_preserves_order_dedups(self):
         from memory_consolidation_service import _distinct_ids
         assert _distinct_ids(["a", "b", "a", "c", None]) == ["a", "b", "c"]
+
+    def test_audit_json_serializes_datetime_and_vector_like_values(self):
+        from datetime import datetime, timezone
+        from memory_consolidation_repository import _json
+
+        class Vector:
+            def tolist(self):
+                return [0.1, 0.2]
+
+        encoded = json.loads(_json({
+            "at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+            "embedding": Vector(),
+        }))
+        assert encoded["at"].startswith("2026-01-01T00:00:00")
+        assert encoded["embedding"] == [0.1, 0.2]
+
+    def test_manual_metrics_are_flattened_for_gates_and_api(self):
+        from memory_consolidation_service import _flatten_manual_metrics
+        flattened = _flatten_manual_metrics({
+            "member_ids": ["a", "b"],
+            "embedding_member_ids": ["a", "b"],
+            "size": 2,
+            "status": "accepted",
+            "metrics": {"cohesion": 0.91, "pairwise_min": 0.88, "weak_links": []},
+        })
+        assert flattened["cohesion"] == 0.91
+        assert flattened["pairwise_min"] == 0.88
+        assert flattened["member_ids"] == ["a", "b"]
 
     def test_validate_source_set_rejects_mixed_categories(self):
         from memory_consolidation_service import _validate_source_set

@@ -86,16 +86,32 @@ def get_embedding_metadata(row: Dict[str, Any]) -> Dict[str, Any]:
     return _coerce_metadata(_coerce_metadata(row.get("metadata")).get("embedding"))
 
 
-def is_embedding_compatible(row: Dict[str, Any], configured_version: int) -> bool:
+def is_embedding_compatible(
+    row: Dict[str, Any], configured_version: int, configured_model: Optional[str] = None
+) -> bool:
     """True when the row's embedding version matches the configured version.
 
     A row with no embedding vector is never compatible (there is nothing to
     compare). Used by automated candidate discovery; manual preview reports the
     mismatch as a warning instead of rejecting.
     """
-    if not row.get("embedding"):
+    vector = row.get("embedding")
+    if not vector:
         return False
-    return get_embedding_version(row) == int(configured_version)
+    meta = get_embedding_metadata(row)
+    # Keep this primitive pure: callers that need model pinning pass the
+    # configured model explicitly instead of triggering a database lookup.
+    expected_model = configured_model
+    try:
+        dimensions_match = int(meta.get("dimensions") or 0) == len(vector)
+    except (TypeError, ValueError):
+        dimensions_match = False
+    model_match = not expected_model or meta.get("model") == expected_model
+    return (
+        get_embedding_version(row) == int(configured_version)
+        and dimensions_match
+        and model_match
+    )
 
 
 def build_embedding_metadata(

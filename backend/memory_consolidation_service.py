@@ -53,6 +53,7 @@ from memory_clustering import (
 )
 from memory_embedding import (
     CONSOLIDATABLE_KNOWLEDGE_CATEGORIES,
+    current_embedding_model,
     embed_knowledge_fields,
     is_embedding_compatible,
 )
@@ -110,7 +111,10 @@ async def preview(
     category = _validate_source_set(rows, origin=origin)
 
     # Grouping metrics (information only for manual origin; gating for automated).
-    metrics = manual_group_metrics(_metric_projection(rows))
+    metrics = _flatten_manual_metrics(manual_group_metrics(
+        _metric_projection(rows),
+        weak_link_threshold=float(settings.get("knowledge_hygiene_weak_link_threshold", 0.65)),
+    ))
     metrics["embedding_compatible"] = _embedding_compat_summary(rows, settings)
     metrics["category"] = category
 
@@ -149,6 +153,8 @@ async def regenerate(*, preview_id: str, actor_type: str = "admin", actor_id: Op
     existing = load_preview(preview_id)
     if not existing:
         raise ConsolidationError("missing_preview", "Preview not found", 404)
+    if existing.get("state") == "applied":
+        raise ConsolidationError("already_applied", "An applied preview cannot be regenerated", 409)
     expire_preview(preview_id)
     return await preview(
         knowledge_ids=existing.get("source_ids") or [],
@@ -198,7 +204,6 @@ def _enforce_automated_controls(metrics: Dict[str, Any], settings: Dict[str, Any
 
     Manual origin never rejects for low similarity; it only reports metrics.
     """
-    threshold = float(settings.get("knowledge_hygiene_similarity_threshold", 0.82))
     min_cohesion = float(settings.get("knowledge_hygiene_min_cluster_cohesion", 0.72))
     min_size = int(settings.get("knowledge_hygiene_min_cluster_size", 2))
     max_size = int(settings.get("knowledge_hygiene_max_cluster_size", 5))
@@ -209,10 +214,10 @@ def _enforce_automated_controls(metrics: Dict[str, Any], settings: Dict[str, Any
         raise ConsolidationError("above_max_size", f"Cluster size {size} above maximum {max_size}", 400)
     if metrics.get("cohesion", 0.0) < min_cohesion:
         raise ConsolidationError("low_cohesion", "Cluster cohesion below threshold", 400)
-    if (metrics.get("pairwise_min", 0.0)) < threshold:
-        raise ConsolidationError("below_threshold", "Minimum pairwise similarity below threshold", 400)
+    if metrics.get("weak_links"):
+        raise ConsolidationError("weak_link", "Cluster contains a member below the centroid weak-link threshold", 400)
     cv = int(settings.get("knowledge_hygiene_embedding_version", 2))
-    if not all(is_embedding_compatible(r, cv) for r in rows):
+    if not all(is_embedding_compatible(r, cv, current_embedding_model()) for r in rows):
         raise ConsolidationError("embedding_incompatible", "Sources have incompatible embedding versions", 400)
 
 
@@ -223,10 +228,42 @@ def _metric_projection(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
+def _flatten_manual_metrics(group: Dict[str, Any]) -> Dict[str, Any]:
+    """Expose the metric bundle consistently to API, gates, prompts, and UI."""
+    return {
+        **(group.get("metrics") or {}),
+        "member_ids": group.get("member_ids") or [],
+        "embedding_member_ids": group.get("embedding_member_ids") or [],
+        "size": group.get("size", 0),
+        "status": group.get("status"),
+        "split_reason": group.get("split_reason"),
+    }
+
+
 def _embedding_compat_summary(rows: Sequence[Dict[str, Any]], settings: Dict[str, Any]) -> Dict[str, Any]:
     cv = int(settings.get("knowledge_hygiene_embedding_version", 2))
-    incompatible = [r["id"] for r in rows if not is_embedding_compatible(r, cv)]
+    incompatible = [r["id"] for r in rows if not is_embedding_compatible(r, cv, current_embedding_model())]
     return {"configured_version": cv, "incompatible_ids": incompatible, "all_compatible": not incompatible}
+
+
+def selection_metrics(knowledge_ids: Sequence[str]) -> Dict[str, Any]:
+    """Non-mutating, no-LLM metrics for the manual Sources review step."""
+    ids = _distinct_ids(knowledge_ids)
+    if len(ids) < 2:
+        raise ConsolidationError("invalid_input", "At least two distinct knowledge ids are required", 400)
+    rows = load_knowledge_records(ids)
+    if len(rows) != len(ids):
+        missing = sorted(set(ids) - {r["id"] for r in rows})
+        raise ConsolidationError("missing_source", f"Source records not found: {missing}", 404)
+    category = _validate_source_set(rows, origin="manual")
+    settings = _settings()
+    metrics = _flatten_manual_metrics(manual_group_metrics(
+        _metric_projection(rows),
+        weak_link_threshold=float(settings.get("knowledge_hygiene_weak_link_threshold", 0.65)),
+    ))
+    metrics["embedding_compatible"] = _embedding_compat_summary(rows, settings)
+    metrics["category"] = category
+    return metrics
 
 
 def _snapshot_for_llm(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -271,11 +308,12 @@ async def _generate_proposal(
     sources_for_llm = [_snapshot_for_llm(r) for r in rows]
     user_prompt = build_user_prompt(sources_for_llm, metrics, category)
 
+    last_errors: List[str] = []
     for attempt in range(2):
         try:
             raw_text = await call_llm(
                 user_prompt,
-                system_prompt=system_prompt + ("\n\n" + repair_prompt([], category) if attempt else ""),
+                system_prompt=system_prompt + ("\n\n" + repair_prompt(last_errors, category) if attempt else ""),
                 max_tokens=int(_settings().get("knowledge_max_tokens") or 1600),
                 task_type="knowledge_consolidation",
             )
@@ -285,13 +323,15 @@ async def _generate_proposal(
         try:
             parsed = parse_llm_json(raw_text, context="knowledge_consolidation")
         except ValueError as exc:
+            last_errors = [f"LLM returned unparseable JSON: {exc}"]
             if attempt == 0:
                 continue
-            return None, raw_text, [f"LLM returned unparseable JSON: {exc}"], model_name
+            return None, raw_text, last_errors, model_name
         proposal_obj, errors = validate_proposal(parsed, category)
         if not errors and proposal_obj is not None:
             return proposal_to_dict(proposal_obj), parsed, [], model_name
         if attempt == 0 and errors:
+            last_errors = list(errors)
             continue
         return (proposal_to_dict(proposal_obj) if proposal_obj else parsed), parsed, errors, model_name
     return None, None, ["LLM proposal validation failed after retry"], model_name
@@ -319,6 +359,9 @@ async def apply(
         raise ConsolidationError("already_applied", "Preview was already applied", 409)
     if preview_row.get("state") == "failed" or preview_row.get("proposal") is None:
         raise ConsolidationError("invalid_preview", "Preview has no valid proposal to apply", 422)
+    expires_at = preview_row.get("expires_at")
+    if expires_at is not None and expires_at <= datetime.now(timezone.utc):
+        raise ConsolidationError("expired", "Preview has expired — regenerate it", 410)
 
     category = preview_row["category"]
     _validate_approved_canonical(approved_canonical, category)
@@ -362,9 +405,14 @@ def _validate_approved_canonical(approved: Dict[str, Any], category: str) -> Non
     # Skills/playbooks: validate the canonical body parses/render round-trips.
     if category in ("skill", "playbook"):
         try:
-            from memory_skill_md import slugify
-            if not slugify(name):
-                raise ConsolidationError("invalid_canonical", "canonical skill/playbook name is invalid", 422)
+            from memory_skill_md import is_skill_md, parse_skill_md, render_skill_md
+            candidate = content if is_skill_md(content) else render_skill_md(
+                name=name, category=category,
+                description=(approved.get("summary") or content), body=content,
+                metadata=approved.get("metadata") or {},
+                signals=approved.get("signals") or [], tags=approved.get("tags") or [],
+            )
+            parse_skill_md(candidate)
         except ConsolidationError:
             raise
         except Exception as exc:
@@ -465,23 +513,30 @@ async def discover_and_propose(
             categories=categories, created_by=actor_id,
         )
 
-    records = load_active_records_for_categories(categories)
+    all_records = load_active_records_for_categories(categories)
+    configured_version = int(settings.get("knowledge_hygiene_embedding_version", 2))
+    records = [r for r in all_records if is_embedding_compatible(r, configured_version, current_embedding_model())]
+    incompatible_skipped = len(all_records) - len(records)
     groups = discover_candidate_groups(
         records, threshold=threshold, min_size=min_size, max_size=max_size,
         min_cohesion=min_cohesion, weak_link_threshold=weak_link,
     )
-    proposal_groups = accepted_proposal_groups(groups, min_size)
-    clusters_found = len(groups)
+    proposal_groups = [
+        g for g in groups
+        if g.get("status") in ("accepted", "manual_review") and g.get("size", 0) >= min_size
+    ]
+    proposal_keys = {tuple(g.get("member_ids") or []) for g in proposal_groups}
+    clusters_found = sum(1 for g in groups if g.get("size", 0) >= min_size)
     proposals_created = 0
     applied_count = 0
     failed_count = 0
 
-    for group in proposal_groups:
+    for group in groups:
         cluster_id = insert_hygiene_cluster(
             run_id=run_id, category=group["category"], group=group,
             centroid_vec=group.get("centroid"),
         )
-        if mode in ("analysis_only",):
+        if mode in ("analysis_only",) or tuple(group.get("member_ids") or []) not in proposal_keys:
             continue
         try:
             result = await preview(
@@ -492,7 +547,11 @@ async def discover_and_propose(
             preview_id = result["preview"]["id"]
             proposals_created += 1
             link_cluster_proposal(cluster_id, preview_id)
-            if auto_apply and _policy_allows_apply(result["proposal"], group["category"], settings):
+            if (
+                auto_apply
+                and group.get("status") == "accepted"
+                and _policy_allows_apply(result["proposal"], group["category"], settings)
+            ):
                 await apply(
                     preview_id=preview_id,
                     approved_canonical=_canonical_from_proposal(result["proposal"]),
@@ -506,28 +565,37 @@ async def discover_and_propose(
             logger.warning("Hygiene proposal/apply failed for cluster %s: %s", group.get("member_ids"), exc)
 
     update_hygiene_run(
-        run_id, status="completed", records_scanned=len(records), clusters_found=clusters_found,
+        run_id, status="completed", records_scanned=len(all_records), clusters_found=clusters_found,
         proposals_created=proposals_created, applied_count=applied_count, failed_count=failed_count,
         finished_at=datetime.now(timezone.utc).isoformat(),
     )
     return {
-        "run_id": run_id, "mode": mode, "records_scanned": len(records),
+        "run_id": run_id, "mode": mode, "records_scanned": len(all_records),
+        "eligible_records": len(records), "incompatible_skipped": incompatible_skipped,
         "clusters_found": clusters_found, "proposals_created": proposals_created,
         "applied_count": applied_count, "failed_count": failed_count,
     }
 
 
 def _policy_allows_apply(proposal: Optional[Dict[str, Any]], category: str, settings: Dict[str, Any]) -> bool:
-    """Conservative auto-apply gate: high confidence, no contradictions, no manual_review."""
+    """Apply the configured global/category automation policy deterministically."""
     if not isinstance(proposal, dict):
         return False
+    global_mode = settings.get("knowledge_hygiene_mode", "manual_only")
+    category_mode = (settings.get("knowledge_hygiene_category_policies") or {}).get(category)
+    effective_mode = category_mode or global_mode
+    if effective_mode not in ("auto_conservative", "auto_synthesis"):
+        return False
     rec = proposal.get("recommendation")
-    if rec not in ("merge",):
+    if effective_mode == "auto_conservative" and rec != "merge":
         return False
-    if proposal.get("contradictions"):
+    if effective_mode == "auto_synthesis" and rec not in ("merge", "merge_with_warnings"):
         return False
-    policy = (settings.get("knowledge_hygiene_contradiction_policy") or "manual_review")
-    if policy == "manual_review":
+    contradictions = proposal.get("contradictions") or []
+    contradiction_policy = settings.get("knowledge_hygiene_contradiction_policy") or "manual_review"
+    if contradictions and contradiction_policy != "warn_and_merge":
+        return False
+    if contradictions and effective_mode == "auto_conservative":
         return False
     min_conf = float(settings.get("knowledge_hygiene_min_auto_confidence", 0.90))
     try:
@@ -535,9 +603,6 @@ def _policy_allows_apply(proposal: Optional[Dict[str, Any]], category: str, sett
     except (TypeError, ValueError):
         conf = 0.0
     if conf < min_conf:
-        return False
-    cat_policy = (settings.get("knowledge_hygiene_category_policies") or {}).get(category)
-    if cat_policy and cat_policy not in ("auto_conservative", "auto_synthesis"):
         return False
     return True
 
@@ -574,10 +639,16 @@ async def creation_time_propose(
         return {"status": "no_embedding", "knowledge_id": knowledge_id}
     if row.get("status") not in ("active", "confirmed") or row.get("merged_into"):
         return {"status": "ineligible", "knowledge_id": knowledge_id}
+    configured_version = int(settings.get("knowledge_hygiene_embedding_version", 2))
+    if not is_embedding_compatible(row, configured_version, current_embedding_model()):
+        return {"status": "embedding_incompatible", "knowledge_id": knowledge_id}
 
     category = row.get("category")
     threshold = float(settings.get("knowledge_hygiene_similarity_threshold", 0.82))
-    candidate_ids = _nearest_neighbors(knowledge_id, row["embedding"], category, threshold, limit=4)
+    candidate_ids = _nearest_neighbors(
+        knowledge_id, row["embedding"], category, threshold,
+        configured_version=configured_version, limit=4,
+    )
     ids = [knowledge_id] + [c for c in candidate_ids if c != knowledge_id]
     if len(ids) < 2:
         return {"status": "no_candidates", "knowledge_id": knowledge_id}
@@ -600,7 +671,15 @@ async def creation_time_propose(
     return {"status": "proposed", "knowledge_id": knowledge_id, "preview_id": result["preview"]["id"]}
 
 
-def _nearest_neighbors(knowledge_id: str, embedding, category: str, threshold: float, limit: int = 4) -> List[str]:
+def _nearest_neighbors(
+    knowledge_id: str,
+    embedding,
+    category: str,
+    threshold: float,
+    *,
+    configured_version: int,
+    limit: int = 4,
+) -> List[str]:
     """Same-category active nearest neighbors above the candidate threshold."""
     from core.storage import get_memory_db_context
     try:
@@ -615,11 +694,18 @@ def _nearest_neighbors(knowledge_id: str, embedding, category: str, threshold: f
                   AND COALESCE(merged_into, '') = ''
                   AND COALESCE(consolidation_protected, FALSE) = FALSE
                   AND embedding IS NOT NULL
+                  AND COALESCE(metadata->'embedding'->>'version', '1') = %s
+                  AND COALESCE(metadata->'embedding'->>'model', '') = %s
+                  AND metadata->'embedding'->>'dimensions' IS NOT DISTINCT FROM vector_dims(embedding)::text
                   AND 1 - (embedding <=> %s::vector) >= %s
                 ORDER BY embedding <=> %s::vector
                 LIMIT %s
                 """,
-                (knowledge_id, category, list(embedding), threshold, list(embedding), limit),
+                (
+                    knowledge_id, category, str(configured_version),
+                    current_embedding_model(),
+                    list(embedding), threshold, list(embedding), limit,
+                ),
             )
             return [r["id"] for r in cur.fetchall()]
     except Exception as exc:

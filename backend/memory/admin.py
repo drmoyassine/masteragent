@@ -413,6 +413,10 @@ async def update_knowledge(
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
+        cursor.execute("SELECT merged_into FROM knowledge WHERE id = %s", (knowledge_id,))
+        existing = cursor.fetchone()
+        if existing and existing.get("merged_into"):
+            raise HTTPException(status_code=409, detail="Retired consolidation sources are immutable; reverse the consolidation first")
         cursor.execute(
             f"UPDATE knowledge SET {', '.join(fields)} WHERE id = %s",
             values
@@ -425,6 +429,13 @@ async def update_knowledge(
 async def delete_knowledge(knowledge_id: str, admin: dict = Depends(require_admin_auth)):
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
+        cursor.execute(
+            "SELECT merged_into, merged_from, consolidation_event_id FROM knowledge WHERE id = %s",
+            (knowledge_id,),
+        )
+        row = cursor.fetchone()
+        if row and (row.get("merged_into") or row.get("merged_from") or row.get("consolidation_event_id")):
+            raise HTTPException(status_code=409, detail="Consolidated knowledge cannot be deleted; reverse its consolidation first")
         cursor.execute("DELETE FROM knowledge WHERE id = %s", (knowledge_id,))
 
 
@@ -436,8 +447,24 @@ async def bulk_delete_knowledge(body: BulkKnowledgeDelete, admin: dict = Depends
     """Bulk delete knowledge records."""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id FROM knowledge
+            WHERE id = ANY(%s)
+              AND (merged_into IS NOT NULL OR COALESCE(array_length(merged_from, 1), 0) > 0
+                   OR consolidation_event_id IS NOT NULL)
+            """,
+            (body.knowledge_ids,),
+        )
+        protected = [r["id"] for r in cursor.fetchall()]
+        if protected:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Consolidated knowledge must be reversed before deletion: {protected}",
+            )
         cursor.execute("DELETE FROM knowledge WHERE id = ANY(%s)", (body.knowledge_ids,))
-    return {"deleted": len(body.knowledge_ids)}
+        deleted = cursor.rowcount
+    return {"deleted": deleted}
 
 
 # ============================================================
@@ -468,10 +495,24 @@ async def consolidation_preview(
     actor_type, actor_id = _consolidation_actor(admin)
     try:
         return await preview(
-            knowledge_ids=body.knowledge_ids, origin=body.origin or "manual",
+            knowledge_ids=body.knowledge_ids, origin="manual",
             options=(body.options.model_dump() if body.options else None),
             actor_type=actor_type, actor_id=actor_id,
         )
+    except Exception as exc:
+        if hasattr(exc, "code"):
+            _raise_consolidation_error(exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@admin_crud.post("/knowledge/consolidations/metrics")
+async def consolidation_metrics(
+    body: ConsolidationPreviewRequest, admin: dict = Depends(require_admin_auth)
+):
+    """Return same-category selection metrics without invoking an LLM or writing state."""
+    from memory_consolidation_service import selection_metrics
+    try:
+        return selection_metrics(body.knowledge_ids)
     except Exception as exc:
         if hasattr(exc, "code"):
             _raise_consolidation_error(exc)
@@ -514,7 +555,7 @@ async def consolidation_apply(body: ConsolidationApplyRequest, admin: dict = Dep
             approved_canonical=body.approved_canonical.model_dump(),
             canonical_strategy=body.canonical_strategy,
             canonical_target_id=body.canonical_target_id,
-            actor_type=body.actor_type or actor_type, actor_id=body.actor_id or actor_id,
+            actor_type=actor_type, actor_id=actor_id,
         )
     except Exception as exc:
         if hasattr(exc, "code"):
@@ -566,7 +607,12 @@ async def consolidation_analyze(body: ConsolidationAnalyzeRequest, admin: dict =
     from memory_consolidation_repository import create_hygiene_run
     from services.config_helpers import get_memory_settings
     settings = get_memory_settings() or {}
-    mode = body.mode or settings.get("knowledge_hygiene_mode", "manual_only")
+    mode = body.mode or "analysis_only"
+    if mode not in ("analysis_only", "proposal_only", "manual_only"):
+        raise HTTPException(
+            status_code=400,
+            detail="Analyze endpoint is non-destructive; use analysis_only, proposal_only, or manual_only",
+        )
     categories = settings.get("knowledge_hygiene_enabled_categories") or [
         "best_practices", "lessons_learned", "trade_knowledge", "skill", "playbook"
     ]
@@ -580,11 +626,23 @@ async def consolidation_analyze(body: ConsolidationAnalyzeRequest, admin: dict =
         embedding_version=int(settings.get("knowledge_hygiene_embedding_version", 2)),
         categories=categories, created_by=(_consolidation_actor(admin))[1],
     )
-    await knowledge_queue.add(
-        "knowledge_hygiene_run",
-        {"run_id": run_id, "mode": mode, "category": body.category, "origin": "admin"},
-        {"priority": 2},
-    )
+    try:
+        await knowledge_queue.add(
+            "knowledge_hygiene_run",
+            {"run_id": run_id, "mode": mode, "category": body.category,
+             "origin": "admin", "allow_auto_apply": False},
+            {"priority": 2},
+        )
+    except Exception as exc:
+        from memory_consolidation_repository import update_hygiene_run
+        update_hygiene_run(
+            run_id,
+            status="failed",
+            failed_count=1,
+            finished_at=datetime.now(timezone.utc).isoformat(),
+        )
+        logger.exception("Failed to queue knowledge hygiene run %s", run_id)
+        raise HTTPException(status_code=503, detail="Knowledge hygiene queue is unavailable") from exc
     return {"run_id": run_id, "status": "queued", "mode": mode}
 
 

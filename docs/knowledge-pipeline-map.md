@@ -1,5 +1,7 @@
 # Knowledge Pipeline — End-to-End Map
 
+> **Roadmap note (2026-07-11):** Sprint 2.5 retrieval is shipped. Remaining Sprint 3 retrieval last-mile and proactive playbook work is consolidated into [features_list.md](features_list.md). The orphan-sweeper item remains a separate reliability fix.
+
 > **Created**: 2026-07-05, day the first production knowledge record shipped.
 > Companion to [knowledge-tier-productionization.md](knowledge-tier-productionization.md). Covers: every path knowledge is **created**, how it **lives**, every path it is **consumed**, the **telemetry→playbook** pipeline status, and the **retrieval design** for scaling injection without context bloat.
 
@@ -119,7 +121,7 @@ At get-context time, match the conversation vector against **playbook embeddings
 | 10 | Layer-3 proactive playbook push | M | Sprint 3 |
 
 ### Sprint 2.5 — Knowledge pre-context retrieval ✅ shipped (PR #31, 2026-07-06)
-Spec: **[knowledge-precontext-retrieval-plan.md](knowledge-precontext-retrieval-plan.md)**. Delivery report: **[sprint2.5-delivery-report.md](sprint2.5-delivery-report.md)**. Turns get-context knowledge injection into a lean, governed, filterable index: WS-1 `context_knowledge_mode` (full|index), WS-2 `GET /knowledge/{id}` + `GET /knowledge/facets` + fixed `list_knowledge`, WS-3 always-on UI-editable Knowledge Management skill (epistemic contract + broaden→tools→delegate ladder), WS-4 governed `metadata.facets` via a separate extraction step (generation prompts untouched) + backfill, WS-5 hard facet filter on all categories (pinned skill exempt) with semantic broaden. Governed filtering = `metadata.facets` only; `tags` off the agent surface. Zero-regression: `profile_facet_map` defaults NULL (opt-in), `full` mode byte-identical to Sprint 2, extraction degrades to `{}`.
+Spec: **[knowledge-precontext-retrieval-plan.md](plans/archived/knowledge-precontext-retrieval-plan.md)**. Delivery report: **[sprint2.5-delivery-report.md](plans/archived/sprint2.5-delivery-report.md)**. Turns get-context knowledge injection into a lean, governed, filterable index: WS-1 `context_knowledge_mode` (full|index), WS-2 `GET /knowledge/{id}` + `GET /knowledge/facets` + fixed `list_knowledge`, WS-3 always-on UI-editable Knowledge Management skill (epistemic contract + broaden→tools→delegate ladder), WS-4 governed `metadata.facets` via a separate extraction step (generation prompts untouched) + backfill, WS-5 hard facet filter on all categories (pinned skill exempt) with semantic broaden. Governed filtering = `metadata.facets` only; `tags` off the agent surface. Zero-regression: `profile_facet_map` defaults NULL (opt-in), `full` mode byte-identical to Sprint 2, extraction degrades to `{}`.
 
 ### Sprint 2 follow-ups (small, deferred)
 - System Monitor UI panel for `/pipeline-runs` (endpoint + data exist; render a table with reason-code badges).

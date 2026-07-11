@@ -1,6 +1,6 @@
 # Sprint 2.5 — Knowledge Pre-Context Retrieval: Delivery Report
 
-> **Status**: Implemented 2026-07-06. Branch `feat/sprint2.5-knowledge-precontext-retrieval` (includes the plan doc `docs/knowledge-precontext-retrieval-plan.md`).
+> **Status**: Implemented 2026-07-06 and archived. Branch `feat/sprint2.5-knowledge-precontext-retrieval`.
 > **Spec**: [knowledge-precontext-retrieval-plan.md](knowledge-precontext-retrieval-plan.md). All five workstreams delivered.
 
 ---
@@ -143,7 +143,7 @@ Closes the WS-3 shortfall flagged in review (skill install + always-on toggle we
 - **System Monitor UI panel** for `/pipeline-runs` (data + endpoint exist from Sprint 2; no UI yet).
 - **Knowledge-tab UI**: import dialog + per-record export button (API clients wired; endpoints live).
 - The Knowledge Management skill is admin-editable; consider reviewing its wording post-deploy against real n8n counselor behavior.
-- `tags` column drop deferred to the `mastermemory` npm refactor (recorded in [mastermemory-npm-migration.md](mastermemory-npm-migration.md)).
+- `tags` column drop deferred to the `mastermemory` npm refactor (recorded in [mastermemory-npm-migration.md](../../mastermemory-npm-migration.md)).
 
 ---
 

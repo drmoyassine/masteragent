@@ -11,6 +11,7 @@ import {
   updateInsightAdmin,
   deleteInsightAdmin,
   getKnowledgeAdmin,
+  getKnowledgeDetail,
   getMemoryStats,
   updateMemoryAdmin,
   deleteMemoryAdmin,
@@ -750,6 +751,15 @@ export default function MemoryExplorerPage() {
     setShowConsolidationDialog(true);
   };
 
+  const handleOpenKnowledgeById = async (knowledgeId) => {
+    try {
+      const { data } = await getKnowledgeDetail(knowledgeId);
+      setEditingKnowledge(data);
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || "Failed to open canonical knowledge");
+    }
+  };
+
   return (
     <div className="space-y-6" data-testid="memory-explorer-page">
       <div className="flex items-center justify-between">
@@ -948,6 +958,7 @@ export default function MemoryExplorerPage() {
             toast.error("Failed to record feedback");
           }
         }}
+        onOpenKnowledge={handleOpenKnowledgeById}
       />
       <KnowledgeConsolidationDialog
         open={showConsolidationDialog}

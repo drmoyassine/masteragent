@@ -5,8 +5,8 @@
 > all pathways, all valves, all defaults. Verified against the code, not assumed.
 >
 > Companion docs: [knowledge-pipeline-map.md](knowledge-pipeline-map.md),
-> [knowledge-to-context-retrieval-report.md](knowledge-to-context-retrieval-report.md),
-> [sprint2.5-delivery-report.md](sprint2.5-delivery-report.md).
+> [knowledge-to-context-retrieval-report.md](plans/archived/knowledge-to-context-retrieval-report.md),
+> [sprint2.5-delivery-report.md](plans/archived/sprint2.5-delivery-report.md).
 
 ---
 
@@ -211,7 +211,7 @@ reflected on yet (idempotent via `telemetry_reflection_log`):
 
 **Design principles:** reflection before codification (raw telemetry never dumped), recurrence
 builds conviction (draft + merge machinery promotes over time), outcome-aware (conversation
-included). See [the telemetry deep-dive](knowledge-to-context-retrieval-report.md) for why this
+included). See [the telemetry deep-dive](plans/archived/knowledge-to-context-retrieval-report.md) for why this
 path was needed.
 
 ### Manual / backfill triggers

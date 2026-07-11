@@ -1032,12 +1032,15 @@ def _assert_agent_mutable(cursor, id: str, agent: dict) -> None:
     delete them — that's an admin-only operation."""
     cursor.execute(
         "SELECT source_pathway, metadata->>'always_inject' AS ai, "
-        "metadata->>'created_by_agent_id' AS owner FROM knowledge WHERE id = %s",
+        "metadata->>'created_by_agent_id' AS owner, merged_into, merged_from, "
+        "consolidation_event_id FROM knowledge WHERE id = %s",
         (id,),
     )
     r = cursor.fetchone()
     if r and (r.get("source_pathway") == "system" or r.get("ai") == "true"):
         raise HTTPException(403, "This knowledge record is system-governed and can only be modified by an admin")
+    if r and (r.get("merged_into") or r.get("merged_from") or r.get("consolidation_event_id")):
+        raise HTTPException(409, "Consolidated knowledge is admin-governed; reverse the consolidation before mutation")
     if scope_enforced() and r and r.get("owner") != agent.get("id") and agent.get("id") != "mcp-service":
         raise HTTPException(403, "Agent can only modify knowledge it created")
 

@@ -9,7 +9,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Loader2, GitMerge, AlertTriangle, CheckCircle2, ArrowLeft, ArrowRight } from "lucide-react";
 import { toast } from "sonner";
 import {
-  consolidationPreview, applyConsolidation, getConsolidationPreview, getKnowledgeDetail,
+  consolidationPreview, applyConsolidation, regenerateConsolidationPreview,
+  getConsolidationMetrics, getKnowledgeDetail,
 } from "@/lib/api";
 
 const STEPS = ["Sources", "Proposal", "Edit", "Confirm", "Result"];
@@ -27,9 +28,12 @@ export default function KnowledgeConsolidationDialog({ open, onOpenChange, selec
   const [loading, setLoading] = useState(false);
   const [sources, setSources] = useState([]);
   const [preview, setPreview] = useState(null); // { preview, sources, metrics, proposal }
+  const [selectionMetrics, setSelectionMetrics] = useState(null);
   const [strategy, setStrategy] = useState("update_existing");
   const [targetId, setTargetId] = useState("");
   const [canonical, setCanonical] = useState({ name: "", summary: "", content: "", signals: [], tags: [], metadata: {} });
+  const [metadataText, setMetadataText] = useState("{}");
+  const [metadataError, setMetadataError] = useState("");
   const [event, setEvent] = useState(null);
   const [error, setError] = useState("");
 
@@ -37,7 +41,8 @@ export default function KnowledgeConsolidationDialog({ open, onOpenChange, selec
   // Reset whenever the dialog opens for a new selection.
   useEffect(() => {
     if (open) {
-      setStep(0); setPreview(null); setEvent(null); setError(""); setSources([]);
+      setStep(0); setPreview(null); setSelectionMetrics(null); setEvent(null); setError(""); setSources([]);
+      setMetadataText("{}"); setMetadataError("");
       setStrategy("update_existing"); setTargetId((selectedIds || [])[0] || "");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -50,6 +55,8 @@ export default function KnowledgeConsolidationDialog({ open, onOpenChange, selec
         try {
           const rows = await Promise.all((selectedIds || []).map((id) => getKnowledgeDetail(id).then((r) => r.data)));
           setSources(rows);
+          const { data: metricData } = await getConsolidationMetrics({ knowledge_ids: selectedIds, origin: "manual" });
+          setSelectionMetrics(metricData);
         } catch (e) { setError("Failed to load source records."); }
       })();
     }
@@ -65,7 +72,11 @@ export default function KnowledgeConsolidationDialog({ open, onOpenChange, selec
       const { data } = await consolidationPreview({ knowledge_ids: selectedIds, origin: "manual", options: { canonical_strategy: strategy, canonical_target_id: targetId || null } });
       setPreview(data);
       const c = data?.proposal?.canonical;
-      if (c) setCanonical({ name: c.name || "", summary: c.summary || "", content: c.content || "", signals: c.signals || [], tags: c.tags || [], metadata: c.metadata || {} });
+      if (c) {
+        setCanonical({ name: c.name || "", summary: c.summary || "", content: c.content || "", signals: c.signals || [], tags: c.tags || [], metadata: c.metadata || {} });
+        setMetadataText(JSON.stringify(c.metadata || {}, null, 2));
+        setMetadataError("");
+      }
       setStep(1);
     } catch (e) {
       setError(_errMsg(e, "Failed to generate proposal"));
@@ -90,7 +101,38 @@ export default function KnowledgeConsolidationDialog({ open, onOpenChange, selec
     } finally { setLoading(false); }
   }
 
+  async function regenerateProposal() {
+    if (!preview?.preview?.id) return;
+    setLoading(true); setError("");
+    try {
+      const { data } = await regenerateConsolidationPreview(preview.preview.id);
+      setPreview(data);
+      const c = data?.proposal?.canonical;
+      setCanonical(c ? {
+        name: c.name || "", summary: c.summary || "", content: c.content || "",
+        signals: c.signals || [], tags: c.tags || [], metadata: c.metadata || {},
+      } : { name: "", summary: "", content: "", signals: [], tags: [], metadata: {} });
+      setMetadataText(JSON.stringify(c?.metadata || {}, null, 2));
+      setMetadataError("");
+      toast.success("Proposal regenerated from current source versions");
+    } catch (e) {
+      setError(_errMsg(e, "Failed to regenerate proposal"));
+    } finally { setLoading(false); }
+  }
+
   function close() { onOpenChange(false); }
+
+  function updateMetadata(value) {
+    setMetadataText(value);
+    try {
+      const parsed = JSON.parse(value || "{}");
+      if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") throw new Error("Metadata must be a JSON object");
+      setCanonical((current) => ({ ...current, metadata: parsed }));
+      setMetadataError("");
+    } catch (e) {
+      setMetadataError(e.message || "Invalid metadata JSON");
+    }
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -131,6 +173,7 @@ export default function KnowledgeConsolidationDialog({ open, onOpenChange, selec
               <div className="rounded-md bg-muted/40 p-3 text-xs text-muted-foreground">
                 A category-aware LLM will read the full content of these records (never their embeddings) and propose a canonical merge.
               </div>
+              {selectionMetrics && <MetricBar metrics={selectionMetrics} />}
             </div>
           )}
 
@@ -164,6 +207,11 @@ export default function KnowledgeConsolidationDialog({ open, onOpenChange, selec
                   <Label className="text-xs">Tags (comma-separated)</Label>
                   <Input value={(canonical.tags || []).join(", ")} onChange={(e) => setCanonical({ ...canonical, tags: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) })} />
                 </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Metadata (JSON)</Label>
+                <Textarea rows={6} className="font-mono text-xs" value={metadataText} onChange={(e) => updateMetadata(e.target.value)} />
+                {metadataError && <div className="text-xs text-destructive">{metadataError}</div>}
               </div>
             </div>
           )}
@@ -232,12 +280,17 @@ export default function KnowledgeConsolidationDialog({ open, onOpenChange, selec
             </Button>
           )}
           {step === 1 && (
-            <Button onClick={() => setStep(2)} disabled={loading}>
-              Edit Canonical <ArrowRight className="w-4 h-4 ml-2" />
-            </Button>
+            <>
+              <Button variant="outline" onClick={regenerateProposal} disabled={loading}>
+                Regenerate Proposal
+              </Button>
+              <Button onClick={() => setStep(2)} disabled={loading || !preview?.proposal?.canonical}>
+                Edit Canonical <ArrowRight className="w-4 h-4 ml-2" />
+              </Button>
+            </>
           )}
           {step === 2 && (
-            <Button onClick={() => setStep(3)} disabled={loading}>
+            <Button onClick={() => setStep(3)} disabled={loading || !!metadataError}>
               Review & Confirm <ArrowRight className="w-4 h-4 ml-2" />
             </Button>
           )}
@@ -264,6 +317,11 @@ function ProposalReview({ preview, metrics }) {
   };
   return (
     <div className="space-y-3">
+      {preview.preview?.state === "failed" && (
+        <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
+          Proposal validation failed: {(preview.preview?.validation_errors || []).join("; ") || "unknown validation error"}. Regenerate before continuing.
+        </div>
+      )}
       <div className="flex items-center gap-2">
         <Badge className={recColors[p.recommendation] || "bg-gray-100"}>{(p.recommendation || "—").replace(/_/g, " ")}</Badge>
         {typeof p.confidence === "number" && (

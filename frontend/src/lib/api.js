@@ -202,6 +202,7 @@ export const getMemoryStats = () => api.get('/memory/admin/stats');
 // Candidate similarity only DISCOVERS related records; merge decisions come
 // from category-aware LLM proposals + admin review. Preview never mutates.
 export const consolidationPreview = (data) => api.post('/memory/admin/knowledge/consolidations/preview', data);
+export const getConsolidationMetrics = (data) => api.post('/memory/admin/knowledge/consolidations/metrics', data);
 export const getConsolidationPreview = (previewId) => api.get(`/memory/admin/knowledge/consolidations/previews/${previewId}`);
 export const regenerateConsolidationPreview = (previewId) => api.post(`/memory/admin/knowledge/consolidations/previews/${previewId}/regenerate`);
 export const applyConsolidation = (data) => api.post('/memory/admin/knowledge/consolidations/apply', data);

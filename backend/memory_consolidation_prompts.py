@@ -122,6 +122,16 @@ def _format_source(idx: int, src: Dict[str, Any]) -> str:
     facets = metadata.get("facets") if isinstance(metadata, dict) else None
     if isinstance(facets, dict) and facets:
         parts.append("context: " + json.dumps(facets, ensure_ascii=False))
+    for key in (
+        "status", "quality_score", "evidence_breadth", "source_pathway",
+        "created_at", "updated_at", "merge_count", "version",
+        "source_intelligence_ids", "source_ai_interaction_ids",
+    ):
+        val = src.get(key)
+        if val not in (None, "", [], {}):
+            parts.append(f"{key}: {json.dumps(val, ensure_ascii=False, default=str)}")
+    if isinstance(metadata, dict) and metadata:
+        parts.append("metadata: " + json.dumps(metadata, ensure_ascii=False, default=str))
     # Operational fields for skills/playbooks
     for key in ("trigger_conditions", "triggers", "steps", "procedure", "prerequisites",
                 "permissions", "tools", "side_effects", "failure_conditions", "safety",
@@ -218,9 +228,14 @@ def validate_proposal(payload: Any, category: str) -> Tuple[Optional[Consolidati
         # cannot be parsed back is invalid and un-applicable).
         if category in ("skill", "playbook") and proposal.canonical and not errors:
             try:
-                from memory_skill_md import slugify
-                if not slugify(proposal.canonical.name):
-                    errors.append("canonical skill/playbook name produced an empty slug")
+                from memory_skill_md import parse_skill_md, render_skill_md
+                candidate = render_skill_md(
+                    name=proposal.canonical.name, category=category,
+                    description=proposal.canonical.summary or proposal.canonical.content,
+                    body=proposal.canonical.content, metadata=proposal.canonical.metadata,
+                    signals=proposal.canonical.signals, tags=proposal.canonical.tags,
+                )
+                parse_skill_md(candidate)
             except Exception as exc:  # pragma: no cover - defensive
                 errors.append(f"skill/playbook validation failed: {exc}")
     if proposal.confidence is not None and not (0.0 <= float(proposal.confidence) <= 1.0):

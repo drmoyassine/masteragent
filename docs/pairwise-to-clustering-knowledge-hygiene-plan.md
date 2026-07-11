@@ -1,517 +1,650 @@
-# Pairwise → Clustering Knowledge Hygiene Plan
+# Knowledge Hygiene and Consolidation Implementation Plan
 
-**Status:** Reviewed, code-grounded, language-neutral — ready for phased implementation
-**Date:** 2026-07-09 (rev. 2026-07-10 — language-neutral architecture revision)
-**Owner:** drmoy
-**Reference implementation:** Python (`pip install masteragent`) — the canonical impl. A future TypeScript implementation (`npm install masteragent`) will reproduce **this architecture** (§2, §4, §20). The **architecture, not the implementation, is what must remain stable.**
-**Implementer:** hand-off agent — see §17 (per-phase build spec) and §18 (acceptance/rollback).
-**Depends on:** PR #43 (creation-dedup/auto-activate/signal-casing), PR #44 (admin route repath), PR #45 (unified dedup threshold), PR #46 (Explorer counts + pagination).
-
----
-
-## 1. Purpose
-
-Define the **language-agnostic architecture** for MasterAgent Memory's knowledge hygiene — replacing pairwise-cosine consolidation with **semantic clustering + structured canonical records**.
-
-The Python package is the **canonical reference implementation**, not a prototype. A future TypeScript package will reproduce the same concepts, data models, APIs, and behaviors by implementing the **same interfaces and algorithms** defined here. Therefore every architectural decision maximizes **portability, simplicity, deterministic behavior, ease of implementation, and long-term maintainability** — over sophisticated language-specific algorithms.
-
-This revision is grounded in the actual code (all file/line anchors verified 2026-07-09) and:
-- corrects places the original draft diverged from the code (§6),
-- right-sizes the machinery to real volume and de-risks the dependency chain (§9, §16),
-- defines stable, language-neutral module boundaries both runtimes will follow (§4),
-- gives an implementation-grade phase spec another agent can execute without re-discovering the codebase (§17),
-- acceptance criteria, tests, rollback per phase (§18),
-- resolved decisions for every open question (§19),
-- per-module portability notes for the future TS impl (§20).
+**Status:** Approved implementation specification
+**Date:** 2026-07-11
+**Audience:** Junior implementation agent, reviewer, and production operator
+**Reference implementation:** MasterAgent Python backend
+**Supersedes:** the earlier pairwise-to-clustering plan wherever requirements conflict.
+**Execution mandate:** implement every work package in this document in one continuous coding session. The PR labels are review-sized checkpoints, not stopping points or future handoffs.
 
 ---
 
-## 2. Architectural principles
+## 1. Product objective
 
-These principles are normative — they constrain every decision below.
+Knowledge hygiene is a consolidation system, not a duplicate-removal job. It must identify groups of related knowledge, assess whether they can coherently become a stronger canonical record, produce an auditable LLM proposal, and apply an approved result transactionally.
 
-1. **Python-first.** The production Python implementation is the primary target. We do **not** redesign around edge runtimes. Future TS support is achieved by preserving the architecture, not by changing today's implementation.
-2. **Language-neutral core.** Every core component is implementable almost identically in Python and TypeScript.
-   - **Prefer:** graph traversal, connected components, union-find, cosine similarity, centroid calculation, deterministic serialization, JSON/YAML, Markdown rendering, BFS/DFS, simple threshold graphs.
-   - **Avoid in core:** HDBSCAN, scipy, sklearn pipelines, FAISS, pickle serialization, native compiled extensions, runtime-specific optimizations. These may exist later as **optional adapters** (Python-only extras) but MUST NOT be part of the core architecture or required for behavioral parity.
-3. **Stable core modules** (§4): Models, Serialization, Embeddings, Clustering, Canonicalization, Retrieval, Storage, Migration. These boundaries remain stable across implementations.
-4. **Clustering = graph-based connected components** as the default, behind a swappable interface (§9). Deterministic, dependency-free, portable.
-5. **Structured knowledge is tri-partite** (§7): distinguish the **canonical object** (in-memory typed record), the **storage format** (Markdown serialization), and the **embedding representation** (deterministic serialized text). Markdown is a serialization/rendering format, **not** the canonical in-memory representation.
-6. **Centralized embedding pipeline** (§8): all embeddings flow through one function (`serialize_for_embedding` → embedder). No duplicate embedding logic anywhere.
-7. **Production upgrade path** (§15): small, incremental, reversible, production-safe migration. **No rewrite.**
-8. **Minimize infrastructure** (§12): recompute clusters, deterministic graph construction, lightweight metadata, **derived state over persisted state** wherever practical. No serialized cluster models, no pickled models, no `approximate_predict`.
-9. **Future portability** (§20): the TS implementation reproduces behavior by implementing the same interfaces and algorithms. Optional Python-only adapters (e.g., HDBSCAN) are not required for parity because the **default** algorithm is portable.
+The system supports:
 
----
+- exact duplicates;
+- near duplicates;
+- overlapping records;
+- complementary records;
+- related records that can become one more complete canonical record.
 
-## 3. Objective (from the spec, with one explicit deviation)
+Embedding similarity is used only to discover and group automated candidates. It never independently decides that records merge. The semantic decision comes from category-aware LLM assessment plus deterministic safety checks and review policy.
 
-When performing knowledge consolidation/de-dup:
-
-1. **Use semantic clustering**, not pairwise similarity as the primary grouping mechanism.
-2. Cluster related records; allow unrelated records to remain unclustered ("noise" / singletons).
-3. Process each cluster independently → produce one high-quality **canonical** knowledge record.
-4. Pairwise cosine similarity is permitted **only within an existing cluster** (exact-dup detection, cohesion/outlier detection, merge decisions). It MUST NOT be the primary clustering algorithm.
-5. Knowledge is stored as **structured, typed objects** (not freeform text). The **entire structured record** is the embedding input (not title/summary, not raw source).
-6. Per cluster: validate cohesion → eject unrelated → merge duplicates → preserve all unique info → remove duplicated info → resolve contradictions → emit one canonical record → record merged source IDs (traceability).
-
-**Explicit deviation from the spec wording (recorded, not silent):** the spec says *"prefer HDBSCAN or another density-based clustering algorithm."* Per Principle 2, **the default core algorithm is graph-based connected components, not density-based HDBSCAN.** Rationale: density-based libraries (HDBSCAN/scipy/sklearn) are Python-ecosystem, native-compiled, and not portable to a future edge-native TS runtime. Connected components (union-find over a cosine threshold graph) is deterministic, dependency-free, and trivially reproducible in TS. Density-based clustering remains available as an **optional Python-only adapter** behind the `Clusterer` interface (§9) — not core, not required for parity.
-
-**Guiding principle:** knowledge as structured, typed semantic objects; clustering over the semantic meaning of those structured objects.
-
----
-
-## 4. Module architecture (the stable spine)
-
-Both implementations organize around these eight modules. Interfaces below are written in a neutral IDL Python and TypeScript can both implement.
-
-### 4.1 Models
-The typed **canonical** knowledge object (in-memory source of truth), the category enum, the cluster assignment, and settings.
-```
-KnowledgeRecord: { id, category, name, summary, structured: CanonicalObject, status, metadata, ... }
-CanonicalObject: declarative schema fields (§7) — the parsed, typed record
-Category: "best_practices" | "lessons_learned" | "trade_knowledge" | "playbook" | "skill"
-ClusterAssignment: { label: int, member_ids: string[], centroid: number[] | null }
-```
-*Portability:* plain data shapes — TS interfaces mirror Python dataclasses/TypedDicts exactly.
-
-### 4.2 Serialization
-Convert between the **canonical object** and the **storage format** (KNOWLEDGE.md / SKILL.md Markdown) and JSON. Deterministic, round-trippable.
-```
-render(canonical) -> markdown        # canonical object -> .md storage format
-parse(markdown)   -> canonical       # .md -> canonical object
-to_json(canonical) -> string         # storage/transport
-from_json(string)  -> canonical
-```
-*Portability:* the Markdown grammar (frontmatter + fixed H2 sections) and the parse contract (§7) are identical in both runtimes.
-
-### 4.3 Embeddings
-One chokepoint. Produces the **embedding representation** (deterministic text) and the vector.
-```
-serialize_for_embedding(record) -> string   # a.k.a. build_embedding_document()
-embed(record) -> number[]                    # serialize_for_embedding -> EmbedderProvider
-```
-`EmbedderProvider` is an interface (OpenAI adapter today; swappable). *No other call site builds the embedding string.*
-
-### 4.4 Clustering
-```
-interface Clusterer { cluster(records: {id, vector}[], opts) -> ClusterAssignment[] }
-GraphClusterer implements Clusterer   # default (§9)
-# Future optional adapters (Python-only, not parity-required):
-# AgglomerativeClusterer, HDBSCANClusterer
-```
-Deterministic. Output is **derived state** — always rebuildable from embeddings (§12).
-
-### 4.5 Canonicalization
-Cluster → one canonical record.
-```
-canonicalize(cluster: ClusterAssignment) -> CanonicalResult
-CanonicalResult: { canonical: KnowledgeRecord | null, ejected: string[], contradictions: [...], confidence: float, action: "merged"|"skipped_low_confidence"|"singletons" }
-```
-Pipeline: deterministic cosine ejection → preservation-first LLM merge → confidence gate (§10). The LLM is invoked through a `GeneratorProvider` interface (provider-agnostic).
-
-### 4.6 Retrieval
-`get_context(...)` — unchanged routing; benefits from richer embeddings for free (§19 Q9).
-
-### 4.7 Storage
-The `knowledge` table (records) + `knowledge_clusters` (derived cluster map) + traceability columns. SQL/pgvector — the same DB and queries serve both runtimes.
-
-### 4.8 Migration
-Incremental, flagged, resumable backfills + schema `ALTER`s following the existing idempotent ALTER-after-CREATE pattern (§6 C5).
-
----
-
-## 5. Current state (code-verified 2026-07-09)
-
-### 5.1 Storage (`backend/memory_db.py`, knowledge table ~line 273)
-- Live columns at CREATE TABLE: `id, seq_id, source_intelligence_ids, signals, name, content, summary, embedding (vector), visibility, tags, created_at, updated_at`. The richer columns (`category, metadata, quality_score, merge_count, source_pathway, evidence_breadth, status, version, last_merged_at, outcome_signal, extraction_confidence`) are added by **`ALTER TABLE ADD COLUMN`** after the CREATE block (schema is additive-migrated in-place). Indexes for `category/status/signals` are created after those ALTERs.
-- `category` ∈ {`skill`, `playbook`, `best_practices`, `lessons_learned`, `trade_knowledge`} (5).
-- **`embedding` is an untyped `vector`** (no dimension pinned) → **no HNSW/IVF index** (commented out at ~243–269 "to support flexible embedding sizes"). All similarity is a brute-force sequential scan via `<=>`.
-- `content` for `skill`/`playbook` = a **SKILL.md** document. For the 3 declarative categories `content` = **freeform text**.
-
-### 5.2 Structured-doc helpers (`backend/memory_skill_md.py`) — already broader than the original draft claimed
-- `SKILL_MD_CATEGORIES = ("skill","playbook")`, `render_skill_md`, `parse_skill_md`, `is_skill_md`, `slugify`.
-- **`render_knowledge_md` (line 114) and `render_any_knowledge_md` (line 159) already exist** for declarative categories — but they are **export-only, flat**: frontmatter + `# Title` + the raw `content` blob. There is **no sectioned schema and no parser** for declarative records. This is the real gap; the new format must **supersede `render_knowledge_md`**, not sit beside it.
-
-### 5.3 Embedding (`backend/services/embeddings.py`)
-- `generate_embedding(text)` (line 12) and `generate_embeddings_batch(texts)` (line 43). Model from admin config, default `text-embedding-3-small`. 30s / 60s timeouts. Returns `[]` on missing config.
-- **Embedding input is `f"{name}. {summary or content}"` — duplicated in 5 call sites**, not one:
-  - `memory_knowledge.py:224` (generate) and `:315` (promote)
-  - `memory_dedup.py:155` (refine-on-merge re-embed)
-  - `memory_telemetry.py:177` (telemetry→knowledge)
-  - `memory_playbooks.py:415` (skill embedding; `:261` uses a **centroid** vector, not text)
-- There is **no shared "embed a knowledge record" function** — the string is hand-built at each site. This is the single biggest source of future drift, and the first thing to fix (§8, Phase 1).
-
-### 5.4 De-dup / consolidation (current) — four creation-time pathways, one weekly job
-Creation-time guard (`memory_dedup.find_similar_existing`, line 11 → `refine_or_increment_merge`, line 67) is invoked from **all four** creation paths:
-1. `memory_knowledge.py:238` (intelligence→knowledge)
-2. `memory_telemetry.py:183` (telemetry→knowledge)
-3. `memory_playbooks.py:261` (playbook, matched on **centroid**)
-4. `memory_playbooks.py:423` (skill)
-
-All use `1 - (embedding <=> new) > dedup_similarity_threshold` (0.85, PR #45), same-category, `status != 'retired'`, `ORDER BY … LIMIT 1`. `refine_or_increment_merge` LLM-refines content (gated by `knowledge_refine_on_merge`) and **re-embeds with the same `name+summary` string** (dedup.py:155) — so even the merge path perpetuates the shallow embedding.
-
-Weekly consolidation (`memory_consolidation.run_consolidation`, line 23 → `_consolidate_duplicates`, line 35): pairwise self-join (`a.id < b.id`, same category, both active), top-50 by similarity, greedy keep-higher-`merge_count`, retire loser, `_refine_playbook` if kept is a playbook. Then `_apply_decay` + `_recompute_quality_scores`.
-
-**No clustering. No cluster map. No back-pointer from a retired record to its survivor** (retirement is a bare `status='retired'`; the only lineage is `source_intelligence_ids` + `merge_count`).
-
-### 5.5 Volume (measured 2026-07-09)
-- ~591 active: 250 `best_practices`, 256 `lessons_learned`, 62 `trade_knowledge`, 15 `playbook`, 9 `skill`.
-- A consolidation run at 0.85 found **zero duplicate pairs** → today's records are content-distinct on the current shallow embedding. (The earlier "384 near-duplicates" was a misread — those were 384 distinct records created 2026-07-08.)
-
----
-
-## 6. Corrections to the original draft (read before building)
-
-| # | Draft said | Reality | Consequence |
-|---|---|---|---|
-| C1 | "Add new `memory_knowledge_md.py`, adapted from skill_md" | `render_knowledge_md`/`render_any_knowledge_md` already live in `memory_skill_md.py` (flat, export-only, no parser) | Build the sectioned format **into `memory_skill_md.py`** (or a new module the old renderer delegates to). **Delete/replace** the flat `render_knowledge_md`. Do not ship two declarative renderers. |
-| C2 | Embedding input change touches "embeddings.py, memory_knowledge.py, memory_dedup.py" | Input string is built at **5 sites across 4 files**, incl. telemetry + skill + the re-embed inside merge | Introduce **one `serialize_for_embedding()` + `embed()` choke-point** and route all 5 sites through it, or the fix is partial. |
-| C3 | Phase 5 "replaces `find_similar_existing` guard" (singular, in memory_knowledge.py) | **4** creation-time guards call it (knowledge, telemetry, playbook-centroid, skill) | Overlay-guard rollout must cover the declarative paths; keep `find_similar_existing` as the within-cluster fallback and wrap it. |
-| C4 | "record merged source IDs" as if a field exists | **No `merged_from`/`merged_into` column exists** | Add columns (§12, §17 Phase 4). Cheap, high-value traceability. |
-| C5 | Schema table implied columns live in CREATE TABLE | They're added via `ALTER TABLE ADD COLUMN` after CREATE | New columns/tables follow the **same ALTER-after-CREATE idempotent pattern**. |
-| C6 | `get_context` open question | Retrieval already renders via `render_any_knowledge_md` | The new format slots into that dispatcher; no retrieval rewrite. |
-
----
-
-## 7. Structured knowledge model (tri-partite — Principle 5)
-
-Three concepts, kept distinct:
-
-1. **Canonical object** — the in-memory typed record (the source of truth code manipulates). For declarative categories it has the fields below. For skill/playbook it is the parsed SKILL.md object.
-2. **Storage format** — the canonical object serialized to **Markdown** (KNOWLEDGE.md / SKILL.md) stored in the `content` column. **Markdown is a serialization format, not the canonical representation.** `render`/`parse` (§4.2) convert between them. Parsed fields are mirrored into `metadata` for programmatic access (existing skill/playbook pattern).
-3. **Embedding representation** — `serialize_for_embedding(canonical)` → deterministic text of populated fields → embedder (§8). This is distinct from the storage Markdown (cleaner, populated-only, stable order).
-
-### 7.1 KNOWLEDGE.md schema (declarative: best_practices, lessons_learned, trade_knowledge)
-
-**Frontmatter (YAML):**
-```yaml
----
-name: <slug>                 # slugify(title)
-description: <summary>       # 1–2 sentences: what + when it applies
-metadata:
-  source: masteragent
-  category: best_practices | lessons_learned | trade_knowledge
-  version: <int>
-  quality_score: <float?>
-  signals: [ ... ]
-  tags: [ ... ]
-  subcategories: [ ... ]
-  topics: [ ... ]
-  keywords: [ ... ]
-  entities: [ ... ]
----
+```text
+Configured similarity threshold
+  -> candidate edges and candidate groups
+  -> cohesion, weak-link, category, and size safeguards
+  -> category-aware LLM consolidation proposal
+  -> review or automation policy
+  -> one transactional canonicalization and lineage event
 ```
 
-**Body — fixed section order (H2 headings are the parse contract):**
-```
-# <Title>
-## Problem
-## Knowledge
-## Best Practices
-## Lessons Learned
-## Common Mistakes
-## Recommendations
-## Related Concepts
-## Examples
-## References
-## Source Content
-```
+The legacy names `dedup`, `find_similar_existing`, and `dedup_similarity_threshold` may remain temporarily for API/configuration compatibility. New code, routes, logs, settings, and UI should use **knowledge hygiene**, **candidate discovery**, **consolidation proposal**, and **consolidation apply**.
 
-### 7.2 Parse contract (`parse_knowledge_md`)
-- Reuse the frontmatter reader from `parse_skill_md` (top-level scalars + one nested `metadata:` map — extend it to read the list fields).
-- Body: split on `^## ` headings; map heading → section key (lowercased, spaces→`_`). **Unknown headings are preserved verbatim** in a `_extra` bucket (forward-compatible). Missing sections → empty string, never an error.
-- **Round-trip guarantee:** `parse(render(x)) == x` for all populated fields (unit test, §18).
-- `render_knowledge_md` is rewritten to emit these sections from the parsed canonical object / `metadata`; the old flat signature is kept as a thin shim for one release (deprecation warning), then removed.
-- **All sections ship in the schema; empty sections are allowed.** The embedding serializer (§8) skips empty sections so they never dilute the vector.
+## 2. Scope and compatibility constraints
 
-### 7.3 SKILL.md field expansion (skill/playbook) — DEFERRED
-The spec lists fields absent from today's SKILL.md (`prerequisites`, `required_tools`, `inputs/outputs`, `decision_points`, `success_criteria`, …). **Deferred:** SKILL.md already renders/parses and skill/playbook are out of clustering scope (§9.4). Non-blocking; track separately. Do not gate this plan on it.
+### 2.1 Supported categories
 
----
+The supported allowlist is exactly:
 
-## 8. Embedding pipeline (Principle 6 — one chokepoint)
-
-- **`serialize_for_embedding(record) -> str`** (working name `build_embedding_document`): concatenates **populated** frontmatter values + each non-empty body section as `"<Section>: <text>"`, newline-joined, whitespace-collapsed, **deterministic field order**. This is the embedding input — not raw Markdown, not `name+summary`.
-- **`embed(record) -> number[]`**: `serialize_for_embedding` → `EmbedderProvider.embed` (OpenAI adapter today; swappable). Records `metadata.embedding_version = 2`.
-- **All 5 call sites (§5.3) route through `embed(record)`.** In `memory_playbooks.py:261` (centroid path) the centroid math is unchanged; only the per-record text-embed sites switch.
-- **Fallback:** if a record is still unstructured (no `.md`), serialize `name + summary + content` (never regress to `name+summary` only).
-- Re-embed on create, merge, edit. One-time batch backfill via `generate_embeddings_batch`, resumable (`WHERE metadata->>'embedding_version' IS DISTINCT FROM '2'`).
-- `text-embedding-3-small`: 8191-token context; a full record ≈ 1–3k tokens → **no truncation**.
-- **Pin `embedding` to `vector(1536)`** (Phase 1). HNSW index is a separate later enhancement (note, don't block).
-
----
-
-## 9. Clustering (Principle 4 — graph-based default, behind an interface)
-
-### 9.1 Clusterer interface
-```
-interface Clusterer {
-  cluster(records: { id: string, vector: number[] }[], opts: ClusterOpts) -> ClusterAssignment[]
+```python
+CONSOLIDATABLE_KNOWLEDGE_CATEGORIES = {
+    "best_practices",
+    "lessons_learned",
+    "trade_knowledge",
+    "skill",
+    "playbook",
 }
-ClusterOpts: { edge_threshold: float, min_size: int }
 ```
-Output: `{ label, member_ids, centroid }`. Singletons/noise get their own label and are left alone.
 
-### 9.2 Default implementation — `GraphClusterer` (language-neutral)
-The algorithm both runtimes implement identically:
-1. Take the active records' vectors for one category.
-2. Compute pairwise **cosine similarity** (`1 - (a·b)/(|a||b|)`).
-3. Build an undirected graph: edge between `i,j` iff `cosine(i,j) ≥ edge_threshold` (**0.80** start).
-4. **Connected components via union-find** (deterministic, O(n·α(n))).
-5. Components with `size < min_size` (**2**) → treated as singletons (noise).
-6. **Centroid** per component = L2-normalized mean of member vectors.
+The database uses singular `skill` and `playbook`; user-facing text may use “skills” and “playbooks.” Automated discovery partitions records by category. Cross-category consolidation is not supported in this release, including manual consolidation, and must return a clear validation error.
 
-Properties: **deterministic** (same vectors → same clusters), **zero dependencies** beyond vector math, O(n²) cosine (trivial at ~568 declarative records, sub-second), trivially portable to TypeScript.
+### 2.2 Non-negotiable compatibility rules
 
-### 9.3 Swappable — optional adapters only
-`AgglomerativeClusterer` (sklearn), `HDBSCANClusterer` (hdbscan) may be added later as **Python-only adapters** behind the same interface. They are **not** part of core, **not** required for TS parity, and **not** on the default path. The TS implementation ships `GraphClusterer` only — which is the documented default, so parity holds.
+1. All schema changes are additive and idempotent in `backend/memory_db.py`.
+2. Source records are never hard-deleted by consolidation.
+3. Normal agent retrieval and prior-context injection return active records only. Administrators can view retired records and their canonical successor.
+4. Existing skill/playbook storage remains valid: their `content` is SKILL.md and structured operational fields remain in metadata. The new code must support both current records and the expanded operational fields defined in this plan.
+5. The existing generation, admin, Hermes, telemetry, import, and playbook paths must continue working when hygiene flags are disabled.
+6. No LLM request may mutate knowledge. Preview and apply are distinct operations.
+7. Manual, scheduled, admin-triggered, and creation-time workflows use one proposal service and one transactional apply service. There must be no second merge implementation.
 
-### 9.4 Scope — declarative only
-Cluster `best_practices` / `lessons_learned` / `trade_knowledge`. Leave `skill` (9) and `playbook` (15) on their existing path in `memory_playbooks.py` (`_process_cluster` @191, centroid match @261, skill dedup @423). Too few per-category for meaningful grouping, and they already have their own dedup.
+## 3. Verified current-state gaps
 
-### 9.5 Derived state — recompute, never persist a model
-Clusters are recomputed every consolidation run from current embeddings. `knowledge_clusters` (§12) stores the result for audit + centroid lookup but is **always rebuildable**. **No fitted-model object, no pickle, no `approximate_predict`** (Principle 8).
+The current code has creation-time nearest-neighbor behavior in `memory_knowledge.py`, `memory_telemetry.py`, `memory_playbooks.py`, `memory_hermes.py`, and admin/import paths. It selects one same-category match by vector similarity and calls `refine_or_increment_merge`.
 
-### 9.6 Chaining risk (the one real weakness of connected components) — and its mitigations
-Connected components can chain: A~B (0.85), B~C (0.82), A≁C (0.70) → all three fused. Mitigations, in order:
-1. **Rich full-record embeddings** (Phase 1) separate records more than today's `name+summary`, lowering false edges.
-2. **Deterministic cosine ejection** in Canonicalization (§10) catches chain-bridged members (mean intra-cluster cosine below floor → ejected to singleton).
-3. **High edge threshold** (0.80) keeps edges meaningful.
-This is explicitly accepted: connected-components + ejection is the portable, good-enough design; density-based is available as an adapter if a future probe (§15 Phase P) proves ejection insufficient.
+Scheduled consolidation in `memory_consolidation.py` self-joins active records, processes at most 50 high-similarity pairs, increments one record, and retires the other. It does not perform a content merge for declarative knowledge, has no successor pointer, and can operate on stale pairs after earlier loop iterations retire rows.
 
----
+The existing `knowledge_creation_dedup_threshold` setting is not the active threshold in all current paths; current code generally reads `dedup_similarity_threshold`. Preserve this legacy field while introducing the explicit hygiene settings below. Do not silently repurpose a production setting without migration/release notes.
 
-## 10. Canonicalization (the destructive step — engineered for safety)
+## 4. Shared domain model and service boundary
 
-Canonicalization is the one irreversible-ish operation (retired sources are recoverable via `merged_into`, but the canonical record is what agents retrieve). Design = **bias-to-preserve + auditable + gated on uncertainty**. Language-neutral.
+Create `backend/memory_consolidation_service.py` as the single orchestration service. Put database operations in `backend/memory_consolidation_repository.py`, similarity primitives in `backend/memory_similarity.py`, clustering in `backend/memory_clustering.py`, embedding serialization in `backend/memory_embedding.py`, and category prompts/validation in `backend/memory_consolidation_prompts.py`. All callers use this boundary.
 
-### 10.1 Pipeline
-1. **Deterministic cosine ejection** (no LLM): for each member, compute mean pairwise cosine to the rest of the cluster; below the **0.70 floor → eject to singleton**. Spec-compliant ("pairwise… identify outlier records"). This targets exactly the chaining failure mode (a record that rode in on one 0.81 edge but is ~0.50 to the majority).
-2. **Preservation-first LLM merge** (the synthesis): emit one canonical KNOWLEDGE.md from the cohesive remainder.
-3. **Confidence gate**: apply the merge only if `confidence ≥ 0.6`; else skip + log.
+```python
+proposal = await consolidation_service.preview(
+    knowledge_ids=source_ids,
+    options=ConsolidationOptions(...),
+    origin="manual" | "scheduled" | "admin" | "creation_time",
+    actor=actor_context,
+)
 
-### 10.2 Merge prompt principles (in priority order)
-1. **Lossless** — every unique fact, step, example, reference, caveat survives. Loss is a failure.
-2. **Dedup only verbatim/near-verbatim overlaps** — never collapse two merely-similar points.
-3. **Contradictions** (same field, different values) → **preserve both + flag** inline ("Note: sources disagree — X / Y"). Never silently pick one.
-4. **Include-don't-drop default** — if unsure whether something belongs, include it.
-5. **Structured output** — KNOWLEDGE.md sections; serialize populated-only.
-6. **No invention** — never fabricate facts/examples/references.
-
-Return JSON: `{ title, summary, sections:{…}, contradictions:[{section, conflict}], confidence: 0–1 }`.
-
-### 10.3 Confidence gate (safety valve)
-`confidence < 0.6` → **skip the merge**, leave records unmerged, log `low_confidence_skip` to `pipeline_runs` with the contradictions array. Worst case = "no merge," never "lost data." Records stay retrievable; the cluster can be reviewed or re-attempted after more evidence.
-
-### 10.4 Contingencies
-- **Large clusters (> ~8 members):** hierarchical sub-merge (merge small sub-groups, then merge partials). Unlikely at current scale; defined for safety.
-- **Singletons/noise:** no merge, no LLM call.
-
-### 10.5 Traceability (§12)
-- Canonical: `merged_from TEXT[]` = all absorbed source IDs; `metadata.contradictions` = flagged conflicts (audit).
-- Retired sources: `status='retired'`, `merged_into = canonical_id`. **Nothing hard-deleted** → fully reversible.
-
----
-
-## 11. Creation-time overlay (centroid assignment — no `approximate_predict`)
-
-1. New declarative record → render KNOWLEDGE.md → `embed(record)`.
-2. Load `knowledge_clusters` centroids for the record's category; compute **max cosine** to any centroid.
-3. Decision:
-   - `≥ assign_threshold` (**0.82**) → consolidate into that cluster's `canonical_record_id` via the existing `refine_or_increment_merge` (now deep-embedding).
-   - `< assign_threshold` → insert as standalone (a future run may cluster it).
-4. `skill`/`playbook` (§9.4): unchanged (`find_similar_existing` path).
-5. **No `approximate_predict`, no pickled model** (Principle 8). Centroids are derived from the last run; stale-but-acceptable between runs; borderline cases defer to the next run.
-
----
-
-## 12. Storage & cluster map (minimized infrastructure — Principle 8)
-
-### 12.1 `knowledge` table additions (idempotent ALTER-after-CREATE)
-- `merged_from TEXT[] DEFAULT '{}'` (on canonical — absorbed source IDs).
-- `merged_into TEXT` (on retired — back-pointer to canonical).
-- Pin `embedding vector(1536)` (Phase 1).
-
-### 12.2 `knowledge_clusters` (derived, recomputed each run)
+result = await consolidation_service.apply(
+    preview_id=proposal.id,
+    approved_canonical=edited_canonical,
+    canonical_strategy="update_existing" | "create_new",
+    canonical_target_id="selected-source-id-or-null",
+    actor=actor_context,
+)
 ```
-category TEXT, cluster_label INT, member_ids TEXT[],
-canonical_record_id TEXT, centroid vector, updated_at TIMESTAMPTZ
+
+### 4.1 Preview contract
+
+`preview` must:
+
+1. Require at least two distinct IDs.
+2. Load source records and validate category allowlist, one-category membership, statuses, and embedding policy.
+3. For automated origin, enforce candidate/cohesion/size controls. For manual origin, compute similarity only as information; never reject solely for low similarity.
+4. Snapshot every source ID, `version`, and `updated_at`.
+5. Calculate pairwise minimum/average/maximum, centroid similarity, weak links, category compatibility, embedding-version compatibility, and cluster size.
+6. Supply complete source records—not embeddings—to the LLM.
+7. Persist an immutable preview record, source snapshot, metrics, LLM response, settings snapshot, model, prompt version, origin, and expiration.
+8. Return no knowledge mutation.
+
+### 4.2 Apply contract
+
+`apply` must:
+
+1. Load an unexpired preview and validate its state.
+2. Acquire the consolidation lock, lock all source rows, and re-read them.
+3. Reject a stale preview if any source is missing, inactive/retired, already merged, or has a changed `version` or `updated_at`.
+4. Validate user-edited canonical output against the category schema before any mutation.
+5. Create or update the canonical record, generate its embedding, write all lineage/audit rows, retire sources, and commit atomically.
+6. Mark the preview applied only inside that transaction.
+7. Safely reject a second application of the same preview. It must not create a second canonical record.
+
+If LLM validation, embedding generation, row validation, or any database operation fails, roll back the entire operation. No source may be retired unless a valid canonical record and audit event exist in the same committed transaction.
+
+## 5. Category-aware LLM assessment and rewrite
+
+### 5.1 Complete LLM input
+
+The service passes every source record’s available fields:
+
+- ID, category, name, summary, content, signals, tags, metadata, governed facets;
+- quality score, evidence breadth, source intelligence IDs, source AI interaction IDs, source pathway;
+- created/updated timestamps, merge count, version, and current status;
+- SKILL.md content and parsed operational fields for skills/playbooks.
+
+Embeddings must not be passed as knowledge content. Similarity metrics may be supplied only as non-authoritative context, clearly labeled as retrieval/grouping evidence.
+
+### 5.2 Required structured proposal output
+
+Use JSON-schema validation or strict Pydantic models. The LLM result must contain:
+
+```json
+{
+  "recommendation": "merge | merge_with_warnings | keep_separate | split_cluster | manual_review",
+  "confidence": 0.0,
+  "rationale": "...",
+  "canonical": {
+    "name": "...",
+    "summary": "...",
+    "content": "...",
+    "signals": [],
+    "tags": [],
+    "metadata": {}
+  },
+  "preserved_information": [],
+  "removed_repetition": [],
+  "unreconciled_information": [],
+  "contradictions": [],
+  "warnings": [],
+  "source_traceability": [
+    {"source_id": "...", "retained_items": [], "omitted_as_repetition": []}
+  ],
+  "split_recommendations": []
+}
 ```
-Index on `(category, cluster_label)`. **No `knowledge_cluster_models` table, no BYTEA/pickle.** The table is always rebuildable from embeddings (§9.5).
 
-### 12.3 Cold start
-Empty map → creation-time guard falls back to `find_similar_existing`/insert; the next consolidation run builds the map.
+The proposal must never invent claims, silently discard qualifications, or turn distinct incidents into one fabricated event. LLM confidence is not an automatic-apply decision by itself.
 
----
+### 5.3 Prompt families and validation
 
-## 13. Settings / dials (extend the existing settings map)
+Use a shared base prompt plus category-specific instructions. Version prompts and store the exact version in every preview.
 
-Reuse `get_memory_settings`. Safe defaults:
-- `knowledge_structured_embedding_enabled` (default **true** after Phase 1 backfill; false during rollout) — routes embeds through `serialize_for_embedding`.
-- `knowledge_clustering_enabled` (default **false** until Phase P passes).
-- `cluster_algorithm` = `connected_components` (default). `agglomerative` / `hdbscan` are **optional Python-only adapters**, selectable but not required for parity.
-- `cluster_edge_threshold` (graph cosine cutoff; start **0.80**).
-- `cluster_assign_threshold` (creation-time centroid cosine; start **0.82**).
-- `cluster_ejection_floor` (mean intra-cluster cosine to eject; start **0.70**).
-- `canonical_min_confidence` (apply merge only above; start **0.6**).
-- `cluster_min_size` (drop clusters smaller than this to singletons; start **2**).
-- Keep `dedup_similarity_threshold` (0.85) for **within-cluster** exact-dup detection.
+| Category | Required preservation and validation |
+|---|---|
+| `best_practices` | Preserve recommendations, conditions, exceptions, scope, and the distinction between guidance that applies universally versus conditionally. |
+| `lessons_learned` | Preserve causal context, evidence, incident distinctions, outcomes, and qualifications. Never fabricate a single incident from separate events. |
+| `trade_knowledge` | Preserve jurisdiction, product, material, environment, domain, and governed contextual distinctions. Surface incompatible contexts as warnings/contradictions. |
+| `skill` | Preserve purpose, inputs, outputs, tools, prerequisites, permissions, side effects, execution behavior, failure conditions, safety requirements, and applicable agents/environments. Parse and re-render SKILL.md where applicable. |
+| `playbook` | Preserve triggers, prerequisites, ordered steps, branches, decisions, escalations, rollback, roles, tools/integrations, completion criteria, and exit conditions. Result must remain executable. |
 
-All surface in the existing admin settings UI.
+For skills and playbooks, validate both the JSON canonical model and its rendered SKILL.md. A proposal that cannot render and parse successfully is invalid and cannot be applied.
 
----
+## 6. Candidate discovery and clustering
 
-## 14. Data volume reality check (drives every sizing decision)
+### 6.1 Candidate discovery
 
-| Category | Active | Clustered here? | Notes |
-|---|---:|---|---|
-| best_practices | 250 | ✅ | primary clustering target |
-| lessons_learned | 256 | ✅ | primary clustering target |
-| trade_knowledge | 62 | ✅ | small but viable |
-| playbook | 15 | ❌ (§9.4) | own path in `memory_playbooks.py` |
-| skill | 9 | ❌ (§9.4) | own path in `memory_playbooks.py` |
+The UI-configured similarity threshold ranges from 0 to 1 and is passed explicitly to each analysis/proposal run. It controls graph edges and candidate grouping only. It is not a merge threshold.
 
-Re-fit cost at this scale is sub-second; migration is ~591 one-time LLM calls (batchable). No index needed for clustering (vectors load into memory). Nothing here justifies persisted models or `approximate_predict`.
+Automated candidate records must be:
 
----
+- active;
+- in the five-category allowlist;
+- same category within one candidate graph;
+- embedding-version compatible according to configured policy;
+- not protected/excluded by metadata or policy;
+- not already retired or merged.
 
-## 15. Phased plan (sequence & PR grouping)
+Use shared similarity utilities in a new `backend/memory_similarity.py`:
 
-| Phase | Scope | Key files | Risk |
+- cosine similarity;
+- pairwise min/mean/max;
+- L2-normalized centroid and member-to-centroid similarities;
+- threshold-edge generation;
+- weak-link detection;
+- deterministic ordering and component labels.
+
+### 6.2 Cluster safeguards
+
+Use threshold edges plus deterministic connected components as candidate proposals, then validate/split components before LLM preview:
+
+- minimum cluster size;
+- configurable maximum cluster size, default 5;
+- minimum cohesion;
+- weak-link detection;
+- minimum pairwise checks where configured;
+- centroid similarity;
+- category and governed-facet compatibility;
+- deterministic component splitting.
+
+Large or weakly connected components must be split into cohesive subgroups or submitted as `manual_review`; they must not become one giant canonical record. Candidate splitting is permitted to use pairwise metrics because it is a grouping safeguard, not a merge decision.
+
+### 6.3 Operational modes
+
+| Mode | Discovery | LLM preview | Apply |
 |---|---|---|---|
-| **1 — Centralized deep embedding** | `serialize_for_embedding()` + `embed()`; route all 5 sites; batch re-embed backfill; pin `vector(1536)` | `services/embeddings.py`, new embedding-input helper (in `memory_skill_md.py` or `memory_embedding_input.py`), `memory_knowledge.py`, `memory_dedup.py`, `memory_telemetry.py`, `memory_playbooks.py`, `memory_db.py` | Low (fallback) |
-| **0 — KNOWLEDGE.md format** | Sectioned `render_knowledge_md`/`parse_knowledge_md`; tri-partite model; supersede flat renderer | `memory_skill_md.py` (+ tests) | None (shim old signature) |
-| **P — Probe & calibrate** | After 0+1 backfill: re-run consolidation + throwaway `GraphClusterer` probe; **calibrate thresholds** (edge/min_size/ejection/assign) on real data; confirm cohesion is acceptable | scratch script; short written finding | None (analysis) |
-| **2 — Structured creation** | Prompts emit KNOWLEDGE.md for declarative; zero-regression freeform fallback | `memory_knowledge.py`, `memory_telemetry.py`, seeded prompts | Low (fallback) |
-| **3 — Cluster map** | `Clusterer` interface + `GraphClusterer` (declarative-only); `knowledge_clusters` table; recompute | new `memory_clustering.py`, `memory_db.py` | Low (additive) |
-| **4 — Cluster canonicalization + traceability** | Deterministic ejection + preservation-first LLM merge + confidence gate; `merged_from`/`merged_into`; replace `_consolidate_duplicates` (declarative) | `memory_clustering.py`, `memory_consolidation.py`, `memory_db.py` | Medium |
-| **5 — Creation-time centroid overlay** | Centroid assignment for declarative creation; skill/playbook unchanged | `memory_knowledge.py`, `memory_telemetry.py`, `memory_clustering.py` | Medium |
-| **6 — Migration backfill** | LLM re-structure declarative → KNOWLEDGE.md; re-embed all; guarded/resumable | queue/job + `memory_db.py` | Low (one-time) |
-| **7 — Frontend** | Render KNOWLEDGE.md sections; optional cluster-review UI | `KnowledgeInspector.jsx`, `KnowledgeTab.jsx` | None |
+| `analysis_only` | Yes | No | Never |
+| `proposal_only` | Yes | Yes | Never |
+| `manual_only` | Yes/manual selection | Yes | Human confirmation required |
+| `auto_conservative` | Yes | Yes | Only when all conservative policy gates pass |
+| `auto_synthesis` | Yes | Yes | Broader policy-controlled automated application |
 
-**PR 1:** Phase 1 + Phase 0 (embedding chokepoint + KNOWLEDGE.md format + backfill). Independently valuable, zero-regression, prerequisite for all else.
-**Gate:** Phase P probe → confirm thresholds on real data (note: this is **threshold calibration, not an algorithm swap** — connected-components is the chosen default).
-**PR 2:** Phases 3–5 (map + canonicalization + overlay), declarative-only.
-**PR 3+:** Phase 2 (structured creation), Phase 6 (migration), Phase 7 (frontend).
+First production rollout must be `proposal_only` or `manual_only`.
 
-> Phase 1 ships before Phase 0's parser is wired into creation: the embedding chokepoint + backfill is what unblocks the probe, and the fallback path keeps unstructured records working.
+## 7. Schema and audit design
 
----
+All DDL follows the repository’s idempotent ALTER-after-CREATE style.
 
-## 16. Risks & mitigations
+### 7.1 Additive knowledge columns
 
-- **Mixed-embedding drift** (old `name+summary` vs new full-record) skews clustering. → Backfill re-embed **before** enabling clustering (`knowledge_clustering_enabled=false` until backfill done); or filter the map to `metadata.embedding_version = 2`.
-- **Connected-components chaining** (A~B~C fusion). → Rich embeddings (Phase 1) + deterministic ejection (§10.1) + high edge threshold (§9.6). Accepted; density-based is an optional adapter if a probe proves ejection insufficient.
-- **Canonicalization data loss** (LLM drops unique info). → Preservation-first prompt (§10.2); confidence gate (§10.3) skips low-certainty merges; retired sources retained (`status='retired'` + `merged_into`); never hard-delete; `merged_from` for audit/undo.
-- **Contradiction handling.** → Prompt: "preserve both, flag the contradiction"; stored in `metadata.contradictions`.
-- **Re-embed cost / rate limits.** → `generate_embeddings_batch`, resumable cursor, guard flag.
-- **Round-trip parser regressions.** → Property test `parse(render(x))==x` in CI before Phase 2 wires it into creation.
-- **Stale centroids at creation time.** → Accepted; borderline records insert as singletons and get pulled in on the next run.
-- **TS-portability drift.** → Core uses only portable primitives (§2, §20). Optional adapters (HDBSCAN/agglomerative) are Python-only and clearly marked; the default `GraphClusterer` is the parity contract.
+- `merged_into TEXT NULL`
+- `merged_from TEXT[] NOT NULL DEFAULT '{}'`
+- `consolidation_event_id TEXT NULL`
+- `consolidation_protected BOOLEAN NOT NULL DEFAULT FALSE`
 
----
+Do not overwrite original source content or metadata. A retired source keeps all original fields and points to its canonical successor.
 
-## 17. Implementation build-spec (for the implementing agent)
+### 7.2 New tables
 
-### Phase 1 — `serialize_for_embedding` + `embed` (do first)
-1. New `serialize_structured(record: dict) -> str` (place in `memory_skill_md.py` or new `memory_embedding_input.py`):
-   - If `category in SKILL_MD_CATEGORIES` and `is_skill_md(content)`: parse via `parse_skill_md`, serialize frontmatter scalars + body.
-   - Elif KNOWLEDGE.md (Phase 0 present): parse via `parse_knowledge_md`, serialize frontmatter + **non-empty** sections.
-   - Else (unstructured): `f"{name}\n{summary}\n{content}"`.
-   - Collapse whitespace; deterministic order; **skip empty fields**.
-2. New `async embed(record: dict) -> list[float]` in `services/embeddings.py`: `serialize_structured` → `generate_embedding`. Set `metadata.embedding_version = 2`.
-3. Replace the raw `generate_embedding(f"{name}. {summary or content}")` at **all 5 sites** (§5.3) with `embed(record_dict)`. Centroid math at `memory_playbooks.py:261` unchanged.
-4. Batch backfill: page active knowledge, `embed` per row (or serialize → `generate_embeddings_batch`), `UPDATE … SET embedding=…, metadata=jsonb_set(metadata,'{embedding_version}','2')`. Resumable.
-5. `memory_db.py`: migrate `embedding` to `vector(1536)` (ALTER; guard existing rows). **Do not** add HNSW yet.
-6. Gate behind `knowledge_structured_embedding_enabled`.
+Use UUID/text IDs consistently with existing tables.
 
-### Phase 0 — KNOWLEDGE.md
-1. In `memory_skill_md.py`: rewrite `render_knowledge_md` to emit §7.1 sections from a parsed dict / `metadata`; add `parse_knowledge_md` (frontmatter reader extended for list fields + `## `-section splitter with `_extra` bucket).
-2. Keep old `render_knowledge_md(...)` call sites working via a shim that maps `content`→`## Source Content` and logs deprecation.
-3. `render_any_knowledge_md` (line 159) dispatches declarative → new renderer.
-4. Tests: round-trip, missing-section tolerance, unknown-heading preservation, empty record.
+1. `knowledge_hygiene_runs`: run metadata, explicit settings snapshot, category filters, mode, counts, status, timestamps, actor/origin.
+2. `knowledge_hygiene_clusters`: run ID, category, member count, metrics, threshold, cohesion/splitting decision, candidate status.
+3. `knowledge_hygiene_cluster_members`: run/cluster/source IDs, role, metrics, ejection/split reason.
+4. `knowledge_consolidation_previews`: preview ID, expiration, origin, actor, category, source snapshot, metrics, settings/model/prompt snapshot, raw/validated proposal, state.
+5. `knowledge_consolidation_preview_sources`: preview ID, source ID, source version, source updated timestamp, source status snapshot.
+6. `knowledge_consolidation_events`: applied event, preview ID, canonical ID, strategy, actor, origin, thresholds/settings, model/prompt, proposed output, approved output, user edits, warnings/contradictions, applied timestamp, reversible state.
+7. `knowledge_consolidation_event_sources`: event ID, source ID, original serialized snapshot, merged_into ID, source traceability, retention/removal notes.
 
-### Phase 3 — Clusterer interface + GraphClusterer + cluster map
-1. `memory_db.py`: `CREATE TABLE IF NOT EXISTS knowledge_clusters (...)` per §12.2 (ALTER-after-CREATE idempotent style). Index `(category, cluster_label)`.
-2. `memory_clustering.py`:
-   - `interface Clusterer` + `class GraphClusterer` (§9.2): `_load_vectors(category) -> (ids, ndarray)`; build cosine graph `≥ cluster_edge_threshold`; union-find; drop `< cluster_min_size` to singletons; L2-normalized centroids. Pure Python/numpy — **no sklearn/hdbscan**.
-   - `build_cluster_map(category)` → upsert `knowledge_clusters`.
-   - Return `{label → {member_ids, centroid}}`.
-3. Wire into `run_consolidation` behind `knowledge_clustering_enabled`.
+Persist the latest centroid map in `knowledge_hygiene_clusters` for automated and creation-time candidate lookup. It must remain rebuildable and must not replace run/audit history.
 
-### Phase 4 — Canonicalization + traceability
-1. `memory_db.py`: `ALTER TABLE knowledge ADD COLUMN IF NOT EXISTS merged_from TEXT[] DEFAULT '{}'`, `ADD COLUMN IF NOT EXISTS merged_into TEXT`.
-2. `canonicalize_cluster(member_ids)` in `memory_clustering.py`:
-   - Eject: mean intra-cluster cosine `< cluster_ejection_floor` → back to singleton.
-   - Merge: preservation-first LLM (§10.2) → one KNOWLEDGE.md + `summary` + `contradictions` + `confidence`.
-   - Confidence gate (`< canonical_min_confidence` → skip + log `low_confidence_skip`).
-   - Write canonical (reuse highest-`quality_score` member as survivor, or new row); `merged_from = [others]`; each retired source `status='retired', merged_into=<canonical>`; re-embed canonical via `embed(record)`.
-3. In `memory_consolidation._consolidate_duplicates`: declarative categories delegate to clustering canonicalization; skill/playbook keep the pairwise path (`_refine_playbook` untouched).
+## 8. Manual knowledge-table workflow
 
-### Phase 5 — Creation-time overlay
-1. `assign_to_cluster(category, vector) -> canonical_id | None` in `memory_clustering.py`: load `knowledge_clusters` centroids, max cosine; `≥ cluster_assign_threshold` → return that cluster's `canonical_record_id`.
-2. In `memory_knowledge.py` + `memory_telemetry.py` declarative creation guards: try `assign_to_cluster` first; hit → `refine_or_increment_merge(canonical_id, …)`; miss → fall through to `find_similar_existing` then insert. Skill/playbook unchanged.
+Implement this before automatic application.
 
-### Phase 6 — Migration
-1. Resumable job: for each declarative record without `## ` sections, LLM re-structure freeform `content` → KNOWLEDGE.md (§7.1), store, re-embed. Guard flag + cursor. Batch. Log per-record to `log_pipeline_run`.
+1. The knowledge table supports multi-select of two or more rows.
+2. Bulk actions show **Merge / Consolidate**.
+3. The backend rejects mixed categories with an explicit explanation. Low similarity is displayed but does not block manual selection.
+4. A review screen shows records, statuses, similarity metrics, compatibility checks, source details, and the LLM recommendation.
+5. User clicks Generate Proposal; this calls preview only.
+6. User can inspect retained information, removed repetition, warnings, contradictions, and source-to-output traceability.
+7. User may edit canonical fields and regenerate a preview.
+8. User chooses either:
+   - update one selected active record; or
+   - create a new canonical record and retire all selected sources.
+9. User confirms apply. The UI handles stale-preview rejection by offering regeneration, never by applying outdated content.
+10. After success, the UI displays canonical lineage and provides admin navigation from each retired source to its successor.
 
-### Phase 7 — Frontend
-1. `KnowledgeInspector.jsx` / `KnowledgeTab.jsx`: render KNOWLEDGE.md sections (reuse existing SKILL.md rendering). Optional: cluster-review view listing `knowledge_clusters` with member/canonical + `merged_from`.
+The API should expose separate endpoints equivalent to:
 
----
+```text
+POST /api/memory/admin/knowledge/consolidations/preview
+GET  /api/memory/admin/knowledge/consolidations/previews/{preview_id}
+POST /api/memory/admin/knowledge/consolidations/previews/{preview_id}/regenerate
+POST /api/memory/admin/knowledge/consolidations/apply
+GET  /api/memory/admin/knowledge/consolidations/events/{event_id}
+```
 
-## 18. Acceptance criteria, tests, rollback (per phase)
+Use the repository’s existing admin authorization dependency. Agent-facing endpoints must not receive apply authority by default.
 
-- **Phase 1** — *Accept:* all 5 sites call `embed`; backfill sets `embedding_version=2` on 100% active; no record embeds to `[]` silently. *Test:* unit for `serialize_structured` per category incl. empty-field skipping; integration: create a record, assert deep embedding differs from `name+summary`. *Rollback:* flip `knowledge_structured_embedding_enabled=false`.
-- **Phase 0** — *Accept:* `parse(render(x))==x` for populated fields; unknown headings preserved. *Test:* the round-trip/tolerance suite. *Rollback:* renderer shim keeps old output.
-- **Phase P** — *Accept:* written finding recommends thresholds (edge/min_size/ejection/assign) with the observed cluster-size histogram and cohesion metrics at the new embedding. *No code to roll back.*
-- **Phase 3** — *Accept:* `GraphClusterer` is deterministic (same vectors → same labels); `knowledge_clusters` populated for 3 declarative categories; singletons excluded; re-run idempotent. *Rollback:* `knowledge_clustering_enabled=false`.
-- **Phase 4** — *Accept:* a known duplicate pair collapses to one canonical with correct `merged_from`/`merged_into`; a synthetic contradiction is preserved-both + flagged; a low-confidence cluster is skipped+logged (not merged); retired sources still queryable; no unique fact lost (spot-check). *Rollback:* disable flag; retired records recoverable; nothing hard-deleted.
-- **Phase 5** — *Accept:* a new near-dup record merges into the cluster canonical; a novel record inserts standalone. *Rollback:* disable overlay → existing `find_similar_existing` resumes.
-- **Phase 6** — *Accept:* 100% declarative records have KNOWLEDGE.md sections + `embedding_version=2`; resumable after interrupt. *Rollback:* records retain original `content` (write new format additively, keep original in `## Source Content`).
+## 9. Canonical strategies and transactional application
 
----
+### 9.1 Update existing
 
-## 19. Resolved decisions (was: open questions)
+One user-selected source remains active and receives the approved canonical content. Record its pre-merge state in the consolidation event. Retire all other sources.
 
-1. **KNOWLEDGE.md body fields** → ship all §7.1 sections; missing render empty; unknown headings preserved in `_extra`; **embedding serializer skips empty fields**.
-2. **Expand SKILL.md?** → No (defer; skill/playbook out of clustering scope). Track separately.
-3. **Clustering scope** → **per-category, declarative-only** (best_practices/lessons_learned/trade_knowledge); skill/playbook unchanged.
-4. **Algorithm** → **`GraphClusterer` (connected components over a cosine ≥ 0.80 threshold graph via union-find)** — the portable default. Density-based (HDBSCAN)/agglomerative are **optional Python-only adapters**, not core, not required for TS parity (Principle 2/4).
-5. **"Nearby" radius at creation** → **centroid cosine ≥ `cluster_assign_threshold` (0.82)**. No `approximate_predict` (Principle 8).
-6. **Cluster-map persistence** → **centroids-only in `knowledge_clusters`, recomputed each run (derived state)**. No pickled model, no `knowledge_cluster_models` table.
-7. **Canonicalization** → **deterministic cosine ejection (0.70 floor) + preservation-first LLM merge + confidence gate (≥ 0.6 to apply, else skip+log)**. Lossless; contradictions preserved-both-and-flagged.
-8. **Traceability** → new columns `merged_from TEXT[]` (canonical) + `merged_into TEXT` (retired). Queryable, indexable. Not metadata.
-9. **`get_context` retrieval** → no change; already routes through `render_any_knowledge_md`. Richer embedding improves recall for free.
-10. **Migration ordering** → **re-embed backfill (Phase 1) first**, then re-structure to KNOWLEDGE.md (Phase 6); enable clustering only after both (avoids mixed-embedding drift).
+### 9.2 Create new
 
----
+Insert a new canonical knowledge record, then retire every selected source. The new record includes full source lineage and the aggregation of evidence/provenance permitted by category policy.
 
-## 20. Portability notes (for the future TypeScript implementation)
+### 9.3 Transaction algorithm
 
-The TS package reproduces **behavior** by implementing the **same interfaces and algorithms**, not by calling Python. Per module:
+1. Acquire a global/advisory hygiene lock suitable for the PostgreSQL deployment.
+2. Start transaction and lock every source row with `FOR UPDATE` in deterministic ID order.
+3. Validate preview expiration, snapshot versions/timestamps/statuses, category, target strategy, and no prior merge.
+4. Validate approved canonical output and category-specific structure.
+5. Generate canonical embedding before retiring any sources. If it fails, abort.
+6. Create/update canonical, preserving evidence IDs, provenance, signals, tags, facets, metadata, and required structured fields.
+7. Insert event/audit rows and original-source snapshots.
+8. Mark absorbed sources `retired`, set `merged_into`, and set the event ID.
+9. Update canonical `merged_from`, version, metadata lineage, and timestamp.
+10. Mark preview applied and commit.
 
-- **Models** — mirror the typed shapes (§4.1) as TS interfaces.
-- **Serialization** — implement the exact KNOWLEDGE.md/SKILL.md grammar and the `parse` contract (§7.2): same frontmatter rules, same H2 section keys, same `_extra` preservation, same round-trip guarantee. `render` must be deterministic (same field order).
-- **Embeddings** — implement `serialize_for_embedding` identically (same populated-only, same deterministic text); `EmbedderProvider` is an HTTP adapter (OpenAI or compatible) — provider-agnostic, no native dep.
-- **Clustering** — implement `GraphClusterer` in pure TS: cosine + threshold graph + union-find + L2-normalized centroid (§9.2). **No native dependencies.** This is the parity contract; optional adapters (HDBSCAN/agglomerative) are Python extras and intentionally absent in TS — acceptable because they are not the default.
-- **Canonicalization** — implement the same ejection math (cosine) and the same LLM prompt contract (§10.2) over the same provider HTTP adapter. Deterministic ejection must produce identical eject decisions given identical vectors.
-- **Retrieval / Storage** — same DB (Postgres + pgvector), same SQL/queries. pgvector is runtime-agnostic.
-- **Migration** — same phased flags and backfill cursors.
+Implement administrator-only reversal in the same delivery. It restores source statuses and an updated canonical record's pre-merge snapshot, or retires a newly created canonical, only after verifying that none of the affected records participated in a later consolidation. Reversal creates a new audit event; it never deletes the original event.
 
-**Parity boundary:** the default path (Models → Serialization → Embeddings → `GraphClusterer` → Canonicalization → Storage) is fully reproducible in TS. Anything Python-only (HDBSCAN/agglomerative adapters) is explicitly out of the parity contract.
+## 10. Settings and policies
 
----
+Add settings with safe defaults and surface them in the existing admin settings UI:
 
-## 21. Code references (verified 2026-07-09)
+- `knowledge_hygiene_enabled_categories` — five-category allowlist by default;
+- `knowledge_hygiene_similarity_threshold` — 0..1 candidate edge threshold;
+- `knowledge_hygiene_min_cluster_size`;
+- `knowledge_hygiene_max_cluster_size` — default 5;
+- `knowledge_hygiene_min_cluster_cohesion`;
+- `knowledge_hygiene_embedding_version`;
+- `knowledge_hygiene_mode`;
+- `knowledge_hygiene_preview_ttl_minutes`;
+- `knowledge_hygiene_llm_provider`, model, and prompt-version selector;
+- `knowledge_hygiene_min_confidence_for_auto_apply`;
+- `knowledge_hygiene_contradiction_policy`;
+- `knowledge_hygiene_default_canonical_strategy`;
+- category-specific automation policies.
 
-- `backend/memory_db.py` — knowledge CREATE ~273, `embedding vector` line 281 (untyped), HNSW commented 243–269, columns/indexes added via ALTER after CREATE.
-- `backend/memory_skill_md.py` — `SKILL_MD_CATEGORIES` 17, `render_skill_md` 38, **`render_knowledge_md` 114**, **`render_any_knowledge_md` 159**, `parse_skill_md` 204, `is_skill_md` 27, `slugify` 20.
-- `backend/memory_dedup.py` — `find_similar_existing` 11, `increment_merge` 40, `_REFINE_PROMPT` 54, `refine_or_increment_merge` 67 (re-embeds `name+summary` at **155**), `compute_quality_score` 186.
-- `backend/memory_consolidation.py` — `run_consolidation` 23, `_consolidate_duplicates` 35 (pairwise self-join), `_refine_playbook` 87, `_apply_decay` 159, `_recompute_quality_scores` 194.
-- `backend/memory_knowledge.py` — `generate_knowledge_from_intelligence` 113, embed **224**, creation guard **235–250**, `promote_to_knowledge` 273 (embed **315**).
-- `backend/memory_telemetry.py` — embed **177**, `find_similar_existing` **183**, `refine_or_increment_merge` **185**.
-- `backend/memory_playbooks.py` — `_process_cluster` 191, centroid `find_similar_existing` **261**, `_generate_skills_from_playbook` 366, skill embed **415**, skill dedup **423**.
-- `backend/services/embeddings.py` — `generate_embedding` 12, `generate_embeddings_batch` 43.
-- `frontend/src/components/memory/KnowledgeTab.jsx`, `KnowledgeInspector.jsx` — display.
+Validate all numeric settings. Do not hardcode universal thresholds: calibrate on production dry-run data for the active embedding model and serialization version.
+
+## 11. Single-session implementation sequence
+
+Complete PR 1 through PR 6 below without stopping for review or requesting design decisions. Commit boundaries may follow the PR labels, but the implementation is not complete until every package, test, UI workflow, migration, and activation control passes the final definition of done in §18.
+
+### PR 1 — Shared embedding and similarity foundation
+
+Files: `services/embeddings.py`, new `memory_embedding.py`, new `memory_similarity.py`, all knowledge creation/update paths, `memory_db.py`, tests.
+
+- Add one deterministic embedding serialization path for all five categories.
+- Record embedding version, model, dimensions, and timestamp.
+- Cover knowledge generation, telemetry, playbooks, skills, Hermes, admin CRUD/import, promotion, and consolidation updates.
+- Add resumable/idempotent embedding backfill; it must not mutate content or status.
+- Add pairwise, min/mean/max, centroid, and edge utilities.
+- Do not merge or call a consolidation LLM.
+
+### PR 2 — Preview, lineage, and audit schema
+
+Files: `memory_db.py`, new repository/service models, tests.
+
+- Add source/canonical lineage columns and all run, cluster, preview, and event tables.
+- Store preview expiration and source version snapshots.
+- Store actor, origin, model, prompt version, settings, threshold, raw proposal, validated proposal, approved output, and user edits.
+- Keep DDL additive and idempotent.
+
+### PR 3 — Candidate clustering and LLM proposal generation
+
+Files: new `memory_clustering.py`, `memory_consolidation_service.py`, prompt/config helpers, admin trigger, tests.
+
+- Support all five categories, partitioned by category.
+- Accept the UI-configured similarity threshold.
+- Build components, calculate safeguards, split weak/oversized groups, and create analysis reports.
+- Implement category-aware structured LLM proposals.
+- Implement `analysis_only` and `proposal_only` only. No knowledge mutation.
+
+### PR 4 — Manual knowledge-table consolidation
+
+Files: `memory/admin.py`, new/updated admin schemas/routes, `frontend/src` knowledge table/inspector components, service tests and frontend tests.
+
+- Multi-selection and bulk action.
+- Preview, review, edit, regenerate, target selection, stale-preview handling, transactional apply, lineage display.
+- Manual same-category selections are permitted below the automated threshold.
+- Use the shared service only.
+
+### PR 5 — Controlled automated application
+
+Files: scheduled consolidation and settings/UI wiring, shared service tests.
+
+- Add `manual_only`, `auto_conservative`, and `auto_synthesis` policy execution.
+- Use the same preview/apply service as manual UI.
+- Add category-specific policy gates.
+- Release as proposal-only/manual-only first; do not create a separate scheduler merge path.
+
+### PR 6 — Creation-time consolidation
+
+Files: all creation paths and shared service.
+
+- Enable only after manual/scheduled behavior is production-proven.
+- Use conservative discovery and the same preview/apply flow.
+- Never merge into draft, retired, protected, or otherwise ineligible records.
+
+## 12. Required tests and acceptance criteria
+
+### 12.1 Cross-cutting tests
+
+- exact, near-duplicate, overlapping, and complementary consolidation;
+- LLM `keep_separate`, `split_cluster`, `manual_review`, and warning recommendations;
+- contradictions and unresolved information;
+- weak semantic chain requiring a split;
+- oversized component handling;
+- deterministic grouping despite shuffled input;
+- category partitioning and mixed-category manual rejection;
+- manual low-similarity selection allowed with warning;
+- editable and regenerated proposal;
+- preview expiration, source change, source retirement, and stale-preview rejection;
+- update-existing and create-new canonical strategies;
+- complete source/canonical/event lineage;
+- evidence, provenance, signals, tags, and facets preserved;
+- rollback for embedding, validation, and database failures;
+- repeat apply safely rejected or idempotent;
+- retired records excluded from agent retrieval and prior-context generation;
+- administrators can access retired records and successor links;
+- all callers demonstrably use the shared preview/apply service.
+
+### 12.2 Category acceptance tests
+
+| Category | Must prove |
+|---|---|
+| Best practices | Related guidance can strengthen one practice while conditions and exceptions remain intact. |
+| Lessons learned | Causal details remain intact and separate incidents are never fabricated into one event. |
+| Trade knowledge | Jurisdictions/materials/products/environments remain explicit and conflicts are surfaced. |
+| Skills | Inputs, outputs, tools, prerequisites, permissions, side effects, failures, safety, and applicability survive; complementary skills only merge into a coherent operational contract. |
+| Playbooks | Triggers, steps, branches, escalation, rollback, roles, tools, and completion criteria survive; output remains parseable and executable. |
+
+## 13. Rollout and operational acceptance
+
+1. Complete and verify all six work packages before deployment.
+2. Deploy the completed build once. Startup creates the additive schema and safe default settings.
+3. The production system starts in `manual_only`; inspect embedding coverage and run the resumable backfill from the UI.
+4. Use **Analyze now** to inspect threshold distributions, cohesion, component sizes, and category samples without mutation.
+5. Review generated proposals, especially skills and playbooks, then perform the first applications through the manual Knowledge-table workflow.
+6. Measure proposal acceptance, fact-loss reports, contradiction rates, stale-preview rates, and retrieval quality.
+7. Every mode and creation-time consolidation ships in this build. `auto_conservative`, `auto_synthesis`, and creation-time apply remain disabled until an administrator enables them in the UI; enabling them requires no later code change or deployment.
+
+Production success is not “fewer rows.” It is: fewer redundant retrieval results, stronger canonical knowledge, preserved operational correctness, complete lineage, reversible audit evidence, and no unapproved content loss.
+
+## 14. Fixed implementation decisions
+
+This section removes choices that would otherwise require a follow-up.
+
+### 14.1 Runtime and dependencies
+
+- Use the existing FastAPI, psycopg, Redis/BullMQ-compatible queue, React, and admin authentication patterns.
+- Do not add sklearn, scipy, HDBSCAN, FAISS, or a second queue.
+- Use plain standard-library Python vector math. Do not add or depend on `numpy` for hygiene.
+- Use the configured OpenAI-compatible LLM through `memory_services.call_llm` with task type `knowledge_consolidation`.
+- Seed a `knowledge_consolidation` LLM config by copying the provider/model defaults used by `knowledge_generation`; do not copy credentials into new storage.
+- Use `services.llm.parse_llm_json` followed by Pydantic validation. One repair retry is allowed for invalid JSON/schema; after that the preview is `failed` with the validation error.
+
+### 14.2 Production-safe defaults
+
+Add these exact `memory_settings` defaults and matching fields to both `MemorySettingsUpdate` and `MemorySettingsResponse` in `backend/memory_models.py`:
+
+| Setting | Type | Default |
+|---|---|---|
+| `knowledge_hygiene_enabled` | boolean | `true` |
+| `knowledge_hygiene_enabled_categories` | JSONB string array | all five canonical database category names |
+| `knowledge_hygiene_similarity_threshold` | float 0..1 | `0.82` |
+| `knowledge_hygiene_min_cluster_size` | integer >=2 | `2` |
+| `knowledge_hygiene_max_cluster_size` | integer 2..20 | `5` |
+| `knowledge_hygiene_min_cluster_cohesion` | float 0..1 | `0.72` |
+| `knowledge_hygiene_weak_link_threshold` | float 0..1 | `0.65` |
+| `knowledge_hygiene_embedding_version` | integer | `2` |
+| `knowledge_hygiene_mode` | enum | `manual_only` |
+| `knowledge_hygiene_preview_ttl_minutes` | integer 5..1440 | `60` |
+| `knowledge_hygiene_min_auto_confidence` | float 0..1 | `0.90` |
+| `knowledge_hygiene_contradiction_policy` | enum | `manual_review` |
+| `knowledge_hygiene_default_canonical_strategy` | enum | `update_existing` |
+| `knowledge_hygiene_creation_time_enabled` | boolean | `false` |
+| `knowledge_hygiene_category_policies` | JSONB object | every category=`manual_only` |
+
+Keep `dedup_similarity_threshold` readable for backward compatibility, but stop using it in new hygiene code. The settings UI labels the new threshold **Candidate similarity** and explains that it finds related records but does not decide merges.
+
+### 14.3 Exact component splitting algorithm
+
+For each category, sort records by ID, calculate all pairwise similarities, create edges at or above the configured candidate threshold, and find deterministic connected components with union-find.
+
+For every component, calculate average all-pairs similarity as cohesion. A component is accepted for proposal only when its size is at most the configured maximum, cohesion is at least the configured minimum, and no member-to-centroid similarity is below the weak-link threshold.
+
+If invalid, repeatedly remove the lowest-similarity graph edge, breaking ties by sorted endpoint IDs, and recompute connected components. Continue until every resulting component passes or becomes a singleton. A fully connected component still larger than the maximum is divided deterministically: choose the lowest-ID member as the first seed, repeatedly add the remaining member with the highest average similarity to the current subgroup until full, then start the next subgroup. Mark these size-forced groups `manual_review`; do not auto-apply them.
+
+Singletons are analysis results only and never invoke the LLM. Manual selection bypasses the automated edge threshold and splitting rules but still reports all metrics and requires a single category.
+
+### 14.4 Canonical field aggregation
+
+The LLM proposes content; deterministic code preserves system fields:
+
+- union and de-duplicate `source_intelligence_ids`, `source_ai_interaction_ids`, `signals`, `tags`, and `merged_from` while preserving first-seen order;
+- merge governed facets only when values agree; conflicting values go to `metadata.consolidation_conflicts` and force manual review;
+- store `metadata.consolidation` with event ID, source IDs, proposal ID, model, prompt version, and origin;
+- set canonical `merge_count` to the sum of source merge counts plus the number of absorbed records;
+- set `evidence_breadth` to at least the count of distinct evidence references;
+- retain the canonical target's visibility and active status for update-existing; create-new defaults to shared/active;
+- increment version exactly once on apply;
+- never let LLM output set IDs, status, visibility, lineage, audit fields, quality counters, or timestamps.
+
+## 15. Exact persistence contract
+
+Implement the following schema using `CREATE TABLE IF NOT EXISTS` and `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`. Types are fixed as follows: every ID, identifier reference, enum, origin, actor, model, prompt version, status, role, reason, and error field is `TEXT`; identifier/category collections are `TEXT[]`; settings, snapshots, metrics, options, proposals, warnings, contradictions, traceability, validation errors, and edits are `JSONB`; counters are `INT`; similarities/confidence are `FLOAT`; timestamps are `TIMESTAMPTZ`; flags are `BOOLEAN`; centroids use the existing unbounded `vector` type. Primary IDs use `TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text`.
+
+### 15.1 Knowledge columns
+
+```sql
+ALTER TABLE knowledge ADD COLUMN IF NOT EXISTS merged_into TEXT;
+ALTER TABLE knowledge ADD COLUMN IF NOT EXISTS merged_from TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE knowledge ADD COLUMN IF NOT EXISTS consolidation_event_id TEXT;
+ALTER TABLE knowledge ADD COLUMN IF NOT EXISTS consolidation_protected BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE INDEX IF NOT EXISTS idx_knowledge_merged_into ON knowledge(merged_into);
+CREATE INDEX IF NOT EXISTS idx_knowledge_consolidation_event ON knowledge(consolidation_event_id);
+```
+
+### 15.2 Required table columns
+
+- `knowledge_hygiene_runs`: `id`, `origin`, `mode`, `status`, `settings_snapshot`, `embedding_version`, `categories`, `records_scanned`, `clusters_found`, `proposals_created`, `applied_count`, `failed_count`, `error`, `started_at`, `finished_at`, `created_by`.
+- `knowledge_hygiene_clusters`: `id`, `run_id`, `category`, `member_ids`, `centroid`, `min_similarity`, `avg_similarity`, `max_similarity`, `cohesion`, `weak_links`, `split_reason`, `proposal_id`, `status`, `created_at`, `updated_at`.
+- `knowledge_hygiene_cluster_members`: composite key `(cluster_id, knowledge_id)`, plus `run_id`, `similarity_to_centroid`, `min_member_similarity`, `role`, `decision_reason`.
+- `knowledge_consolidation_previews`: `id`, `origin`, `actor_type`, `actor_id`, `category`, `state`, `source_ids`, `source_snapshot`, `metrics`, `options`, `settings_snapshot`, `model_provider`, `model_name`, `prompt_version`, `raw_response`, `proposal`, `validation_errors`, `expires_at`, `created_at`, `updated_at`, `applied_event_id`.
+- `knowledge_consolidation_preview_sources`: composite key `(preview_id, knowledge_id)`, plus `source_version`, `source_updated_at`, `source_status`, `source_snapshot`.
+- `knowledge_consolidation_events`: `id`, `preview_id`, `action`, `origin`, `actor_type`, `actor_id`, `category`, `canonical_id`, `canonical_strategy`, `model_provider`, `model_name`, `prompt_version`, `similarity_threshold`, `settings_snapshot`, `proposed_output`, `approved_output`, `user_edits`, `warnings`, `contradictions`, `reversed_event_id`, `created_at`.
+- `knowledge_consolidation_event_sources`: composite key `(event_id, knowledge_id)`, plus `role`, `original_snapshot`, `source_traceability`, `merged_into`, `created_at`.
+
+Use these foreign keys only: cluster rows reference their hygiene run with `ON DELETE CASCADE`; cluster-member rows reference their cluster with `ON DELETE CASCADE`; preview-source rows reference their preview with `ON DELETE CASCADE`; event-source rows reference their event with `ON DELETE CASCADE`. Do not add foreign keys from audit/lineage tables to `knowledge`, and do not add a foreign key on `knowledge.merged_into`, because recovery must survive later manual deletion. Add indexes for preview state/expiry, event canonical ID, cluster run/category, and source knowledge IDs.
+
+Store vectors using the existing `vector` type without pinning dimensions. Store embedding model, dimensions, version, and timestamp in `knowledge.metadata.embedding` so configured embedding providers remain compatible.
+
+## 16. Exact API and UI contract
+
+### 16.1 Admin endpoints
+
+Add these routes under the existing authenticated admin router:
+
+| Method and path | Behavior |
+|---|---|
+| `POST /api/memory/admin/knowledge/consolidations/analyze` | Create the run row, queue `knowledge_hygiene_run`, and return HTTP 202 with run ID. |
+| `GET /api/memory/admin/knowledge/hygiene-runs/{run_id}` | Return run, clusters, members, and proposal links. |
+| `POST /api/memory/admin/knowledge/consolidations/preview` | Synchronously create a non-mutating preview for 2+ same-category IDs and return HTTP 200. |
+| `GET /api/memory/admin/knowledge/consolidations/previews/{preview_id}` | Return preview, source snapshots, metrics, and proposal. |
+| `POST /api/memory/admin/knowledge/consolidations/previews/{preview_id}/regenerate` | Expire the old preview, synchronously create a new preview from current source versions, and return HTTP 200 with the new preview. |
+| `POST /api/memory/admin/knowledge/consolidations/apply` | Apply edited/approved canonical data transactionally. |
+| `GET /api/memory/admin/knowledge/consolidations/events/{event_id}` | Return full lineage/audit detail. |
+| `POST /api/memory/admin/knowledge/consolidations/events/{event_id}/reverse` | Reverse when dependency validation permits. |
+
+Preview request:
+
+```json
+{
+  "knowledge_ids": ["id-1", "id-2"],
+  "origin": "manual",
+  "options": {"canonical_strategy": "update_existing", "canonical_target_id": "id-1"}
+}
+```
+
+Apply request:
+
+```json
+{
+  "preview_id": "preview-id",
+  "canonical_strategy": "update_existing",
+  "canonical_target_id": "id-1",
+  "approved_canonical": {"name": "...", "summary": "...", "content": "...", "signals": [], "tags": [], "metadata": {}}
+}
+```
+
+Use status codes consistently: 400 invalid category/options, 404 missing preview/source, 409 stale/already-applied/dependency conflict, 410 expired preview, 422 invalid LLM or edited canonical structure, and 500 only for unexpected failures.
+
+### 16.2 Frontend files and behavior
+
+- Add API methods in `frontend/src/lib/api.js` for every endpoint above.
+- Add `onConsolidate` beside bulk delete in `frontend/src/components/memory/KnowledgeTab.jsx`; enable it only for two or more selected records. Show a same-category validation message before calling the API.
+- Manage dialog state and reloads in `frontend/src/pages/MemoryExplorerPage.jsx`.
+- Create `frontend/src/components/memory/KnowledgeConsolidationDialog.jsx` with steps: Sources → Generate/Review Proposal → Edit Canonical → Confirm → Result.
+- Create `frontend/src/components/memory/KnowledgeLineagePanel.jsx` and render it from `KnowledgeInspector.jsx` for canonical and retired records.
+- Add hygiene mode, categories, threshold, cluster size/cohesion, TTL, confidence, contradiction policy, category automation policies, backfill progress, and **Analyze now** controls to the existing Knowledge settings tab.
+- Do not restore the removed legacy one-click Consolidate button. “Analyze now” obeys the selected mode; manual application remains in the Knowledge table.
+- Retired rows remain visible only in the admin Knowledge table when its status filter is retired/all. Agent endpoints, semantic/full-text search, get-context, and prior-context remain active-only.
+
+The consolidation dialog must show min/average/max similarity, each member's centroid similarity, embedding compatibility, statuses, LLM recommendation, confidence, rationale, retained information, repetition removed, warnings, contradictions, unreconciled information, and per-source traceability. Edits must be visually identified in the confirmation step.
+
+## 17. Queue, scheduler, migration, and activation
+
+### 17.1 Replace legacy consolidation
+
+- Replace `memory_consolidation.run_consolidation` internals with candidate analysis and shared-service preview/apply policy execution. Do not retain the pairwise retirement loop.
+- Keep the `run_consolidation` queue job name and `/trigger/run-consolidation` route as backward-compatible aliases, but make them start a hygiene run using the configured mode.
+- Update `memory/queue.py` to handle `knowledge_hygiene_run` and `knowledge_embedding_backfill`; the legacy job delegates to `knowledge_hygiene_run`.
+- Update `memory_tasks.py` so the periodic schedule queues hygiene only when `knowledge_hygiene_enabled=true`. In `manual_only` or `proposal_only`, it never applies a proposal.
+- Creation-time paths call the shared candidate/preview service only when `knowledge_hygiene_creation_time_enabled=true`. Default false means existing insert behavior remains available while production is calibrated.
+
+Creation-time consolidation is asynchronous: insert the new knowledge record normally, discover same-category candidates, and enqueue a preview containing the new record and candidates. The queue worker calls the shared preview, policy, and apply methods. Generation requests must never wait for a consolidation LLM call. In `manual_only` this creates a reviewable proposal; in automatic modes it applies only when the common policy permits it.
+
+### 17.2 Embedding backfill
+
+Implement a resumable queue job with batches of 50 and per-record error capture. It selects active records whose `metadata.embedding.version` differs from the configured version, serializes all category-specific fields, generates embeddings in provider-supported batches, and updates only embedding metadata/vector after a version check. It records processed/succeeded/failed counts in a hygiene run.
+
+The settings UI shows current-version coverage and exposes **Backfill embeddings**. Candidate automation excludes incompatible versions; manual preview allows them with a warning and calculates available metrics only. Backfill failure does not block manual consolidation because the LLM uses source content, but it blocks automatic application for the affected cluster.
+
+### 17.3 One-deployment activation
+
+Database initialization creates all schema automatically on backend startup. No separate SQL migration command is required. On first startup:
+
+1. Seed missing settings and `knowledge_consolidation` task configuration.
+2. Start in `manual_only`; no automatic source retirement occurs.
+3. Display embedding coverage in settings and allow the backfill to run from the UI.
+4. Allow manual same-category consolidation immediately, even before backfill.
+5. Allow `analysis_only`/`proposal_only` scheduled runs as soon as compatible embeddings exist.
+6. Expose all modes in settings so production can enable them without another code deployment.
+
+The coding agent must not claim production activation if it lacks VPS/deployment access. It must still leave a single deployable build in which startup migration and UI controls complete activation without additional coding.
+
+## 18. Unattended definition of done
+
+The coding agent may stop only when all items below are true.
+
+### 18.1 Code completion
+
+- All six work packages are implemented; none are left as TODOs, stubs, future PRs, or pseudo-code.
+- All five categories work through the same preview/apply service.
+- Manual preview, edit, regenerate, both canonical strategies, apply, lineage display, and reversal work end to end.
+- Scheduled, admin-triggered, automatic-policy, and creation-time code paths call the same service.
+- Legacy pairwise destructive consolidation is removed; backward-compatible route/job names delegate to hygiene.
+- Retired records are absent from all agent retrieval, external search, get-context, and prior-context paths.
+
+### 18.2 Verification commands
+
+Run from the repository root using PowerShell syntax:
+
+```powershell
+$python = "C:\Users\drmoy\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
+& $python -m compileall backend
+Set-Location backend\tests
+& $python -m pytest . -v --timeout=30
+Set-Location ..\..\frontend
+npm.cmd test -- --watchAll=false
+$env:CI="true"
+npm.cmd run build
+Set-Location ..
+docker compose config --quiet
+git -c core.whitespace=cr-at-eol diff --check
+```
+
+If the integration suite requires a running database/server that is unavailable, the agent must still run every pure/unit test, document only that environmental limitation, and must not treat unrun integration tests as passed.
+
+### 18.3 Required automated coverage
+
+In addition to §12, tests must assert exact API error codes, preview immutability, prompt/schema validation retry, source-version race handling, transaction rollback, queue delegation, scheduler mode behavior, settings validation, embedding-backfill resume, frontend bulk-action enablement, multi-step dialog editing, and lineage/reversal dependency protection.
+
+Use a fake LLM provider with fixed category fixtures and a fake embedding provider; tests must not call paid/external APIs. Include golden fixtures for each category and for every recommendation enum.
+
+### 18.4 Handoff
+
+The final handoff must list changed files, schema additions, default settings, test results, any tests not runnable due to environment, and the exact production deployment command already used by this repository. It must clearly distinguish “implemented and deployable” from “deployed to VPS.” No additional design question is permitted unless the repository contradicts this specification in a way that would cause data loss.

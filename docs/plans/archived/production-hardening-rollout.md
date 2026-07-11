@@ -1,4 +1,4 @@
-# Production Hardening Rollout
+# Production Hardening Rollout (Completed and Archived)
 
 This release is schema-additive and keeps legacy routes, prompt keys, webhook
 signatures, and agent visibility behavior during the initial rollout.

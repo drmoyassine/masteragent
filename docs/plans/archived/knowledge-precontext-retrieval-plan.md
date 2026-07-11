@@ -1,8 +1,8 @@
 # Knowledge Pre-Context Retrieval — Implementation Plan (Sprint 2.5)
 
-> **Status**: Planned, ready to implement. Self-contained — no prior conversation needed.
+> **Status**: Implemented in Sprint 2.5; retained as the historical delivery specification. See [sprint2.5-delivery-report.md](sprint2.5-delivery-report.md). Remaining configurable retrieval and proactive activation work is consolidated in [features_list.md](../../features_list.md). Do not reimplement this plan.
 > **Author handoff**: written 2026-07-06 for a separate implementing agent.
-> **Companion**: [knowledge-pipeline-map.md](knowledge-pipeline-map.md) (overall knowledge system), [knowledge-tier-productionization.md](knowledge-tier-productionization.md) (how Tier 3 went live).
+> **Companion**: [knowledge-pipeline-map.md](../../knowledge-pipeline-map.md) (overall knowledge system), [knowledge-tier-productionization.md](../../knowledge-tier-productionization.md) (how Tier 3 went live).
 
 ---
 
@@ -218,4 +218,4 @@ New index: `idx_knowledge_metadata_gin`.
 
 ## 8. Deferred to npm refactor (`mastermemory`)
 
-- **Drop the `tags` column**; fold any freeform labels into `metadata.tags` in the clean-slate schema (no migration cost there). Until then, `tags` stays as a human/admin-only field, off the agent surface. Recorded in [mastermemory-npm-migration.md](mastermemory-npm-migration.md).
+- **Drop the `tags` column**; fold any freeform labels into `metadata.tags` in the clean-slate schema (no migration cost there). Until then, `tags` stays as a human/admin-only field, off the agent surface. Recorded in [mastermemory-npm-migration.md](../../mastermemory-npm-migration.md).

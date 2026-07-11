@@ -33,6 +33,7 @@ async def run_consolidation():
     logger.info("Starting consolidation run (hygiene mode)")
 
     # Knowledge hygiene discovery + proposals (mode-gated; manual_only never applies).
+    hygiene_error = None
     if settings.get("knowledge_hygiene_enabled", True):
         try:
             from memory_consolidation_service import discover_and_propose
@@ -42,10 +43,16 @@ async def run_consolidation():
                 auto_apply=mode in ("auto_conservative", "auto_synthesis"),
             )
         except Exception as exc:
-            logger.warning(f"Hygiene discovery failed during consolidation run: {exc}")
+            hygiene_error = exc
+            logger.exception("Hygiene discovery failed during consolidation run")
 
     _apply_decay()
     _recompute_quality_scores()
+    if hygiene_error is not None:
+        # Let the queue retry/DLQ policy observe the failure instead of silently
+        # reporting a successful scheduled run. Maintenance above remains safe
+        # and idempotent if the job is retried.
+        raise hygiene_error
     logger.info("Consolidation run complete")
 
 
