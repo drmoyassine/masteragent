@@ -542,6 +542,12 @@ async def create_knowledge(body: KnowledgeCreate, admin: dict = Depends(require_
     from memory_facets import enrich_metadata_with_facets
     final_metadata = await enrich_metadata_with_facets(body.metadata, body.name, content, body.summary)
 
+    if category in SKILL_MD_CATEGORIES:
+        try:
+            validate_skill_md(content)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid SKILL.md contract: {exc}") from exc
+
     embedding = None
     try:
         from memory_embedding import embed_knowledge_fields
@@ -550,11 +556,6 @@ async def create_knowledge(body: KnowledgeCreate, admin: dict = Depends(require_
             summary=body.summary or "", signals=body.signals or [],
             tags=body.tags or [], metadata=final_metadata,
         )
-    if category in SKILL_MD_CATEGORIES:
-        try:
-            validate_skill_md(content)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=f"Invalid SKILL.md contract: {exc}") from exc
     except Exception as exc:
         logger.warning("Manual Knowledge embedding failed: %s", exc)
     from memory_db_writes import insert_knowledge
