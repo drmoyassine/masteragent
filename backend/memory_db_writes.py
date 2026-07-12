@@ -119,6 +119,7 @@ def insert_knowledge(
     source_pathway: str = "experiential",
     source_ai_interaction_ids: Optional[list] = None,
     source_links: Optional[list] = None,
+    attachment_ids: Optional[list] = None,
     extraction_confidence: float = 0.5,
     evidence_breadth: int = 1,
     outcome_signal: float = 0.0,
@@ -225,6 +226,26 @@ def insert_knowledge(
                 INSERT INTO knowledge_source_links(knowledge_id,source_type,source_id,source_role)
                 VALUES (%s,%s,%s,'primary') ON CONFLICT DO NOTHING
             """, (knowledge_id, source_type, source_id))
+        if attachment_ids:
+            attachment_ids = list(dict.fromkeys(str(a) for a in attachment_ids))
+            cursor.execute(
+                """SELECT id FROM knowledge_attachments
+                   WHERE id = ANY(%s) AND knowledge_id IS NULL AND status = 'ready'""",
+                (attachment_ids,),
+            )
+            found = {str(row["id"]) for row in cursor.fetchall()}
+            missing = [aid for aid in attachment_ids if aid not in found]
+            if missing:
+                raise ValueError(f"Attachment(s) are missing, expired, or already linked: {', '.join(missing)}")
+            for aid in attachment_ids:
+                cursor.execute(
+                    "UPDATE knowledge_attachments SET knowledge_id=%s, status='linked', updated_at=NOW() WHERE id=%s",
+                    (knowledge_id, aid),
+                )
+                cursor.execute("""
+                    INSERT INTO knowledge_source_links(knowledge_id,source_type,source_id,source_role)
+                    VALUES (%s,'attachment',%s,'evidence') ON CONFLICT DO NOTHING
+                """, (knowledge_id, aid))
 
     from memory_quality import recalculate_knowledge_quality
     recalculate_knowledge_quality(knowledge_id)

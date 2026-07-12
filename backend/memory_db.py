@@ -1309,7 +1309,6 @@ def _create_evidence_schema(cursor):
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_source_links_source ON knowledge_source_links(source_type, source_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_source_links_bundle ON knowledge_source_links(bundle_id)")
-
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS knowledge_evidence_events (
             id                  TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
@@ -1346,6 +1345,31 @@ def _create_evidence_schema(cursor):
         FROM knowledge k, unnest(COALESCE(k.source_ai_interaction_ids, '{}')) sid
         ON CONFLICT DO NOTHING
     """)
+
+
+def _create_knowledge_attachment_schema(cursor):
+    """Private staged/source documents used by the knowledge authoring flow."""
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS knowledge_attachments (
+            id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            knowledge_id    TEXT REFERENCES knowledge(id) ON DELETE SET NULL,
+            filename        TEXT NOT NULL,
+            mime_type       TEXT NOT NULL,
+            size_bytes      INT NOT NULL,
+            sha256          TEXT NOT NULL,
+            content         BYTEA NOT NULL,
+            extracted_text  TEXT DEFAULT '',
+            extraction      JSONB DEFAULT '{}',
+            status          TEXT NOT NULL DEFAULT 'queued',
+            created_by      TEXT,
+            created_at      TIMESTAMPTZ DEFAULT NOW(),
+            updated_at      TIMESTAMPTZ DEFAULT NOW(),
+            expires_at      TIMESTAMPTZ DEFAULT (NOW() + INTERVAL '24 hours')
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_attachments_knowledge ON knowledge_attachments(knowledge_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_attachments_status ON knowledge_attachments(status, created_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_attachments_sha ON knowledge_attachments(sha256)")
 
 
 def init_memory_db():
@@ -1386,6 +1410,7 @@ def init_memory_db():
         _run_migrations(cursor)
         _create_consolidation_schema(cursor)
         _create_evidence_schema(cursor)
+        _create_knowledge_attachment_schema(cursor)
 
         # Operational hardening migrations are additive and safe on existing
         # production tables.

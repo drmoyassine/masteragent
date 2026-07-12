@@ -536,6 +536,13 @@ class KnowledgeCreate(BaseModel):
     category: Optional[str] = "trade_knowledge"
     metadata: Optional[dict] = None
     status: Optional[str] = "draft"
+    attachment_ids: Optional[List[str]] = Field(default_factory=list, description="Staged document attachment IDs to link as source evidence")
+
+class KnowledgeAttachmentProposalRequest(BaseModel):
+    attachment_ids: List[str] = Field(..., min_length=1, max_length=10)
+    category: str = "trade_knowledge"
+    name: Optional[str] = None
+    summary: Optional[str] = None
 
 class KnowledgeResponse(BaseModel):
     id: str
@@ -840,9 +847,12 @@ class ConsolidationAnalyzeRequest(BaseModel):
     """Trigger an automated hygiene run (analysis_only / proposal_only)."""
     mode: Optional[Literal["analysis_only", "proposal_only", "manual_only"]] = None
     category: Optional[Literal["best_practices", "lessons_learned", "trade_knowledge", "skill", "playbook"]] = None
-    max_records: int = Field(5000, ge=1, le=100000)
+    max_records: int = Field(5000, ge=1, le=1000000)
     max_clusters: int = Field(100, ge=1, le=10000)
     dry_run: Optional[bool] = None
+    records_per_batch: Optional[int] = Field(None, ge=1, le=5000)
+    batches_per_run: Optional[int] = Field(None, ge=1, le=10000)
+    run_all: bool = False
 
 
 

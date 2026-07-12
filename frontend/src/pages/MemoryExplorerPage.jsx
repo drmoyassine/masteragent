@@ -127,7 +127,7 @@ export default function MemoryExplorerPage() {
     try { const res = await getMemoryStats(); setStats(res.data); } catch { setStats(null); }
   }, []);
   const [editingKnowledge, setEditingKnowledge] = useState(null);
-  const [newKnowledge, setNewKnowledge] = useState({ name: "", category: "trade_knowledge", content: "", summary: "", tags: [], status: "draft" });
+  const [newKnowledge, setNewKnowledge] = useState({ name: "", category: "trade_knowledge", content: "", summary: "", tags: [], signals: [], metadata: {}, attachment_ids: [], status: "draft" });
   const [showNewKnowledgeDialog, setShowNewKnowledgeDialog] = useState(false);
   const [showConsolidationDialog, setShowConsolidationDialog] = useState(false);
   const [consolidationIds, setConsolidationIds] = useState([]);
@@ -431,14 +431,18 @@ export default function MemoryExplorerPage() {
       toast.error("Please fill name and content");
       return;
     }
+    if (["skill", "playbook"].includes(newKnowledge.category) && !newKnowledge.summary?.trim()) {
+      toast.error("Skills and playbooks require a concise description / summary");
+      return;
+    }
     try {
       await createKnowledgeAdmin(newKnowledge);
       toast.success("Knowledge created");
       setShowNewKnowledgeDialog(false);
-      setNewKnowledge({ name: "", category: "trade_knowledge", content: "", summary: "", tags: [], status: "draft" });
+      setNewKnowledge({ name: "", category: "trade_knowledge", content: "", summary: "", tags: [], signals: [], metadata: {}, attachment_ids: [], status: "draft" });
       loadKnowledge();
     } catch (error) {
-      toast.error("Failed to create knowledge");
+      toast.error(error?.response?.data?.detail || "Failed to create knowledge");
     }
   };
 

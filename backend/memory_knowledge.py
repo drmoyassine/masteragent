@@ -36,7 +36,7 @@ async def run_knowledge_check(
 
     min_count (nightly schedule floor) overrides the per-type knowledge threshold,
     so entity types below the main threshold still get reflected on nightly."""
-    max_rounds = max(1, min(int(max_rounds if max_rounds is not None else (50 if drain else 1)), 50))
+    max_rounds = max(1, min(int(max_rounds if max_rounds is not None else (50 if drain else 1)), 10000))
     max_records = max(1, int(max_records))
     total_created = 0
     for round_no in range(max_rounds):

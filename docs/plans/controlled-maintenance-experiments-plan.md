@@ -245,3 +245,16 @@ Operationally, the maintenance status API is available at
 Pause, cancel, and clear-stop commands use
 `POST /api/memory/maintenance-controls/{job}/{command}`. The UI wraps these
 endpoints, so operators normally do not need to call them directly.
+
+## Operations-tab UI decision
+
+Manual execution is separated from permanent configuration in a fourth
+Knowledge subtab named **Knowledge Operations**. The locked shared terminology
+is **Records per Batch** and **Batches per Run**. Batches per Run supports a
+finite numeric limit or **All eligible records**, where “all” is a snapshot of
+records eligible when the run starts so newly arriving records cannot create an
+unbounded loop.
+
+Generation, Maintenance, and Retrieval contain behavior settings only. The
+Operations tab contains the operation launcher, operation-specific validation,
+active pause/cancel/resume controls, estimates, and detailed run history.

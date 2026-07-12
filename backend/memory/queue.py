@@ -49,11 +49,19 @@ async def _process_bulk_job(job: Job, token: str):
             "extract_playbooks", "knowledge_hygiene_run", "knowledge_embedding_backfill",
             "creation_time_consolidation", "backfill_facets", "backfill_telemetry",
             "run_intelligence_sweep", "reflect_telemetry",
+            "extract_knowledge_attachment",
         }
         if job.name in ai_jobs:
             from services.job_safety import active_provider_stop
             provider_block = active_provider_stop()
             if provider_block:
+                if job.name == "extract_knowledge_attachment" and job.data.get("attachment_id"):
+                    from core.storage import get_memory_db_context
+                    with get_memory_db_context() as conn:
+                        conn.cursor().execute(
+                            "UPDATE knowledge_attachments SET status='blocked', extraction=%s::jsonb, updated_at=NOW() WHERE id=%s",
+                            (json.dumps({"error": provider_block["message"], "reason": provider_block["code"]}), job.data.get("attachment_id")),
+                        )
                 from memory_db_writes import log_pipeline_run
                 log_pipeline_run(job.name, "blocked", reason_code=provider_block["code"],
                                  detail={"message": provider_block["message"], "queue_job_id": str(job.id)},
@@ -113,7 +121,10 @@ async def _process_bulk_job(job: Job, token: str):
                 job.name, "started",
                 detail={"queue_job_id": str(job.id), "progress_total": int(max_records or 0),
                         "estimated_tokens": estimated_tokens, "estimated_cost_usd": estimated_cost,
-                        "batch_size": batch_size}, trigger="queue")
+                        "batch_size": batch_size,
+                        "records_per_batch": job.data.get("records_per_batch") or batch_size,
+                        "batches_per_run": job.data.get("batches_per_run"),
+                        "run_all": bool(job.data.get("run_all", False))}, trigger="queue")
 
         # Import dynamically to avoid circular dependencies at boot
         from memory_tasks import (
@@ -276,6 +287,13 @@ async def _process_bulk_job(job: Job, token: str):
         elif job.name == "reflect_telemetry":
             from memory_telemetry import run_telemetry_reflection
             await run_telemetry_reflection(job.data.get("reflection_date"))
+
+        elif job.name == "extract_knowledge_attachment":
+            from memory_knowledge_attachments import extract_attachment
+            operation_result = await extract_attachment(
+                str(job.data.get("attachment_id")),
+                max_pages=int(job.data.get("max_pages", 200)),
+            )
 
         else:
             logger.warning(f"Unknown job name: {job.name}")

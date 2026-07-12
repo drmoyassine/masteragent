@@ -183,6 +183,13 @@ export const triggerBackfillProfiles = () => api.post('/memory/trigger/backfill-
 // Public Knowledge - Admin UI
 export const getKnowledgeAdmin = (params) => api.get('/memory/admin/knowledge', { params });
 export const createKnowledgeAdmin = (data) => api.post('/memory/admin/knowledge', data);
+export const uploadKnowledgeAttachment = (file) => {
+  const form = new FormData();
+  form.append('file', file);
+  return api.post('/memory/admin/knowledge/attachments/preview', form, { headers: { 'Content-Type': 'multipart/form-data' } });
+};
+export const getKnowledgeAttachment = (id) => api.get(`/memory/admin/knowledge/attachments/${id}`);
+export const proposeKnowledgeFromAttachments = (data) => api.post('/memory/admin/knowledge/attachments/propose', data);
 export const updateKnowledgeAdmin = (id, data) => api.patch(`/memory/admin/knowledge/${id}`, data);
 export const deleteKnowledgeAdmin = (id) => api.delete(`/memory/admin/knowledge/${id}`);
 export const bulkDeleteKnowledgeAdmin = (data) => api.post('/memory/admin/knowledge/bulk-delete', data);
@@ -193,6 +200,7 @@ export const exportKnowledgePack = (params) => api.get('/memory/admin/knowledge-
 export const importSkillMd = (data) => api.post('/memory/skills/import', data);
 export const getPipelineRuns = (params) => api.get('/memory/pipeline-runs', { params });
 export const getMaintenanceControls = () => api.get('/memory/maintenance-controls');
+export const getMaintenanceEligibleCounts = () => api.get('/memory/maintenance/eligible-counts');
 export const setMaintenanceControl = (job, command) => api.post(`/memory/maintenance-controls/${encodeURIComponent(job)}/${command}`);
 export const getSystemAlerts = () => api.get('/memory/system-alerts');
 export const resolveSystemAlert = (code) => api.post(`/memory/system-alerts/${code}/resolve`);

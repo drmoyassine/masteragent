@@ -14,10 +14,12 @@ Auth: Admin JWT (require_admin_auth)
 import json
 import logging
 import uuid
+import hashlib
+import os
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Body
+from fastapi import APIRouter, Depends, HTTPException, Query, Body, UploadFile, File, Response
 from pydantic import BaseModel
 
 from core.storage import get_memory_db_context
@@ -31,6 +33,7 @@ from memory_models import (
     VisionWebhookCreate, VisionWebhookUpdate,
     AdminInstruction, PlaybookFeedback,
     ConsolidationPreviewRequest, ConsolidationApplyRequest, ConsolidationAnalyzeRequest,
+    KnowledgeAttachmentProposalRequest,
 )
 from memory_services import (
     generate_embedding, search_memories_by_vector,
@@ -331,6 +334,179 @@ async def get_knowledge(knowledge_id: str, admin: dict = Depends(require_admin_a
     return dict(row)
 
 
+_KNOWLEDGE_UPLOAD_MIME_TYPES = {
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "text/plain", "text/markdown", "text/csv",
+}
+_KNOWLEDGE_UPLOAD_EXTENSIONS = {".pdf", ".docx", ".xlsx", ".txt", ".md", ".csv"}
+_KNOWLEDGE_UPLOAD_MAX_BYTES = 25 * 1024 * 1024
+
+
+@admin_crud.post("/knowledge/attachments/preview")
+async def upload_knowledge_attachment(file: UploadFile = File(...), admin: dict = Depends(require_admin_auth)):
+    """Stage one document and queue full bounded extraction through the shared parser."""
+    filename = os.path.basename(file.filename or "document")
+    extension = os.path.splitext(filename)[1].lower()
+    if extension not in _KNOWLEDGE_UPLOAD_EXTENSIONS:
+        raise HTTPException(status_code=415, detail="Supported files: PDF, DOCX, XLSX, TXT, Markdown, and CSV")
+    raw = await file.read(_KNOWLEDGE_UPLOAD_MAX_BYTES + 1)
+    if len(raw) > _KNOWLEDGE_UPLOAD_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Document exceeds the 25 MB upload limit")
+    if not raw:
+        raise HTTPException(status_code=422, detail="Document is empty")
+
+    import filetype
+    inferred = filetype.guess(raw)
+    mime_type = (inferred.mime if inferred else None) or file.content_type or "application/octet-stream"
+    if extension == ".md":
+        mime_type = "text/markdown"
+    elif extension == ".csv":
+        mime_type = "text/csv"
+    elif extension == ".txt":
+        mime_type = "text/plain"
+    elif extension == ".pdf":
+        mime_type = "application/pdf"
+    elif extension == ".docx":
+        mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    elif extension == ".xlsx":
+        mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    if mime_type not in _KNOWLEDGE_UPLOAD_MIME_TYPES:
+        raise HTTPException(status_code=415, detail=f"Unsupported document type: {mime_type}")
+    digest = hashlib.sha256(raw).hexdigest()
+    attachment_id = str(uuid.uuid4())
+    actor_id = str(admin.get("id") or admin.get("sub") or admin.get("email") or "admin")
+    with get_memory_db_context() as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM knowledge_attachments WHERE knowledge_id IS NULL AND expires_at < NOW()")
+        cur.execute(
+            """SELECT id, status, filename FROM knowledge_attachments
+               WHERE sha256=%s AND knowledge_id IS NULL AND expires_at > NOW()
+               ORDER BY created_at DESC LIMIT 1""",
+            (digest,),
+        )
+        existing = cur.fetchone()
+        if existing:
+            attachment_id = str(existing["id"])
+            status = existing["status"]
+        else:
+            cur.execute(
+                """INSERT INTO knowledge_attachments
+                   (id, filename, mime_type, size_bytes, sha256, content, status, created_by)
+                   VALUES (%s,%s,%s,%s,%s,%s,'queued',%s)""",
+                (attachment_id, filename, mime_type, len(raw), digest, raw, actor_id),
+            )
+            status = "queued"
+
+    if status in {"queued", "failed"}:
+        if status == "failed":
+            with get_memory_db_context() as conn:
+                conn.cursor().execute("UPDATE knowledge_attachments SET status='queued', updated_at=NOW() WHERE id=%s", (attachment_id,))
+        from memory.queue import knowledge_queue
+        await knowledge_queue.add(
+            "extract_knowledge_attachment",
+            {"attachment_id": attachment_id, "max_pages": 200},
+            {"priority": 2, "attempts": 2, "backoff": {"type": "exponential", "delay": 3000}},
+        )
+    return {"attachment_id": attachment_id, "filename": filename, "mime_type": mime_type, "status": status}
+
+
+@admin_crud.get("/knowledge/attachments/{attachment_id}")
+async def get_knowledge_attachment(attachment_id: str, admin: dict = Depends(require_admin_auth)):
+    with get_memory_db_context() as conn:
+        cur = conn.cursor()
+        cur.execute("""SELECT id, knowledge_id, filename, mime_type, size_bytes, sha256,
+                              extraction, status, extracted_text, created_at, updated_at
+                       FROM knowledge_attachments WHERE id=%s""", (attachment_id,))
+        row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    result = dict(row)
+    text = result.pop("extracted_text", "") or ""
+    result["extracted_text"] = text[:50000]
+    result["extracted_text_truncated"] = len(text) > 50000
+    return result
+
+
+@admin_crud.post("/knowledge/attachments/propose")
+async def propose_knowledge_from_attachments(
+    body: KnowledgeAttachmentProposalRequest,
+    admin: dict = Depends(require_admin_auth),
+):
+    """Generate an editable category-aware canonical proposal from extracted sources."""
+    allowed_categories = {"best_practices", "lessons_learned", "trade_knowledge", "skill", "playbook"}
+    if body.category not in allowed_categories:
+        raise HTTPException(status_code=400, detail="Unsupported knowledge category")
+    from memory_knowledge_attachments import load_ready_attachment_text
+    sources = load_ready_attachment_text(body.attachment_ids)
+    if len(sources) != len(set(body.attachment_ids)):
+        raise HTTPException(status_code=404, detail="One or more attachments were not found")
+    if any(source.get("status") != "ready" for source in sources):
+        raise HTTPException(status_code=409, detail="All attachments must finish extraction before proposal generation")
+
+    from memory_consolidation_prompts import CATEGORY_INSTRUCTIONS
+    from memory_services import call_llm
+    from services.llm import parse_llm_json
+    source_text = []
+    remaining_chars = 220_000
+    for source in sources:
+        extracted = source.get("extracted_text") or ""
+        excerpt = extracted[:max(0, remaining_chars)]
+        remaining_chars -= len(excerpt)
+        source_text.append(
+            f"===== SOURCE: {source['filename']} ({source['mime_type']}) =====\n"
+            f"{excerpt or '[No extracted text]'}"
+        )
+        if remaining_chars <= 0:
+            source_text.append("[Remaining source text omitted from this proposal due to context limits; review the full extracted source before approval.]")
+            break
+    prompt = f"""Create one editable knowledge proposal from the source documents below.
+Category: {body.category}
+{CATEGORY_INSTRUCTIONS.get(body.category, '')}
+
+Rules:
+- Do not invent claims or fill gaps with assumptions.
+- Preserve qualifications, exceptions, context, tables, and operational requirements.
+- Keep page/sheet references in source_traceability where practical.
+- For skills and playbooks, return metadata fields compatible with the SKILL.md contract.
+- Return ONLY JSON with keys: name, summary, content, metadata, signals, tags, warnings, contradictions, source_traceability.
+
+{chr(10).join(source_text)}"""
+    raw = await call_llm(prompt, max_tokens=2400, task_type="knowledge_generation")
+    if not raw:
+        raise HTTPException(status_code=503, detail="Knowledge-generation model is not configured")
+    try:
+        proposal = parse_llm_json(raw, context="knowledge_attachment_proposal")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    if not isinstance(proposal, dict) or not str(proposal.get("content") or "").strip():
+        raise HTTPException(status_code=502, detail="Knowledge-generation model returned an incomplete proposal")
+    proposal["attachment_ids"] = body.attachment_ids
+    proposal["category"] = body.category
+    return {"proposal": proposal, "sources": [{k: v for k, v in source.items() if k != "extracted_text"} for source in sources]}
+
+
+@admin_crud.get("/knowledge/{knowledge_id}/attachments")
+async def list_knowledge_attachments(knowledge_id: str, admin: dict = Depends(require_admin_auth)):
+    with get_memory_db_context() as conn:
+        cur = conn.cursor()
+        cur.execute("""SELECT id, filename, mime_type, size_bytes, sha256, extraction, status, created_at, updated_at
+                       FROM knowledge_attachments WHERE knowledge_id=%s ORDER BY created_at ASC""", (knowledge_id,))
+        return [dict(row) for row in cur.fetchall()]
+
+
+@admin_crud.get("/knowledge/{knowledge_id}/attachments/{attachment_id}/download")
+async def download_knowledge_attachment(knowledge_id: str, attachment_id: str, admin: dict = Depends(require_admin_auth)):
+    with get_memory_db_context() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT filename, mime_type, content FROM knowledge_attachments WHERE id=%s AND knowledge_id=%s", (attachment_id, knowledge_id))
+        row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    return Response(content=bytes(row["content"]), media_type=row["mime_type"], headers={"Content-Disposition": f'attachment; filename="{os.path.basename(row["filename"])}"'})
+
+
 @admin_crud.post("/knowledge")
 async def create_knowledge(body: KnowledgeCreate, admin: dict = Depends(require_admin_auth)):
     """Manually create a Knowledge. Skill/playbook content is stored in
@@ -338,7 +514,16 @@ async def create_knowledge(body: KnowledgeCreate, admin: dict = Depends(require_
     knowledge_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
 
-    from memory_skill_md import SKILL_MD_CATEGORIES, is_skill_md, render_skill_md
+    if body.attachment_ids:
+        with get_memory_db_context() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id, status, knowledge_id FROM knowledge_attachments WHERE id = ANY(%s)", (body.attachment_ids,))
+            rows = cur.fetchall()
+        ready_ids = {str(row["id"]) for row in rows if row["status"] == "ready" and row["knowledge_id"] is None}
+        if ready_ids != {str(aid) for aid in body.attachment_ids}:
+            raise HTTPException(status_code=409, detail="All attached documents must finish extraction before creation")
+
+    from memory_skill_md import SKILL_MD_CATEGORIES, is_skill_md, render_skill_md, validate_skill_md
     category = body.category or "trade_knowledge"
     content = body.content
     if category in SKILL_MD_CATEGORIES and not is_skill_md(content):
@@ -365,6 +550,11 @@ async def create_knowledge(body: KnowledgeCreate, admin: dict = Depends(require_
             summary=body.summary or "", signals=body.signals or [],
             tags=body.tags or [], metadata=final_metadata,
         )
+    if category in SKILL_MD_CATEGORIES:
+        try:
+            validate_skill_md(content)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid SKILL.md contract: {exc}") from exc
     except Exception as exc:
         logger.warning("Manual Knowledge embedding failed: %s", exc)
     from memory_db_writes import insert_knowledge
@@ -376,9 +566,10 @@ async def create_knowledge(body: KnowledgeCreate, admin: dict = Depends(require_
         source_pathway="manual", status=body.status or "draft",
         approved_by_type="user", approved_by_id=str(admin.get("id") or admin.get("sub") or ""),
         approval_origin="manual",
+        attachment_ids=body.attachment_ids or [],
     )
 
-    return {"id": knowledge_id, "created_at": now}
+    return {"id": knowledge_id, "created_at": now, "attachment_ids": body.attachment_ids or []}
 
 
 @admin_crud.patch("/knowledge/{knowledge_id}")
@@ -660,6 +851,9 @@ async def consolidation_analyze(body: ConsolidationAnalyzeRequest, admin: dict =
                 "max_records": body.max_records,
                 "max_clusters": body.max_clusters,
                 "dry_run": body.dry_run,
+                "records_per_batch": body.records_per_batch,
+                "batches_per_run": body.batches_per_run,
+                "run_all": body.run_all,
             },
         embedding_version=int(settings.get("knowledge_hygiene_embedding_version", 2)),
         categories=categories, created_by=(_consolidation_actor(admin))[1],
@@ -670,7 +864,8 @@ async def consolidation_analyze(body: ConsolidationAnalyzeRequest, admin: dict =
             {"run_id": run_id, "mode": mode, "category": body.category,
              "origin": "admin", "allow_auto_apply": False,
              "max_records": body.max_records, "max_clusters": body.max_clusters,
-             "dry_run": body.dry_run},
+             "dry_run": body.dry_run, "records_per_batch": body.records_per_batch,
+             "batches_per_run": body.batches_per_run, "run_all": body.run_all},
             {"priority": 2},
         )
     except Exception as exc:
@@ -706,13 +901,17 @@ async def embedding_coverage(admin: dict = Depends(require_admin_auth)):
 @admin_crud.post("/knowledge/consolidations/backfill-embeddings")
 async def backfill_embeddings(
     batch_size: int = Query(25, ge=1, le=25),
-    max_records: int = Query(1000, ge=1, le=100000),
+    max_records: int = Query(1000, ge=1, le=10000000),
+    batches_per_run: Optional[int] = Query(None, ge=1, le=10000),
+    run_all: bool = Query(False),
     admin: dict = Depends(require_admin_auth),
 ):
     """Queue the resumable embedding backfill job. Returns 202."""
     from memory.queue import knowledge_queue
     await knowledge_queue.add("knowledge_embedding_backfill", {
-        "batch_size": batch_size, "max_records": max_records,
+        "batch_size": batch_size, "records_per_batch": batch_size,
+        "max_records": max_records, "batches_per_run": batches_per_run,
+        "run_all": run_all,
     }, {"priority": 3})
     return {"status": "queued", "batch_size": batch_size, "max_records": max_records}
 
@@ -883,8 +1082,11 @@ async def trigger_reprocess_intelligence(body: dict, admin: dict = Depends(requi
 async def trigger_knowledge_check(
     drain: bool = Query(False, description="Drain BOTH backlogs: intelligence→knowledge (looped) + AI-telemetry reflection (historical days)."),
     drain_telemetry: bool = Query(True, description="When drain=true, also backfill accumulated AI telemetry (set false to drain intelligence only)."),
-    max_rounds: int = Query(1, ge=1, le=50),
-    max_records: int = Query(100, ge=1, le=100000),
+    max_rounds: int = Query(1, ge=1, le=10000),
+    max_records: int = Query(100, ge=1, le=1000000),
+    records_per_batch: Optional[int] = Query(None, ge=1, le=1000),
+    batches_per_run: Optional[int] = Query(None, ge=1, le=10000),
+    run_all: bool = Query(False),
     admin: dict = Depends(require_admin_auth),
 ):
     """Manually trigger Knowledge generation.
@@ -898,7 +1100,9 @@ async def trigger_knowledge_check(
     await knowledge_queue.add(
         "run_all_knowledge_generation",
         {"drain": drain, "max_days": 30 if drain_telemetry else 0,
-         "max_rounds": max_rounds if drain else 1, "max_records": max_records}, {"priority": 1},
+         "max_rounds": max_rounds if drain else 1, "max_records": max_records,
+         "records_per_batch": records_per_batch, "batches_per_run": batches_per_run,
+         "run_all": run_all}, {"priority": 1},
     )
     queued = ["all_knowledge_generation"]
     return {"message": "Knowledge generation queued", "drain": drain,
@@ -928,13 +1132,17 @@ async def trigger_consolidation(
 @router.post("/trigger/backfill-facets")
 async def trigger_backfill_facets(
     batch_size: int = Query(25, ge=1, le=100),
-    max_records: int = Query(250, ge=1, le=10000),
+    max_records: int = Query(250, ge=1, le=1000000),
+    batches_per_run: Optional[int] = Query(None, ge=1, le=10000),
+    run_all: bool = Query(False),
     admin: dict = Depends(require_admin_auth),
 ):
     """Backfill governed metadata.facets on existing active knowledge records that lack them."""
     from memory.queue import knowledge_queue
     await knowledge_queue.add("backfill_facets", {
-        "batch_size": batch_size, "max_records": max_records,
+        "batch_size": batch_size, "records_per_batch": batch_size,
+        "max_records": max_records, "batches_per_run": batches_per_run,
+        "run_all": run_all,
     }, {"priority": 2})
     return {"message": "Facet backfill queued", "batch_size": batch_size, "max_records": max_records}
 
@@ -996,6 +1204,42 @@ async def maintenance_controls(admin: dict = Depends(require_admin_auth)):
     from services.job_controls import get_command
     jobs = ["knowledge_embedding_backfill", "run_all_knowledge_generation", "knowledge_hygiene_run", "run_consolidation", "backfill_facets"]
     return {"items": [{"job": job, "command": get_command("knowledge_hygiene_run" if job == "run_consolidation" else job)} for job in jobs]}
+
+
+@router.get("/maintenance/eligible-counts")
+async def maintenance_eligible_counts(admin: dict = Depends(require_admin_auth)):
+    """Snapshot eligible work so an exhaustive run has a finite start boundary."""
+    from memory_embedding_backfill import preview_backfill
+    embedding = preview_backfill()
+    with get_memory_db_context() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT COUNT(*) AS count FROM intelligence i
+            WHERE i.status='confirmed'
+              AND NOT EXISTS (
+                  SELECT 1 FROM knowledge_source_links l
+                  WHERE l.source_type='intelligence' AND l.source_id=i.id
+              )
+        """)
+        generation = int(cur.fetchone()["count"] or 0)
+        cur.execute("""
+            SELECT COUNT(*) AS count FROM knowledge
+            WHERE status='active' AND COALESCE(metadata->'facets', '{}'::jsonb) = '{}'::jsonb
+        """)
+        facets = int(cur.fetchone()["count"] or 0)
+        cur.execute("""
+            SELECT COUNT(*) AS count FROM knowledge
+            WHERE status='active'
+              AND category IN ('best_practices','lessons_learned','trade_knowledge','skill','playbook')
+        """)
+        hygiene = int(cur.fetchone()["count"] or 0)
+    return {
+        "embedding_backfill": int(embedding.get("stale") or 0),
+        "knowledge_generation": generation,
+        "hygiene_analysis": hygiene,
+        "facet_backfill": facets,
+        "snapshot_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 @router.post("/maintenance-controls/{job}/{command}")
