@@ -344,12 +344,48 @@ async def delete_interaction(id: str, agent: dict = Depends(verify_agent_key)):
 async def get_has_context(
     entity_type: str = Query(...),
     entity_id: str = Query(...),
+    summary_only: bool = Query(
+        False,
+        description="Return only counts and has_context. Use this for pre-checks; it avoids loading historical IDs and records.",
+    ),
     agent: dict = Depends(verify_agent_key)
 ):
     """Check if any memory history exists prior to pulling detailed data."""
     ensure_entity_access(agent, entity_type, entity_id)
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
+        if summary_only:
+            cursor.execute("""
+                SELECT COUNT(*) AS count, MAX(timestamp) AS last_date
+                FROM interactions WHERE primary_entity_type=%s AND primary_entity_id=%s
+            """, (entity_type, entity_id))
+            i_summary = cursor.fetchone() or {}
+            cursor.execute("""
+                SELECT COUNT(*) AS count, MAX(date) AS last_date
+                FROM memories WHERE primary_entity_type=%s AND primary_entity_id=%s
+            """, (entity_type, entity_id))
+            m_summary = cursor.fetchone() or {}
+            cursor.execute("""
+                SELECT COUNT(*) AS count, MAX(created_at) AS last_date
+                FROM intelligence WHERE primary_entity_type=%s AND primary_entity_id=%s
+            """, (entity_type, entity_id))
+            ins_summary = cursor.fetchone() or {}
+            i_count = int(i_summary.get("count") or 0)
+            m_count = int(m_summary.get("count") or 0)
+            ins_count = int(ins_summary.get("count") or 0)
+            return ContextStatusResponse(
+                has_context=bool(i_count or ins_count),
+                interactions_count=i_count,
+                last_interaction_date=str(i_summary["last_date"]) if i_summary.get("last_date") else None,
+                interactions_ids=[],
+                memories_count=m_count,
+                last_memory_date=str(m_summary["last_date"]) if m_summary.get("last_date") else None,
+                memories_ids=[],
+                Intelligences_count=ins_count,
+                last_Intelligence_date=str(ins_summary["last_date"]) if ins_summary.get("last_date") else None,
+                Intelligences_ids=[],
+                intelligences=[], knowledge_count=0, knowledge=[],
+            )
         cursor.execute("SELECT id, timestamp FROM interactions WHERE primary_entity_type = %s AND primary_entity_id = %s ORDER BY timestamp DESC", (entity_type, entity_id))
         i_rows = cursor.fetchall()
         cursor.execute("SELECT id, date FROM memories WHERE primary_entity_type = %s AND primary_entity_id = %s ORDER BY date DESC", (entity_type, entity_id))
@@ -409,6 +445,18 @@ async def get_context(
             "Only effective when interaction_types is set."
         ),
     ),
+    interaction_limit: Optional[int] = Query(
+        200, ge=1, le=1000,
+        description="Cap on returned interactions, taking the most recent records first. Pass a higher value explicitly when needed.",
+    ),
+    memory_limit: Optional[int] = Query(
+        100, ge=1, le=1000,
+        description="Cap on returned memories, taking the most recent records first. Pass a higher value explicitly when needed.",
+    ),
+    intelligence_limit: Optional[int] = Query(
+        100, ge=1, le=1000,
+        description="Cap on returned intelligence, taking the most recent records first. Pass a higher value explicitly when needed.",
+    ),
     knowledge_facets: Optional[str] = Query(
         None,
         description=(
@@ -458,8 +506,14 @@ async def get_context(
             else:
                 interactions_query += " AND interaction_type = ANY(%s)"
             interactions_params.append(type_filter)
-        interactions_query += " ORDER BY timestamp ASC"
+        interactions_query += " ORDER BY timestamp DESC"
+        if interaction_limit:
+            interactions_query += " LIMIT %s"
+            interactions_params.append(interaction_limit)
         cursor.execute(interactions_query, interactions_params)
+        interaction_rows = cursor.fetchall()
+        if interaction_limit:
+            interaction_rows = list(reversed(interaction_rows))
         interactions = [{
             "id": r["id"],
             "interaction_type": r["interaction_type"],
@@ -468,14 +522,18 @@ async def get_context(
             "timestamp": str(r["timestamp"]),
             "source": r["source"],
             "is_enriched": r["is_enriched"],
-        } for r in cursor.fetchall()]
+        } for r in interaction_rows]
 
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT id, signals, name, content, summary, status, created_at
             FROM intelligence
             WHERE primary_entity_type = %s AND primary_entity_id = %s
-            ORDER BY created_at ASC
-        """, (entity_type, entity_id))
+            ORDER BY created_at DESC
+            {"LIMIT %s" if intelligence_limit else ""}
+        """, (entity_type, entity_id) + ((intelligence_limit,) if intelligence_limit else ()))
+        intelligence_rows = cursor.fetchall()
+        if intelligence_limit:
+            intelligence_rows = list(reversed(intelligence_rows))
         intelligence = [{
             "id": r["id"],
             "signals": r["signals"] or [],
@@ -484,14 +542,18 @@ async def get_context(
             "summary": r["summary"],
             "status": r["status"],
             "created_at": str(r["created_at"]),
-        } for r in cursor.fetchall()]
+        } for r in intelligence_rows]
 
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT id, date, content_summary, related_entities, intents, compacted
             FROM memories
             WHERE primary_entity_type = %s AND primary_entity_id = %s
-            ORDER BY date ASC
-        """, (entity_type, entity_id))
+            ORDER BY date DESC
+            {"LIMIT %s" if memory_limit else ""}
+        """, (entity_type, entity_id) + ((memory_limit,) if memory_limit else ()))
+        memory_rows = cursor.fetchall()
+        if memory_limit:
+            memory_rows = list(reversed(memory_rows))
         memories = [{
             "id": r["id"],
             "date": str(r["date"]),
@@ -499,7 +561,7 @@ async def get_context(
             "related_entities": r["related_entities"],
             "intents": r["intents"],
             "compacted": r["compacted"],
-        } for r in cursor.fetchall()]
+        } for r in memory_rows]
 
         # Knowledge (all categories: declarative + playbooks + skills).
         # Sprint 2.5: governed facet hard-filter (WS-5), pinned always-on
@@ -546,7 +608,11 @@ async def get_context(
         # not silently miss (e.g. CRM 'malaysia' vs stored 'Malaysia'). For
         # profile-derived facets, drop values that exist nowhere rather than
         # hard-filtering to zero results on a value the corpus has never seen.
-        if resolved_facets:
+        # Profile-derived facets only affect the bounded in-memory ranking
+        # below; they are never SQL filters. Do not scan the entire Knowledge
+        # table to canonicalize them on every context request. Explicit facet
+        # filters retain canonicalization because they use JSONB containment.
+        if resolved_facets and not facets_from_profile:
             try:
                 resolved_facets = canonicalize_facets(cursor, resolved_facets, drop_unmatched=facets_from_profile)
             except Exception as e:
