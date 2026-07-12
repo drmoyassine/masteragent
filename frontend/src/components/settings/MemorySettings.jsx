@@ -331,7 +331,7 @@ function PromptStructurePreview({ sections }) {
 
 // â”€â”€â”€ Interactions Tab â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, onDeleteConfig, onAddConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline }) {
-    const pipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "interactions").sort((a,b) => a.execution_order - b.execution_order);
+    const pipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "interactions" && c.task_type !== "embedding").sort((a,b) => a.execution_order - b.execution_order);
 
     return (
         <div className="space-y-6">
@@ -429,7 +429,7 @@ function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProvide
 // â”€â”€â”€ Memories Tab â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, onDeleteConfig, onAddConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline }) {
     const [isTriggering, setIsTriggering] = useState(false);
-    const pipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "memories").sort((a,b) => a.execution_order - b.execution_order);
+    const pipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "memories" && c.task_type !== "embedding").sort((a,b) => a.execution_order - b.execution_order);
 
     const handleRunNow = async () => {
         setIsTriggering(true);
@@ -679,44 +679,6 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
                         fetchingModels={fetchingModels}
                         fetchErrors={fetchErrors}
                         onFetchModels={onFetchModels}
-                        renderNodeExtras={(config) => {
-                            if (config.task_type === "embedding") {
-                                return (
-                                    <div className="space-y-4">
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <div className="space-y-2">
-                                                <SettingLabel help="embedding_chunk_size" className="text-xs font-mono">Chunk Size (tokens)</SettingLabel>
-                                                <Input
-                                                    type="number"
-                                                    min={100}
-                                                    max={2000}
-                                                    value={settings.chunk_size || 400}
-                                                    onChange={(e) =>
-                                                        onUpdateSettings("chunk_size", parseInt(e.target.value))
-                                                    }
-                                                />
-                                            </div>
-                                            <div className="space-y-2">
-                                                <SettingLabel help="embedding_chunk_overlap" className="text-xs font-mono">Chunk Overlap (tokens)</SettingLabel>
-                                                <Input
-                                                    type="number"
-                                                    min={0}
-                                                    max={500}
-                                                    value={settings.chunk_overlap || 80}
-                                                    onChange={(e) =>
-                                                        onUpdateSettings("chunk_overlap", parseInt(e.target.value))
-                                                    }
-                                                />
-                                            </div>
-                                        </div>
-                                        <p className="text-[10px] text-muted-foreground">
-                                            Controls how interaction text is split before embedding. larger chunks = more context, smaller = finer search.
-                                        </p>
-                                    </div>
-                                );
-                            }
-                            return null;
-                        }}
                     />
                 </CardContent>
             </Card>
@@ -727,7 +689,7 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
 
 // â”€â”€â”€ Intelligence Tab â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function IntelligenceTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, onDeleteConfig, onAddConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline, entityTypes }) {
-    const privatePipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "intelligence").sort((a,b) => a.execution_order - b.execution_order);
+    const privatePipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "intelligence" && c.task_type !== "embedding").sort((a,b) => a.execution_order - b.execution_order);
     const [isTriggering, setIsTriggering] = useState(false);
 
     const handleRunNow = async () => {
@@ -1615,6 +1577,51 @@ function AnalyticsTab() {
 }
 
 // â”€â”€â”€ Main Component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function SharedEmbeddingCard({ llmConfigs, onSaveConfig, onDeleteConfig, llmProviders, modelLists, fetchingModels, fetchErrors, onFetchModels }) {
+    const [coverage, setCoverage] = useState(null);
+    const [busy, setBusy] = useState(false);
+    const embeddingConfig = (llmConfigs || []).find((config) => config.task_type === "embedding");
+    const refreshCoverage = useCallback(() => {
+        getEmbeddingCoverage().then(({ data }) => setCoverage(data)).catch(() => setCoverage(null));
+    }, []);
+    useEffect(() => { refreshCoverage(); }, [refreshCoverage]);
+    const runBackfill = async () => {
+        setBusy(true);
+        try {
+            await backfillEmbeddings();
+            toast.success("Embedding backfill queued");
+            setTimeout(refreshCoverage, 1500);
+        } catch (error) {
+            toast.error(error?.response?.data?.detail || "Failed to start embedding backfill");
+        } finally { setBusy(false); }
+    };
+    return (
+        <Card className="mb-6 border-green-500/30">
+            <CardHeader className="pb-3 border-b">
+                <div className="flex items-center gap-2"><Layers className="w-5 h-5 text-green-500" /><CardTitle className="text-lg">Shared Embedding &amp; Semantic Index</CardTitle></div>
+                <CardDescription className="text-xs mt-1.5">One embedding provider and model are shared by interactions, memories, intelligence, and knowledge. Changing them requires a coordinated backfill.</CardDescription>
+            </CardHeader>
+            <CardContent className="pt-4 space-y-4">
+                {embeddingConfig ? <InlineTaskConfigAccordion
+                    config={embeddingConfig} llmProviders={llmProviders} onSaveConfig={onSaveConfig}
+                    models={modelLists[embeddingConfig.id] || []} loadingModels={fetchingModels[embeddingConfig.id]}
+                    error={fetchErrors[embeddingConfig.id]} onFetchModels={onFetchModels} isToggleable={true}
+                    toggleChecked={embeddingConfig.is_active}
+                    onToggleChange={(value) => onSaveConfig(embeddingConfig.id, { is_active: value })}
+                    onDeleteConfig={onDeleteConfig}
+                /> : <p className="text-xs text-amber-600">No shared embedding configuration is active. Semantic retrieval and consolidation will be limited.</p>}
+                <div className="rounded-md border p-3 text-xs space-y-2">
+                    <div className="flex items-center justify-between"><span className="text-muted-foreground">Overall coverage (v{coverage?.current_version ?? 2})</span><span className="font-medium">{coverage ? `${coverage.compatible}/${coverage.total} compatible (${(coverage.coverage * 100).toFixed(0)}%)` : "Loading…"}</span></div>
+                    {coverage && <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 text-[10px]">{["interactions", "memories", "intelligence", "knowledge"].map((tier) => { const item = coverage.tiers?.[tier] || {}; return <div key={tier} className="rounded border px-2 py-1"><div className="font-medium capitalize">{tier}</div><div className="text-muted-foreground">{item.compatible || 0}/{item.total || 0} compatible</div></div>; })}</div>}
+                    {coverage?.stale > 0 && <div className="text-amber-700">{coverage.stale} record(s) need backfill.</div>}
+                    <Button size="sm" variant="outline" onClick={runBackfill} disabled={busy || !coverage?.stale}>{busy ? "Queueing…" : "Backfill embeddings"}</Button>
+                </div>
+                <p className="text-[10px] text-muted-foreground">Record-level embeddings currently use one serialized vector per record. Chunk size and overlap are not embedding controls.</p>
+            </CardContent>
+        </Card>
+    );
+}
+
 export function MemorySettings({
     settings,
     llmConfigs,
@@ -1676,6 +1683,16 @@ export function MemorySettings({
 
     return (
         <div className="max-w-4xl">
+            <SharedEmbeddingCard
+                llmConfigs={llmConfigs}
+                onSaveConfig={onSaveConfig}
+                onDeleteConfig={onDeleteConfig}
+                llmProviders={llmProviders}
+                modelLists={modelLists}
+                fetchingModels={fetchingModels}
+                fetchErrors={fetchErrors}
+                onFetchModels={handleFetchModels}
+            />
             <Tabs value={activeTab} onValueChange={onTabChange} className="w-full">
                 <TabsList className="grid w-full grid-cols-5 mb-8">
                     <TabsTrigger value="raw_interactions" className="gap-2">
@@ -1875,15 +1892,7 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
 // always comes from the category-aware LLM proposal + review. First rollout
 // is manual_only; auto modes are exposed but disabled by default.
 function KnowledgeHygieneCard({ settings, onUpdateSettings }) {
-    const [coverage, setCoverage] = useState(null);
     const [busy, setBusy] = useState(false);
-
-    const refreshCoverage = () => {
-        getEmbeddingCoverage().then(({ data }) => setCoverage(data)).catch(() => {});
-    };
-    useEffect(() => {
-        getEmbeddingCoverage().then(({ data }) => setCoverage(data)).catch(() => {});
-    }, []);
 
     const CATEGORIES = ["best_practices", "lessons_learned", "trade_knowledge", "skill", "playbook"];
     const enabledCats = settings.knowledge_hygiene_enabled_categories || CATEGORIES;
@@ -1902,16 +1911,6 @@ function KnowledgeHygieneCard({ settings, onUpdateSettings }) {
         } catch (e) { toast.error("Failed to start hygiene run"); }
         finally { setBusy(false); }
     };
-    const runBackfill = async () => {
-        setBusy(true);
-        try {
-            await backfillEmbeddings();
-            toast.success("Embedding backfill queued");
-            setTimeout(refreshCoverage, 1500);
-        } catch (e) { toast.error("Failed to start backfill"); }
-        finally { setBusy(false); }
-    };
-
     return (
         <Card>
             <CardHeader className="pb-3">
@@ -2061,19 +2060,6 @@ function KnowledgeHygieneCard({ settings, onUpdateSettings }) {
                         ))}
                     </div>
                 </div>
-
-                {coverage && (
-                    <div className="rounded-md border p-3 text-xs space-y-1">
-                        <div className="flex items-center justify-between">
-                            <span className="text-muted-foreground">Embedding coverage (v{coverage.current_version})</span>
-                            <span className="font-medium">{coverage.compatible}/{coverage.total} compatible ({(coverage.coverage * 100).toFixed(0)}%)</span>
-                        </div>
-                        {coverage.stale > 0 && <div className="text-amber-700">{coverage.stale} record(s) need backfill.</div>}
-                        <div className="flex gap-2 mt-2">
-                            <Button size="sm" variant="outline" onClick={runBackfill} disabled={busy}>Backfill embeddings</Button>
-                        </div>
-                    </div>
-                )}
 
                 <div className="flex items-center justify-between border-t pt-4">
                     <div className="space-y-0.5 pr-4">
