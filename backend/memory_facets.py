@@ -251,7 +251,8 @@ async def enrich_metadata_with_facets(
 
 # ── Backfill (WS-4) ──────────────────────────────────────────────────────────
 
-async def backfill_facets(batch_size: int = 25, max_records: int = 1000) -> dict:
+async def backfill_facets(batch_size: int = 25, max_records: int = 1000,
+                          progress_run_id: Optional[str] = None) -> dict:
     """Run extract_facets over active knowledge records missing metadata.facets.
     Best-effort; resolves facets from name+summary+content using the global schema."""
     from core.storage import get_memory_db_context
@@ -270,6 +271,10 @@ async def backfill_facets(batch_size: int = 25, max_records: int = 1000) -> dict
             rows = [dict(r) for r in cursor.fetchall()]
 
         for r in rows:
+            from services.job_controls import get_command
+            if get_command("backfill_facets") in {"pause", "cancel"}:
+                logger.info("Facet backfill stopped at checkpoint")
+                break
             processed += 1
             facets = await extract_facets(r.get("name", ""), r.get("content", ""), r.get("summary", ""))
             if not facets:
@@ -286,6 +291,12 @@ async def backfill_facets(batch_size: int = 25, max_records: int = 1000) -> dict
                     updated += 1
             if processed % batch_size == 0:
                 logger.info(f"Facet backfill progress: {processed}/{len(rows)} ({updated} enriched)")
+            if progress_run_id:
+                from memory_db_writes import update_pipeline_run
+                update_pipeline_run(progress_run_id, progress_completed=processed,
+                                    progress_failed=max(0, processed - updated),
+                                    detail={"enriched": updated, "source_rows": len(rows),
+                                            "checkpoint": {"last_record_id": str(r["id"])}})
         logger.info(f"Facet backfill complete: processed={processed}, enriched={updated}")
     except Exception as e:
         from services.job_safety import ProviderStopError

@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import api, { triggerMemoryGeneration, triggerIntelligenceCheck, triggerKnowledgeCheck, triggerPlaybookExtraction, exportKnowledgePack, triggerBackfillFacets, triggerReflectTelemetry, fetchProviderModels, analyzeHygieneNow, backfillEmbeddings, getEmbeddingCoverage, getPipelineRuns } from "@/lib/api";
+import api, { triggerMemoryGeneration, triggerIntelligenceCheck, triggerKnowledgeCheck, triggerPlaybookExtraction, exportKnowledgePack, triggerBackfillFacets, triggerReflectTelemetry, fetchProviderModels, analyzeHygieneNow, backfillEmbeddings, getEmbeddingCoverage, getPipelineRuns, getMaintenanceControls, setMaintenanceControl } from "@/lib/api";
 import { useEffect } from "react";
 
 // â”€â”€â”€ Threshold Overrides Table â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -1580,6 +1580,8 @@ function AnalyticsTab() {
 function SharedEmbeddingCard({ llmConfigs, onSaveConfig, onDeleteConfig, llmProviders, modelLists, fetchingModels, fetchErrors, onFetchModels }) {
     const [coverage, setCoverage] = useState(null);
     const [busy, setBusy] = useState(false);
+    const [batchSize, setBatchSize] = useState(25);
+    const [maxRecords, setMaxRecords] = useState(1000);
     const embeddingConfig = (llmConfigs || []).find((config) => config.task_type === "embedding");
     const refreshCoverage = useCallback(() => {
         getEmbeddingCoverage().then(({ data }) => setCoverage(data)).catch(() => setCoverage(null));
@@ -1588,7 +1590,7 @@ function SharedEmbeddingCard({ llmConfigs, onSaveConfig, onDeleteConfig, llmProv
     const runBackfill = async () => {
         setBusy(true);
         try {
-            await backfillEmbeddings();
+            await backfillEmbeddings({ batch_size: batchSize, max_records: maxRecords });
             toast.success("Embedding backfill queued");
             setTimeout(refreshCoverage, 1500);
         } catch (error) {
@@ -1614,7 +1616,12 @@ function SharedEmbeddingCard({ llmConfigs, onSaveConfig, onDeleteConfig, llmProv
                     <div className="flex items-center justify-between"><span className="text-muted-foreground">Overall coverage (v{coverage?.current_version ?? 2})</span><span className="font-medium">{coverage ? `${coverage.compatible}/${coverage.total} compatible (${(coverage.coverage * 100).toFixed(0)}%)` : "Loading…"}</span></div>
                     {coverage && <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 text-[10px]">{["interactions", "memories", "intelligence", "knowledge"].map((tier) => { const item = coverage.tiers?.[tier] || {}; return <div key={tier} className="rounded border px-2 py-1"><div className="font-medium capitalize">{tier}</div><div className="text-muted-foreground">{item.compatible || 0}/{item.total || 0} compatible</div></div>; })}</div>}
                     {coverage?.stale > 0 && <div className="text-amber-700">{coverage.stale} record(s) need backfill.</div>}
-                    <Button size="sm" variant="outline" onClick={runBackfill} disabled={busy || !coverage?.stale}>{busy ? "Queueing…" : "Backfill embeddings"}</Button>
+                    <div className="grid grid-cols-2 gap-2 max-w-sm">
+                        <Input type="number" min="1" max="25" value={batchSize} onChange={(e) => setBatchSize(Number(e.target.value) || 25)} placeholder="Batch size" />
+                        <Input type="number" min="1" max="100000" value={maxRecords} onChange={(e) => setMaxRecords(Number(e.target.value) || 1000)} placeholder="Max records" />
+                    </div>
+                    <p className="text-[10px] text-muted-foreground">Rough estimate: ~{(maxRecords * 500).toLocaleString()} input tokens, {Math.ceil(maxRecords / Math.max(1, batchSize))} provider requests, about ${((maxRecords * 500 * 0.02) / 1_000_000).toFixed(4)} at the text-embedding-3-small list price. Actual usage depends on record length.</p>
+                    <Button size="sm" variant="outline" onClick={runBackfill} disabled={busy || !coverage?.stale}>{busy ? "Queueing…" : `Backfill up to ${maxRecords}`}</Button>
                 </div>
                 <p className="text-[10px] text-muted-foreground">Record-level embeddings currently use one serialized vector per record. Chunk size and overlap are not embedding controls.</p>
             </CardContent>
@@ -1809,15 +1816,30 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
     const publicPipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "knowledge").sort((a,b) => a.execution_order - b.execution_order);
     const [triggering, setTriggering] = useState(null);
     const [runs, setRuns] = useState([]);
+    const [controls, setControls] = useState([]);
     const [facetsSchemaText, setFacetsSchemaText] = useState("[]");
     const [profileMapText, setProfileMapText] = useState("{}");
+    const [generationMaxRecords, setGenerationMaxRecords] = useState(100);
+    const [generationMaxRounds, setGenerationMaxRounds] = useState(1);
+    const [facetBatchSize, setFacetBatchSize] = useState(25);
+    const [facetMaxRecords, setFacetMaxRecords] = useState(250);
 
     useEffect(() => {
         try { setFacetsSchemaText(JSON.stringify(settings.knowledge_facets_schema || [], null, 2)); } catch { /* noop */ }
         try { setProfileMapText(JSON.stringify(settings.profile_facet_map || {}, null, 2)); } catch { /* noop */ }
     }, [settings.knowledge_facets_schema, settings.profile_facet_map]);
-    const refreshRuns = () => getPipelineRuns({ limit: 8 }).then(({ data }) => setRuns(data?.items || data || [])).catch(() => setRuns([]));
-    useEffect(refreshRuns, []);
+    const refreshStatus = useCallback(() => Promise.all([
+        getPipelineRuns({ limit: 12 }), getMaintenanceControls(),
+    ]).then(([runResponse, controlResponse]) => {
+        setRuns(runResponse.data?.items || runResponse.data || []);
+        setControls(controlResponse.data?.items || []);
+    }).catch(() => {}), []);
+    const refreshRuns = refreshStatus;
+    useEffect(() => {
+        refreshStatus();
+        const timer = setInterval(refreshStatus, 5000);
+        return () => clearInterval(timer);
+    }, [refreshStatus]);
     const run = async (kind, fn, message) => {
         setTriggering(kind);
         try { await fn(); toast.success(message); setTimeout(refreshRuns, 700); }
@@ -1860,7 +1882,9 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                     <Card>
                         <CardHeader><CardTitle className="text-base">Generation actions and recent runs</CardTitle><CardDescription>Run all enabled pathways once, or drain accumulated source evidence.</CardDescription></CardHeader>
                         <CardContent className="space-y-4">
-                            <div className="flex gap-2 flex-wrap"><Button variant="outline" disabled={!!triggering} onClick={() => run("run", () => triggerKnowledgeCheck(false), "Knowledge generation queued")}><Play className="w-4 h-4 mr-2" />Run now</Button><Button variant="outline" disabled={!!triggering} onClick={() => run("drain", () => triggerKnowledgeCheck(true), "Knowledge backlog processing queued")}><Zap className="w-4 h-4 mr-2" />Process backlog</Button></div>
+                            <div className="grid grid-cols-2 gap-3 max-w-md"><div className="space-y-1"><SettingLabel help="generation_max_records">Max records</SettingLabel><Input type="number" min="1" max="100000" value={generationMaxRecords} onChange={(e) => setGenerationMaxRecords(Number(e.target.value) || 100)} /></div><div className="space-y-1"><SettingLabel help="generation_max_rounds">Max backlog rounds</SettingLabel><Input type="number" min="1" max="50" value={generationMaxRounds} onChange={(e) => setGenerationMaxRounds(Number(e.target.value) || 1)} /></div></div>
+                            <p className="text-[10px] text-muted-foreground">Planning estimate: up to {generationMaxRecords.toLocaleString()} records × the configured generation budget ({settings.knowledge_generation_max_tokens ?? 1200} output tokens each). Input tokens and provider pricing vary, so the final run status is the source of truth.</p>
+                            <div className="flex gap-2 flex-wrap"><Button variant="outline" disabled={!!triggering} onClick={() => run("run", () => triggerKnowledgeCheck(false, { max_records: generationMaxRecords, max_rounds: 1 }), "Knowledge generation queued")}><Play className="w-4 h-4 mr-2" />Run now</Button><Button variant="outline" disabled={!!triggering} onClick={() => run("drain", () => triggerKnowledgeCheck(true, { max_records: generationMaxRecords, max_rounds: generationMaxRounds }), "Knowledge backlog batch queued")}><Zap className="w-4 h-4 mr-2" />Process bounded backlog</Button></div>
                             <div className="rounded-md border divide-y">{runs.length ? runs.slice(0,5).map((item, i) => <div key={item.id || i} className="px-3 py-2 text-xs flex justify-between gap-3"><span>{item.pipeline || item.pipeline_name || item.run_type || "Knowledge run"}</span><Badge variant="outline">{item.status || "queued"}</Badge></div>) : <div className="px-3 py-3 text-xs text-muted-foreground">No recent run information.</div>}</div>
                         </CardContent>
                     </Card>
@@ -1870,12 +1894,13 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                 </TabsContent>
 
                 <TabsContent value="maintenance" className="space-y-5 mt-5">
+                    <MaintenanceRunStatus runs={runs} controls={controls} onRefresh={refreshStatus} />
                     <KnowledgeHygieneCard settings={settings} onUpdateSettings={onUpdateSettings} />
                     <Card><CardHeader><CardTitle className="text-base">Pre-generation evidence routing</CardTitle><CardDescription>Uses persisted source embeddings before an expensive generation call. Similarity discovers the route; the LLM decides whether moderate matches revise an existing record.</CardDescription></CardHeader><CardContent className="space-y-4">
                         <div className="flex items-center justify-between"><div><SettingLabel help="evidence_routing">Evidence routing enabled</SettingLabel><p className="text-[10px] text-muted-foreground">Applies to declarative, telemetry, playbook, and skill pathways.</p></div><Switch checked={settings.knowledge_evidence_routing_enabled ?? true} onCheckedChange={(v) => onUpdateSettings("knowledge_evidence_routing_enabled", v)} /></div>
                         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4"><div className="space-y-1"><SettingLabel help="evidence_mode">Mode</SettingLabel><Select value={settings.knowledge_evidence_routing_mode || "analysis_only"} onValueChange={(v) => onUpdateSettings("knowledge_evidence_routing_mode", v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="analysis_only">Analysis only</SelectItem><SelectItem value="enforced">Enforced</SelectItem></SelectContent></Select></div><div className="space-y-1"><SettingLabel help="evidence_low">Moderate from</SettingLabel><Input type="number" min="0" max="1" step="0.01" value={settings.knowledge_evidence_low_threshold ?? 0.78} onChange={(e) => onUpdateSettings("knowledge_evidence_low_threshold", Number(e.target.value))} /></div><div className="space-y-1"><SettingLabel help="evidence_high">Very high from</SettingLabel><Input type="number" min="0" max="1" step="0.01" value={settings.knowledge_evidence_high_threshold ?? 0.95} onChange={(e) => onUpdateSettings("knowledge_evidence_high_threshold", Number(e.target.value))} /></div><div className="space-y-1"><SettingLabel help="evidence_coverage">High-match coverage</SettingLabel><Input type="number" min="0" max="1" step="0.05" value={settings.knowledge_evidence_high_coverage ?? 0.9} onChange={(e) => onUpdateSettings("knowledge_evidence_high_coverage", Number(e.target.value))} /></div></div>
                     </CardContent></Card>
-                    <Card><CardHeader><CardTitle className="text-base">Maintenance actions</CardTitle><CardDescription>Occasional repair and export tools. Consolidation analysis and application remain proposal-and-review based.</CardDescription></CardHeader><CardContent className="flex gap-2 flex-wrap"><Button variant="outline" onClick={() => run("facets", triggerBackfillFacets, "Facet backfill queued")} disabled={!!triggering}><Sparkles className="w-4 h-4 mr-2" />Backfill facets</Button><Button variant="outline" onClick={() => run("export", async () => { const res = await exportKnowledgePack({ status: "active" }); const url = URL.createObjectURL(new Blob([res.data])); const a = document.createElement("a"); a.href=url; a.download="knowledge-pack.zip"; a.click(); URL.revokeObjectURL(url); }, "Knowledge pack exported")} disabled={!!triggering}><FileText className="w-4 h-4 mr-2" />Export approved knowledge</Button></CardContent></Card>
+                    <Card><CardHeader><CardTitle className="text-base">Maintenance actions</CardTitle><CardDescription>Occasional repair and export tools. Consolidation analysis and application remain proposal-and-review based.</CardDescription></CardHeader><CardContent className="space-y-3"><div className="grid grid-cols-2 gap-3 max-w-md"><div className="space-y-1"><SettingLabel help="facet_batch_size" className="text-xs font-mono">Facet batch size</SettingLabel><Input type="number" min="1" max="100" value={facetBatchSize} onChange={(e) => setFacetBatchSize(Number(e.target.value) || 25)} /></div><div className="space-y-1"><SettingLabel help="facet_max_records" className="text-xs font-mono">Facet max records</SettingLabel><Input type="number" min="1" max="10000" value={facetMaxRecords} onChange={(e) => setFacetMaxRecords(Number(e.target.value) || 250)} /></div></div><p className="text-[10px] text-muted-foreground">Facet extraction estimate: up to {facetMaxRecords.toLocaleString()} LLM records in batches of {facetBatchSize}. Token and cost totals appear in Live maintenance status after the run is queued.</p><div className="flex gap-2 flex-wrap"><Button variant="outline" onClick={() => run("facets", () => triggerBackfillFacets({ batch_size: facetBatchSize, max_records: facetMaxRecords }), "Facet backfill batch queued")} disabled={!!triggering}><Sparkles className="w-4 h-4 mr-2" />Backfill facets</Button><Button variant="outline" onClick={() => run("export", async () => { const res = await exportKnowledgePack({ status: "active" }); const url = URL.createObjectURL(new Blob([res.data])); const a = document.createElement("a"); a.href=url; a.download="knowledge-pack.zip"; a.click(); URL.revokeObjectURL(url); }, "Knowledge pack exported")} disabled={!!triggering}><FileText className="w-4 h-4 mr-2" />Export approved knowledge</Button></div></CardContent></Card>
                 </TabsContent>
 
                 <TabsContent value="retrieval" className="space-y-5 mt-5">
@@ -1887,12 +1912,51 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
     );
 }
 
+function MaintenanceRunStatus({ runs, controls, onRefresh }) {
+    const [busy, setBusy] = useState(null);
+    const labels = {
+        knowledge_embedding_backfill: "Embedding backfill",
+        run_all_knowledge_generation: "Knowledge generation",
+        knowledge_hygiene_run: "Hygiene analysis",
+        backfill_facets: "Facet backfill",
+    };
+    const controlFor = (job) => controls.find((item) => item.job === job)?.command || "run";
+    const setControl = async (job, command) => {
+        setBusy(`${job}:${command}`);
+        try { await setMaintenanceControl(job, command); toast.success(command === "run" ? "Run state cleared. Start the next bounded run to resume." : `${labels[job] || job} will ${command} at its next safe checkpoint.`); onRefresh(); }
+        catch (error) { toast.error(error?.response?.data?.detail || "Could not update run control"); }
+        finally { setBusy(null); }
+    };
+    const maintenanceJobs = Object.keys(labels);
+    return <Card className="border-amber-500/40 bg-amber-500/5">
+        <CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><BarChart3 className="w-4 h-4" />Live maintenance status</CardTitle><CardDescription>Updates every 5 seconds. Pause and cancel take effect at a safe checkpoint; Resume clears the stop flag for the next run.</CardDescription></CardHeader>
+        <CardContent className="space-y-3">
+            {maintenanceJobs.map((job) => {
+                const latest = runs.find((run) => run.job === job);
+                const command = controlFor(job);
+                const total = Number(latest?.progress_total || 0);
+                const completed = Number(latest?.progress_completed || 0);
+                const progress = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : null;
+                return <div key={job} className="rounded-md border p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2"><span className="text-xs font-medium">{labels[job]}</span><Badge variant="outline">{latest?.status || "idle"}</Badge></div>
+                    <div className="text-[11px] text-muted-foreground flex flex-wrap gap-x-4 gap-y-1"><span>Control: {command}</span>{progress !== null && <span>Progress: {completed}/{total} ({progress}%)</span>}{latest?.estimated_tokens && <span>Est. tokens: {Number(latest.estimated_tokens).toLocaleString()}</span>}{latest?.estimated_cost_usd != null && <span>Est. cost: ${Number(latest.estimated_cost_usd).toFixed(4)}</span>}{latest?.detail?.checkpoint?.last_record_id && <span>Checkpoint: {String(latest.detail.checkpoint.last_record_id).slice(0, 8)}…</span>}</div>
+                    {latest?.reason_code && <div className="text-[11px] text-amber-700 dark:text-amber-300">{latest.reason_code}</div>}
+                    <div className="flex gap-2"><Button size="sm" variant="outline" disabled={busy === `${job}:pause` || command === "pause"} onClick={() => setControl(job, "pause")}>Pause</Button><Button size="sm" variant="outline" disabled={busy === `${job}:cancel` || command === "cancel"} onClick={() => setControl(job, "cancel")}>Cancel</Button><Button size="sm" variant="ghost" disabled={busy === `${job}:run` || command === "run"} onClick={() => setControl(job, "run")}>Resume</Button></div>
+                </div>;
+            })}
+            {!runs.length && <p className="text-xs text-muted-foreground">No maintenance runs have been recorded yet.</p>}
+        </CardContent>
+    </Card>;
+}
+
 // ── Knowledge Hygiene & Consolidation settings card ──────────────────────────
 // Candidate similarity only DISCOVERS related records; the merge decision
 // always comes from the category-aware LLM proposal + review. First rollout
 // is manual_only; auto modes are exposed but disabled by default.
 function KnowledgeHygieneCard({ settings, onUpdateSettings }) {
     const [busy, setBusy] = useState(false);
+    const [analysisMaxRecords, setAnalysisMaxRecords] = useState(1000);
+    const [analysisMaxClusters, setAnalysisMaxClusters] = useState(100);
 
     const CATEGORIES = ["best_practices", "lessons_learned", "trade_knowledge", "skill", "playbook"];
     const enabledCats = settings.knowledge_hygiene_enabled_categories || CATEGORIES;
@@ -1906,7 +1970,7 @@ function KnowledgeHygieneCard({ settings, onUpdateSettings }) {
     const runAnalyze = async () => {
         setBusy(true);
         try {
-            const { data } = await analyzeHygieneNow({ mode: "analysis_only" });
+            const { data } = await analyzeHygieneNow({ mode: "analysis_only", dry_run: true, max_records: analysisMaxRecords, max_clusters: analysisMaxClusters });
             toast.success(`Hygiene run queued (run ${data.run_id?.slice(0, 8)}…)`);
         } catch (e) { toast.error("Failed to start hygiene run"); }
         finally { setBusy(false); }
@@ -2070,6 +2134,11 @@ function KnowledgeHygieneCard({ settings, onUpdateSettings }) {
                         checked={settings.knowledge_hygiene_creation_time_enabled === true}
                         onCheckedChange={(v) => onUpdateSettings("knowledge_hygiene_creation_time_enabled", v)}
                     />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 border-t pt-4 max-w-md">
+                    <div className="space-y-1"><SettingLabel help="analysis_max_records" className="text-xs font-mono">Analysis max records</SettingLabel><Input type="number" min="1" max="100000" value={analysisMaxRecords} onChange={(e) => setAnalysisMaxRecords(Number(e.target.value) || 1000)} /></div>
+                    <div className="space-y-1"><SettingLabel help="analysis_max_clusters" className="text-xs font-mono">Analysis max clusters</SettingLabel><Input type="number" min="1" max="10000" value={analysisMaxClusters} onChange={(e) => setAnalysisMaxClusters(Number(e.target.value) || 100)} /></div>
                 </div>
 
                 <div className="flex gap-2 border-t pt-4">

@@ -9,6 +9,7 @@ Runs periodically (configurable interval) to:
 import json
 import logging
 from datetime import datetime, timezone
+from typing import Optional
 
 from core.storage import get_memory_db_context
 from memory_services import get_memory_settings
@@ -18,7 +19,8 @@ from memory_helpers import _get_entity_type_config
 logger = logging.getLogger(__name__)
 
 
-async def run_consolidation():
+async def run_consolidation(*, max_records: int = 1000, max_clusters: int = 100,
+                            progress_run_id: Optional[str] = None):
     """Run hygiene + decay + quality maintenance.
 
     The destructive pairwise retirement loop is GONE. Candidate discovery and
@@ -39,6 +41,8 @@ async def run_consolidation():
             await discover_and_propose(
                 origin="scheduled", mode=mode,
                 auto_apply=mode in ("auto_conservative", "auto_synthesis"),
+                max_records=max_records, max_clusters=max_clusters,
+                progress_run_id=progress_run_id,
             )
         except Exception as exc:
             hygiene_error = exc

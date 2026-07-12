@@ -840,6 +840,9 @@ class ConsolidationAnalyzeRequest(BaseModel):
     """Trigger an automated hygiene run (analysis_only / proposal_only)."""
     mode: Optional[Literal["analysis_only", "proposal_only", "manual_only"]] = None
     category: Optional[Literal["best_practices", "lessons_learned", "trade_knowledge", "skill", "playbook"]] = None
+    max_records: int = Field(5000, ge=1, le=100000)
+    max_clusters: int = Field(100, ge=1, le=10000)
+    dry_run: Optional[bool] = None
 
 
 

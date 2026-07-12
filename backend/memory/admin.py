@@ -641,7 +641,7 @@ async def consolidation_analyze(body: ConsolidationAnalyzeRequest, admin: dict =
     from memory_consolidation_repository import create_hygiene_run
     from services.config_helpers import get_memory_settings
     settings = get_memory_settings() or {}
-    mode = body.mode or "analysis_only"
+    mode = "analysis_only" if body.dry_run is True else (body.mode or "analysis_only")
     if mode not in ("analysis_only", "proposal_only", "manual_only"):
         raise HTTPException(
             status_code=400,
@@ -656,7 +656,11 @@ async def consolidation_analyze(body: ConsolidationAnalyzeRequest, admin: dict =
         origin="admin", mode=mode, settings_snapshot={k: settings.get(k) for k in (
             "knowledge_hygiene_similarity_threshold", "knowledge_hygiene_min_cluster_size",
             "knowledge_hygiene_max_cluster_size", "knowledge_hygiene_min_cluster_cohesion",
-            "knowledge_hygiene_mode")},
+            "knowledge_hygiene_mode")} | {
+                "max_records": body.max_records,
+                "max_clusters": body.max_clusters,
+                "dry_run": body.dry_run,
+            },
         embedding_version=int(settings.get("knowledge_hygiene_embedding_version", 2)),
         categories=categories, created_by=(_consolidation_actor(admin))[1],
     )
@@ -664,7 +668,9 @@ async def consolidation_analyze(body: ConsolidationAnalyzeRequest, admin: dict =
         await knowledge_queue.add(
             "knowledge_hygiene_run",
             {"run_id": run_id, "mode": mode, "category": body.category,
-             "origin": "admin", "allow_auto_apply": False},
+             "origin": "admin", "allow_auto_apply": False,
+             "max_records": body.max_records, "max_clusters": body.max_clusters,
+             "dry_run": body.dry_run},
             {"priority": 2},
         )
     except Exception as exc:
@@ -698,11 +704,17 @@ async def embedding_coverage(admin: dict = Depends(require_admin_auth)):
 
 
 @admin_crud.post("/knowledge/consolidations/backfill-embeddings")
-async def backfill_embeddings(admin: dict = Depends(require_admin_auth)):
+async def backfill_embeddings(
+    batch_size: int = Query(25, ge=1, le=25),
+    max_records: int = Query(1000, ge=1, le=100000),
+    admin: dict = Depends(require_admin_auth),
+):
     """Queue the resumable embedding backfill job. Returns 202."""
     from memory.queue import knowledge_queue
-    await knowledge_queue.add("knowledge_embedding_backfill", {}, {"priority": 3})
-    return {"status": "queued"}
+    await knowledge_queue.add("knowledge_embedding_backfill", {
+        "batch_size": batch_size, "max_records": max_records,
+    }, {"priority": 3})
+    return {"status": "queued", "batch_size": batch_size, "max_records": max_records}
 
 
 # ============================================================
@@ -871,6 +883,8 @@ async def trigger_reprocess_intelligence(body: dict, admin: dict = Depends(requi
 async def trigger_knowledge_check(
     drain: bool = Query(False, description="Drain BOTH backlogs: intelligence→knowledge (looped) + AI-telemetry reflection (historical days)."),
     drain_telemetry: bool = Query(True, description="When drain=true, also backfill accumulated AI telemetry (set false to drain intelligence only)."),
+    max_rounds: int = Query(1, ge=1, le=50),
+    max_records: int = Query(100, ge=1, le=100000),
     admin: dict = Depends(require_admin_auth),
 ):
     """Manually trigger Knowledge generation.
@@ -883,10 +897,12 @@ async def trigger_knowledge_check(
     from memory.queue import knowledge_queue
     await knowledge_queue.add(
         "run_all_knowledge_generation",
-        {"drain": drain, "max_days": 30 if drain_telemetry else 0}, {"priority": 1},
+        {"drain": drain, "max_days": 30 if drain_telemetry else 0,
+         "max_rounds": max_rounds if drain else 1, "max_records": max_records}, {"priority": 1},
     )
     queued = ["all_knowledge_generation"]
-    return {"message": "Knowledge generation queued", "drain": drain, "jobs": queued}
+    return {"message": "Knowledge generation queued", "drain": drain,
+            "max_rounds": max_rounds if drain else 1, "max_records": max_records, "jobs": queued}
 
 
 @router.post("/trigger/extract-playbooks")
@@ -898,19 +914,29 @@ async def trigger_playbook_extraction(admin: dict = Depends(require_admin_auth))
 
 
 @router.post("/trigger/run-consolidation")
-async def trigger_consolidation(admin: dict = Depends(require_admin_auth)):
+async def trigger_consolidation(
+    max_records: int = Query(1000, ge=1, le=100000),
+    max_clusters: int = Query(100, ge=1, le=10000),
+    admin: dict = Depends(require_admin_auth),
+):
     """Manually trigger knowledge consolidation (dedup merge + decay + quality recompute) via queue drop."""
     from memory.queue import knowledge_queue
-    await knowledge_queue.add("run_consolidation", {}, {"priority": 1})
-    return {"message": "Consolidation queued"}
+    await knowledge_queue.add("run_consolidation", {"max_records": max_records, "max_clusters": max_clusters}, {"priority": 1})
+    return {"message": "Consolidation queued", "max_records": max_records, "max_clusters": max_clusters}
 
 
 @router.post("/trigger/backfill-facets")
-async def trigger_backfill_facets(admin: dict = Depends(require_admin_auth)):
+async def trigger_backfill_facets(
+    batch_size: int = Query(25, ge=1, le=100),
+    max_records: int = Query(250, ge=1, le=10000),
+    admin: dict = Depends(require_admin_auth),
+):
     """Backfill governed metadata.facets on existing active knowledge records that lack them."""
     from memory.queue import knowledge_queue
-    await knowledge_queue.add("backfill_facets", {}, {"priority": 2})
-    return {"message": "Facet backfill queued"}
+    await knowledge_queue.add("backfill_facets", {
+        "batch_size": batch_size, "max_records": max_records,
+    }, {"priority": 2})
+    return {"message": "Facet backfill queued", "batch_size": batch_size, "max_records": max_records}
 
 
 @router.post("/trigger/backfill-telemetry")
@@ -955,11 +981,32 @@ async def list_pipeline_runs(
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute(f"""
-            SELECT id, job, outcome, reason_code, records_created, detail, trigger, created_at
+            SELECT id, job, outcome, reason_code, records_created, detail, trigger, created_at,
+                   status, progress_total, progress_completed, progress_failed,
+                   estimated_tokens, estimated_cost_usd, started_at, updated_at, finished_at
             FROM memory_pipeline_runs {where}
             ORDER BY created_at DESC LIMIT %s
         """, params + [limit])
         return [dict(r) for r in cursor.fetchall()]
+
+
+@router.get("/maintenance-controls")
+async def maintenance_controls(admin: dict = Depends(require_admin_auth)):
+    """Return persistent pause/cancel state for maintenance job families."""
+    from services.job_controls import get_command
+    jobs = ["knowledge_embedding_backfill", "run_all_knowledge_generation", "knowledge_hygiene_run", "run_consolidation", "backfill_facets"]
+    return {"items": [{"job": job, "command": get_command("knowledge_hygiene_run" if job == "run_consolidation" else job)} for job in jobs]}
+
+
+@router.post("/maintenance-controls/{job}/{command}")
+async def set_maintenance_control(job: str, command: str, admin: dict = Depends(require_admin_auth)):
+    """Pause, cancel, or resume a maintenance job family at its next safe checkpoint."""
+    from services.job_controls import set_command
+    allowed = {"knowledge_embedding_backfill", "run_all_knowledge_generation", "knowledge_hygiene_run", "run_consolidation", "backfill_facets"}
+    if job not in allowed or command not in {"pause", "cancel", "run"}:
+        raise HTTPException(status_code=400, detail="Unsupported maintenance control")
+    set_command("knowledge_hygiene_run" if job == "run_consolidation" else job, command, str(admin.get("id") or admin.get("email") or "admin"))
+    return {"job": job, "command": command}
 
 
 @router.get("/system-alerts")

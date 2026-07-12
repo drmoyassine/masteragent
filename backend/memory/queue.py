@@ -37,6 +37,8 @@ knowledge_worker = None
 
 async def _process_bulk_job(job: Job, token: str):
     singleton_lock_name = None
+    run_id = None
+    operation_result = None
     try:
         # A credit/quota hard-stop must halt queued AI work cleanly. Completing
         # the skipped job (rather than retrying it) prevents a queue storm; an
@@ -59,6 +61,24 @@ async def _process_bulk_job(job: Job, token: str):
                 logger.warning("Skipping %s (%s): %s", job.name, job.id, provider_block["code"])
                 return {"status": "blocked", "reason": provider_block["code"]}
 
+        control_job = {
+            "knowledge_embedding_backfill": "knowledge_embedding_backfill",
+            "run_all_knowledge_generation": "run_all_knowledge_generation",
+            "generate_knowledge": "run_all_knowledge_generation",
+            "knowledge_hygiene_run": "knowledge_hygiene_run",
+            "run_consolidation": "knowledge_hygiene_run",
+            "backfill_facets": "backfill_facets",
+        }.get(job.name)
+        if control_job:
+            from services.job_controls import get_command
+            command = get_command(control_job)
+            if command in {"pause", "cancel"}:
+                logger.info("Skipping %s at operator checkpoint (%s)", job.name, command)
+                from memory_db_writes import log_pipeline_run
+                log_pipeline_run(job.name, "skipped", reason_code=f"operator_{command}",
+                                 detail={"queue_job_id": str(job.id), "control": command}, trigger="queue")
+                return {"status": command, "reason": f"operator_{command}"}
+
         singleton_jobs = {
             "knowledge_embedding_backfill", "backfill_facets", "backfill_telemetry",
             "run_all_knowledge_generation", "run_consolidation", "knowledge_hygiene_run",
@@ -74,7 +94,26 @@ async def _process_bulk_job(job: Job, token: str):
                 return {"status": "skipped", "reason": "already_running"}
             singleton_lock_name = job.name
             from memory_db_writes import log_pipeline_run
-            log_pipeline_run(job.name, "started", detail={"queue_job_id": str(job.id)}, trigger="queue")
+            max_records = job.data.get("max_records")
+            batch_size = job.data.get("batch_size")
+            if max_records:
+                if job.name == "knowledge_embedding_backfill":
+                    average_tokens, price_per_million = 500, 0.02
+                else:
+                    # Generation/facet/hygiene input sizes vary by record and
+                    # provider. Store a planning token estimate, but do not
+                    # pretend we can calculate a reliable bill without model
+                    # pricing metadata.
+                    average_tokens, price_per_million = 1200, None
+                estimated_tokens = int(max_records) * average_tokens
+                estimated_cost = (estimated_tokens * price_per_million / 1_000_000) if price_per_million else None
+            else:
+                estimated_tokens = estimated_cost = None
+            run_id = log_pipeline_run(
+                job.name, "started",
+                detail={"queue_job_id": str(job.id), "progress_total": int(max_records or 0),
+                        "estimated_tokens": estimated_tokens, "estimated_cost_usd": estimated_cost,
+                        "batch_size": batch_size}, trigger="queue")
 
         # Import dynamically to avoid circular dependencies at boot
         from memory_tasks import (
@@ -124,7 +163,12 @@ async def _process_bulk_job(job: Job, token: str):
                 rpm = p_conf.get("rate_limit_rpm", 60)
 
         elif job.name == "generate_knowledge":
-            await run_knowledge_check(drain=bool(job.data.get("drain")), min_count=job.data.get("min_count"))
+            operation_result = await run_knowledge_check(
+                drain=bool(job.data.get("drain")), min_count=job.data.get("min_count"),
+                max_rounds=int(job.data.get("max_rounds", 50 if job.data.get("drain") else 1)),
+                max_records=int(job.data.get("max_records", 100000)),
+                progress_run_id=run_id,
+            )
             p_conf = get_llm_config("knowledge_generation")
             if p_conf and "rate_limit_rpm" in p_conf:
                 rpm = p_conf.get("rate_limit_rpm", 60)
@@ -132,8 +176,11 @@ async def _process_bulk_job(job: Job, token: str):
         elif job.name == "run_all_knowledge_generation":
             # One orchestrated run for every enabled producer. Individual legacy
             # job names remain accepted for API/backlog compatibility.
-            await run_knowledge_check(
+            operation_result = await run_knowledge_check(
                 drain=bool(job.data.get("drain")), min_count=job.data.get("min_count"),
+                max_rounds=int(job.data.get("max_rounds", 50 if job.data.get("drain") else 1)),
+                max_records=int(job.data.get("max_records", 100000)),
+                progress_run_id=run_id,
             )
             from memory_playbooks import run_playbook_check
             from memory_telemetry import run_telemetry_reflection, backfill_telemetry
@@ -159,7 +206,11 @@ async def _process_bulk_job(job: Job, token: str):
             # Legacy job name kept as a backward-compatible alias: it now starts
             # a hygiene run using the configured mode (no pairwise retirement).
             from memory_consolidation import run_consolidation
-            await run_consolidation()
+            operation_result = await run_consolidation(
+                max_records=int(job.data.get("max_records", 1000)),
+                max_clusters=int(job.data.get("max_clusters", 100)),
+                progress_run_id=run_id,
+            )
 
         elif job.name == "knowledge_hygiene_run":
             # Knowledge hygiene: discover candidate clusters + generate proposals.
@@ -173,19 +224,26 @@ async def _process_bulk_job(job: Job, token: str):
                 and _mode in ("auto_conservative", "auto_synthesis")
                 and _hsettings.get("knowledge_hygiene_enabled", True)
             )
-            await discover_and_propose(
+            operation_result = await discover_and_propose(
                 run_id=job.data.get("run_id"),
                 origin=job.data.get("origin") or "scheduled",
                 mode=_mode,
                 category_filter=job.data.get("category"),
                 actor_id=None,
                 auto_apply=bool(_auto),
+                max_records=int(job.data.get("max_records", 5000)),
+                max_clusters=int(job.data.get("max_clusters", 100)),
+                progress_run_id=run_id,
             )
 
         elif job.name == "knowledge_embedding_backfill":
             # Resumable, idempotent embedding backfill (never mutates content/status).
             from memory_embedding_backfill import run_embedding_backfill
-            await run_embedding_backfill()
+            operation_result = await run_embedding_backfill(
+                batch_size=int(job.data.get("batch_size", 25)),
+                max_records=int(job.data.get("max_records", 1000)),
+                progress_run_id=run_id,
+            )
 
         elif job.name == "creation_time_consolidation":
             # Async creation-time consolidation: find candidates for a freshly
@@ -201,7 +259,11 @@ async def _process_bulk_job(job: Job, token: str):
 
         elif job.name == "backfill_facets":
             from memory_facets import backfill_facets
-            await backfill_facets()
+            operation_result = await backfill_facets(
+                batch_size=int(job.data.get("batch_size", 25)),
+                max_records=int(job.data.get("max_records", 250)),
+                progress_run_id=run_id,
+            )
 
         elif job.name == "backfill_telemetry":
             from memory_telemetry import backfill_telemetry
@@ -221,7 +283,30 @@ async def _process_bulk_job(job: Job, token: str):
         logger.info(f"Successfully processed bulk job {job.id} ({job.name})")
         if singleton_lock_name:
             from memory_db_writes import log_pipeline_run
-            log_pipeline_run(job.name, "completed", detail={"queue_job_id": str(job.id)}, trigger="queue")
+            from services.job_controls import get_command
+            control = control_job and get_command(control_job)
+            stopped = control in {"pause", "cancel"}
+            detail = {"queue_job_id": str(job.id), "result": operation_result or {},
+                      "control": control or "run"}
+            if run_id:
+                from memory_db_writes import update_pipeline_run
+                if isinstance(operation_result, dict):
+                    tier_results = operation_result.get("tiers") or {}
+                    base_completed = operation_result.get("processed")
+                    if base_completed is None:
+                        base_completed = operation_result.get("clusters_found", operation_result.get("records_scanned", 0))
+                        if operation_result.get("clusters_found") is not None:
+                            base_completed = min(int(base_completed or 0), int(job.data.get("max_clusters", 100)))
+                    completed = int(base_completed or 0) + sum(int(v.get("processed", 0) or 0) for v in tier_results.values() if isinstance(v, dict))
+                    failed_total = int(operation_result.get("failed", 0) or 0) + sum(int(v.get("failed", 0) or 0) for v in tier_results.values() if isinstance(v, dict))
+                else:
+                    completed, failed_total = int(operation_result or 0), 0
+                update_pipeline_run(run_id, status="cancelled" if control == "cancel" else ("paused" if control == "pause" else "completed"),
+                                    outcome="stopped" if stopped else "completed", records_created=int(completed or 0),
+                                    progress_completed=int(completed or 0), progress_failed=failed_total,
+                                    detail=detail)
+            else:
+                log_pipeline_run(job.name, "completed", detail=detail, trigger="queue")
         
         # Mathematical rate limiting sequential block
         sleep_interval = 60.0 / (rpm if rpm and rpm > 0 else 60)
@@ -230,11 +315,22 @@ async def _process_bulk_job(job: Job, token: str):
     except Exception as e:
         logger.error(f"Bulk job {job.id} failed: {e}")
 
+        if run_id:
+            from memory_db_writes import update_pipeline_run
+            update_pipeline_run(run_id, status="failed", outcome="failed",
+                                reason_code="job_failed",
+                                detail={"message": str(e), "queue_job_id": str(job.id)})
+
         from services.job_safety import ProviderStopError
         if isinstance(e, ProviderStopError):
             from memory_db_writes import log_pipeline_run
-            log_pipeline_run(job.name, "blocked", reason_code=e.code,
-                             detail={"message": str(e), "queue_job_id": str(job.id)}, trigger="queue")
+            if run_id:
+                from memory_db_writes import update_pipeline_run
+                update_pipeline_run(run_id, status="blocked", outcome="blocked", reason_code=e.code,
+                                    detail={"message": str(e), "queue_job_id": str(job.id)})
+            else:
+                log_pipeline_run(job.name, "blocked", reason_code=e.code,
+                                 detail={"message": str(e), "queue_job_id": str(job.id)}, trigger="queue")
             # Do not re-raise: a provider stop is operational state, not a
             # per-record failure that BullMQ should repeatedly retry.
             return {"status": "blocked", "reason": e.code}

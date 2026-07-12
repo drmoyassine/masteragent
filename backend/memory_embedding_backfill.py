@@ -86,6 +86,7 @@ async def run_embedding_backfill(
     max_records: Optional[int] = None,
     configured_version: Optional[int] = None,
     settings: Optional[Dict[str, Any]] = None,
+    progress_run_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Re-embed stale records in batches. Idempotent and resumable.
 
@@ -110,6 +111,10 @@ async def run_embedding_backfill(
     failed_ids: List[str] = []
 
     while True:
+        from services.job_controls import get_command
+        if get_command("knowledge_embedding_backfill") in {"pause", "cancel"}:
+            logger.info("Embedding backfill stopped at checkpoint")
+            break
         if max_records is not None and seen >= max_records:
             break
         remaining = None
@@ -147,10 +152,19 @@ async def run_embedding_backfill(
             logger.warning("Knowledge embedding backfill batch failed for %d records: %s", len(rows), exc)
 
         batches += 1
+        if progress_run_id:
+            from memory_db_writes import update_pipeline_run
+            update_pipeline_run(progress_run_id, progress_completed=seen,
+                                progress_failed=failed,
+                                detail={"batches": batches, "succeeded": succeeded, "failed": failed,
+                                        "checkpoint": {"last_record_id": str(rows[-1]["id"]) if rows else None}})
         if len(rows) < this_batch:
             break
 
-    tier_counts = await _backfill_source_tiers(batch_size=batch_size, max_records=max_records)
+    remaining_records = None if max_records is None else max(0, max_records - processed)
+    tier_counts = await _backfill_source_tiers(batch_size=batch_size, max_records=remaining_records,
+                                               progress_run_id=progress_run_id,
+                                               progress_offset=processed)
     counts = {
         "processed": processed,
         "succeeded": succeeded,
@@ -163,7 +177,9 @@ async def run_embedding_backfill(
     return counts
 
 
-async def _backfill_source_tiers(*, batch_size: int, max_records: Optional[int]) -> Dict[str, Dict[str, int]]:
+async def _backfill_source_tiers(*, batch_size: int, max_records: Optional[int],
+                                 progress_run_id: Optional[str] = None,
+                                 progress_offset: int = 0) -> Dict[str, Dict[str, int]]:
     """Persist missing/stale embeddings for tiers 0–2 using their canonical text."""
     model = current_embedding_model()
     specs = {
@@ -172,11 +188,15 @@ async def _backfill_source_tiers(*, batch_size: int, max_records: Optional[int])
         "intelligence": ("COALESCE(name,'') || '. ' || COALESCE(summary,'') || ' ' || COALESCE(content,'')", "created_at"),
     }
     results: Dict[str, Dict[str, int]] = {}
+    global_processed = 0
     for table, (text_expr, order_col) in specs.items():
+        if max_records is not None and global_processed >= max_records:
+            break
         processed = succeeded = failed = 0
         failed_ids: set[str] = set()
-        while max_records is None or processed < max_records:
-            limit = min(batch_size, max_records - processed) if max_records is not None else batch_size
+        table_budget = None if max_records is None else max_records - global_processed
+        while table_budget is None or processed < table_budget:
+            limit = min(batch_size, table_budget - processed) if table_budget is not None else batch_size
             limit = min(limit, EMBEDDING_API_BATCH_SIZE)
             with get_memory_db_context() as conn:
                 cur = conn.cursor()
@@ -212,9 +232,17 @@ async def _backfill_source_tiers(*, batch_size: int, max_records: Optional[int])
                 failed += len(rows)
                 failed_ids.update(row["id"] for row in rows)
                 logger.warning("%s embedding backfill batch failed for %d records: %s", table, len(rows), exc)
+            if progress_run_id:
+                from memory_db_writes import update_pipeline_run
+                update_pipeline_run(progress_run_id, progress_completed=progress_offset + global_processed + processed,
+                                    progress_failed=failed,
+                                    detail={"tier": table, "tier_processed": processed, "tier_succeeded": succeeded,
+                                            "tier_failed": failed,
+                                            "checkpoint": {"last_record_id": str(rows[-1]["id"]) if rows else None}})
             if len(rows) < limit:
                 break
         results[table] = {"processed": processed, "succeeded": succeeded, "failed": failed}
+        global_processed += processed
     return results
 
 

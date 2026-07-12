@@ -485,6 +485,9 @@ async def discover_and_propose(
     category_filter: Optional[str] = None,
     actor_id: Optional[str] = None,
     auto_apply: bool = False,
+    max_records: int = 5000,
+    max_clusters: int = 100,
+    progress_run_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Discover candidate clusters, generate proposals, optionally auto-apply.
 
@@ -513,7 +516,9 @@ async def discover_and_propose(
             categories=categories, created_by=actor_id,
         )
 
-    all_records = load_active_records_for_categories(categories)
+    max_records = max(1, int(max_records))
+    max_clusters = max(1, int(max_clusters))
+    all_records = load_active_records_for_categories(categories, limit=max_records)
     configured_version = int(settings.get("knowledge_hygiene_embedding_version", 2))
     records = [r for r in all_records if is_embedding_compatible(r, configured_version, current_embedding_model())]
     incompatible_skipped = len(all_records) - len(records)
@@ -531,11 +536,25 @@ async def discover_and_propose(
     applied_count = 0
     failed_count = 0
 
-    for group in groups:
+    processed_groups = 0
+    stopped_command = None
+    for group in groups[:max_clusters]:
+        from services.job_controls import get_command
+        stopped_command = get_command("knowledge_hygiene_run")
+        if stopped_command in {"pause", "cancel"}:
+            logger.info("Hygiene analysis stopped at checkpoint (%s)", stopped_command)
+            break
         cluster_id = insert_hygiene_cluster(
             run_id=run_id, category=group["category"], group=group,
             centroid_vec=group.get("centroid"),
         )
+        processed_groups += 1
+        if progress_run_id:
+            from memory_db_writes import update_pipeline_run
+            update_pipeline_run(progress_run_id, progress_total=min(len(groups), max_clusters),
+                                progress_completed=processed_groups,
+                                progress_failed=failed_count,
+                                detail={"clusters_found": clusters_found, "proposals_created": proposals_created})
         if mode in ("analysis_only",) or tuple(group.get("member_ids") or []) not in proposal_keys:
             continue
         try:
@@ -563,9 +582,8 @@ async def discover_and_propose(
         except Exception as exc:
             failed_count += 1
             logger.warning("Hygiene proposal/apply failed for cluster %s: %s", group.get("member_ids"), exc)
-
     update_hygiene_run(
-        run_id, status="completed", records_scanned=len(all_records), clusters_found=clusters_found,
+        run_id, status="cancelled" if stopped_command == "cancel" else ("paused" if stopped_command == "pause" else "completed"), records_scanned=len(all_records), clusters_found=min(clusters_found, max_clusters),
         proposals_created=proposals_created, applied_count=applied_count, failed_count=failed_count,
         finished_at=datetime.now(timezone.utc).isoformat(),
     )

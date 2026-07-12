@@ -21,7 +21,13 @@ from memory_facets import facet_prompt_instructions, validate_generated_facets
 logger = logging.getLogger(__name__)
 
 
-async def run_knowledge_check(drain: bool = False, min_count: Optional[int] = None):
+async def run_knowledge_check(
+    drain: bool = False,
+    min_count: Optional[int] = None,
+    max_rounds: Optional[int] = None,
+    max_records: int = 100,
+    progress_run_id: Optional[str] = None,
+):
     """Check if enough confirmed intelligence have accumulated to generate a Knowledge.
 
     Each pass consumes at most one threshold-sized batch per entity type. With
@@ -30,12 +36,23 @@ async def run_knowledge_check(drain: bool = False, min_count: Optional[int] = No
 
     min_count (nightly schedule floor) overrides the per-type knowledge threshold,
     so entity types below the main threshold still get reflected on nightly."""
-    max_rounds = 50 if drain else 1
+    max_rounds = max(1, min(int(max_rounds if max_rounds is not None else (50 if drain else 1)), 50))
+    max_records = max(1, int(max_records))
     total_created = 0
     for round_no in range(max_rounds):
-        created = await _run_knowledge_check_once(min_count=min_count)
+        from services.job_controls import get_command
+        if get_command("run_all_knowledge_generation") in {"pause", "cancel"}:
+            logger.info("Knowledge generation stopped at checkpoint")
+            break
+        created = await _run_knowledge_check_once(
+            min_count=min_count, max_records=max_records - total_created,
+        )
         total_created += created
-        if not created:
+        if progress_run_id:
+            from memory_db_writes import update_pipeline_run
+            update_pipeline_run(progress_run_id, progress_completed=total_created,
+                                detail={"round": round_no + 1, "rounds": max_rounds})
+        if not created or total_created >= max_records:
             break
         if drain:
             logger.info(f"Knowledge drain round {round_no + 1}: created {created} record(s), continuing")
@@ -44,7 +61,7 @@ async def run_knowledge_check(drain: bool = False, min_count: Optional[int] = No
     return total_created
 
 
-async def _run_knowledge_check_once(min_count: Optional[int] = None) -> int:
+async def _run_knowledge_check_once(min_count: Optional[int] = None, max_records: int = 100) -> int:
     """Single knowledge-check pass. Returns the number of knowledge records created.
     min_count overrides the effective threshold (nightly schedule floor)."""
     settings = get_memory_settings()
@@ -69,6 +86,8 @@ async def _run_knowledge_check_once(min_count: Optional[int] = None) -> int:
         entities = cursor.fetchall()
 
         for row in entities:
+            if created >= max_records:
+                break
             entity_type = row["primary_entity_type"]
             count = row["unused_count"]
 
@@ -99,7 +118,7 @@ async def _run_knowledge_check_once(min_count: Optional[int] = None) -> int:
                       )
                     ORDER BY i.created_at ASC
                     LIMIT %s
-                """, (entity_type, threshold))
+                """, (entity_type, min(threshold, max_records - created)))
 
                 batch = [dict(r) for r in cursor.fetchall()]
                 logger.info(f"Knowledge extraction trigger (count) for {entity_type}: {len(batch)} unused intelligence items")

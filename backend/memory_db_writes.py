@@ -288,7 +288,7 @@ def log_pipeline_run(
     records_created: int = 0,
     detail: Optional[dict] = None,
     trigger: str = "scheduled",
-) -> None:
+) -> Optional[str]:
     """Record one pipeline run for observability. Best-effort — never raises, so
     it can wrap generation code without risking the pipeline."""
     import json as _json
@@ -296,12 +296,58 @@ def log_pipeline_run(
     try:
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
+            status = {"started": "running", "completed": "completed", "created": "completed", "revised": "completed", "stopped": "paused", "failed": "failed", "blocked": "blocked", "skipped": "skipped"}.get(outcome, outcome)
             cursor.execute("""
-                INSERT INTO memory_pipeline_runs (job, outcome, reason_code, records_created, detail, trigger)
-                VALUES (%s, %s, %s, %s, %s, %s)
-            """, (job, outcome, reason_code, records_created, _json.dumps(detail or {}), trigger))
+                INSERT INTO memory_pipeline_runs (job, outcome, reason_code, records_created, detail, trigger, status,
+                    progress_total, progress_completed, progress_failed, estimated_tokens, estimated_cost_usd,
+                    started_at, updated_at, finished_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s,
+                    COALESCE((%s::jsonb->>'progress_total')::int, 0),
+                    COALESCE((%s::jsonb->>'progress_completed')::int, 0),
+                    COALESCE((%s::jsonb->>'progress_failed')::int, 0),
+                    (%s::jsonb->>'estimated_tokens')::bigint,
+                    (%s::jsonb->>'estimated_cost_usd')::numeric,
+                    CASE WHEN %s = 'running' THEN NOW() ELSE NULL END,
+                    NOW(),
+                    CASE WHEN %s IN ('completed','failed','blocked','skipped') THEN NOW() ELSE NULL END)
+                RETURNING id
+            """, (job, outcome, reason_code, records_created, _json.dumps(detail or {}), trigger, status,
+                   _json.dumps(detail or {}), _json.dumps(detail or {}), _json.dumps(detail or {}),
+                   _json.dumps(detail or {}), _json.dumps(detail or {}), status, status))
+            row = cursor.fetchone()
+            return str(row["id"]) if row else None
     except Exception as e:
         logging.getLogger(__name__).warning(f"log_pipeline_run failed ({job}/{outcome}): {e}")
+        return None
+
+
+def update_pipeline_run(run_id: str, *, status: Optional[str] = None,
+                        outcome: Optional[str] = None, reason_code: Optional[str] = None,
+                        records_created: Optional[int] = None, progress_total: Optional[int] = None,
+                        progress_completed: Optional[int] = None, progress_failed: Optional[int] = None,
+                        detail: Optional[dict] = None, estimated_tokens: Optional[int] = None,
+                        estimated_cost_usd: Optional[float] = None) -> None:
+    """Update live status for a running maintenance job. Best effort only."""
+    import json as _json
+    import logging
+    try:
+        sets, params = ["updated_at = NOW()"], []
+        for column, value in (("status", status), ("outcome", outcome), ("reason_code", reason_code),
+                              ("records_created", records_created), ("progress_total", progress_total),
+                              ("progress_completed", progress_completed), ("progress_failed", progress_failed),
+                              ("estimated_tokens", estimated_tokens), ("estimated_cost_usd", estimated_cost_usd)):
+            if value is not None:
+                sets.append(f"{column} = %s"); params.append(value)
+        if detail is not None:
+            sets.append("detail = detail || %s::jsonb"); params.append(_json.dumps(detail))
+        if status in {"completed", "failed", "blocked", "cancelled", "paused"}:
+            sets.append("finished_at = COALESCE(finished_at, NOW())")
+        params.append(run_id)
+        with get_memory_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"UPDATE memory_pipeline_runs SET {', '.join(sets)} WHERE id = %s", params)
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"update_pipeline_run failed ({run_id}): {e}")
 
 
 def append_knowledge_feedback(knowledge_id: str, outcome: str, notes: Optional[str] = None) -> None:

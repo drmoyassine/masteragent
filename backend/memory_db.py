@@ -790,11 +790,57 @@ def _run_migrations(cursor):
             records_created INT DEFAULT 0,
             detail          JSONB DEFAULT '{}',
             trigger         TEXT DEFAULT 'scheduled',
-            created_at      TIMESTAMPTZ DEFAULT NOW()
+            created_at      TIMESTAMPTZ DEFAULT NOW(),
+            status          TEXT DEFAULT 'queued',
+            progress_total  INT DEFAULT 0,
+            progress_completed INT DEFAULT 0,
+            progress_failed INT DEFAULT 0,
+            estimated_tokens BIGINT,
+            estimated_cost_usd NUMERIC(12,6),
+            started_at      TIMESTAMPTZ,
+            updated_at      TIMESTAMPTZ DEFAULT NOW(),
+            finished_at     TIMESTAMPTZ
         )
+    """)
+    for column, definition in (
+        ("status", "TEXT DEFAULT 'queued'"),
+        ("progress_total", "INT DEFAULT 0"),
+        ("progress_completed", "INT DEFAULT 0"),
+        ("progress_failed", "INT DEFAULT 0"),
+        ("estimated_tokens", "BIGINT"),
+        ("estimated_cost_usd", "NUMERIC(12,6)"),
+        ("started_at", "TIMESTAMPTZ"),
+        ("updated_at", "TIMESTAMPTZ DEFAULT NOW()"),
+        ("finished_at", "TIMESTAMPTZ"),
+    ):
+        cursor.execute(f"ALTER TABLE memory_pipeline_runs ADD COLUMN IF NOT EXISTS {column} {definition}")
+    cursor.execute("""
+        UPDATE memory_pipeline_runs
+        SET status = CASE outcome
+            WHEN 'started' THEN 'running'
+            WHEN 'completed' THEN 'completed'
+            WHEN 'created' THEN 'completed'
+            WHEN 'revised' THEN 'completed'
+            WHEN 'stopped' THEN 'paused'
+            WHEN 'failed' THEN 'failed'
+            WHEN 'blocked' THEN 'blocked'
+            WHEN 'skipped' THEN 'skipped'
+            ELSE status END
+        WHERE status = 'queued'
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_pipeline_runs_job ON memory_pipeline_runs (job, created_at DESC)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_pipeline_runs_created ON memory_pipeline_runs (created_at DESC)")
+
+    # Operator controls for bounded maintenance runs. State is intentionally
+    # separate from the append-only run log so pause/cancel survives restarts.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS memory_job_controls (
+            job TEXT PRIMARY KEY,
+            command TEXT NOT NULL DEFAULT 'run',
+            updated_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_by TEXT
+        )
+    """)
 
     # Persistent, app-wide operational alerts. These are intentionally separate
     # from the append-only pipeline log so a provider hard-stop remains visible

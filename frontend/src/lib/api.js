@@ -175,7 +175,7 @@ export const getDailyMemories = (date) => api.get(`/memory/admin/daily/${date}`)
 export const getTimeline = (entityType, entityId) => api.get(`/memory/admin/timeline/${entityType}/${entityId}`);
 export const triggerMemoryGeneration = (includeToday = false) => api.post('/memory/trigger/generate-memories', null, { params: { include_today: includeToday } });
 export const triggerIntelligenceCheck = () => api.post('/memory/trigger/run-intelligence-check');
-export const triggerKnowledgeCheck = (drain = false) => api.post('/memory/trigger/run-knowledge-check', null, { params: { drain } });
+export const triggerKnowledgeCheck = (drain = false, options = {}) => api.post('/memory/trigger/run-knowledge-check', null, { params: { drain, ...options } });
 export const triggerPlaybookExtraction = () => api.post('/memory/trigger/extract-playbooks');
 export const reprocessIntelligence = (intelligenceIds) => api.post('/memory/trigger/reprocess-intelligence', { intelligence_ids: intelligenceIds });
 export const triggerBackfillProfiles = () => api.post('/memory/trigger/backfill-profiles');
@@ -192,11 +192,13 @@ export const exportKnowledgeMarkdown = (id) => api.get(`/memory/admin/knowledge/
 export const exportKnowledgePack = (params) => api.get('/memory/admin/knowledge-pack', { params, responseType: 'blob' });
 export const importSkillMd = (data) => api.post('/memory/skills/import', data);
 export const getPipelineRuns = (params) => api.get('/memory/pipeline-runs', { params });
+export const getMaintenanceControls = () => api.get('/memory/maintenance-controls');
+export const setMaintenanceControl = (job, command) => api.post(`/memory/maintenance-controls/${encodeURIComponent(job)}/${command}`);
 export const getSystemAlerts = () => api.get('/memory/system-alerts');
 export const resolveSystemAlert = (code) => api.post(`/memory/system-alerts/${code}/resolve`);
 export const getKnowledgeById = (id) => api.get(`/memory/admin/knowledge/${id}`);
 export const getKnowledgeFacets = (params) => api.get('/memory/knowledge/facets', { params });
-export const triggerBackfillFacets = () => api.post('/memory/trigger/backfill-facets');
+export const triggerBackfillFacets = (options = {}) => api.post('/memory/trigger/backfill-facets', null, { params: options });
 export const triggerReflectTelemetry = (reflectionDate) => api.post('/memory/trigger/reflect-telemetry', null, { params: reflectionDate ? { reflection_date: reflectionDate } : {} });
 export const getMemoryStats = () => api.get('/memory/admin/stats');
 
@@ -214,7 +216,7 @@ export const getConsolidationLineage = (knowledgeId) => api.get(`/memory/admin/k
 export const analyzeHygieneNow = (data) => api.post('/memory/admin/knowledge/consolidations/analyze', data);
 export const getHygieneRun = (runId) => api.get(`/memory/admin/knowledge/hygiene-runs/${runId}`);
 export const getEmbeddingCoverage = () => api.get('/memory/admin/knowledge/consolidations/embedding-coverage');
-export const backfillEmbeddings = () => api.post('/memory/admin/knowledge/consolidations/backfill-embeddings');
+export const backfillEmbeddings = (options = {}) => api.post('/memory/admin/knowledge/consolidations/backfill-embeddings', null, { params: options });
 
 // Outbound Webhooks - Admin UI
 export const getOutboundWebhooks = () => api.get('/memory/outbound-webhooks');

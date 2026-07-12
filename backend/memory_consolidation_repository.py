@@ -86,23 +86,26 @@ def load_knowledge_record(knowledge_id: str) -> Optional[Dict[str, Any]]:
     return rows[0] if rows else None
 
 
-def load_active_records_for_categories(categories: Sequence[str]) -> List[Dict[str, Any]]:
+def load_active_records_for_categories(categories: Sequence[str], limit: Optional[int] = None) -> List[Dict[str, Any]]:
     """Active, embedded, non-merged, non-protected records in the allowlist."""
     if not categories:
         return []
     with get_memory_db_context() as conn:
         cur = conn.cursor()
-        cur.execute(
-            f"""
+        query = f"""
             SELECT {KNOWLEDGE_COLUMNS} FROM knowledge
             WHERE status = 'active'
               AND embedding IS NOT NULL
               AND COALESCE(merged_into, '') = ''
               AND COALESCE(consolidation_protected, FALSE) = FALSE
               AND category = ANY(%s)
-            """,
-            (list(categories),),
-        )
+            ORDER BY created_at ASC, id ASC
+        """
+        params = [list(categories)]
+        if limit is not None:
+            query += " LIMIT %s"
+            params.append(max(1, int(limit)))
+        cur.execute(query, tuple(params))
         return [dict(r) for r in cur.fetchall()]
 
 
