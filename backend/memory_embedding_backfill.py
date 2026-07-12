@@ -138,6 +138,10 @@ async def run_embedding_backfill(
                         # A concurrent writer made the row current or retired it.
                         logger.info("Embedding backfill skipped concurrently changed row %s", row["id"])
         except Exception as exc:  # never abort the complete run on one bad batch
+            from services.job_safety import ProviderStopError
+            if isinstance(exc, ProviderStopError):
+                logger.warning("Knowledge embedding backfill stopped by provider: %s", exc)
+                raise
             failed += len(rows)
             failed_ids.extend(row["id"] for row in rows)
             logger.warning("Knowledge embedding backfill batch failed for %d records: %s", len(rows), exc)
@@ -201,6 +205,10 @@ async def _backfill_source_tiers(*, batch_size: int, max_records: Optional[int])
                         """, (vector, model, len(vector), row["id"], model))
                         succeeded += int(cur.rowcount == 1)
             except Exception as exc:
+                from services.job_safety import ProviderStopError
+                if isinstance(exc, ProviderStopError):
+                    logger.warning("%s embedding backfill stopped by provider: %s", table, exc)
+                    raise
                 failed += len(rows)
                 failed_ids.update(row["id"] for row in rows)
                 logger.warning("%s embedding backfill batch failed for %d records: %s", table, len(rows), exc)

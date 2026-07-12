@@ -796,6 +796,31 @@ def _run_migrations(cursor):
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_pipeline_runs_job ON memory_pipeline_runs (job, created_at DESC)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_pipeline_runs_created ON memory_pipeline_runs (created_at DESC)")
 
+    # Persistent, app-wide operational alerts. These are intentionally separate
+    # from the append-only pipeline log so a provider hard-stop remains visible
+    # until it expires (rate limit) or is resolved (credits/quota).
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS memory_system_alerts (
+            code TEXT PRIMARY KEY,
+            severity TEXT NOT NULL,
+            title TEXT NOT NULL,
+            message TEXT NOT NULL,
+            source TEXT,
+            detail JSONB DEFAULT '{}',
+            active BOOLEAN NOT NULL DEFAULT TRUE,
+            expires_at TIMESTAMPTZ,
+            first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS memory_job_locks (
+            job_name TEXT PRIMARY KEY,
+            locked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            expires_at TIMESTAMPTZ NOT NULL
+        )
+    """)
+
     # Telemetry reflection idempotency log — one row per (entity, day) reflected on
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS telemetry_reflection_log (

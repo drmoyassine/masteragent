@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { 
-    Webhook, Plus, Trash2, Edit2, Check, X, AlertCircle, RefreshCw
+import {
+    Webhook, Plus, Trash2, Edit2, Check, X, AlertCircle, RefreshCw, CircleHelp
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -9,11 +9,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "sonner";
 import { 
     getOutboundWebhooks, createOutboundWebhook, 
     updateOutboundWebhook, deleteOutboundWebhook 
 } from "@/lib/api";
+
+function HelpLabel({ children, help }) {
+    return <div className="flex items-center gap-1"><Label>{children}</Label><TooltipProvider delayDuration={120}><Tooltip><TooltipTrigger asChild><button type="button" aria-label={`Help: ${children}`} className="text-muted-foreground hover:text-foreground"><CircleHelp className="h-3.5 w-3.5" /></button></TooltipTrigger><TooltipContent className="max-w-xs text-xs leading-relaxed">{help}</TooltipContent></Tooltip></TooltipProvider></div>;
+}
 
 export function OutboundWebhooksSettings() {
     const [webhooks, setWebhooks] = useState([]);
@@ -273,7 +278,7 @@ export function OutboundWebhooksSettings() {
 
                     <div className="space-y-4 py-4 max-h-[60vh] overflow-y-auto px-1">
                         <div className="space-y-2">
-                            <Label>Internal Name</Label>
+                            <HelpLabel help="A human-readable name used only in this dashboard to identify the webhook rule.">Internal Name</HelpLabel>
                             <Input 
                                 placeholder="eg. Make.com WhatsApp Responder" 
                                 value={formData.name}
@@ -282,7 +287,7 @@ export function OutboundWebhooksSettings() {
                         </div>
                         
                         <div className="space-y-2">
-                            <Label>Target URL</Label>
+                            <HelpLabel help="HTTPS endpoint that receives the outbound webhook payload. Keep secrets out of the URL where possible.">Target URL</HelpLabel>
                             <Input 
                                 placeholder="https://hook.make.com/..." 
                                 value={formData.url}
@@ -292,7 +297,7 @@ export function OutboundWebhooksSettings() {
 
                         <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-2">
-                                <Label>Debounce Time (ms)</Label>
+                                <HelpLabel help="Wait after the most recent matching interaction before sending. This combines rapid message bursts into one outbound event.">Debounce Time (ms)</HelpLabel>
                                 <Input 
                                     type="number"
                                     min={5000}
@@ -303,7 +308,7 @@ export function OutboundWebhooksSettings() {
                             </div>
                             
                             <div className="space-y-2">
-                                <Label>Payload Composition</Label>
+                                <HelpLabel help="Strict Filter sends only interactions matching the type filter. Timeline Context sends all interactions collected during the debounce window.">Payload Composition</HelpLabel>
                                 <Select 
                                     value={formData.payload_mode} 
                                     onValueChange={v => setFormData({...formData, payload_mode: v})}
@@ -320,7 +325,7 @@ export function OutboundWebhooksSettings() {
 
                         <div className="flex items-center justify-between border-y py-3 my-2">
                             <div className="space-y-0.5">
-                                <Label>Include Latest Memory</Label>
+                                <HelpLabel help="Adds the entity's latest compacted memory to the webhook payload when one is available.">Include Latest Memory</HelpLabel>
                                 <p className="text-[10px] text-muted-foreground">Attach the Entity's latest compacted knowledge base.</p>
                             </div>
                             <Switch
@@ -330,7 +335,7 @@ export function OutboundWebhooksSettings() {
                         </div>
 
                         <div className="space-y-2">
-                            <Label>Payload Interaction-Type Filter</Label>
+                            <HelpLabel help="Comma-separated interaction types that should be included or excluded from this webhook payload. Leave empty for all types.">Payload Interaction-Type Filter</HelpLabel>
                             <div className="flex gap-2">
                                 <Input
                                     placeholder="e.g. incoming_whatsapp_message,outgoing_whatsapp_message"
@@ -358,7 +363,7 @@ export function OutboundWebhooksSettings() {
 
                         <div className="space-y-3">
                             <div className="flex items-center justify-between">
-                                <Label>Trigger Conditions</Label>
+                                <HelpLabel help="Additional metadata field/value rules that must match before this webhook can trigger. With no rules, every eligible interaction can trigger it.">Trigger Conditions</HelpLabel>
                                 <Button variant="outline" size="sm" className="h-7 text-[10px]" onClick={handleAddCondition}>
                                     <Plus className="w-3 h-3 mr-1" /> Add Rule
                                 </Button>

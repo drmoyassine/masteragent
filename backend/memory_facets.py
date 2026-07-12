@@ -192,6 +192,9 @@ async def extract_facets(name: str, content: str, summary: str) -> dict:
                 out[k] = sval
         return out
     except Exception as e:
+        from services.job_safety import ProviderStopError
+        if isinstance(e, ProviderStopError):
+            raise
         logger.warning(f"extract_facets failed (returning {{}}): {e}")
         return {}
 
@@ -285,6 +288,10 @@ async def backfill_facets(batch_size: int = 25, max_records: int = 1000) -> dict
                 logger.info(f"Facet backfill progress: {processed}/{len(rows)} ({updated} enriched)")
         logger.info(f"Facet backfill complete: processed={processed}, enriched={updated}")
     except Exception as e:
+        from services.job_safety import ProviderStopError
+        if isinstance(e, ProviderStopError):
+            logger.warning("Facet backfill stopped by provider: %s", e)
+            raise
         logger.error(f"backfill_facets failed: {e}")
     return {"processed": processed, "enriched": updated}
 

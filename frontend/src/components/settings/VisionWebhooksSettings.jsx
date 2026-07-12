@@ -1,16 +1,21 @@
 import React, { useState, useEffect } from "react";
-import { Eye, Plus, Trash2, Edit2, X } from "lucide-react";
+import { Eye, Plus, Trash2, Edit2, X, CircleHelp } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "sonner";
 import {
     getVisionWebhooks, createVisionWebhook,
     updateVisionWebhook, deleteVisionWebhook
 } from "@/lib/api";
+
+function HelpLabel({ children, help }) {
+    return <div className="flex items-center gap-1"><Label>{children}</Label><TooltipProvider delayDuration={120}><Tooltip><TooltipTrigger asChild><button type="button" aria-label={`Help: ${children}`} className="text-muted-foreground hover:text-foreground"><CircleHelp className="h-3.5 w-3.5" /></button></TooltipTrigger><TooltipContent className="max-w-xs text-xs leading-relaxed">{help}</TooltipContent></Tooltip></TooltipProvider></div>;
+}
 
 /**
  * Vision/Doc parsing completion webhooks.
@@ -197,7 +202,7 @@ export function VisionWebhooksSettings() {
 
                     <div className="space-y-4 py-4 max-h-[60vh] overflow-y-auto px-1">
                         <div className="space-y-2">
-                            <Label>Internal Name</Label>
+                            <HelpLabel help="A human-readable name used only in this dashboard to identify the completion webhook.">Internal Name</HelpLabel>
                             <Input
                                 placeholder="eg. Doc Indexer"
                                 value={formData.name}
@@ -206,7 +211,7 @@ export function VisionWebhooksSettings() {
                         </div>
 
                         <div className="space-y-2">
-                            <Label>Target URL</Label>
+                            <HelpLabel help="HTTPS endpoint that receives the parsed-attachment completion payload.">Target URL</HelpLabel>
                             <Input
                                 placeholder="https://..."
                                 value={formData.url}
@@ -215,7 +220,7 @@ export function VisionWebhooksSettings() {
                         </div>
 
                         <div className="space-y-2">
-                            <Label>Doc Type Filter</Label>
+                            <HelpLabel help="Comma-separated MIME types to send, such as application/pdf. Leave empty to send every successfully parsed attachment.">Doc Type Filter</HelpLabel>
                             <Input
                                 placeholder="application/pdf,image/png,image/jpeg"
                                 className="font-mono text-xs"
@@ -226,7 +231,7 @@ export function VisionWebhooksSettings() {
                         </div>
 
                         <div className="space-y-2">
-                            <Label>Source Filter</Label>
+                            <HelpLabel help="Comma-separated interaction source values to send, such as chatwoot or crm. Leave empty for every source.">Source Filter</HelpLabel>
                             <Input
                                 placeholder="chatwoot,crm"
                                 className="font-mono text-xs"
@@ -238,7 +243,7 @@ export function VisionWebhooksSettings() {
 
                         <div className="flex items-center justify-between border-y py-3">
                             <div className="space-y-0.5">
-                                <Label>Active</Label>
+                                <HelpLabel help="When disabled, attachments are still processed and stored, but no completion webhook is sent.">Active</HelpLabel>
                                 <p className="text-[10px] text-muted-foreground">When off, parsed attachments are stored but no POST is sent.</p>
                             </div>
                             <Switch

@@ -65,7 +65,7 @@ _REFLECTION_SYSTEM_PROMPT = (
 )
 
 
-async def run_telemetry_reflection(reflection_date: Optional[str] = None):
+async def run_telemetry_reflection(reflection_date: Optional[str] = None, entity_limit: int = 100):
     """Nightly: reflect on each entity's telemetry for the given date (default:
     yesterday) and emit typed knowledge candidates. Idempotent per (entity, date)
     via the telemetry_reflection_log table."""
@@ -92,7 +92,9 @@ async def run_telemetry_reflection(reflection_date: Optional[str] = None):
                     AND l.entity_id = interactions.primary_entity_id
                     AND l.reflection_date = %s
               )
-        """, (list(TELEMETRY_TYPES), target_day, target_day))
+            ORDER BY primary_entity_type, primary_entity_id
+            LIMIT %s
+        """, (list(TELEMETRY_TYPES), target_day, target_day, entity_limit))
         entities = [dict(r) for r in cursor.fetchall()]
 
     if not entities:
@@ -105,6 +107,10 @@ async def run_telemetry_reflection(reflection_date: Optional[str] = None):
                 e["primary_entity_type"], e["primary_entity_id"], target_day, confidence_min
             )
         except Exception as ex:
+            from services.job_safety import ProviderStopError
+            if isinstance(ex, ProviderStopError):
+                logger.warning("Telemetry reflection stopped by provider: %s", ex)
+                raise
             logger.error(f"Telemetry reflection failed for {e['primary_entity_type']}/{e['primary_entity_id']}: {ex}")
     logger.info(f"Telemetry reflection ({target_day}): {total} candidate(s) created across {len(entities)} entities")
     return total
@@ -193,6 +199,11 @@ async def _reflect_entity_day(entity_type: str, entity_id: str, day: str, confid
         )
         candidates = parse_llm_json(result_text, context="telemetry_reflection")
     except Exception as e:
+        from services.job_safety import ProviderStopError
+        if isinstance(e, ProviderStopError):
+            # Do not mark this day reflected: it must remain safely resumable
+            # after the provider issue is resolved.
+            raise
         logger.error(f"Telemetry reflection LLM failed for {entity_type}/{entity_id}: {e}")
         _mark_reflected(entity_type, entity_id, day, 0)
         log_pipeline_run("telemetry_reflection", "failed", reason_code="llm_error",
@@ -307,7 +318,7 @@ def _mark_reflected(entity_type: str, entity_id: str, day: str, produced: int) -
         logger.warning(f"_mark_reflected failed for {entity_type}/{entity_id}/{day}: {e}")
 
 
-async def backfill_telemetry(max_days: int = 30) -> dict:
+async def backfill_telemetry(max_days: int = 7) -> dict:
     """Process the accumulated AI-telemetry backlog by reflecting on each
     historical day that still has unreflected telemetry, oldest-first.
 
@@ -357,6 +368,10 @@ async def backfill_telemetry(max_days: int = 30) -> dict:
             n = await run_telemetry_reflection(cur.isoformat())
             total_candidates += n
         except Exception as e:
+            from services.job_safety import ProviderStopError
+            if isinstance(e, ProviderStopError):
+                logger.warning("Telemetry backfill stopped by provider: %s", e)
+                raise
             logger.error(f"Telemetry backfill day {cur} failed: {e}")
         days_processed += 1
         if days_processed % 5 == 0:

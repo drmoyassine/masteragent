@@ -133,6 +133,9 @@ async def generate_knowledge_from_intelligence(intelligence: list) -> int:
             content = await scrub_pii(content)
             summary = await scrub_pii(summary) if summary else ""
         except Exception as e:
+            from services.job_safety import ProviderStopError
+            if isinstance(e, ProviderStopError):
+                raise
             logger.warning(f"PII scrub failed for Intelligence {ins['id']}: {e}")
         scrubbed_parts.append(
             f"[{', '.join(ins.get('signals') or []) or 'signal'}] {ins.get('name', '')}\n{content}"
@@ -245,6 +248,9 @@ async def generate_knowledge_from_intelligence(intelligence: list) -> int:
         )
         result = parse_llm_json(result_text, context="knowledge_generation")
     except Exception as e:
+        from services.job_safety import ProviderStopError
+        if isinstance(e, ProviderStopError):
+            raise
         logger.error(f"Knowledge generation LLM call failed: {e}")
         return 0
 
@@ -299,6 +305,9 @@ async def generate_knowledge_from_intelligence(intelligence: list) -> int:
             summary=summary, signals=signals, tags=tags,
         )
     except Exception as e:
+        from services.job_safety import ProviderStopError
+        if isinstance(e, ProviderStopError):
+            raise
         logger.warning(f"Knowledge embedding failed: {e}")
 
     metadata = result.get("metadata") or {}

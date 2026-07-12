@@ -915,7 +915,7 @@ async def trigger_backfill_facets(admin: dict = Depends(require_admin_auth)):
 
 @router.post("/trigger/backfill-telemetry")
 async def trigger_backfill_telemetry(
-    max_days: int = Query(30, description="Max historical days to reflect on per invocation (most-recent window). Re-trigger to continue."),
+    max_days: int = Query(7, description="Max historical days to reflect on per invocation (most-recent window). Re-trigger to continue."),
     admin: dict = Depends(require_admin_auth),
 ):
     """Reflect on accumulated AI-telemetry history (internal_ai_thought / internal_ai_tool_call)
@@ -960,6 +960,25 @@ async def list_pipeline_runs(
             ORDER BY created_at DESC LIMIT %s
         """, params + [limit])
         return [dict(r) for r in cursor.fetchall()]
+
+
+@router.get("/system-alerts")
+async def list_system_alerts(admin: dict = Depends(require_admin_auth)):
+    """Active operational alerts for the app-wide sticky warning banner."""
+    from services.job_safety import active_provider_stop
+    alert = active_provider_stop()
+    return {"items": [alert] if alert else []}
+
+
+@router.post("/system-alerts/{code}/resolve")
+async def resolve_system_alert(code: str, admin: dict = Depends(require_admin_auth)):
+    """Clear a provider alert after the administrator has resolved it."""
+    if code not in {"provider_rate_limited", "provider_credits_exhausted"}:
+        raise HTTPException(status_code=404, detail="Unknown system alert")
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE memory_system_alerts SET active=FALSE WHERE code=%s", (code,))
+    return {"status": "resolved", "code": code}
 
 
 @router.post("/trigger/backfill-profiles")

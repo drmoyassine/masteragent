@@ -328,6 +328,9 @@ async def embed_knowledge_text(row: Dict[str, Any]) -> Tuple[Optional[List[float
     try:
         vector = await generate_embedding(text)
     except Exception as exc:
+        from services.job_safety import ProviderStopError
+        if isinstance(exc, ProviderStopError):
+            raise
         logger.warning("Embedding failed for knowledge %s: %s", row.get("id"), exc)
         return None, model_name
     if not vector:

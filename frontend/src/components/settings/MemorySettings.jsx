@@ -388,7 +388,7 @@ function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProvide
                         </h4>
                         <div className="flex items-center justify-between">
                             <div className="space-y-0.5">
-                                <Label>Enable Rate Limiting</Label>
+                                <SettingLabel help="rate_limit_enabled">Enable Rate Limiting</SettingLabel>
                                 <p className="text-[10px] text-muted-foreground">
                                     Limit inbound API requests per agent.
                                 </p>
@@ -399,7 +399,7 @@ function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProvide
                             />
                         </div>
                         <div className="space-y-2">
-                            <Label className="text-xs font-mono">Requests per Minute (RPM)</Label>
+                            <SettingLabel help="rate_limit_rpm" className="text-xs font-mono">Requests per Minute (RPM)</SettingLabel>
                             <Input
                                 type="number"
                                 value={settings.rate_limit_per_minute || 60}
@@ -486,7 +486,7 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
                             Schedule
                         </h4>
                         <div className="space-y-2">
-                            <Label className="text-xs font-mono">Daily Run Time (UTC)</Label>
+                            <SettingLabel help="memory_run_time" className="text-xs font-mono">Daily Run Time (UTC)</SettingLabel>
                             <Input
                                 type="time"
                                 value={settings.memory_generation_time || "02:00"}
@@ -512,7 +512,7 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
                         </p>
                         <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-2">
-                                <Label className="text-xs font-mono">Chronological Memories</Label>
+                                <SettingLabel help="memory_prior_chrono" className="text-xs font-mono">Chronological Memories</SettingLabel>
                                 <Input
                                     type="number"
                                     min={0}
@@ -527,7 +527,7 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
                                 </p>
                             </div>
                             <div className="space-y-2">
-                                <Label className="text-xs font-mono">Semantic Memories</Label>
+                                <SettingLabel help="memory_prior_semantic" className="text-xs font-mono">Semantic Memories</SettingLabel>
                                 <Input
                                     type="number"
                                     min={0}
@@ -549,7 +549,7 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
                     </div>
 
                     <div className="space-y-2">
-                        <Label className="text-xs font-mono">Max Output Tokens</Label>
+                        <SettingLabel help="memory_max_tokens" className="text-xs font-mono">Max Output Tokens</SettingLabel>
                         <Input
                             type="number"
                             min={256}
@@ -578,7 +578,7 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
                         </p>
                         <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-2">
-                                <Label className="text-xs font-mono">Interaction Threshold</Label>
+                                <SettingLabel help="memory_threshold" className="text-xs font-mono">Interaction Threshold</SettingLabel>
                                 <Input
                                     type="number"
                                     min={0}
@@ -593,7 +593,7 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
                                 </p>
                             </div>
                             <div className="space-y-2">
-                                <Label className="text-xs font-mono">Safe Boundary Types</Label>
+                                <SettingLabel help="memory_safe_boundary" className="text-xs font-mono">Safe Boundary Types</SettingLabel>
                                 <Input
                                     placeholder="e.g. outgoing_whatsapp_message,outgoing_email"
                                     className="font-mono text-xs"
@@ -623,7 +623,7 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
                         </h4>
                         <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-2">
-                                <Label className="text-xs font-mono">Max Retries</Label>
+                                <SettingLabel help="memory_retries" className="text-xs font-mono">Max Retries</SettingLabel>
                                 <Input
                                     type="number"
                                     min="0"
@@ -635,7 +635,7 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
                                 />
                             </div>
                             <div className="space-y-2">
-                                <Label className="text-xs font-mono">Retry Delay (ms)</Label>
+                                <SettingLabel help="memory_retry_delay" className="text-xs font-mono">Retry Delay (ms)</SettingLabel>
                                 <Input
                                     type="number"
                                     min="0"
@@ -685,7 +685,7 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
                                     <div className="space-y-4">
                                         <div className="grid grid-cols-2 gap-4">
                                             <div className="space-y-2">
-                                                <Label className="text-xs font-mono">Chunk Size (tokens)</Label>
+                                                <SettingLabel help="embedding_chunk_size" className="text-xs font-mono">Chunk Size (tokens)</SettingLabel>
                                                 <Input
                                                     type="number"
                                                     min={100}
@@ -697,7 +697,7 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
                                                 />
                                             </div>
                                             <div className="space-y-2">
-                                                <Label className="text-xs font-mono">Chunk Overlap (tokens)</Label>
+                                                <SettingLabel help="embedding_chunk_overlap" className="text-xs font-mono">Chunk Overlap (tokens)</SettingLabel>
                                                 <Input
                                                     type="number"
                                                     min={0}
@@ -789,7 +789,7 @@ function IntelligenceTab({ settings, onUpdateSettings, llmConfigs, llmProviders,
                         </p>
                         <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-2">
-                                <Label className="text-xs font-mono">Chronological</Label>
+                                <SettingLabel help="intelligence_prior_chrono" className="text-xs font-mono">Chronological</SettingLabel>
                                 <Input
                                     type="number"
                                     min={0}
@@ -804,7 +804,7 @@ function IntelligenceTab({ settings, onUpdateSettings, llmConfigs, llmProviders,
                                 </p>
                             </div>
                             <div className="space-y-2">
-                                <Label className="text-xs font-mono">Semantic</Label>
+                                <SettingLabel help="intelligence_prior_semantic" className="text-xs font-mono">Semantic</SettingLabel>
                                 <Input
                                     type="number"
                                     min={0}
@@ -820,7 +820,7 @@ function IntelligenceTab({ settings, onUpdateSettings, llmConfigs, llmProviders,
                             </div>
                         </div>
                         <div className="space-y-2 border-t pt-3">
-                            <Label className="text-xs font-mono">Knowledge Cross-Reference (Semantic)</Label>
+                            <SettingLabel help="intelligence_prior_knowledge" className="text-xs font-mono">Knowledge Cross-Reference (Semantic)</SettingLabel>
                             <Input
                                 type="number"
                                 min={0}
@@ -839,7 +839,7 @@ function IntelligenceTab({ settings, onUpdateSettings, llmConfigs, llmProviders,
                             All prior context is injected as labeled sections in the LLM prompt to prevent redundant generation.
                         </p>
                         <div className="space-y-2 border-t pt-3">
-                            <Label className="text-xs font-mono">Max Output Tokens</Label>
+                            <SettingLabel help="intelligence_max_tokens" className="text-xs font-mono">Max Output Tokens</SettingLabel>
                             <Input
                                 type="number"
                                 min={256}
@@ -865,7 +865,7 @@ function IntelligenceTab({ settings, onUpdateSettings, llmConfigs, llmProviders,
                         </h4>
                         <div className="flex items-center justify-between">
                             <div className="space-y-0.5 pr-4">
-                                <Label className="text-xs font-mono">Nightly Sweep</Label>
+                                <SettingLabel help="intelligence_schedule_enabled" className="text-xs font-mono">Nightly Sweep</SettingLabel>
                                 <p className="text-[10px] text-muted-foreground">
                                     Reflect every night on whatever accumulated — even entities below the threshold.
                                     Fires alongside the threshold valve (whichever comes first).
@@ -878,12 +878,12 @@ function IntelligenceTab({ settings, onUpdateSettings, llmConfigs, llmProviders,
                         </div>
                         <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-1">
-                                <Label className="text-xs font-mono">Daily Run Time (UTC)</Label>
+                                <SettingLabel help="intelligence_run_time" className="text-xs font-mono">Daily Run Time (UTC)</SettingLabel>
                                 <Input type="time" value={settings.intelligence_generation_time || "02:30"}
                                     onChange={(e) => onUpdateSettings("intelligence_generation_time", e.target.value)} />
                             </div>
                             <div className="space-y-1">
-                                <Label className="text-xs font-mono">Schedule Floor (min memories)</Label>
+                                <SettingLabel help="intelligence_schedule_floor" className="text-xs font-mono">Schedule Floor (min memories)</SettingLabel>
                                 <Input type="number" min={1}
                                     value={settings.intelligence_schedule_floor !== undefined ? settings.intelligence_schedule_floor : 2}
                                     onChange={(e) => onUpdateSettings("intelligence_schedule_floor", parseInt(e.target.value) || 1)} />
@@ -899,7 +899,7 @@ function IntelligenceTab({ settings, onUpdateSettings, llmConfigs, llmProviders,
                             Threshold Trigger
                         </h4>
                         <div className="space-y-2">
-                            <Label className="text-xs font-mono">Global Default Threshold (N memories)</Label>
+                            <SettingLabel help="intelligence_threshold" className="text-xs font-mono">Global Default Threshold (N memories)</SettingLabel>
                             <Input
                                 type="number"
                                 min={2}
@@ -913,7 +913,7 @@ function IntelligenceTab({ settings, onUpdateSettings, llmConfigs, llmProviders,
                             </p>
                         </div>
                         <div className="space-y-3 pt-2">
-                            <Label className="text-xs font-mono">Entity-Specific Overrides</Label>
+                            <SettingLabel help="intelligence_overrides" className="text-xs font-mono">Entity-Specific Overrides</SettingLabel>
                             <p className="text-[10px] text-muted-foreground">
                                 Different entities accumulate interactions at different rates (e.g., an API token might need 1,000 interactions before compaction, while a Contact might need only 5).
                             </p>
@@ -927,10 +927,10 @@ function IntelligenceTab({ settings, onUpdateSettings, llmConfigs, llmProviders,
 
                     {/* § Auto-Approve */}
                     <div className="space-y-4 pt-2">
-                        <h4 className="text-sm font-semibold flex items-center gap-1.5 border-b pb-1">
+                        <div className="text-sm font-semibold flex items-center gap-1.5 border-b pb-1">
                             <CheckCircle2 className="w-4 h-4 text-green-500" />
-                            Auto-Approve
-                        </h4>
+                            <SettingLabel help="intelligence_auto_approve" className="text-sm font-semibold">Auto-Approve</SettingLabel>
+                        </div>
                         <p className="text-[10px] text-muted-foreground -mt-2">
                             When enabled, newly generated intelligence items are automatically set to <span className="font-mono">confirmed</span> instead of <span className="font-mono">draft</span>. Only enable for entity types where you trust the pipeline output.
                         </p>
@@ -1726,6 +1726,27 @@ export function MemorySettings({
 }
 
 const KNOWLEDGE_SETTING_HELP = {
+    rate_limit_enabled: "Applies a per-agent limit to incoming API requests. Enable it when clients or integrations must be protected from bursts.",
+    rate_limit_rpm: "Maximum incoming API requests an agent may make in one minute while rate limiting is enabled.",
+    memory_run_time: "UTC time for the daily sweep that turns pending interactions into memory records.",
+    memory_prior_chrono: "Number of the entity's newest memory records provided to the memory model for continuity.",
+    memory_prior_semantic: "Number of earlier memories most related to the current interactions, found through semantic search.",
+    memory_max_tokens: "Maximum length of the generated memory output. Higher values retain more detail but use more model tokens.",
+    memory_threshold: "Creates a memory before the daily sweep once this many pending interactions accumulate for an entity. Zero disables this early trigger.",
+    memory_safe_boundary: "Interaction types that may close a memory window. This prevents an active conversation from being split into separate memories.",
+    memory_retries: "Maximum attempts to retry a failed memory-generation job before it is marked failed.",
+    memory_retry_delay: "Initial wait before retrying a failed memory job. Later retries use exponential backoff from this value.",
+    embedding_chunk_size: "Maximum size of an interaction-text chunk sent for embedding. Larger chunks carry more context; smaller chunks make retrieval more precise.",
+    embedding_chunk_overlap: "Text repeated between adjacent embedding chunks so information at a boundary is not lost.",
+    intelligence_prior_chrono: "Number of the entity's most recent intelligence records included to avoid repeating known findings.",
+    intelligence_prior_semantic: "Number of the entity's most semantically related intelligence records included during generation.",
+    intelligence_prior_knowledge: "Number of approved organizational Knowledge records supplied as cross-entity context when generating intelligence.",
+    intelligence_max_tokens: "Maximum total length of the intelligence response. Raise only when valid multi-insight output is being truncated.",
+    intelligence_schedule_enabled: "Enables the daily intelligence sweep, in addition to the threshold-based trigger.",
+    intelligence_run_time: "UTC time for the daily intelligence sweep.",
+    intelligence_schedule_floor: "Minimum uncompacted memories required for the scheduled sweep to generate intelligence for an entity.",
+    intelligence_threshold: "Default number of uncompacted memories that triggers intelligence generation before the scheduled sweep.",
+    intelligence_overrides: "Optional per-entity threshold overrides. Use only where an entity type accumulates evidence at a meaningfully different rate.",
     generation_enabled: "Turns all scheduled and threshold-driven Knowledge generation on or off. Existing Knowledge is not changed.",
     generation_time: "UTC time for the single daily run of all enabled Knowledge pathways.",
     evidence_threshold: "Minimum source evidence required before a pathway may generate Knowledge. Higher values wait for more evidence; lower values generate sooner.",

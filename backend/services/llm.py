@@ -6,6 +6,7 @@ from typing import Optional
 import httpx
 
 from services.config_helpers import get_llm_config
+from services.job_safety import ProviderStopError, provider_stop_from_response, record_provider_stop
 
 logger = logging.getLogger(__name__)
 
@@ -105,8 +106,16 @@ async def call_llm(
             )
             if response.status_code == 200:
                 return response.json()["choices"][0]["message"]["content"]
+            provider_stop = provider_stop_from_response(
+                response.status_code, response.text, response.headers.get("retry-after")
+            )
+            if provider_stop:
+                record_provider_stop(provider_stop, source=f"llm:{task_type}")
+                raise provider_stop
             logger.error(f"LLM call failed: {response.status_code} - {response.text}")
             raise RuntimeError(f"LLM call failed: {response.status_code} - {response.text}")
+    except ProviderStopError:
+        raise
     except Exception as e:
         logger.error(f"LLM call error: {e}")
         raise RuntimeError(str(e))
@@ -161,6 +170,12 @@ async def call_llm_with_thinking(
                     json=request_body,
                 )
                 if response.status_code != 200:
+                    provider_stop = provider_stop_from_response(
+                        response.status_code, response.text, response.headers.get("retry-after")
+                    )
+                    if provider_stop:
+                        record_provider_stop(provider_stop, source=f"llm:{task_type}")
+                        raise provider_stop
                     logger.error(f"LLM thinking call failed: {response.status_code} - {response.text}")
                     raise RuntimeError(f"LLM call failed: {response.status_code} - {response.text}")
 
@@ -198,8 +213,16 @@ async def call_llm_with_thinking(
                     )
                     if final_resp.status_code == 200:
                         return final_resp.json()["choices"][0]["message"].get("content") or ""
+                    provider_stop = provider_stop_from_response(
+                        final_resp.status_code, final_resp.text, final_resp.headers.get("retry-after")
+                    )
+                    if provider_stop:
+                        record_provider_stop(provider_stop, source=f"llm:{task_type}")
+                        raise provider_stop
                     raise RuntimeError(f"Final LLM call failed: {final_resp.status_code}")
 
+    except ProviderStopError:
+        raise
     except Exception as e:
         logger.error(f"LLM thinking call error: {e}")
         raise RuntimeError(str(e))
@@ -235,8 +258,16 @@ async def call_llm_vision(prompt: str, image_base64: str, mime_type: str = "imag
             )
             if response.status_code == 200:
                 return response.json()["choices"][0]["message"]["content"]
+            provider_stop = provider_stop_from_response(
+                response.status_code, response.text, response.headers.get("retry-after")
+            )
+            if provider_stop:
+                record_provider_stop(provider_stop, source="vision")
+                raise provider_stop
             logger.error(f"Vision LLM call failed: {response.status_code}")
             raise RuntimeError(f"Vision LLM call failed: {response.status_code} - {response.text}")
+    except ProviderStopError:
+        raise
     except Exception as e:
         logger.error(f"Vision LLM call error: {e}")
         raise RuntimeError(str(e))

@@ -25,14 +25,37 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { canAdministerMemory } from "@/lib/access";
+import { getSystemAlerts, resolveSystemAlert } from "@/lib/api";
 
 export const MainLayout = ({ children }) => {
   const { user, logout } = useAuth();
   const { isConfigured, storageMode, hasGitHub } = useConfig();
   const navigate = useNavigate();
+  const [systemAlerts, setSystemAlerts] = useState([]);
+
+  const resolveAlert = async (code) => {
+    try {
+      await resolveSystemAlert(code);
+      setSystemAlerts((alerts) => alerts.filter((alert) => alert.code !== code));
+    } catch {
+      // Keep the sticky alert visible if its state could not be updated.
+    }
+  };
+
+  useEffect(() => {
+    if (!canAdministerMemory(user)) return undefined;
+    let mounted = true;
+    const refresh = () => getSystemAlerts()
+      .then(({ data }) => { if (mounted) setSystemAlerts(data?.items || []); })
+      .catch(() => { /* A warning banner must never break normal navigation. */ });
+    refresh();
+    const timer = window.setInterval(refresh, 30000);
+    return () => { mounted = false; window.clearInterval(timer); };
+  }, [user]);
 
   const navItems = [
     { path: "/app", icon: LayoutDashboard, label: "Prompts", end: true },
@@ -123,6 +146,19 @@ export const MainLayout = ({ children }) => {
 
       {/* Main Content */}
       <main className="main-content">
+        {systemAlerts.map((alert) => (
+          <Alert key={alert.code} className="mx-6 mt-4 border-red-500/60 bg-red-500/10">
+            <AlertTriangle className="h-4 w-4 text-red-400" />
+            <AlertDescription className="text-red-100">
+              <span className="font-medium">{alert.title}.</span>{" "}{alert.message}
+              {alert.code === "provider_rate_limited" && " New AI jobs are paused until the provider window expires; retry the affected job afterward."}
+              {alert.code === "provider_credits_exhausted" && " New AI jobs are paused. Add credits or resolve the provider quota, then retry affected jobs."}
+              <Button variant="link" className="ml-2 h-auto p-0 text-red-200 underline" onClick={() => resolveAlert(alert.code)}>
+                I resolved this
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ))}
         {/* Configuration Warning Banner */}
         {!(isConfigured || hasGitHub) && (
           <Alert className="mx-6 mt-4 border-yellow-500/50 bg-yellow-500/10">

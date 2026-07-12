@@ -36,7 +36,46 @@ memory_worker = None
 knowledge_worker = None
 
 async def _process_bulk_job(job: Job, token: str):
+    singleton_lock_name = None
     try:
+        # A credit/quota hard-stop must halt queued AI work cleanly. Completing
+        # the skipped job (rather than retrying it) prevents a queue storm; an
+        # operator can re-run it after resolving the provider alert.
+        ai_jobs = {
+            "ingest_interaction", "reprocess", "generate_memory", "generate_insight",
+            "generate_knowledge", "run_all_knowledge_generation", "promote_to_knowledge",
+            "extract_playbooks", "knowledge_hygiene_run", "knowledge_embedding_backfill",
+            "creation_time_consolidation", "backfill_facets", "backfill_telemetry",
+            "run_intelligence_sweep", "reflect_telemetry",
+        }
+        if job.name in ai_jobs:
+            from services.job_safety import active_provider_stop
+            provider_block = active_provider_stop()
+            if provider_block:
+                from memory_db_writes import log_pipeline_run
+                log_pipeline_run(job.name, "blocked", reason_code=provider_block["code"],
+                                 detail={"message": provider_block["message"], "queue_job_id": str(job.id)},
+                                 trigger="queue")
+                logger.warning("Skipping %s (%s): %s", job.name, job.id, provider_block["code"])
+                return {"status": "blocked", "reason": provider_block["code"]}
+
+        singleton_jobs = {
+            "knowledge_embedding_backfill", "backfill_facets", "backfill_telemetry",
+            "run_all_knowledge_generation", "run_consolidation", "knowledge_hygiene_run",
+            "extract_playbooks",
+        }
+        if job.name in singleton_jobs:
+            from services.job_safety import try_acquire_singleton_job
+            if not try_acquire_singleton_job(job.name):
+                from memory_db_writes import log_pipeline_run
+                log_pipeline_run(job.name, "skipped", reason_code="already_running",
+                                 detail={"queue_job_id": str(job.id)}, trigger="queue")
+                logger.warning("Skipping duplicate maintenance job %s (%s)", job.name, job.id)
+                return {"status": "skipped", "reason": "already_running"}
+            singleton_lock_name = job.name
+            from memory_db_writes import log_pipeline_run
+            log_pipeline_run(job.name, "started", detail={"queue_job_id": str(job.id)}, trigger="queue")
+
         # Import dynamically to avoid circular dependencies at boot
         from memory_tasks import (
             process_interaction, 
@@ -100,7 +139,7 @@ async def _process_bulk_job(job: Job, token: str):
             from memory_telemetry import run_telemetry_reflection, backfill_telemetry
             await run_playbook_check()
             if job.data.get("drain"):
-                await backfill_telemetry(max_days=int(job.data.get("max_days", 30)))
+                await backfill_telemetry(max_days=int(job.data.get("max_days", 7)))
             else:
                 await run_telemetry_reflection(job.data.get("reflection_date"))
 
@@ -166,7 +205,7 @@ async def _process_bulk_job(job: Job, token: str):
 
         elif job.name == "backfill_telemetry":
             from memory_telemetry import backfill_telemetry
-            await backfill_telemetry(max_days=int(job.data.get("max_days", 30)))
+            await backfill_telemetry(max_days=int(job.data.get("max_days", 7)))
 
         elif job.name == "run_intelligence_sweep":
             from memory_compaction import run_compaction_check
@@ -180,6 +219,9 @@ async def _process_bulk_job(job: Job, token: str):
             logger.warning(f"Unknown job name: {job.name}")
 
         logger.info(f"Successfully processed bulk job {job.id} ({job.name})")
+        if singleton_lock_name:
+            from memory_db_writes import log_pipeline_run
+            log_pipeline_run(job.name, "completed", detail={"queue_job_id": str(job.id)}, trigger="queue")
         
         # Mathematical rate limiting sequential block
         sleep_interval = 60.0 / (rpm if rpm and rpm > 0 else 60)
@@ -187,6 +229,15 @@ async def _process_bulk_job(job: Job, token: str):
             
     except Exception as e:
         logger.error(f"Bulk job {job.id} failed: {e}")
+
+        from services.job_safety import ProviderStopError
+        if isinstance(e, ProviderStopError):
+            from memory_db_writes import log_pipeline_run
+            log_pipeline_run(job.name, "blocked", reason_code=e.code,
+                             detail={"message": str(e), "queue_job_id": str(job.id)}, trigger="queue")
+            # Do not re-raise: a provider stop is operational state, not a
+            # per-record failure that BullMQ should repeatedly retry.
+            return {"status": "blocked", "reason": e.code}
         
         # DLQ logic: If this is the final attempt, update database status
         attempts_made = job.attemptsMade + 1
@@ -208,6 +259,10 @@ async def _process_bulk_job(job: Job, token: str):
                 logger.error(f"DLQ update failed for job {job.id}: {dlq_e}")
                 
         raise e
+    finally:
+        if singleton_lock_name:
+            from services.job_safety import release_singleton_job
+            release_singleton_job(singleton_lock_name)
 
 def _handle_completed(job, result):
     logger.info(f"Job {job.id} completed successfully")

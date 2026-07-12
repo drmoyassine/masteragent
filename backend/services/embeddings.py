@@ -5,6 +5,7 @@ from typing import List
 import httpx
 
 from services.config_helpers import get_llm_config
+from services.job_safety import ProviderStopError, provider_stop_from_response, record_provider_stop
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +33,16 @@ async def generate_embedding(text: str) -> List[float]:
             )
             if response.status_code == 200:
                 return response.json()["data"][0]["embedding"]
+            provider_stop = provider_stop_from_response(
+                response.status_code, response.text, response.headers.get("retry-after")
+            )
+            if provider_stop:
+                record_provider_stop(provider_stop, source="embedding")
+                raise provider_stop
             logger.error(f"Embedding call failed: {response.status_code}")
             raise RuntimeError(f"Embedding call failed: {response.status_code} - {response.text}")
+    except ProviderStopError:
+        raise
     except Exception as e:
         logger.error(f"Embedding call error: {e}")
         raise RuntimeError(str(e))
@@ -70,8 +79,16 @@ async def generate_embeddings_batch(texts: List[str]) -> List[List[float]]:
                         f"Batch embedding response count mismatch: expected {len(texts)}, got {len(vectors)}"
                     )
                 return vectors
+            provider_stop = provider_stop_from_response(
+                response.status_code, response.text, response.headers.get("retry-after")
+            )
+            if provider_stop:
+                record_provider_stop(provider_stop, source="embedding_backfill")
+                raise provider_stop
             logger.error(f"Batch embedding failed: {response.status_code}")
             raise RuntimeError(f"Batch embedding failed: {response.status_code} - {response.text}")
+    except ProviderStopError:
+        raise
     except Exception as e:
         logger.error(f"Batch embedding error: {e}")
         raise RuntimeError(str(e))

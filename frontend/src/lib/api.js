@@ -192,6 +192,8 @@ export const exportKnowledgeMarkdown = (id) => api.get(`/memory/admin/knowledge/
 export const exportKnowledgePack = (params) => api.get('/memory/admin/knowledge-pack', { params, responseType: 'blob' });
 export const importSkillMd = (data) => api.post('/memory/skills/import', data);
 export const getPipelineRuns = (params) => api.get('/memory/pipeline-runs', { params });
+export const getSystemAlerts = () => api.get('/memory/system-alerts');
+export const resolveSystemAlert = (code) => api.post(`/memory/system-alerts/${code}/resolve`);
 export const getKnowledgeById = (id) => api.get(`/memory/admin/knowledge/${id}`);
 export const getKnowledgeFacets = (params) => api.get('/memory/knowledge/facets', { params });
 export const triggerBackfillFacets = () => api.post('/memory/trigger/backfill-facets');
