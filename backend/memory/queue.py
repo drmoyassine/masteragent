@@ -26,9 +26,30 @@ class PromoteKnowledgePayload(TypedDict):
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379")
 
-interactions_queue = Queue("interactions_ops", opts={"connection": REDIS_URL})
-memory_queue = Queue("memory_ops", opts={"connection": REDIS_URL})
-knowledge_queue = Queue("knowledge_ops", opts={"connection": REDIS_URL})
+
+def _positive_int_env(name: str, default: int) -> int:
+    """Read a bounded queue setting without allowing malformed deployment envs."""
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        logger.warning("Invalid %s; using %s", name, default)
+        return default
+    return max(0, value)
+
+
+# BullMQ stores completed/failed job payloads unless retention is explicitly
+# bounded.  Counts are deliberately configurable because production operators
+# may need a larger audit window, but must never be unbounded by default.
+BULL_REMOVE_ON_COMPLETE = _positive_int_env("BULL_REMOVE_ON_COMPLETE_COUNT", 1000)
+BULL_REMOVE_ON_FAIL = _positive_int_env("BULL_REMOVE_ON_FAIL_COUNT", 1000)
+BULL_DEFAULT_JOB_OPTIONS = {
+    "removeOnComplete": BULL_REMOVE_ON_COMPLETE,
+    "removeOnFail": BULL_REMOVE_ON_FAIL,
+}
+
+interactions_queue = Queue("interactions_ops", opts={"connection": REDIS_URL, "defaultJobOptions": BULL_DEFAULT_JOB_OPTIONS})
+memory_queue = Queue("memory_ops", opts={"connection": REDIS_URL, "defaultJobOptions": BULL_DEFAULT_JOB_OPTIONS})
+knowledge_queue = Queue("knowledge_ops", opts={"connection": REDIS_URL, "defaultJobOptions": BULL_DEFAULT_JOB_OPTIONS})
 memory_bulk_queue = interactions_queue
 
 interactions_worker = None
