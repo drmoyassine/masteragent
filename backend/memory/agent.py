@@ -357,7 +357,10 @@ async def get_has_context(
         if summary_only:
             cursor.execute("""
                 SELECT COUNT(*) AS count, MAX(timestamp) AS last_date
-                FROM interactions WHERE primary_entity_type=%s AND primary_entity_id=%s
+                FROM interactions
+                WHERE primary_entity_type=%s AND primary_entity_id=%s
+                  AND status IN ('pending', 'failed')
+                  AND interaction_type NOT IN ('internal_ai_tool_call', 'internal_ai_thought')
             """, (entity_type, entity_id))
             i_summary = cursor.fetchone() or {}
             cursor.execute("""
@@ -374,7 +377,7 @@ async def get_has_context(
             m_count = int(m_summary.get("count") or 0)
             ins_count = int(ins_summary.get("count") or 0)
             return ContextStatusResponse(
-                has_context=bool(i_count or ins_count),
+                has_context=bool(i_count or m_count or ins_count),
                 interactions_count=i_count,
                 last_interaction_date=str(i_summary["last_date"]) if i_summary.get("last_date") else None,
                 interactions_ids=[],
@@ -386,7 +389,13 @@ async def get_has_context(
                 Intelligences_ids=[],
                 intelligences=[], knowledge_count=0, knowledge=[],
             )
-        cursor.execute("SELECT id, timestamp FROM interactions WHERE primary_entity_type = %s AND primary_entity_id = %s ORDER BY timestamp DESC", (entity_type, entity_id))
+        cursor.execute("""
+            SELECT id, timestamp FROM interactions
+            WHERE primary_entity_type = %s AND primary_entity_id = %s
+              AND status IN ('pending', 'failed')
+              AND interaction_type NOT IN ('internal_ai_tool_call', 'internal_ai_thought')
+            ORDER BY timestamp DESC
+        """, (entity_type, entity_id))
         i_rows = cursor.fetchall()
         cursor.execute("SELECT id, date FROM memories WHERE primary_entity_type = %s AND primary_entity_id = %s ORDER BY date DESC", (entity_type, entity_id))
         m_rows = cursor.fetchall()
@@ -471,8 +480,8 @@ async def get_context(
     ),
     agent: dict = Depends(verify_agent_key)
 ):
-    """Return full context for an entity: pending+enriched interactions
-    (unprocessed), all memories, and all intelligence. Payload shape matches
+    """Return full context for an entity: uncompacted interactions
+    (pending/failed, excluding telemetry), all memories, and all intelligence. Payload shape matches
     the outbound webhook so agents can request the same context on demand.
 
     Optional ?interaction_types=a,b&interaction_types_mode=include|exclude
@@ -487,17 +496,15 @@ async def get_context(
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
 
-        # Matches the outbound webhook's step-2 SELECT: all interactions for the
-        # entity that are either still pending OR were recently processed. This
-        # catches interactions marked 'done' by memory generation while avoiding
-        # stale historical data. The is_enriched flag rides on each row so callers
-        # can detect attachments still being parsed.
-        lookback_seconds = 120  # 2-minute window to catch race conditions
+        # “Uncompacted” means not yet successfully processed into a memory.
+        # Failed rows remain eligible for retry. Completed historical rows are
+        # deliberately excluded; callers should use the memories collection for
+        # their compacted representation.
         interactions_query = f"""
             SELECT id, interaction_type, content, metadata, timestamp, source, is_enriched
             FROM interactions
             WHERE primary_entity_type = %s AND primary_entity_id = %s
-              AND (status = 'pending' OR timestamp > NOW() - INTERVAL '{lookback_seconds}'::interval)
+              AND status IN ('pending', 'failed')
         """
         interactions_params: list = [entity_type, entity_id]
         if type_filter:
@@ -506,6 +513,10 @@ async def get_context(
             else:
                 interactions_query += " AND interaction_type = ANY(%s)"
             interactions_params.append(type_filter)
+        else:
+            # Telemetry is a producer input for reflection, not user/entity
+            # context. Keep it out unless a caller explicitly asks for it.
+            interactions_query += " AND interaction_type NOT IN ('internal_ai_tool_call', 'internal_ai_thought')"
         interactions_query += " ORDER BY timestamp DESC"
         if interaction_limit:
             interactions_query += " LIMIT %s"
