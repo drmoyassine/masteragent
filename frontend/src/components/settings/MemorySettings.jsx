@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import api, { triggerMemoryGeneration, triggerIntelligenceCheck, triggerKnowledgeCheck, triggerPlaybookExtraction, exportKnowledgePack, triggerBackfillFacets, triggerReflectTelemetry, fetchProviderModels, analyzeHygieneNow, backfillEmbeddings, getEmbeddingCoverage, getPipelineRuns, getMaintenanceControls, getMaintenanceEligibleCounts, setMaintenanceControl } from "@/lib/api";
+import api, { triggerMemoryGeneration, triggerIntelligenceCheck, triggerKnowledgeCheck, triggerPlaybookExtraction, exportKnowledgePack, triggerBackfillFacets, triggerReflectTelemetry, triggerInteractionRetention, fetchProviderModels, analyzeHygieneNow, backfillEmbeddings, getEmbeddingCoverage, getPipelineRuns, getMaintenanceControls, getMaintenanceEligibleCounts, setMaintenanceControl } from "@/lib/api";
 import { useEffect } from "react";
 
 // â”€â”€â”€ Threshold Overrides Table â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -331,6 +331,7 @@ function PromptStructurePreview({ sections }) {
 
 // â”€â”€â”€ Interactions Tab â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, onDeleteConfig, onAddConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline }) {
+    const [retentionRunning, setRetentionRunning] = useState(false);
     const pipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "interactions" && c.task_type !== "embedding").sort((a,b) => a.execution_order - b.execution_order);
 
     return (
@@ -414,6 +415,40 @@ function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProvide
                         </div>
                     </div>
 
+                </CardContent>
+            </Card>
+
+            <Card>
+                <CardHeader className="pb-3">
+                    <CardTitle className="text-lg">Raw Interaction Retention</CardTitle>
+                    <CardDescription className="text-xs">
+                        Remove old source interactions after their processing outcome is recorded. Default retention is 30 days.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-1">
+                            <SettingLabel help="interaction_retention_days" className="text-xs font-mono">Retention period (days)</SettingLabel>
+                            <Input type="number" min={1} max={3650}
+                                value={settings.interaction_retention_days ?? 30}
+                                onChange={(e) => onUpdateSettings("interaction_retention_days", Math.max(1, parseInt(e.target.value, 10) || 30))} />
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                            <div>
+                                <SettingLabel help="interaction_retain_until_processed">Retain until processing completes</SettingLabel>
+                                <p className="text-[10px] text-muted-foreground">Protect pending, failed, and unreflected source records.</p>
+                            </div>
+                            <Switch checked={settings.interaction_retain_until_processed ?? true}
+                                onCheckedChange={(v) => onUpdateSettings("interaction_retain_until_processed", v)} />
+                        </div>
+                    </div>
+                    <Button variant="outline" disabled={retentionRunning} onClick={async () => {
+                        setRetentionRunning(true);
+                        try { await triggerInteractionRetention({ batch_size: 500, max_records: 5000 }); toast.success("Interaction retention cleanup queued"); }
+                        catch (e) { toast.error(e?.response?.data?.detail || "Failed to queue retention cleanup"); }
+                        finally { setRetentionRunning(false); }
+                    }}>Run bounded cleanup</Button>
+                    <p className="text-[10px] text-muted-foreground">Each run deletes at most 5,000 eligible records. Failed or unfinished telemetry remains protected when the toggle is on.</p>
                 </CardContent>
             </Card>
 
@@ -1732,6 +1767,8 @@ export function MemorySettings({
 }
 
 const KNOWLEDGE_SETTING_HELP = {
+    interaction_retention_days: "Number of days raw interactions are retained after their processing outcome is complete. This does not delete memories, intelligence, or Knowledge.",
+    interaction_retain_until_processed: "When enabled, pending, failed, and unreflected interactions cannot be removed by age-based cleanup. A telemetry day with no reusable learning counts as completed.",
     rate_limit_enabled: "Applies a per-agent limit to incoming API requests. Enable it when clients or integrations must be protected from bursts.",
     rate_limit_rpm: "Maximum incoming API requests an agent may make in one minute while rate limiting is enabled.",
     memory_run_time: "UTC time for the daily sweep that turns pending interactions into memory records.",
@@ -1890,7 +1927,10 @@ const OPERATION_DEFINITIONS = {
     facet_backfill: { label: "Facet backfill", job: "backfill_facets", eligibleKey: "facet_backfill", defaultRecords: 25, maxRecords: 100, maxTotal: 1000000, defaultBatches: 10, button: "Backfill missing Knowledge facets", description: "Extract governed facets for active Knowledge records that currently have none." },
 };
 
-const JOB_LABELS = Object.fromEntries(Object.values(OPERATION_DEFINITIONS).map(def => [def.job, def.label]));
+const JOB_LABELS = {
+    ...Object.fromEntries(Object.values(OPERATION_DEFINITIONS).map(def => [def.job, def.label])),
+    interaction_retention: "Interaction retention",
+};
 
 function KnowledgeOperations({ runs, controls, eligibleCounts, onRefresh, settings }) {
     const [operation, setOperation] = useState("embedding_backfill");

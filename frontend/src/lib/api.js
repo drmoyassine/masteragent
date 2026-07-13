@@ -208,6 +208,7 @@ export const getKnowledgeById = (id) => api.get(`/memory/admin/knowledge/${id}`)
 export const getKnowledgeFacets = (params) => api.get('/memory/knowledge/facets', { params });
 export const triggerBackfillFacets = (options = {}) => api.post('/memory/trigger/backfill-facets', null, { params: options });
 export const triggerReflectTelemetry = (reflectionDate) => api.post('/memory/trigger/reflect-telemetry', null, { params: reflectionDate ? { reflection_date: reflectionDate } : {} });
+export const triggerInteractionRetention = (options = {}) => api.post('/memory/trigger/interaction-retention', null, { params: options });
 export const getMemoryStats = () => api.get('/memory/admin/stats');
 
 // Knowledge Hygiene & Consolidation - Admin UI

@@ -97,6 +97,7 @@ async def _process_bulk_job(job: Job, token: str):
             "knowledge_hygiene_run": "knowledge_hygiene_run",
             "run_consolidation": "knowledge_hygiene_run",
             "backfill_facets": "backfill_facets",
+            "interaction_retention": "interaction_retention",
         }.get(job.name)
         if control_job:
             from services.job_controls import get_command
@@ -111,7 +112,7 @@ async def _process_bulk_job(job: Job, token: str):
         singleton_jobs = {
             "knowledge_embedding_backfill", "backfill_facets", "backfill_telemetry",
             "run_all_knowledge_generation", "run_consolidation", "knowledge_hygiene_run",
-            "extract_playbooks",
+            "extract_playbooks", "interaction_retention",
         }
         if job.name in singleton_jobs:
             from services.job_safety import try_acquire_singleton_job
@@ -300,6 +301,14 @@ async def _process_bulk_job(job: Job, token: str):
         elif job.name == "backfill_telemetry":
             from memory_telemetry import backfill_telemetry
             await backfill_telemetry(max_days=int(job.data.get("max_days", 7)))
+
+        elif job.name == "interaction_retention":
+            from memory_interaction_retention import run_interaction_retention
+            operation_result = run_interaction_retention(
+                batch_size=int(job.data.get("batch_size", 500)),
+                max_records=int(job.data.get("max_records", 5000)),
+                progress_run_id=run_id,
+            )
 
         elif job.name == "run_intelligence_sweep":
             from memory_compaction import run_compaction_check

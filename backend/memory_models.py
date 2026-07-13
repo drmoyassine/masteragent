@@ -188,6 +188,9 @@ class SystemPromptResponse(BaseModel):
     updated_at: Timestamp
 
 class MemorySettingsUpdate(BaseModel):
+    # Raw interaction retention
+    interaction_retention_days: Optional[int] = Field(30, ge=1, le=3650)
+    interaction_retain_until_processed: Optional[bool] = True
     # Chunking settings
     chunk_size: Optional[int] = 400         # tokens
     chunk_overlap: Optional[int] = 80       # tokens
@@ -322,6 +325,8 @@ class MemorySettingsUpdate(BaseModel):
         return self
 
 class MemorySettingsResponse(BaseModel):
+    interaction_retention_days: int = 30
+    interaction_retain_until_processed: bool = True
     chunk_size: int = 400
     chunk_overlap: int = 80
     memory_generation_time: str = "02:00"

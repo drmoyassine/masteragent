@@ -1161,6 +1161,22 @@ async def trigger_backfill_telemetry(
     return {"message": "Telemetry backfill queued", "max_days": max_days}
 
 
+@router.post("/trigger/interaction-retention")
+async def trigger_interaction_retention(
+    batch_size: int = Query(500, ge=1, le=5000),
+    max_records: int = Query(5000, ge=1, le=1000000),
+    admin: dict = Depends(require_admin_auth),
+):
+    """Queue bounded cleanup of age-qualified raw interactions."""
+    from memory.queue import memory_bulk_queue
+    await memory_bulk_queue.add(
+        "interaction_retention",
+        {"batch_size": batch_size, "records_per_batch": batch_size, "max_records": max_records},
+        {"priority": 5},
+    )
+    return {"message": "Interaction retention queued", "batch_size": batch_size, "max_records": max_records}
+
+
 @router.post("/trigger/reflect-telemetry")
 async def trigger_reflect_telemetry(
     reflection_date: Optional[str] = Query(None, description="YYYY-MM-DD; default yesterday"),

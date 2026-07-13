@@ -634,6 +634,9 @@ def _run_migrations(cursor):
         # Playbooks: nightly cadence (was weekly-only)
         ("playbook_schedule_enabled", "BOOLEAN DEFAULT TRUE"),
         ("playbook_generation_time", "TEXT DEFAULT '03:30'"),
+        # Raw interaction retention. Processing protection is on by default.
+        ("interaction_retention_days", "INT DEFAULT 30"),
+        ("interaction_retain_until_processed", "BOOLEAN DEFAULT TRUE"),
         # Telemetry reflection (AI telemetry → skill/playbook/knowledge, option B)
         ("telemetry_reflection_enabled", "BOOLEAN DEFAULT TRUE"),
         ("telemetry_reflection_time", "TEXT DEFAULT '04:00'"),
@@ -874,6 +877,7 @@ def _run_migrations(cursor):
             entity_id           TEXT NOT NULL,
             reflection_date     DATE NOT NULL,
             candidates_created  INT DEFAULT 0,
+            outcome              TEXT DEFAULT 'knowledge_created',
             reflected_at        TIMESTAMPTZ DEFAULT NOW(),
             PRIMARY KEY (entity_type, entity_id, reflection_date)
         )
@@ -1273,6 +1277,7 @@ def _create_evidence_schema(cursor):
             UNIQUE(pathway, source_digest)
         )
     """)
+    cursor.execute("ALTER TABLE telemetry_reflection_log ADD COLUMN IF NOT EXISTS outcome TEXT DEFAULT 'knowledge_created'")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_evidence_bundles_route ON knowledge_evidence_bundles(pathway, status, route)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_evidence_bundles_canonical ON knowledge_evidence_bundles(canonical_knowledge_id)")
 

@@ -133,7 +133,7 @@ async def _reflect_entity_day(entity_type: str, entity_id: str, day: str, confid
 
     telemetry = [r for r in rows if r["interaction_type"] in TELEMETRY_TYPES]
     if not telemetry:
-        _mark_reflected(entity_type, entity_id, day, 0)
+        _mark_reflected(entity_type, entity_id, day, 0, "no_telemetry")
         return 0
 
     convo = [r for r in rows if r["interaction_type"] not in TELEMETRY_TYPES]
@@ -166,14 +166,14 @@ async def _reflect_entity_day(entity_type: str, entity_id: str, day: str, confid
                 entity_type=entity_type, outcome_signature={"day": day},
             )
             if apply_high_similarity_link(route, sources, settings):
-                _mark_reflected(entity_type, entity_id, day, 0)
+                _mark_reflected(entity_type, entity_id, day, 0, "already_covered")
                 return 0
             if (route.get("route") == "revision_assessment" and
                     settings.get("knowledge_evidence_routing_mode") == "enforced"):
                 from memory_evidence_revision_service import assess_and_apply
                 revision = await assess_and_apply(route=route, sources=sources, settings=settings)
                 if revision.get("action") in {"no_change", "revised"}:
-                    _mark_reflected(entity_type, entity_id, day, 0)
+                    _mark_reflected(entity_type, entity_id, day, 0, "already_covered")
                     return 0
                 if revision.get("action") == "manual_review":
                     log_pipeline_run("telemetry_reflection", "skipped",
@@ -205,7 +205,6 @@ async def _reflect_entity_day(entity_type: str, entity_id: str, day: str, confid
             # after the provider issue is resolved.
             raise
         logger.error(f"Telemetry reflection LLM failed for {entity_type}/{entity_id}: {e}")
-        _mark_reflected(entity_type, entity_id, day, 0)
         log_pipeline_run("telemetry_reflection", "failed", reason_code="llm_error",
                          detail={"entity_type": entity_type, "day": day})
         return 0
@@ -294,7 +293,8 @@ async def _reflect_entity_day(entity_type: str, entity_id: str, day: str, confid
         created += 1
         logger.info(f"Telemetry reflection created {target} '{name}' [{status}] for {entity_type}/{entity_id}")
 
-    _mark_reflected(entity_type, entity_id, day, created)
+    _mark_reflected(entity_type, entity_id, day, created,
+                    "knowledge_created" if created else "no_meaningful_knowledge")
     log_pipeline_run("telemetry_reflection", "created" if created else "skipped",
                      reason_code=None if created else "no_reusable_learning",
                      records_created=created,
@@ -303,17 +303,18 @@ async def _reflect_entity_day(entity_type: str, entity_id: str, day: str, confid
     return created
 
 
-def _mark_reflected(entity_type: str, entity_id: str, day: str, produced: int) -> None:
+def _mark_reflected(entity_type: str, entity_id: str, day: str, produced: int,
+                    outcome: str = "knowledge_created") -> None:
     """Record that (entity, day) was reflected on — idempotency guard."""
     try:
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO telemetry_reflection_log (entity_type, entity_id, reflection_date, candidates_created, reflected_at)
-                VALUES (%s, %s, %s, %s, NOW())
+                INSERT INTO telemetry_reflection_log (entity_type, entity_id, reflection_date, candidates_created, outcome, reflected_at)
+                VALUES (%s, %s, %s, %s, %s, NOW())
                 ON CONFLICT (entity_type, entity_id, reflection_date) DO UPDATE
-                    SET candidates_created = EXCLUDED.candidates_created, reflected_at = NOW()
-            """, (entity_type, entity_id, day, produced))
+                    SET candidates_created = EXCLUDED.candidates_created, outcome = EXCLUDED.outcome, reflected_at = NOW()
+            """, (entity_type, entity_id, day, produced, outcome))
     except Exception as e:
         logger.warning(f"_mark_reflected failed for {entity_type}/{entity_id}/{day}: {e}")
 
