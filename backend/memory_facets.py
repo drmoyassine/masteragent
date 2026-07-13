@@ -40,8 +40,22 @@ MANAGEMENT_SKILL_NAME = "Knowledge Management Protocol"
 
 
 def _management_skill_body() -> str:
-    """The protocol body taught to every agent. Concise + imperative."""
+    """The protocol body taught to every agent using the SKILL.md contract."""
     return (
+        "## Purpose\n"
+        "Use the injected knowledge index safely and retrieve authoritative full records when needed. "
+        "Treat knowledge as organizational guidance, not as a replacement for current evidence or agent tools.\n\n"
+        "## Trigger conditions\n"
+        "Apply this protocol whenever knowledge, a skill, a playbook, or an empty/sparse knowledge result is present. "
+        "It is always active for agent context.\n\n"
+        "## Inputs\n"
+        "- The injected knowledge array, which may contain full records or lean index entries.\n"
+        "- The current conversation, entity profile, and governed facet values.\n"
+        "- Retrieval and delegation tools available to the agent.\n\n"
+        "## Outputs\n"
+        "- Responses grounded in relevant full knowledge records.\n"
+        "- Explicit uncertainty when no authoritative record is found.\n"
+        "- Feedback or a delegated follow-up when a record succeeds or fails.\n\n"
         "## What the injected knowledge is\n"
         "The knowledge items provided alongside this skill are **experiential knowledge** "
         "this organization has accumulated from past interactions — best practices, lessons "
@@ -70,6 +84,21 @@ def _management_skill_body() -> str:
         "Filter only on governed facet keys. **Do not invent facet values** — use values you "
         "have seen in the index, in the contact's CRM profile, or from `GET /knowledge/facets`. "
         "If unsure whether a value is valid, broaden the search semantically instead of guessing.\n\n"
+        "## Procedure\n"
+        "1. Inspect the injected index for relevant category, summary, and facet matches.\n"
+        "2. If an entry has no `content`, retrieve its full record before relying on it.\n"
+        "3. Preserve qualifications, exceptions, jurisdiction, dates, and procedural constraints.\n"
+        "4. If the index is sparse, broaden retrieval and use assigned tools or delegation.\n"
+        "5. State uncertainty rather than treating missing knowledge as proof of absence.\n\n"
+        "## Permissions and safety\n"
+        "Read injected records and use approved retrieval/delegation tools. Do not invent facts, facet values, "
+        "permissions, or procedures. Do not treat a summary as an executable procedure. Do not expose private "
+        "records outside their permitted scope.\n\n"
+        "## Failure conditions\n"
+        "A retrieval timeout, empty result, malformed record, or conflicting record is not proof that knowledge is absent. "
+        "Retry or broaden safely, surface the conflict, and escalate when the answer is consequential.\n\n"
+        "## Environment\n"
+        "Applies to all MasterAgent agents and generation/retrieval pathways that receive injected knowledge.\n\n"
         "## Contributing back\n"
         "Knowledge is generated **automatically** from interactions — your job is to use and "
         "delegate, not to write knowledge manually. If a record helped or failed, submit "
@@ -317,13 +346,20 @@ def seed_management_skill() -> None:
     try:
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT id FROM knowledge WHERE id = %s", (MANAGEMENT_SKILL_ID,))
-            if cursor.fetchone():
-                return
             metadata = {
                 "always_inject": True,
                 "skill_type": "soft",
                 "trigger_desc": "Always active — governs how to read and use the injected knowledge index.",
+                "purpose": "Safely use injected knowledge and retrieve authoritative full records when needed.",
+                "inputs": ["injected knowledge index", "conversation and entity profile", "approved retrieval tools"],
+                "outputs": ["grounded response", "explicit uncertainty", "feedback or delegated follow-up"],
+                "prerequisites": ["agent receives injected context", "approved retrieval tools are configured"],
+                "tools": ["GET /knowledge/{id}", "GET /search/semantic", "GET /knowledge/facets"],
+                "permissions": ["read permitted knowledge", "use approved retrieval and delegation tools"],
+                "side_effects": ["may submit usage feedback for non-system knowledge records"],
+                "failure_conditions": ["retrieval timeout", "empty result", "malformed record", "conflicting records"],
+                "safety_requirements": ["do not invent facts or facet values", "preserve scope and privacy", "surface uncertainty"],
+                "environments": ["all MasterAgent agents", "knowledge retrieval and generation pathways"],
                 "entity_types": [],
                 "playbook_ids": [],
             }
@@ -341,19 +377,28 @@ def seed_management_skill() -> None:
                 metadata=metadata,
                 signals=[],
                 tags=[],
-                version=1,
+                version=2,
             )
+            cursor.execute("SELECT id FROM knowledge WHERE id = %s", (MANAGEMENT_SKILL_ID,))
+            if cursor.fetchone():
+                cursor.execute("""UPDATE knowledge
+                    SET content=%s, summary=%s, metadata=%s, source_pathway='system',
+                        quality_components=%s::jsonb,
+                        extraction_confidence=1.0, quality_score=1.0, status='active', version=2, updated_at=NOW()
+                    WHERE id=%s""", (content, description, json.dumps(metadata), json.dumps({"score_basis": "system_protected", "components": {"system_assurance": 1.0}}), MANAGEMENT_SKILL_ID))
+                logger.info("Updated Knowledge Management skill")
+                return
             cursor.execute("""
                 INSERT INTO knowledge (
                     id, source_intelligence_ids, signals, name, content, summary,
                     visibility, tags, category, metadata, source_pathway,
-                    extraction_confidence, quality_score, status, version, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                    extraction_confidence, quality_score, quality_components, status, version, created_at, updated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
                 ON CONFLICT (id) DO NOTHING
             """, (
                 MANAGEMENT_SKILL_ID, [], [], MANAGEMENT_SKILL_NAME, content, description,
                 "shared", [], "skill", json.dumps(metadata), "system",
-                1.0, 1.0, "active", 1,
+                1.0, 1.0, json.dumps({"score_basis": "system_protected", "components": {"system_assurance": 1.0}}), "active", 2,
             ))
         logger.info("Seeded Knowledge Management skill")
     except Exception as e:
