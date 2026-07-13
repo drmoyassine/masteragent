@@ -1931,10 +1931,10 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
 }
 
 const OPERATION_DEFINITIONS = {
-    embedding_backfill: { label: "Embedding backfill", job: "knowledge_embedding_backfill", eligibleKey: "embedding_backfill", defaultRecords: 25, maxRecords: 25, maxTotal: 10000000, defaultBatches: 40, button: "Start embedding backfill", description: "Generate missing or stale embeddings across interactions, memories, intelligence, and Knowledge." },
-    knowledge_generation: { label: "Knowledge generation", job: "run_all_knowledge_generation", eligibleKey: "knowledge_generation", defaultRecords: 100, maxRecords: 1000, maxTotal: 1000000, defaultBatches: 1, button: "Generate Knowledge from source evidence", description: "Process eligible source evidence through every enabled Knowledge generation pathway." },
-    hygiene_analysis: { label: "Knowledge hygiene analysis", job: "knowledge_hygiene_run", eligibleKey: "hygiene_analysis", defaultRecords: 1000, maxRecords: 5000, maxTotal: 1000000, defaultBatches: 1, button: "Analyze Knowledge for consolidation", description: "Discover candidate relationships and cluster metrics. This analysis does not generate or apply a merge." },
-    facet_backfill: { label: "Facet backfill", job: "backfill_facets", eligibleKey: "facet_backfill", defaultRecords: 25, maxRecords: 100, maxTotal: 1000000, defaultBatches: 10, button: "Backfill missing Knowledge facets", description: "Extract governed facets for active Knowledge records that currently have none." },
+    embedding_backfill: { label: "Embedding backfill", job: "knowledge_embedding_backfill", eligibleKey: "embedding_backfill", defaultRecords: 25, maxRecords: 25, maxTotal: 10000000, defaultBatches: 10, calibrationCap: 250, button: "Start embedding backfill", description: "Generate missing or stale embeddings across interactions, memories, intelligence, and Knowledge." },
+    knowledge_generation: { label: "Knowledge generation", job: "run_all_knowledge_generation", eligibleKey: "knowledge_generation", defaultRecords: 100, maxRecords: 1000, maxTotal: 1000000, defaultBatches: 1, calibrationCap: 250, button: "Generate Knowledge from source evidence", description: "Process eligible source evidence through every enabled Knowledge generation pathway." },
+    hygiene_analysis: { label: "Knowledge hygiene analysis", job: "knowledge_hygiene_run", eligibleKey: "hygiene_analysis", defaultRecords: 250, maxRecords: 5000, maxTotal: 1000000, defaultBatches: 1, calibrationCap: 250, button: "Analyze Knowledge for consolidation", description: "Discover candidate relationships and cluster metrics. This analysis does not generate or apply a merge." },
+    facet_backfill: { label: "Facet backfill", job: "backfill_facets", eligibleKey: "facet_backfill", defaultRecords: 25, maxRecords: 100, maxTotal: 1000000, defaultBatches: 10, calibrationCap: 250, button: "Backfill missing Knowledge facets", description: "Extract governed facets for active Knowledge records that currently have none." },
 };
 
 const JOB_LABELS = {
@@ -1959,7 +1959,7 @@ function KnowledgeOperations({ runs, controls, eligibleCounts, onRefresh, settin
     const operationActive = ["running", "paused", "blocked"].includes(latestOperation?.status);
     const resolvedBatches = runExtent === "all" ? Math.ceil(eligible / Math.max(1, recordsPerBatch)) : Math.max(1, batchesPerRun);
     const totalRecords = runExtent === "all" ? eligible : recordsPerBatch * resolvedBatches;
-    const calibrationCap = 250;
+    const calibrationCap = definition.calibrationCap || 250;
 
     const changeOperation = (value) => {
         const next = OPERATION_DEFINITIONS[value];
@@ -2003,6 +2003,7 @@ function KnowledgeOperations({ runs, controls, eligibleCounts, onRefresh, settin
                 {operation === "hygiene_analysis" && <div className="max-w-xs space-y-1"><SettingLabel help="analysis_max_clusters">Maximum clusters inspected</SettingLabel><Input type="number" min="1" max="10000" value={maxClusters} onChange={(e) => setMaxClusters(Math.max(1, Math.min(10000, Number(e.target.value) || 1)))} /></div>}
                 <div className="rounded-md border bg-muted/20 p-3 text-xs grid grid-cols-2 md:grid-cols-4 gap-3"><div><span className="text-muted-foreground">Eligible now</span><div className="font-medium">{eligible.toLocaleString()}</div></div><div><span className="text-muted-foreground">Records per Batch</span><div className="font-medium">{recordsPerBatch.toLocaleString()}</div></div><div><span className="text-muted-foreground">Batches per Run</span><div className="font-medium">{runExtent === "all" ? `All (${resolvedBatches})` : resolvedBatches}</div></div><div><span className="text-muted-foreground">Maximum records</span><div className="font-medium">{totalRecords.toLocaleString()}{executionMode === "synchronous_calibration" ? ` / ${calibrationCap} calibration cap` : ""}</div></div></div>
                 <div className="flex gap-2 flex-wrap"><Button onClick={start} disabled={busy || operationActive || totalRecords < 1 || totalRecords > definition.maxTotal || (executionMode === "synchronous_calibration" && totalRecords > calibrationCap)}><Play className="w-4 h-4 mr-2" />{busy ? "Queueing…" : operationActive ? `${definition.label} already active` : executionMode === "synchronous_calibration" ? `Run synchronous calibration` : definition.button}</Button><Button variant="outline" onClick={exportApproved} disabled={busy}><FileText className="w-4 h-4 mr-2" />Export approved Knowledge</Button></div>
+                {executionMode === "synchronous_calibration" && totalRecords > calibrationCap && <p className="text-xs text-destructive">Reduce Records per Batch or Batches per Run: calibration is limited to {calibrationCap.toLocaleString()} records.</p>}
                 {operation === "knowledge_generation" && <p className="text-[10px] text-muted-foreground">One input record is one eligible source-evidence record. Several inputs may produce one Knowledge record, or none when policy rejects the candidate. Output is therefore not one-to-one.</p>}
                 {operation === "hygiene_analysis" && <p className="text-[10px] text-muted-foreground">Records are combined into the selected analysis window before candidate graph formation. Similarity discovers candidates only; it never applies a merge.</p>}
             </CardContent>
