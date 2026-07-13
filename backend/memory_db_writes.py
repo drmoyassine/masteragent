@@ -366,7 +366,11 @@ def update_pipeline_run(run_id: str, *, status: Optional[str] = None,
         params.append(run_id)
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
-            cursor.execute(f"UPDATE memory_pipeline_runs SET {', '.join(sets)} WHERE id = %s", params)
+            cursor.execute(f"UPDATE memory_pipeline_runs SET {', '.join(sets)} WHERE id = %s RETURNING job, status", params)
+            run = cursor.fetchone()
+        if run and run.get("status") in {"started", "running", "paused"}:
+            from services.job_safety import renew_singleton_job
+            renew_singleton_job(run.get("job"))
     except Exception as e:
         logging.getLogger(__name__).warning(f"update_pipeline_run failed ({run_id}): {e}")
 

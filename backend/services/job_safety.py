@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import timedelta
 from typing import Optional
 
@@ -72,6 +73,10 @@ def active_provider_stop() -> Optional[dict]:
         from core.storage import get_memory_db_context
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
+            try:
+                stale_minutes = max(5, int(os.getenv("MAINTENANCE_LOCK_STALE_MINUTES", "30")))
+            except (TypeError, ValueError):
+                stale_minutes = 30
             cursor.execute("""
                 UPDATE memory_system_alerts SET active=FALSE
                 WHERE code='provider_rate_limited' AND active=TRUE
@@ -107,8 +112,14 @@ def try_acquire_singleton_job(job_name: str) -> bool:
                 ON CONFLICT (job_name) DO UPDATE SET locked_at=NOW(),
                     expires_at=NOW() + INTERVAL '12 hours'
                 WHERE memory_job_locks.expires_at <= NOW()
+                   OR NOT EXISTS (
+                       SELECT 1 FROM memory_pipeline_runs r
+                       WHERE r.job = %s
+                         AND r.status IN ('started', 'running', 'paused')
+                         AND r.updated_at > NOW() - (%s * INTERVAL '1 minute')
+                   )
                 RETURNING job_name
-            """, (job_name,))
+            """, (job_name, job_name, stale_minutes))
             return cursor.fetchone() is not None
     except Exception as exc:
         # Do not turn observability-table trouble into a production outage.
@@ -124,3 +135,16 @@ def release_singleton_job(job_name: str) -> None:
             cursor.execute("DELETE FROM memory_job_locks WHERE job_name=%s", (job_name,))
     except Exception as exc:
         logger.warning("Could not release maintenance lock for %s: %s", job_name, exc)
+
+
+def renew_singleton_job(job_name: str) -> None:
+    """Extend a healthy maintenance lease when its pipeline reports progress."""
+    try:
+        from core.storage import get_memory_db_context
+        with get_memory_db_context() as conn:
+            conn.cursor().execute(
+                "UPDATE memory_job_locks SET expires_at=NOW() + INTERVAL '12 hours' WHERE job_name=%s",
+                (job_name,),
+            )
+    except Exception as exc:
+        logger.warning("Could not renew maintenance lock for %s: %s", job_name, exc)
