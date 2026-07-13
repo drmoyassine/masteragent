@@ -427,8 +427,8 @@ export default function MemoryExplorerPage() {
 
   // ─── Knowledge Handlers ─────────────────────────────────────
   const handleCreateKnowledge = async () => {
-    if (!newKnowledge.name || !newKnowledge.content) {
-      toast.error("Please fill name and content");
+    if (!newKnowledge.name || (!newKnowledge.content?.trim() && !(newKnowledge.attachment_ids || []).length)) {
+      toast.error("Please provide a name and either content or an extracted source document");
       return;
     }
     if (["skill", "playbook"].includes(newKnowledge.category) && !newKnowledge.summary?.trim()) {

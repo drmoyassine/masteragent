@@ -33,7 +33,7 @@ from memory_models import (
     VisionWebhookCreate, VisionWebhookUpdate,
     AdminInstruction, PlaybookFeedback,
     ConsolidationPreviewRequest, ConsolidationApplyRequest, ConsolidationAnalyzeRequest,
-    KnowledgeAttachmentProposalRequest,
+    KnowledgeAttachmentProposalRequest, KnowledgeDraftProposalRequest,
 )
 from memory_services import (
     generate_embedding, search_memories_by_vector,
@@ -487,6 +487,72 @@ Rules:
     return {"proposal": proposal, "sources": [{k: v for k, v in source.items() if k != "extracted_text"} for source in sources]}
 
 
+@admin_crud.post("/knowledge/draft/propose")
+async def propose_knowledge_draft(
+    body: KnowledgeDraftProposalRequest,
+    admin: dict = Depends(require_admin_auth),
+):
+    """Generate an editable structured draft without creating or changing a record."""
+    allowed_categories = {"best_practices", "lessons_learned", "trade_knowledge", "skill", "playbook"}
+    if body.category not in allowed_categories:
+        raise HTTPException(status_code=400, detail="Unsupported knowledge category")
+
+    source_text = []
+    if body.attachment_ids:
+        from memory_knowledge_attachments import load_ready_attachment_text
+        sources = load_ready_attachment_text(body.attachment_ids)
+        if len(sources) != len(set(body.attachment_ids)):
+            raise HTTPException(status_code=404, detail="One or more attachments were not found")
+        if any(source.get("status") != "ready" for source in sources):
+            raise HTTPException(status_code=409, detail="All attachments must finish extraction before proposal generation")
+        remaining_chars = 220_000
+        for source in sources:
+            extracted = source.get("extracted_text") or ""
+            excerpt = extracted[:max(0, remaining_chars)]
+            remaining_chars -= len(excerpt)
+            source_text.append(f"===== SOURCE: {source['filename']} ({source['mime_type']}) =====\n{excerpt or '[No extracted text]'}")
+            if remaining_chars <= 0:
+                source_text.append("[Remaining source text omitted due to context limits.]\n")
+                break
+    if body.content:
+        source_text.append(f"===== CURRENT USER CONTENT =====\n{body.content[:100_000]}")
+    if not source_text:
+        raise HTTPException(status_code=422, detail="Provide source content or upload a document before generating a draft")
+
+    from memory_consolidation_prompts import CATEGORY_INSTRUCTIONS
+    from memory_services import call_llm
+    from services.llm import parse_llm_json
+    prompt = f"""Create one editable knowledge draft from the supplied source material.
+Category: {body.category}
+{CATEGORY_INSTRUCTIONS.get(body.category, '')}
+
+Existing user-entered hints (may be improved, but never treated as evidence):
+name: {body.name or ''}
+summary: {body.summary or ''}
+signals: {json.dumps(body.signals)}
+tags: {json.dumps(body.tags)}
+metadata: {json.dumps(body.metadata or {}, ensure_ascii=False)}
+
+Rules:
+- Do not invent claims; preserve qualifications, exceptions, evidence and provenance.
+- Return category-appropriate structured metadata. For skills/playbooks preserve the complete SKILL.md-inspired contract.
+- Return ONLY JSON with keys: name, summary, content, metadata, signals, tags, warnings, contradictions, source_traceability.
+
+{chr(10).join(source_text)}"""
+    raw = await call_llm(prompt, max_tokens=2400, task_type="knowledge_generation")
+    if not raw:
+        raise HTTPException(status_code=503, detail="Knowledge-generation model is not configured")
+    try:
+        proposal = parse_llm_json(raw, context="knowledge_draft_proposal")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    if not isinstance(proposal, dict) or not str(proposal.get("content") or "").strip():
+        raise HTTPException(status_code=502, detail="Knowledge-generation model returned an incomplete proposal")
+    proposal["category"] = body.category
+    proposal["attachment_ids"] = body.attachment_ids
+    return {"proposal": proposal}
+
+
 @admin_crud.get("/knowledge/{knowledge_id}/attachments")
 async def list_knowledge_attachments(knowledge_id: str, admin: dict = Depends(require_admin_auth)):
     with get_memory_db_context() as conn:
@@ -525,7 +591,7 @@ async def create_knowledge(body: KnowledgeCreate, admin: dict = Depends(require_
 
     from memory_skill_md import SKILL_MD_CATEGORIES, is_skill_md, render_skill_md, validate_skill_md
     category = body.category or "trade_knowledge"
-    content = body.content
+    content = body.content or ""
     if category in SKILL_MD_CATEGORIES and not is_skill_md(content):
         content = render_skill_md(
             name=body.name,
@@ -602,6 +668,14 @@ async def update_knowledge(
         fields.append("metadata = %s"); values.append(json.dumps(body.metadata))
     if body.status is not None:
         fields.append("status = %s"); values.append(body.status)
+        if body.status == "active":
+            fields.extend([
+                "approved_at = COALESCE(approved_at, %s)",
+                "approved_by_type = COALESCE(approved_by_type, 'user')",
+                "approved_by_id = COALESCE(approved_by_id, %s)",
+                "approval_origin = COALESCE(approval_origin, 'manual')",
+            ])
+            values.extend([now, str(admin.get("id") or admin.get("sub") or "")])
     # always_inject: merge the single key into existing metadata (jsonb) rather
     # than requiring the caller to send the whole blob. Skipped if metadata was
     # already replaced above (that payload is authoritative).

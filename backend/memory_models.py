@@ -533,7 +533,7 @@ class IntelligenceUpdate(BaseModel):
 class KnowledgeCreate(BaseModel):
     signals: List[str] = []
     name: str
-    content: str                         # PII-stripped Markdown
+    content: str = ""                    # PII-stripped Markdown; staged attachments may be the source
     summary: Optional[str] = None
     source_Intelligence_ids: Optional[List[str]] = []
     visibility: str = "shared"           # shared | team | private
@@ -548,6 +548,17 @@ class KnowledgeAttachmentProposalRequest(BaseModel):
     category: str = "trade_knowledge"
     name: Optional[str] = None
     summary: Optional[str] = None
+
+class KnowledgeDraftProposalRequest(BaseModel):
+    """Inputs for an editable, non-mutating knowledge draft proposal."""
+    category: str = "trade_knowledge"
+    name: Optional[str] = None
+    summary: Optional[str] = None
+    content: Optional[str] = None
+    signals: List[str] = Field(default_factory=list)
+    tags: List[str] = Field(default_factory=list)
+    metadata: Optional[dict] = None
+    attachment_ids: List[str] = Field(default_factory=list, max_length=10)
 
 class KnowledgeResponse(BaseModel):
     id: str

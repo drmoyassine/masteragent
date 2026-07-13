@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, X } from "lucide-react";
 import { toast } from "sonner";
-import { getKnowledgeAttachment, proposeKnowledgeFromAttachments, uploadKnowledgeAttachment } from "@/lib/api";
+import { getKnowledgeAttachment, proposeKnowledgeDraft, proposeKnowledgeFromAttachments, uploadKnowledgeAttachment } from "@/lib/api";
 
 const CATEGORIES = [
   { value: "best_practices", label: "Best Practices" },
@@ -21,11 +21,23 @@ const CATEGORIES = [
 function TagInput({ tags, onChange }) {
   const [newTag, setNewTag] = useState("");
 
+  const addValues = (values) => {
+    const next = [...(tags || [])];
+    for (const value of values) {
+      const tag = String(value || "").trim();
+      if (tag && !next.includes(tag)) next.push(tag);
+    }
+    onChange(next);
+  };
   const addTag = () => {
-    const tag = newTag.trim();
-    if (!tag || tags.includes(tag)) return;
-    onChange([...tags, tag]);
+    addValues(newTag.split(","));
     setNewTag("");
+  };
+  const handleChange = (value) => {
+    const parts = value.split(",");
+    if (parts.length === 1) return setNewTag(value);
+    addValues(parts.slice(0, -1));
+    setNewTag(parts[parts.length - 1]);
   };
 
   return (
@@ -42,9 +54,10 @@ function TagInput({ tags, onChange }) {
       </div>
       <div className="flex gap-2">
         <Input
-          placeholder="Add tag..."
+          placeholder="Add tags (comma-separated)..."
           value={newTag}
-          onChange={(e) => setNewTag(e.target.value)}
+          onChange={(e) => handleChange(e.target.value)}
+          onBlur={addTag}
           className="h-8 text-sm"
           onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addTag())}
         />
@@ -173,6 +186,39 @@ function AttachmentPanel({ open, knowledge, setKnowledge }) {
 }
 
 export function NewKnowledgeDialog({ open, onOpenChange, newKnowledge, setNewKnowledge, onCreate }) {
+  const [proposing, setProposing] = useState(false);
+  const generateDraft = async () => {
+    if (!newKnowledge.content?.trim() && !(newKnowledge.attachment_ids || []).length) {
+      toast.error("Add source content or upload a document first");
+      return;
+    }
+    setProposing(true);
+    try {
+      const { data } = await proposeKnowledgeDraft({
+        category: newKnowledge.category || "trade_knowledge",
+        name: newKnowledge.name,
+        summary: newKnowledge.summary,
+        content: newKnowledge.content,
+        signals: newKnowledge.signals || [],
+        tags: newKnowledge.tags || [],
+        metadata: newKnowledge.metadata || {},
+        attachment_ids: newKnowledge.attachment_ids || [],
+      });
+      const proposal = data.proposal || {};
+      setNewKnowledge({
+        ...newKnowledge,
+        name: proposal.name || newKnowledge.name,
+        summary: proposal.summary || newKnowledge.summary,
+        content: proposal.content || newKnowledge.content,
+        signals: proposal.signals || newKnowledge.signals || [],
+        tags: proposal.tags || newKnowledge.tags || [],
+        metadata: { ...(newKnowledge.metadata || {}), ...(proposal.metadata || {}), source_traceability: proposal.source_traceability || [], consolidation_warnings: proposal.warnings || [], contradictions: proposal.contradictions || [] },
+        status: "draft",
+      });
+      toast.success("Editable structured draft generated");
+    } catch (error) { toast.error(error?.response?.data?.detail || "Could not generate draft"); }
+    finally { setProposing(false); }
+  };
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl max-h-[92vh] overflow-y-auto">
@@ -215,11 +261,11 @@ export function NewKnowledgeDialog({ open, onOpenChange, newKnowledge, setNewKno
             <Textarea value={newKnowledge.summary || ""} onChange={(e) => setNewKnowledge({ ...newKnowledge, summary: e.target.value })} placeholder="One-line summary (optional)" rows={2} />
           </div>
           <div>
-            <Label>Signals</Label>
+            <Label>Signals <span className="text-xs text-muted-foreground">(comma-separated or press Enter)</span></Label>
             <TagInput tags={newKnowledge.signals || []} onChange={(signals) => setNewKnowledge({ ...newKnowledge, signals })} />
           </div>
           <div>
-            <Label>Tags</Label>
+            <Label>Tags <span className="text-xs text-muted-foreground">(comma-separated or press Enter)</span></Label>
             <TagInput tags={newKnowledge.tags || []} onChange={(tags) => setNewKnowledge({ ...newKnowledge, tags })} />
           </div>
           <StructuredFields category={newKnowledge.category || "trade_knowledge"} knowledge={newKnowledge} setKnowledge={setNewKnowledge} />
@@ -227,7 +273,8 @@ export function NewKnowledgeDialog({ open, onOpenChange, newKnowledge, setNewKno
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={onCreate}>Create Knowledge</Button>
+          <Button type="button" variant="outline" onClick={generateDraft} disabled={proposing}>{proposing ? "Generating…" : "Generate structured draft"}</Button>
+          <Button onClick={onCreate}>Save Knowledge</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

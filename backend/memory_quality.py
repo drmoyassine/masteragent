@@ -81,6 +81,12 @@ def recalculate_knowledge_quality(knowledge_id: str) -> Dict[str, Any] | None:
             generation_confidence=float(row.get("extraction_confidence") if row.get("extraction_confidence") is not None else 0.5),
             provenance_completeness=provenance, approval_assurance=assurance,
         )
+        # Explicit human approval of a manually curated record is the strongest
+        # available assurance for that record. Keep the component breakdown for
+        # explanation, but expose the approved manual record as fully trusted.
+        if row.get("status") == "active" and approval_origin == "manual":
+            result["score"] = 1.0
+            result["score_basis"] = "human_approved_manual"
         cur.execute("""
             UPDATE knowledge SET quality_score=%s,quality_version=%s,
                 quality_components=%s::jsonb,outcome_signal=%s,updated_at=NOW()
@@ -93,7 +99,10 @@ def recalculate_knowledge_quality(knowledge_id: str) -> Dict[str, Any] | None:
 def backfill_quality_v2(limit: int = 1000) -> Dict[str, int]:
     with get_memory_db_context() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT id FROM knowledge WHERE COALESCE(quality_version,0)<>%s ORDER BY created_at LIMIT %s",
+        cur.execute("""SELECT id FROM knowledge
+                       WHERE COALESCE(quality_version,0)<>%s
+                          OR (status='active' AND approval_origin='manual' AND COALESCE(quality_score,0)<>1.0)
+                       ORDER BY created_at LIMIT %s""",
                     (QUALITY_VERSION, limit))
         ids = [r["id"] for r in cur.fetchall()]
     updated = sum(1 for kid in ids if recalculate_knowledge_quality(kid))

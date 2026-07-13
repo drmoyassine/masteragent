@@ -190,6 +190,7 @@ export const uploadKnowledgeAttachment = (file) => {
 };
 export const getKnowledgeAttachment = (id) => api.get(`/memory/admin/knowledge/attachments/${id}`);
 export const proposeKnowledgeFromAttachments = (data) => api.post('/memory/admin/knowledge/attachments/propose', data);
+export const proposeKnowledgeDraft = (data) => api.post('/memory/admin/knowledge/draft/propose', data);
 export const updateKnowledgeAdmin = (id, data) => api.patch(`/memory/admin/knowledge/${id}`, data);
 export const deleteKnowledgeAdmin = (id) => api.delete(`/memory/admin/knowledge/${id}`);
 export const bulkDeleteKnowledgeAdmin = (data) => api.post('/memory/admin/knowledge/bulk-delete', data);

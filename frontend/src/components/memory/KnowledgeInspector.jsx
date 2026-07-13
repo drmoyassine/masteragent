@@ -86,6 +86,9 @@ export default function KnowledgeInspector({ editingKnowledge, setEditingKnowled
                 <div className={`font-mono font-medium ${editingKnowledge.quality_score >= 0.7 ? "text-green-600" : editingKnowledge.quality_score >= 0.4 ? "text-amber-600" : "text-red-600"}`}>
                   {editingKnowledge.quality_score != null ? editingKnowledge.quality_score.toFixed(3) : "—"}
                 </div>
+                {editingKnowledge.quality_components?.score_basis === "human_approved_manual" && (
+                  <div className="text-[11px] text-green-600">Human-approved manual record</div>
+                )}
               </div>
               {(editingKnowledge.merge_count > 0) && (
                 <>
@@ -108,6 +111,17 @@ export default function KnowledgeInspector({ editingKnowledge, setEditingKnowled
                 </div>
               )}
             </div>
+
+            {editingKnowledge.quality_components?.components && (
+              <div className="rounded-md border p-3 space-y-2">
+                <Label className="text-xs text-muted-foreground">Score breakdown</Label>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                  {Object.entries(editingKnowledge.quality_components.components).map(([key, value]) => (
+                    <div key={key} className="flex justify-between gap-2"><span className="text-muted-foreground">{key.replace(/_/g, " ")}</span><span className="font-mono">{Number(value).toFixed(2)}</span></div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <Separator />
 
