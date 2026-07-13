@@ -26,6 +26,7 @@ export default function KnowledgeInspector({ editingKnowledge, setEditingKnowled
 
   const cat = editingKnowledge.category || "trade_knowledge";
   const meta = editingKnowledge.metadata || {};
+  const feedbackDisabled = editingKnowledge.source_pathway === "system";
 
   const addTag = () => {
     const tag = newTag.trim();
@@ -291,7 +292,7 @@ export default function KnowledgeInspector({ editingKnowledge, setEditingKnowled
                   <ThumbsDown className="w-4 h-4 text-red-600" />
                   <span className="font-mono text-sm">{editingKnowledge.failure_count || 0}</span>
                 </div>
-                {onFeedback && (
+                {onFeedback && !feedbackDisabled && (
                   <>
                     <Button variant="outline" size="sm" className="ml-2" onClick={() => handleFeedback("success")}>
                       <ThumbsUp className="w-3 h-3 mr-1" /> Success
@@ -300,6 +301,9 @@ export default function KnowledgeInspector({ editingKnowledge, setEditingKnowled
                       <ThumbsDown className="w-3 h-3 mr-1" /> Failure
                     </Button>
                   </>
+                )}
+                {feedbackDisabled && (
+                  <span className="ml-2 text-xs text-muted-foreground">System skills do not collect usage feedback.</span>
                 )}
               </div>
               {editingKnowledge.feedback_notes?.length > 0 && (
