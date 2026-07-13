@@ -982,15 +982,53 @@ async def backfill_embeddings(
     execution_mode: str = Query("synchronous_calibration"),
     admin: dict = Depends(require_admin_auth),
 ):
-    """Queue the resumable embedding backfill job. Returns 202."""
+    """Run a bounded calibration inline, or queue a resumable provider job."""
     from memory.queue import knowledge_queue
     if execution_mode not in {"synchronous_calibration", "synchronous", "provider_batch"}:
         raise HTTPException(status_code=422, detail="Unsupported execution mode")
-    await knowledge_queue.add("knowledge_embedding_backfill", {
+    payload = {
         "batch_size": batch_size, "records_per_batch": batch_size,
         "max_records": max_records, "batches_per_run": batches_per_run,
         "run_all": run_all, "execution_mode": execution_mode,
-    }, {"priority": 3})
+    }
+    if execution_mode in {"synchronous_calibration", "synchronous"}:
+        if max_records > 250:
+            raise HTTPException(status_code=422, detail="Synchronous calibration is limited to 250 records")
+        from services.job_safety import try_acquire_singleton_job, release_singleton_job
+        if not try_acquire_singleton_job("knowledge_embedding_backfill"):
+            raise HTTPException(status_code=409, detail="Embedding backfill is already running")
+        from memory_db_writes import log_pipeline_run, update_pipeline_run
+        run_id = log_pipeline_run(
+            "knowledge_embedding_backfill", "started", trigger="admin_calibration",
+            detail={**payload, "progress_total": max_records},
+        )
+        try:
+            from memory_embedding_backfill import run_embedding_backfill
+            result = await run_embedding_backfill(
+                batch_size=batch_size, max_records=max_records, progress_run_id=run_id,
+            )
+            completed = int(result.get("processed", 0)) + sum(
+                int(value.get("processed", 0)) for value in (result.get("tiers") or {}).values()
+            )
+            failed = int(result.get("failed", 0)) + sum(
+                int(value.get("failed", 0)) for value in (result.get("tiers") or {}).values()
+            )
+            if run_id:
+                update_pipeline_run(
+                    run_id, status="completed", outcome="completed",
+                    records_created=completed, progress_completed=completed,
+                    progress_failed=failed, detail={"result": result, "execution_mode": execution_mode},
+                )
+            return {"status": "completed", "run_id": run_id, "result": result,
+                    "batch_size": batch_size, "max_records": max_records}
+        except Exception as exc:
+            if run_id:
+                update_pipeline_run(run_id, status="failed", outcome="failed",
+                                    reason_code="calibration_failed", detail={"message": str(exc)})
+            raise
+        finally:
+            release_singleton_job("knowledge_embedding_backfill")
+    await knowledge_queue.add("knowledge_embedding_backfill", payload, {"priority": 3})
     return {"status": "queued", "batch_size": batch_size, "max_records": max_records}
 
 

@@ -15,6 +15,14 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
+def _maintenance_stale_minutes() -> int:
+    """Return the shared stale-heartbeat threshold with a safe lower bound."""
+    try:
+        return max(5, int(os.getenv("MAINTENANCE_LOCK_STALE_MINUTES", "30")))
+    except (TypeError, ValueError):
+        return 30
+
+
 class ProviderStopError(RuntimeError):
     def __init__(self, code: str, message: str, *, retry_after_seconds: Optional[int] = None):
         super().__init__(message)
@@ -73,10 +81,6 @@ def active_provider_stop() -> Optional[dict]:
         from core.storage import get_memory_db_context
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
-            try:
-                stale_minutes = max(5, int(os.getenv("MAINTENANCE_LOCK_STALE_MINUTES", "30")))
-            except (TypeError, ValueError):
-                stale_minutes = 30
             cursor.execute("""
                 UPDATE memory_system_alerts SET active=FALSE
                 WHERE code='provider_rate_limited' AND active=TRUE
@@ -103,6 +107,7 @@ def try_acquire_singleton_job(job_name: str) -> bool:
     releases it immediately.
     """
     try:
+        stale_minutes = _maintenance_stale_minutes()
         from core.storage import get_memory_db_context
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
@@ -158,10 +163,7 @@ def reconcile_stale_maintenance_runs() -> int:
     a healthy worker after a deploy/crash and must not remain ``running``.
     Paused rows are intentionally preserved for operator-controlled resume.
     """
-    try:
-        stale_minutes = max(5, int(os.getenv("MAINTENANCE_LOCK_STALE_MINUTES", "30")))
-    except (TypeError, ValueError):
-        stale_minutes = 30
+    stale_minutes = _maintenance_stale_minutes()
     try:
         from core.storage import get_memory_db_context
         with get_memory_db_context() as conn:

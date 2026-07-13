@@ -446,6 +446,7 @@ class BulkInteractionResponse(BaseModel):
     ids: List[str]
     count: int
     status: str = "pending"
+    replayed: bool = False
 
 class InteractionUpdate(BaseModel):
     interaction_type: Optional[str] = None

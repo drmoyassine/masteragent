@@ -227,6 +227,20 @@ def _create_interaction_tables(cursor):
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_interactions_timestamp ON interactions (timestamp)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_interactions_status ON interactions (status)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_interactions_agent ON interactions (agent_id)")
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS interaction_ingestion_requests (
+            agent_id          TEXT NOT NULL,
+            idempotency_key   TEXT NOT NULL,
+            request_hash      TEXT NOT NULL,
+            interaction_ids   TEXT[] NOT NULL,
+            created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (agent_id, idempotency_key)
+        )
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_interaction_ingestion_requests_created
+        ON interaction_ingestion_requests (created_at)
+    """)
 
     # Entity profiles — stores per-entity instance data extracted from CRM blobs
     cursor.execute("""

@@ -32,6 +32,14 @@ def _bounded_input(text: str) -> str:
     return value[:_MAX_INPUT_CHARS]
 
 
+def _bounded_inputs(texts: List[str]) -> List[str]:
+    """Validate a provider batch before making a billable network request."""
+    values = [_bounded_input(text) for text in texts]
+    if any(not value.strip() for value in values):
+        raise ValueError("Invalid embedding input: input cannot be empty")
+    return values
+
+
 async def generate_embedding(text: str) -> List[float]:
     """Generate embedding using admin-configured API."""
     config = get_llm_config("embedding")
@@ -46,12 +54,15 @@ async def generate_embedding(text: str) -> List[float]:
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
+    bounded = _bounded_input(text)
+    if not bounded.strip():
+        raise ValueError("Invalid embedding input: input cannot be empty")
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 f"{api_base}/embeddings",
                 headers=headers,
-                json={"model": model, "input": _bounded_input(text)},
+                json={"model": model, "input": bounded},
             )
             if response.status_code == 200:
                 return response.json()["data"][0]["embedding"]
@@ -84,12 +95,13 @@ async def generate_embeddings_batch(texts: List[str]) -> List[List[float]]:
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
+    bounded = _bounded_inputs(texts)
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
                 f"{api_base}/embeddings",
                 headers=headers,
-                json={"model": model, "input": [_bounded_input(text) for text in texts]},
+                json={"model": model, "input": bounded},
             )
             if response.status_code == 200:
                 # Pair vectors to input rows by the provider's explicit index,

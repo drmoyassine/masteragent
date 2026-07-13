@@ -210,6 +210,7 @@ async def _backfill_source_tiers(*, batch_size: int, max_records: Optional[int],
                 cur.execute(f"""
                     SELECT id, {text_expr} AS embedding_text FROM {table}
                     WHERE NOT (id = ANY(%s)) AND ({text_expr}) IS NOT NULL
+                      AND BTRIM(({text_expr})::text) <> ''
                       AND (embedding IS NULL OR embedding_model IS DISTINCT FROM %s
                            OR embedding_dimensions IS DISTINCT FROM vector_dims(embedding))
                     ORDER BY {order_col} ASC, id ASC LIMIT %s
@@ -342,6 +343,23 @@ async def _embed_batch_isolated(texts: List[str]):
 
     if not texts:
         return [], {}
+    # Empty source records are a data-quality condition, not a provider
+    # failure. Isolate them locally so no invalid request is sent and valid
+    # neighbours still share one provider batch.
+    blank = {index: "Embedding source text is empty" for index, text in enumerate(texts)
+             if not str(text or "").strip()}
+    if blank:
+        valid_indexes = [index for index in range(len(texts)) if index not in blank]
+        vectors: List[Optional[List[float]]] = [None] * len(texts)
+        failures = dict(blank)
+        if valid_indexes:
+            valid_vectors, valid_failures = await _embed_batch_isolated(
+                [texts[index] for index in valid_indexes]
+            )
+            for local_index, source_index in enumerate(valid_indexes):
+                vectors[source_index] = valid_vectors[local_index]
+            failures.update({valid_indexes[index]: reason for index, reason in valid_failures.items()})
+        return vectors, failures
     try:
         return await _embed_batch(texts), {}
     except ProviderStopError:
@@ -395,13 +413,20 @@ def preview_backfill(configured_version: Optional[int] = None) -> Dict[str, Any]
     current = int(row.get("current") or 0)
     stale = int(row.get("stale") or 0)
     tiers = {"knowledge": {"total": total, "compatible": current, "stale": stale}}
-    for table in ("interactions", "memories", "intelligence"):
+    tier_specs = {
+        "interactions": "content",
+        "memories": "content_summary",
+        "intelligence": "COALESCE(name,'') || '. ' || COALESCE(summary,'') || ' ' || COALESCE(content,'')",
+    }
+    for table, text_expr in tier_specs.items():
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
             cursor.execute(f"""
-                SELECT COUNT(*) AS total,
+                SELECT COUNT(*) FILTER (WHERE BTRIM(COALESCE(({text_expr})::text, '')) <> '') AS total,
+                       COUNT(*) FILTER (WHERE BTRIM(COALESCE(({text_expr})::text, '')) = '') AS ineligible,
                        COUNT(*) FILTER (WHERE embedding IS NOT NULL AND embedding_model=%s
-                         AND embedding_dimensions=vector_dims(embedding)) AS compatible
+                         AND embedding_dimensions=vector_dims(embedding)
+                         AND BTRIM(COALESCE(({text_expr})::text, '')) <> '') AS compatible
                 FROM {table}
             """, (configured_model,))
             tier = cursor.fetchone() or {}
@@ -410,6 +435,7 @@ def preview_backfill(configured_version: Optional[int] = None) -> Dict[str, Any]
         tiers[table] = {
             "total": tier_total, "compatible": tier_current,
             "stale": tier_total - tier_current,
+            "ineligible": int(tier.get("ineligible") or 0),
             "coverage": round(tier_current / tier_total, 4) if tier_total else 0.0,
         }
     all_total = sum(item["total"] for item in tiers.values())

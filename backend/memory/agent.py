@@ -6,13 +6,14 @@ Exposes standard CRUD operations across all four memory tiers with strict entity
 All endpoints use the Agent API Key validation.
 """
 import json
+import hashlib
 import logging
 import os
 import uuid
 from datetime import datetime, timezone
 from typing import List, Optional, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from pydantic import BaseModel
 
 from core.storage import get_memory_db_context, cache_interaction, flush_interaction_cache
@@ -112,6 +113,7 @@ async def ingest_interaction(
 async def ingest_interactions_bulk(
     body: BulkInteractionCreate,
     response: Response,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
     agent: dict = Depends(verify_agent_key)
 ):
     """Ingest 1–100 interactions in a single request.
@@ -124,45 +126,89 @@ async def ingest_interactions_bulk(
     if not check_rate_limit(agent["id"]):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
 
+    if idempotency_key is not None:
+        idempotency_key = idempotency_key.strip()
+        if not idempotency_key or len(idempotency_key) > 200:
+            raise HTTPException(status_code=422, detail="Idempotency-Key must contain 1-200 characters")
+
     now = datetime.now(timezone.utc).isoformat()
     items = body.items
-    ids = [str(uuid.uuid4()) for _ in items]
+    request_hash = hashlib.sha256(
+        json.dumps(body.model_dump(mode="json"), sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+    ids: List[str] = []
+    replayed = False
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        for interaction_id, item in zip(ids, items):
+        if idempotency_key:
+            # Serialize requests for this agent/key so concurrent n8n retries
+            # cannot both insert a batch before the receipt becomes visible.
+            cursor.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                (f"{agent['id']}:{idempotency_key}",),
+            )
             cursor.execute("""
-                INSERT INTO interactions (
-                    id, timestamp, interaction_type, agent_id, agent_name,
-                    content, primary_entity_type, primary_entity_subtype, primary_entity_id,
-                    metadata, metadata_field_map, has_attachments, attachment_refs,
-                    processing_errors, source, status, created_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (
-                interaction_id, now, item.interaction_type, agent["id"], item.agent_name or agent.get("name"),
-                item.content, item.primary_entity_type, item.primary_entity_subtype, item.primary_entity_id,
-                json.dumps(item.metadata or {}, ensure_ascii=False), json.dumps(item.metadata_field_map or {}, ensure_ascii=False),
-                item.has_attachments, json.dumps(list(item.attachment_refs or []), ensure_ascii=False),
-                json.dumps({}), item.source, "pending", now
-            ))
+                SELECT request_hash, interaction_ids
+                FROM interaction_ingestion_requests
+                WHERE agent_id=%s AND idempotency_key=%s
+            """, (agent["id"], idempotency_key))
+            receipt = cursor.fetchone()
+            if receipt:
+                if receipt["request_hash"] != request_hash:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Idempotency-Key was already used with a different interaction batch",
+                    )
+                ids = list(receipt["interaction_ids"] or [])
+                replayed = True
+
+        if not replayed:
+            ids = [str(uuid.uuid4()) for _ in items]
+            for interaction_id, item in zip(ids, items):
+                cursor.execute("""
+                    INSERT INTO interactions (
+                        id, timestamp, interaction_type, agent_id, agent_name,
+                        content, primary_entity_type, primary_entity_subtype, primary_entity_id,
+                        metadata, metadata_field_map, has_attachments, attachment_refs,
+                        processing_errors, source, status, created_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    interaction_id, now, item.interaction_type, agent["id"], item.agent_name or agent.get("name"),
+                    item.content, item.primary_entity_type, item.primary_entity_subtype, item.primary_entity_id,
+                    json.dumps(item.metadata or {}, ensure_ascii=False), json.dumps(item.metadata_field_map or {}, ensure_ascii=False),
+                    item.has_attachments, json.dumps(list(item.attachment_refs or []), ensure_ascii=False),
+                    json.dumps({}), item.source, "pending", now
+                ))
+            if idempotency_key:
+                cursor.execute("""
+                    INSERT INTO interaction_ingestion_requests
+                        (agent_id, idempotency_key, request_hash, interaction_ids)
+                    VALUES (%s, %s, %s, %s)
+                """, (agent["id"], idempotency_key, request_hash, ids))
 
     from memory.queue import interactions_queue
     for interaction_id in ids:
         await interactions_queue.add(
             "ingest_interaction",
             {"interaction_id": interaction_id},
-            {"attempts": 3, "backoff": {"type": "exponential", "delay": 2000}}
+            {"jobId": f"interaction-{interaction_id}",
+             "attempts": 3, "backoff": {"type": "exponential", "delay": 2000}}
         )
 
-    log_audit(agent["id"], "ingest_interactions_bulk", "interaction", ids[0], {
-        "count": len(ids),
-        "interaction_types": sorted({i.interaction_type for i in items}),
-    })
-    for item in items:
-        grant_entity(agent["id"], item.primary_entity_type, item.primary_entity_id)
+    if not replayed:
+        log_audit(agent["id"], "ingest_interactions_bulk", "interaction", ids[0], {
+            "count": len(ids),
+            "interaction_types": sorted({i.interaction_type for i in items}),
+            "idempotency_key_supplied": bool(idempotency_key),
+        })
+        for item in items:
+            grant_entity(agent["id"], item.primary_entity_type, item.primary_entity_id)
 
     response.status_code = 202
-    return BulkInteractionResponse(ids=ids, count=len(ids), status="pending")
+    if replayed:
+        response.headers["Idempotent-Replayed"] = "true"
+    return BulkInteractionResponse(ids=ids, count=len(ids), status="pending", replayed=replayed)
 
 
 # ============================================

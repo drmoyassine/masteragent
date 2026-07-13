@@ -100,6 +100,36 @@ class TestInteractionBulkIngestion:
         assert resp.status_code == 422, f"Expected 422 for >100 items, got {resp.status_code}"
         print("✓ Bulk endpoint rejects batches over 100 items")
 
+    def test_bulk_ingest_idempotency_key_replays_original_result(self, agent, base_url):
+        payload = {"items": [{
+            "interaction_type": "internal_ai_thought",
+            "content": "idempotent trace row",
+            "primary_entity_type": "contact",
+            "primary_entity_id": "test-contact-bulk-idempotent",
+            "source": "n8n:tasks_agent",
+        }]}
+        headers = {"Idempotency-Key": "pytest-bulk-idempotency-1"}
+        first = agent.post(f"{base_url}/api/memory/interactions/bulk", json=payload, headers=headers)
+        second = agent.post(f"{base_url}/api/memory/interactions/bulk", json=payload, headers=headers)
+        assert first.status_code == 202, first.text
+        assert second.status_code == 202, second.text
+        assert second.json()["ids"] == first.json()["ids"]
+        assert second.json()["replayed"] is True
+        assert second.headers.get("Idempotent-Replayed") == "true"
+
+    def test_bulk_ingest_rejects_reused_key_with_different_payload(self, agent, base_url):
+        headers = {"Idempotency-Key": "pytest-bulk-idempotency-conflict"}
+        base = {
+            "interaction_type": "internal_ai_thought",
+            "primary_entity_type": "contact",
+            "primary_entity_id": "test-contact-bulk-idempotent",
+            "source": "n8n:tasks_agent",
+        }
+        first = agent.post(f"{base_url}/api/memory/interactions/bulk", json={"items": [{**base, "content": "one"}]}, headers=headers)
+        conflict = agent.post(f"{base_url}/api/memory/interactions/bulk", json={"items": [{**base, "content": "two"}]}, headers=headers)
+        assert first.status_code == 202, first.text
+        assert conflict.status_code == 409, conflict.text
+
     def test_bulk_ingest_rejects_empty_batch(self, agent, base_url):
         resp = agent.post(f"{base_url}/api/memory/interactions/bulk", json={"items": []})
         assert resp.status_code == 422, f"Expected 422 for empty items, got {resp.status_code}"
