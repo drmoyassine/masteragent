@@ -418,6 +418,9 @@ async def start_bullmq_workers():
     global interactions_worker, memory_worker, knowledge_worker
     from core.storage import get_memory_db_context
     
+    from services.job_safety import reconcile_stale_maintenance_runs
+    reconcile_stale_maintenance_runs()
+
     settings = {}
     try:
         with get_memory_db_context() as conn:

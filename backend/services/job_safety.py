@@ -148,3 +148,42 @@ def renew_singleton_job(job_name: str) -> None:
             )
     except Exception as exc:
         logger.warning("Could not renew maintenance lock for %s: %s", job_name, exc)
+
+
+def reconcile_stale_maintenance_runs() -> int:
+    """Close orphaned running rows and release their singleton leases.
+
+    A healthy maintenance job updates its pipeline heartbeat at each safe
+    processing unit. Rows older than the configured threshold cannot belong to
+    a healthy worker after a deploy/crash and must not remain ``running``.
+    Paused rows are intentionally preserved for operator-controlled resume.
+    """
+    try:
+        stale_minutes = max(5, int(os.getenv("MAINTENANCE_LOCK_STALE_MINUTES", "30")))
+    except (TypeError, ValueError):
+        stale_minutes = 30
+    try:
+        from core.storage import get_memory_db_context
+        with get_memory_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE memory_pipeline_runs
+                SET status='failed', outcome='failed', reason_code='stale_worker_heartbeat',
+                    detail=COALESCE(detail, '{}'::jsonb) || jsonb_build_object(
+                        'reconciled_at', NOW(), 'stale_after_minutes', %s
+                    ),
+                    finished_at=COALESCE(finished_at, NOW()), updated_at=NOW()
+                WHERE status IN ('started', 'running')
+                  AND updated_at <= NOW() - (%s * INTERVAL '1 minute')
+                RETURNING job, id
+            """, (stale_minutes, stale_minutes))
+            stale = [dict(row) for row in cursor.fetchall()]
+            jobs = sorted({row["job"] for row in stale if row.get("job")})
+            if jobs:
+                cursor.execute("DELETE FROM memory_job_locks WHERE job_name = ANY(%s)", (jobs,))
+        if stale:
+            logger.warning("Reconciled %d stale maintenance run(s): %s", len(stale), jobs)
+        return len(stale)
+    except Exception as exc:
+        logger.warning("Could not reconcile stale maintenance runs: %s", exc)
+        return 0
