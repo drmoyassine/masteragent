@@ -37,7 +37,7 @@ function ModelCombobox({ value, onChange, models = [], loading, error, onFetch, 
                     <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
                 </Button>
             </div>
-            {error && <p className="text-xs text-red-500">{error}</p>}
+            {error && <p className="text-xs text-red-500">{typeof error === "string" ? error : JSON.stringify(error)}</p>}
         </div>
     );
 }

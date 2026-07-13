@@ -14,6 +14,13 @@ import { toast } from "sonner";
 import api, { triggerMemoryGeneration, triggerIntelligenceCheck, triggerKnowledgeCheck, triggerPlaybookExtraction, exportKnowledgePack, triggerBackfillFacets, triggerReflectTelemetry, triggerInteractionRetention, fetchProviderModels, analyzeHygieneNow, backfillEmbeddings, getEmbeddingCoverage, getPipelineRuns, getMaintenanceControls, getMaintenanceEligibleCounts, setMaintenanceControl } from "@/lib/api";
 import { useEffect } from "react";
 
+const apiErrorMessage = (error, fallback) => {
+    const detail = error?.response?.data?.detail;
+    if (Array.isArray(detail)) return detail.map(item => item?.msg || item?.detail || JSON.stringify(item)).join(", ");
+    if (detail && typeof detail === "object") return detail.message || JSON.stringify(detail);
+    return detail || fallback;
+};
+
 // â”€â”€â”€ Threshold Overrides Table â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Shows only entity types that have an active override.
 // Users pick from a dropdown to add new overrides and can remove them.
@@ -445,7 +452,7 @@ function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProvide
                     <Button variant="outline" disabled={retentionRunning} onClick={async () => {
                         setRetentionRunning(true);
                         try { await triggerInteractionRetention({ batch_size: 500, max_records: 5000 }); toast.success("Interaction retention cleanup queued"); }
-                        catch (e) { toast.error(e?.response?.data?.detail || "Failed to queue retention cleanup"); }
+                        catch (e) { toast.error(apiErrorMessage(e, "Failed to queue retention cleanup")); }
                         finally { setRetentionRunning(false); }
                     }}>Run bounded cleanup</Button>
                     <p className="text-[10px] text-muted-foreground">Each run deletes at most 5,000 eligible records. Failed or unfinished telemetry remains protected when the toggle is on.</p>
@@ -472,7 +479,7 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
             await triggerMemoryGeneration(true);
             toast.success("Generation task scheduled in background. Check docker logs.");
         } catch (error) {
-            toast.error(error?.response?.data?.detail || "Failed to trigger task");
+            toast.error(apiErrorMessage(error, "Failed to trigger task"));
         } finally {
             setIsTriggering(false);
         }
@@ -733,7 +740,7 @@ function IntelligenceTab({ settings, onUpdateSettings, llmConfigs, llmProviders,
             await triggerIntelligenceCheck();
             toast.success("Intelligence extraction check triggered. Entities at threshold will be queued.");
         } catch (error) {
-            toast.error(error?.response?.data?.detail || "Failed to trigger intelligence check");
+            toast.error(apiErrorMessage(error, "Failed to trigger intelligence check"));
         } finally {
             setIsTriggering(false);
         }
@@ -1003,7 +1010,7 @@ function LegacyKnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProvide
             await fn();
             toast.success(successMsg);
         } catch (error) {
-            toast.error(error?.response?.data?.detail || "Failed to queue trigger");
+            toast.error(apiErrorMessage(error, "Failed to queue trigger"));
         } finally {
             setTriggering(null);
         }
@@ -1681,8 +1688,11 @@ export function MemorySettings({
                     [configId]: response.data.models,
                 }));
             } catch (err) {
-                const detail = err.response?.data?.detail || "Failed to fetch models.";
-                setFetchErrors((prev) => ({ ...prev, [configId]: detail }));
+                const detail = err.response?.data?.detail;
+                const message = Array.isArray(detail)
+                    ? detail.map(item => item?.msg || item?.detail || JSON.stringify(item)).join(", ")
+                    : (typeof detail === "object" ? JSON.stringify(detail) : (detail || "Failed to fetch models."));
+                setFetchErrors((prev) => ({ ...prev, [configId]: message }));
             } finally {
                 setFetchingModels((prev) => ({ ...prev, [configId]: false }));
             }
@@ -1956,13 +1966,13 @@ function KnowledgeOperations({ runs, controls, eligibleCounts, onRefresh, settin
         setBusy(true);
         try {
             await setMaintenanceControl(definition.job, "run");
-            const runMetadata = { records_per_batch: recordsPerBatch, batches_per_run: resolvedBatches, run_all: runExtent === "all" };
+            const runMetadata = { records_per_batch: recordsPerBatch, batches_per_run: runExtent === "all" ? undefined : resolvedBatches, run_all: runExtent === "all" };
             if (operation === "embedding_backfill") await backfillEmbeddings({ batch_size: recordsPerBatch, max_records: totalRecords, ...runMetadata });
             if (operation === "knowledge_generation") await triggerKnowledgeCheck(resolvedBatches > 1, { max_records: totalRecords, max_rounds: resolvedBatches, ...runMetadata });
             if (operation === "hygiene_analysis") await analyzeHygieneNow({ mode: "analysis_only", dry_run: true, max_records: totalRecords, max_clusters: maxClusters, ...runMetadata });
             if (operation === "facet_backfill") await triggerBackfillFacets({ batch_size: recordsPerBatch, max_records: totalRecords, ...runMetadata });
             toast.success(`${definition.label} queued`); setTimeout(onRefresh, 700);
-        } catch (error) { toast.error(error?.response?.data?.detail || `Could not start ${definition.label}`); }
+        } catch (error) { toast.error(apiErrorMessage(error, `Could not start ${definition.label}`)); }
         finally { setBusy(false); }
     };
     const exportApproved = async () => {
@@ -2001,7 +2011,7 @@ function MaintenanceRunStatus({ runs, controls, onRefresh }) {
     const setControl = async (job, command) => {
         setBusy(`${job}:${command}`);
         try { await setMaintenanceControl(job, command); toast.success(command === "run" ? "Run state cleared. Start the next bounded run to resume." : `${labels[job] || job} will ${command} at its next safe checkpoint.`); onRefresh(); }
-        catch (error) { toast.error(error?.response?.data?.detail || "Could not update run control"); }
+        catch (error) { toast.error(apiErrorMessage(error, "Could not update run control")); }
         finally { setBusy(null); }
     };
     const activeJobs = Object.keys(labels).map(job => ({ job, latest: runs.find(run => run.job === job) })).filter(item => ["running", "paused", "blocked"].includes(item.latest?.status));

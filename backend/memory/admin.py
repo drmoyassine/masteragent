@@ -903,7 +903,7 @@ async def embedding_coverage(admin: dict = Depends(require_admin_auth)):
 async def backfill_embeddings(
     batch_size: int = Query(25, ge=1, le=25),
     max_records: int = Query(1000, ge=1, le=10000000),
-    batches_per_run: Optional[int] = Query(None, ge=1, le=10000),
+    batches_per_run: Optional[int] = Query(None, ge=1, le=1000000),
     run_all: bool = Query(False),
     admin: dict = Depends(require_admin_auth),
 ):
@@ -933,7 +933,18 @@ async def get_entity_type_config(entity_type: str, admin: dict = Depends(require
         row = cursor.fetchone()
 
     if not row:
-        raise HTTPException(status_code=404, detail="Entity type config not found")
+        # Entity types can be created by the CRM/configuration layer before a
+        # per-type memory row exists. Materialize the defaults on first read so
+        # settings screens do not produce noisy 404s or fail to save overrides.
+        cursor.execute(
+            "INSERT INTO memory_entity_type_config (entity_type) VALUES (%s) ON CONFLICT (entity_type) DO NOTHING",
+            (entity_type,),
+        )
+        cursor.execute(
+            "SELECT * FROM memory_entity_type_config WHERE entity_type = %s",
+            (entity_type,),
+        )
+        row = cursor.fetchone()
     config = dict(row)
     if isinstance(config.get("metadata_field_map"), str):
         config["metadata_field_map"] = json.loads(config["metadata_field_map"])
