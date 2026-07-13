@@ -130,10 +130,17 @@ async def run_embedding_backfill(
         processed += len(rows)
         seen += len(rows)
         try:
-            vectors = await _embed_batch([serialize_knowledge_for_embedding(row) for row in rows])
+            texts = [serialize_knowledge_for_embedding(row) for row in rows]
+            vectors, failures = await _embed_batch_isolated(texts)
+            failed += len(failures)
+            failed_ids.extend(rows[index]["id"] for index in failures)
+            for index, reason in failures.items():
+                logger.warning("Knowledge embedding skipped %s: %s", rows[index]["id"], reason)
             with get_memory_db_context() as conn:
                 cursor = conn.cursor()
                 for row, vector in zip(rows, vectors):
+                    if vector is None:
+                        continue
                     metadata = merge_embedding_metadata(
                         row.get("metadata"), model=configured_model, vector=vector, version=cv
                     )
@@ -212,10 +219,17 @@ async def _backfill_source_tiers(*, batch_size: int, max_records: Optional[int],
                 break
             processed += len(rows)
             try:
-                vectors = await _embed_batch([str(row.get("embedding_text") or "") for row in rows])
+                texts = [str(row.get("embedding_text") or "") for row in rows]
+                vectors, failures = await _embed_batch_isolated(texts)
+                failed += len(failures)
+                failed_ids.update(rows[index]["id"] for index in failures)
+                for index, reason in failures.items():
+                    logger.warning("%s embedding skipped %s: %s", table, rows[index]["id"], reason)
                 with get_memory_db_context() as conn:
                     cur = conn.cursor()
                     for row, vector in zip(rows, vectors):
+                        if vector is None:
+                            continue
                         cur.execute(f"""
                             UPDATE {table} SET embedding=%s::vector,embedding_model=%s,
                                 embedding_version=1,embedding_dimensions=%s,embedded_at=NOW()
@@ -314,6 +328,39 @@ async def _embed_batch(texts: List[str]) -> List[List[float]]:
     if len(vectors) != len(texts):
         raise RuntimeError(f"Expected {len(texts)} embedding vectors, got {len(vectors)}")
     return vectors
+
+
+async def _embed_batch_isolated(texts: List[str]):
+    """Embed a batch without letting one invalid input poison its siblings.
+
+    Provider failures are recursively split until the offending record is
+    isolated. Provider stop/rate-limit errors are still raised immediately.
+    Returns ``(vectors, failures)`` where vectors is aligned with ``texts``
+    and failed positions contain ``None``.
+    """
+    from services.job_safety import ProviderStopError
+
+    if not texts:
+        return [], {}
+    try:
+        return await _embed_batch(texts), {}
+    except ProviderStopError:
+        raise
+    except Exception as exc:
+        message = str(exc).lower()
+        # Do not amplify transient 5xx/network failures into many requests.
+        # Only split deterministic input-validation failures that can be
+        # isolated to one record.
+        if not any(marker in message for marker in ("maximum input length", "invalid 'input", "invalid input")):
+            raise
+        if len(texts) == 1:
+            return [None], {0: str(exc)}
+        midpoint = len(texts) // 2
+        left_vectors, left_failures = await _embed_batch_isolated(texts[:midpoint])
+        right_vectors, right_failures = await _embed_batch_isolated(texts[midpoint:])
+        failures = dict(left_failures)
+        failures.update({midpoint + index: reason for index, reason in right_failures.items()})
+        return left_vectors + right_vectors, failures
 
 
 def preview_backfill(configured_version: Optional[int] = None) -> Dict[str, Any]:

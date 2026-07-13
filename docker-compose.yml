@@ -32,6 +32,7 @@ services:
       - MEMORY_POSTGRES_URL=${MEMORY_POSTGRES_URL:-postgresql://postgres:postgres@postgres:5432/memory}
       # Memory system: Redis cache
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - EMBEDDING_MAX_INPUT_CHARS=${EMBEDDING_MAX_INPUT_CHARS:-12000}
       # BullMQ retention. Keep completed/failed job records bounded.
       - BULL_REMOVE_ON_COMPLETE_COUNT=${BULL_REMOVE_ON_COMPLETE_COUNT:-1000}
       - BULL_REMOVE_ON_FAIL_COUNT=${BULL_REMOVE_ON_FAIL_COUNT:-1000}

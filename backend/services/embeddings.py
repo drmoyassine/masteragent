@@ -1,5 +1,6 @@
 """services/embeddings.py — Embedding generation via admin-configured API"""
 import logging
+import os
 from typing import List
 
 import httpx
@@ -8,6 +9,27 @@ from services.config_helpers import get_llm_config
 from services.job_safety import ProviderStopError, provider_stop_from_response, record_provider_stop
 
 logger = logging.getLogger(__name__)
+
+# OpenAI embedding models accept a maximum of 8192 tokens per input. A
+# conservative character cap prevents oversized records from rejecting an
+# otherwise valid batch; the batch backfill also isolates any provider error
+# that remains after this guard.
+try:
+    _MAX_INPUT_CHARS = max(1000, int(os.getenv("EMBEDDING_MAX_INPUT_CHARS", "12000")))
+except (TypeError, ValueError):
+    _MAX_INPUT_CHARS = 12000
+    logger.warning("Invalid EMBEDDING_MAX_INPUT_CHARS; using %d", _MAX_INPUT_CHARS)
+
+
+def _bounded_input(text: str) -> str:
+    value = str(text or "")
+    if len(value) <= _MAX_INPUT_CHARS:
+        return value
+    logger.warning(
+        "Truncating embedding input from %d to %d characters",
+        len(value), _MAX_INPUT_CHARS,
+    )
+    return value[:_MAX_INPUT_CHARS]
 
 
 async def generate_embedding(text: str) -> List[float]:
@@ -29,7 +51,7 @@ async def generate_embedding(text: str) -> List[float]:
             response = await client.post(
                 f"{api_base}/embeddings",
                 headers=headers,
-                json={"model": model, "input": text},
+                json={"model": model, "input": _bounded_input(text)},
             )
             if response.status_code == 200:
                 return response.json()["data"][0]["embedding"]
@@ -67,7 +89,7 @@ async def generate_embeddings_batch(texts: List[str]) -> List[List[float]]:
             response = await client.post(
                 f"{api_base}/embeddings",
                 headers=headers,
-                json={"model": model, "input": texts},
+                json={"model": model, "input": [_bounded_input(text) for text in texts]},
             )
             if response.status_code == 200:
                 # Pair vectors to input rows by the provider's explicit index,
