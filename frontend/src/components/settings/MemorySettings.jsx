@@ -1951,7 +1951,11 @@ function KnowledgeOperations({ runs, controls, eligibleCounts, onRefresh, settin
     const [busy, setBusy] = useState(false);
     const definition = OPERATION_DEFINITIONS[operation];
     const eligible = Number(eligibleCounts?.[definition.eligibleKey] || 0);
-    const operationActive = runs.some(run => run.job === definition.job && ["running", "paused"].includes(run.status));
+    const latestRunFor = (job) => runs
+        .filter(run => run.job === job)
+        .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))[0];
+    const latestOperation = latestRunFor(definition.job);
+    const operationActive = ["running", "paused", "blocked"].includes(latestOperation?.status);
     const resolvedBatches = runExtent === "all" ? Math.ceil(eligible / Math.max(1, recordsPerBatch)) : Math.max(1, batchesPerRun);
     const totalRecords = runExtent === "all" ? eligible : recordsPerBatch * resolvedBatches;
 
@@ -2014,7 +2018,10 @@ function MaintenanceRunStatus({ runs, controls, onRefresh }) {
         catch (error) { toast.error(apiErrorMessage(error, "Could not update run control")); }
         finally { setBusy(null); }
     };
-    const activeJobs = Object.keys(labels).map(job => ({ job, latest: runs.find(run => run.job === job) })).filter(item => ["running", "paused", "blocked"].includes(item.latest?.status));
+    const activeJobs = Object.keys(labels).map(job => ({
+        job,
+        latest: runs.filter(run => run.job === job).sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))[0],
+    })).filter(item => ["running", "paused", "blocked"].includes(item.latest?.status));
     return <Card className="border-amber-500/40 bg-amber-500/5">
         <CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><BarChart3 className="w-4 h-4" />Active Knowledge operations</CardTitle><CardDescription>Updates every 5 seconds. Pause and cancel take effect after the current safe processing unit.</CardDescription></CardHeader>
         <CardContent className="space-y-3">
