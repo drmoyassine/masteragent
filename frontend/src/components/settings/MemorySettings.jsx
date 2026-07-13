@@ -1947,6 +1947,7 @@ function KnowledgeOperations({ runs, controls, eligibleCounts, onRefresh, settin
     const [recordsPerBatch, setRecordsPerBatch] = useState(OPERATION_DEFINITIONS.embedding_backfill.defaultRecords);
     const [runExtent, setRunExtent] = useState("limited");
     const [batchesPerRun, setBatchesPerRun] = useState(OPERATION_DEFINITIONS.embedding_backfill.defaultBatches);
+    const [executionMode, setExecutionMode] = useState("synchronous_calibration");
     const [maxClusters, setMaxClusters] = useState(100);
     const [busy, setBusy] = useState(false);
     const definition = OPERATION_DEFINITIONS[operation];
@@ -1958,6 +1959,7 @@ function KnowledgeOperations({ runs, controls, eligibleCounts, onRefresh, settin
     const operationActive = ["running", "paused", "blocked"].includes(latestOperation?.status);
     const resolvedBatches = runExtent === "all" ? Math.ceil(eligible / Math.max(1, recordsPerBatch)) : Math.max(1, batchesPerRun);
     const totalRecords = runExtent === "all" ? eligible : recordsPerBatch * resolvedBatches;
+    const calibrationCap = 250;
 
     const changeOperation = (value) => {
         const next = OPERATION_DEFINITIONS[value];
@@ -1966,11 +1968,12 @@ function KnowledgeOperations({ runs, controls, eligibleCounts, onRefresh, settin
     const start = async () => {
         if (recordsPerBatch < 1 || recordsPerBatch > definition.maxRecords) return toast.error(`Records per Batch must be between 1 and ${definition.maxRecords}`);
         if (totalRecords < 1) return toast.error("No eligible records are available for this operation");
+        if (executionMode === "synchronous_calibration" && totalRecords > calibrationCap) return toast.error(`Calibration runs are limited to ${calibrationCap} records`);
         if (totalRecords > definition.maxTotal) return toast.error(`This run exceeds the ${definition.maxTotal.toLocaleString()} record safety limit`);
         setBusy(true);
         try {
             await setMaintenanceControl(definition.job, "run");
-            const runMetadata = { records_per_batch: recordsPerBatch, batches_per_run: runExtent === "all" ? undefined : resolvedBatches, run_all: runExtent === "all" };
+            const runMetadata = { records_per_batch: recordsPerBatch, batches_per_run: runExtent === "all" ? undefined : resolvedBatches, run_all: runExtent === "all", execution_mode: executionMode };
             if (operation === "embedding_backfill") await backfillEmbeddings({ batch_size: recordsPerBatch, max_records: totalRecords, ...runMetadata });
             if (operation === "knowledge_generation") await triggerKnowledgeCheck(resolvedBatches > 1, { max_records: totalRecords, max_rounds: resolvedBatches, ...runMetadata });
             if (operation === "hygiene_analysis") await analyzeHygieneNow({ mode: "analysis_only", dry_run: true, max_records: totalRecords, max_clusters: maxClusters, ...runMetadata });
@@ -1991,14 +1994,15 @@ function KnowledgeOperations({ runs, controls, eligibleCounts, onRefresh, settin
             <CardHeader><CardTitle className="text-base">Start a Knowledge operation</CardTitle><CardDescription>Choose one operation, define its bounded workload, review the estimate, and start it explicitly.</CardDescription></CardHeader>
             <CardContent className="space-y-4">
                 <div className="max-w-md space-y-1"><SettingLabel help="operation_type">Operation</SettingLabel><Select value={operation} onValueChange={changeOperation}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{Object.entries(OPERATION_DEFINITIONS).map(([key, item]) => <SelectItem key={key} value={key}>{item.label}</SelectItem>)}</SelectContent></Select><p className="text-[11px] text-muted-foreground">{definition.description}</p></div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div className="space-y-1"><SettingLabel help="execution_mode">Execution mode</SettingLabel><Select value={executionMode} onValueChange={setExecutionMode}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="synchronous_calibration">Synchronous calibration</SelectItem><SelectItem value="provider_batch" disabled>Provider batch (enable after calibration)</SelectItem></SelectContent></Select><p className="text-[10px] text-muted-foreground">Small immediate run for cost, latency, and quality calibration.</p></div>
                     <div className="space-y-1"><SettingLabel help="records_per_batch">Records per Batch</SettingLabel><Input type="number" min="1" max={definition.maxRecords} value={recordsPerBatch} onChange={(e) => setRecordsPerBatch(Math.max(1, Math.min(definition.maxRecords, Number(e.target.value) || 1)))} /><p className="text-[10px] text-muted-foreground">Allowed for this operation: 1–{definition.maxRecords}.</p></div>
                     <div className="space-y-1"><SettingLabel help="batches_per_run">Batches per Run</SettingLabel><Select value={runExtent} onValueChange={setRunExtent}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="limited">Limit batches</SelectItem><SelectItem value="all">All eligible records</SelectItem></SelectContent></Select></div>
                     <div className="space-y-1"><SettingLabel help="batch_limit">Batch limit</SettingLabel><Input type="number" min="1" max="10000" disabled={runExtent === "all"} value={runExtent === "all" ? resolvedBatches || 0 : batchesPerRun} onChange={(e) => setBatchesPerRun(Math.max(1, Math.min(10000, Number(e.target.value) || 1)))} /><p className="text-[10px] text-muted-foreground">All uses a finite snapshot of currently eligible records.</p></div>
                 </div>
                 {operation === "hygiene_analysis" && <div className="max-w-xs space-y-1"><SettingLabel help="analysis_max_clusters">Maximum clusters inspected</SettingLabel><Input type="number" min="1" max="10000" value={maxClusters} onChange={(e) => setMaxClusters(Math.max(1, Math.min(10000, Number(e.target.value) || 1)))} /></div>}
-                <div className="rounded-md border bg-muted/20 p-3 text-xs grid grid-cols-2 md:grid-cols-4 gap-3"><div><span className="text-muted-foreground">Eligible now</span><div className="font-medium">{eligible.toLocaleString()}</div></div><div><span className="text-muted-foreground">Records per Batch</span><div className="font-medium">{recordsPerBatch.toLocaleString()}</div></div><div><span className="text-muted-foreground">Batches per Run</span><div className="font-medium">{runExtent === "all" ? `All (${resolvedBatches})` : resolvedBatches}</div></div><div><span className="text-muted-foreground">Maximum records</span><div className="font-medium">{totalRecords.toLocaleString()}</div></div></div>
-                <div className="flex gap-2 flex-wrap"><Button onClick={start} disabled={busy || operationActive || totalRecords < 1 || totalRecords > definition.maxTotal}><Play className="w-4 h-4 mr-2" />{busy ? "Queueing…" : operationActive ? `${definition.label} already active` : definition.button}</Button><Button variant="outline" onClick={exportApproved} disabled={busy}><FileText className="w-4 h-4 mr-2" />Export approved Knowledge</Button></div>
+                <div className="rounded-md border bg-muted/20 p-3 text-xs grid grid-cols-2 md:grid-cols-4 gap-3"><div><span className="text-muted-foreground">Eligible now</span><div className="font-medium">{eligible.toLocaleString()}</div></div><div><span className="text-muted-foreground">Records per Batch</span><div className="font-medium">{recordsPerBatch.toLocaleString()}</div></div><div><span className="text-muted-foreground">Batches per Run</span><div className="font-medium">{runExtent === "all" ? `All (${resolvedBatches})` : resolvedBatches}</div></div><div><span className="text-muted-foreground">Maximum records</span><div className="font-medium">{totalRecords.toLocaleString()}{executionMode === "synchronous_calibration" ? ` / ${calibrationCap} calibration cap` : ""}</div></div></div>
+                <div className="flex gap-2 flex-wrap"><Button onClick={start} disabled={busy || operationActive || totalRecords < 1 || totalRecords > definition.maxTotal || (executionMode === "synchronous_calibration" && totalRecords > calibrationCap)}><Play className="w-4 h-4 mr-2" />{busy ? "Queueing…" : operationActive ? `${definition.label} already active` : executionMode === "synchronous_calibration" ? `Run synchronous calibration` : definition.button}</Button><Button variant="outline" onClick={exportApproved} disabled={busy}><FileText className="w-4 h-4 mr-2" />Export approved Knowledge</Button></div>
                 {operation === "knowledge_generation" && <p className="text-[10px] text-muted-foreground">One input record is one eligible source-evidence record. Several inputs may produce one Knowledge record, or none when policy rejects the candidate. Output is therefore not one-to-one.</p>}
                 {operation === "hygiene_analysis" && <p className="text-[10px] text-muted-foreground">Records are combined into the selected analysis window before candidate graph formation. Similarity discovers candidates only; it never applies a merge.</p>}
             </CardContent>

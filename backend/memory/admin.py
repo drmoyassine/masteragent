@@ -979,14 +979,17 @@ async def backfill_embeddings(
     max_records: int = Query(1000, ge=1, le=10000000),
     batches_per_run: Optional[int] = Query(None, ge=1, le=1000000),
     run_all: bool = Query(False),
+    execution_mode: str = Query("synchronous_calibration"),
     admin: dict = Depends(require_admin_auth),
 ):
     """Queue the resumable embedding backfill job. Returns 202."""
     from memory.queue import knowledge_queue
+    if execution_mode not in {"synchronous_calibration", "synchronous", "provider_batch"}:
+        raise HTTPException(status_code=422, detail="Unsupported execution mode")
     await knowledge_queue.add("knowledge_embedding_backfill", {
         "batch_size": batch_size, "records_per_batch": batch_size,
         "max_records": max_records, "batches_per_run": batches_per_run,
-        "run_all": run_all,
+        "run_all": run_all, "execution_mode": execution_mode,
     }, {"priority": 3})
     return {"status": "queued", "batch_size": batch_size, "max_records": max_records}
 
