@@ -1,0 +1,13 @@
+# Core dependencies
+httpx>=0.25.0
+python-dotenv>=1.0.0
+
+# MCP Server
+aiohttp>=3.9.0
+
+# Type hints
+typing-extensions>=4.8.0
+
+# SDK Oficial de Model Context Protocol (MCP)
+# >=1.2 required for tool annotations (ToolAnnotations: readOnlyHint/destructiveHint/...)
+mcp>=1.2.0
