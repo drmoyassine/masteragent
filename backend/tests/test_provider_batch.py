@@ -1,8 +1,11 @@
 import json
 import asyncio
+import pytest
 
 from services.provider_batch import OpenAIBatchAdapter, parse_jsonl
-from memory_operation_service import _extract_result, _local_from_provider
+from memory_operation_service import (
+    _bounded_total, _extract_result, _local_from_provider, _pricing, _provider_safe_manifest,
+)
 
 
 def test_openai_jsonl_preserves_custom_ids_and_request_bodies():
@@ -46,3 +49,33 @@ def test_result_parser_separates_usage_and_errors():
     }}})
     assert result is None
     assert error["message"] == "bad input"
+
+
+def test_run_pricing_overrides_config_without_mutating_it():
+    config = {"extra_config": {"batch_input_cost_per_million": 1.0}}
+    resolved = _pricing(config, {"pricing": {
+        "batch_input_cost_per_million": "0.5",
+        "batch_output_cost_per_million": "2.0",
+    }})
+    assert resolved["batch_input_cost_per_million"] == .5
+    assert resolved["batch_output_cost_per_million"] == 2.0
+    assert config["extra_config"]["batch_input_cost_per_million"] == 1.0
+    with pytest.raises(ValueError):
+        _pricing(config, {"pricing": {"batch_input_cost_per_million": -1}})
+
+
+def test_provider_safe_manifest_splits_without_dropping_source_inputs():
+    class Caps:
+        max_requests = 2
+        max_file_bytes = 10_000
+        max_embedding_inputs = 3
+    manifest = [
+        {"custom_id": "one", "url": "/v1/embeddings", "body": {"input": ["a", "b"]}},
+        {"custom_id": "two", "url": "/v1/embeddings", "body": {"input": ["c", "d"]}},
+    ]
+    selected = _provider_safe_manifest(manifest, Caps(), "knowledge_embedding_backfill", 2)
+    assert [item["custom_id"] for item in selected] == ["one"]
+
+
+def test_all_eligible_workload_is_not_silently_capped():
+    assert _bounded_total({"run_all": True, "max_records": 2_500_000}) == 2_500_000

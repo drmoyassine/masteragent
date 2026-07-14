@@ -1457,6 +1457,16 @@ def _create_provider_batch_schema(cursor):
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_provider_batch_runs_status ON memory_provider_batch_runs(local_status, next_poll_at)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_provider_batch_runs_preview ON memory_provider_batch_runs(preview_id)")
+    # Coordinator fields are additive so existing single-provider-job runs remain valid.
+    # A coordinator owns a finite workload and prepares bounded provider child jobs over time.
+    cursor.execute("ALTER TABLE memory_provider_batch_runs ADD COLUMN IF NOT EXISTS is_coordinator BOOLEAN NOT NULL DEFAULT FALSE")
+    cursor.execute("ALTER TABLE memory_provider_batch_runs ADD COLUMN IF NOT EXISTS target_source_count BIGINT NOT NULL DEFAULT 0")
+    cursor.execute("ALTER TABLE memory_provider_batch_runs ADD COLUMN IF NOT EXISTS prepared_source_count BIGINT NOT NULL DEFAULT 0")
+    cursor.execute("ALTER TABLE memory_provider_batch_runs ADD COLUMN IF NOT EXISTS child_count INT NOT NULL DEFAULT 0")
+    cursor.execute("ALTER TABLE memory_provider_batch_runs ADD COLUMN IF NOT EXISTS preparation_complete BOOLEAN NOT NULL DEFAULT FALSE")
+    cursor.execute("ALTER TABLE memory_provider_batch_runs ADD COLUMN IF NOT EXISTS run_options JSONB NOT NULL DEFAULT '{}'")
+    cursor.execute("ALTER TABLE memory_provider_batch_runs ADD COLUMN IF NOT EXISTS pricing_snapshot JSONB NOT NULL DEFAULT '{}'")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_provider_batch_runs_parent ON memory_provider_batch_runs(parent_run_id, created_at)")
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS memory_provider_batch_requests (
             id                  TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,

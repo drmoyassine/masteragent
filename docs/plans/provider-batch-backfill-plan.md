@@ -21,10 +21,17 @@ Delivered in this implementation:
 - Operations UI capability checks, batch review, submission, live local/provider
   states, controls, and detailed history;
 - synchronous calibration and legacy operation endpoints retained unchanged.
-- a default 10,000-source-record review/submission cap (configurable up to the
-  provider's 50,000-input ceiling), with deferred counts shown explicitly; this
-  prevents an `All eligible` review from loading a production-scale backlog into
-  application memory at once.
+- exhaustive `All eligible` execution through a durable parent operation and as
+  many provider-safe child batches as required;
+- bounded, streamed preparation controlled by
+  `PROVIDER_BATCH_PREPARATION_CHUNK_RECORDS` (an internal memory guard, never a
+  user workload cap);
+- lightweight sampled previews with extrapolated request, token, child-job, and
+  cost estimates instead of materializing the full production manifest;
+- configured provider-account selection, per-run model override, and per-run
+  input/output or embedding price snapshots without changing shared prompts;
+- parent-level pause, resume, cancellation, progress aggregation, child lineage,
+  restart recovery, and actual-token cost calculation.
 
 The `run_all_knowledge_generation` operation keeps telemetry, playbook, and
 skill producers registered in the shared operation. Its first discounted remote
@@ -136,8 +143,13 @@ The preview expires. Submission rejects a stale preview and requires regeneratio
 
 ### 5. Submit and monitor
 
-`Submit asynchronous batch` persists the manifest before any provider call,
-uploads the provider input, creates the provider batch, and returns immediately.
+`Submit asynchronous batch` creates a durable parent operation and returns
+immediately. Short-lived recovery cycles discover the accepted finite snapshot,
+prepare one bounded manifest, persist its requests and source lineage, upload it,
+and create a provider child batch. The cycle repeats until every accepted source
+has been prepared. Provider request, embedding-input, and file-size limits create
+additional child batches automatically; they never defer the remaining workload
+to a separate user submission.
 
 The Active Knowledge Operations panel shows:
 
@@ -159,6 +171,11 @@ The Active Knowledge Operations panel shows:
 
 The panel must show provider state separately from local worker state. A run
 waiting at the provider is not an active long-running Python worker.
+
+The parent operation displays sources prepared versus selected, provider request
+count, child provider-job count, applied/failed results, model, estimated cost,
+and child status. Child runs remain inspectable for provider IDs and request-level
+errors.
 
 ### 6. Operate the run
 
@@ -630,7 +647,10 @@ Operation overrides:
 - maximum records per batch;
 - maximum batches per run;
 - maximum concurrent provider jobs;
-- provider/model override only where the current operation already permits one;
+- a configured provider account and model override for the run; credentials are
+  never accepted from or returned to the UI;
+- batch input/output price per million tokens, or embedding input price per
+  million tokens, frozen into the run for estimates and audit;
 - auto-selection policy.
 
 Do not introduce independent prompt, confidence, token-budget, or schedule values

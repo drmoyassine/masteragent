@@ -36,24 +36,97 @@ def _hash(value: Any) -> str:
     return hashlib.sha256(_json(value).encode("utf-8")).hexdigest()
 
 
-def _provider_config(operation: str) -> Dict[str, Any]:
-    if operation == "run_all_knowledge_generation":
-        node = next((n for n in get_pipeline_configs("knowledge") if n.get("task_type") == "knowledge_generation"), None)
-        if node:
-            return get_llm_config_by_id(node["id"]) or {}
+def _provider_config(operation: str, options: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    options = options or {}
     task = {
         "knowledge_embedding_backfill": "embedding",
         "run_all_knowledge_generation": "knowledge_generation",
         "knowledge_hygiene_run": "knowledge_consolidation",
         "backfill_facets": "knowledge_generation",
     }[operation]
-    return get_llm_config(task) or {}
+    selected_id = options.get("provider_config_id")
+    if selected_id:
+        selected = get_llm_config_by_id(str(selected_id)) or {}
+        if not selected or not selected.get("is_active"):
+            raise ValueError("The selected provider configuration is unavailable or inactive")
+        if selected.get("task_type") != task:
+            raise ValueError(f"The selected provider configuration is not registered for {task}")
+        config = dict(selected)
+        if options.get("model_name"):
+            config["model_name"] = str(options["model_name"]).strip()
+        return config
+    if operation == "run_all_knowledge_generation":
+        node = next((n for n in get_pipeline_configs("knowledge") if n.get("task_type") == "knowledge_generation"), None)
+        if node:
+            config = get_llm_config_by_id(node["id"]) or {}
+            if options.get("model_name"):
+                config = dict(config); config["model_name"] = str(options["model_name"]).strip()
+            return config
+    config = get_llm_config(task) or {}
+    if options.get("model_name"):
+        config = dict(config)
+        config["model_name"] = str(options["model_name"]).strip()
+    return config
+
+
+def _pricing(config: Dict[str, Any], options: Optional[Dict[str, Any]] = None) -> Dict[str, Optional[float]]:
+    """Resolve a run-frozen price snapshot without changing the shared model config."""
+    extra = config.get("extra_config") or {}
+    supplied = (options or {}).get("pricing") or {}
+    result: Dict[str, Optional[float]] = {}
+    for key in ("batch_input_cost_per_million", "batch_output_cost_per_million", "embedding_cost_per_million"):
+        value = supplied.get(key, extra.get(key))
+        try:
+            result[key] = float(value) if value not in (None, "") else None
+        except (TypeError, ValueError):
+            raise ValueError(f"{key} must be a non-negative number")
+        if result[key] is not None and result[key] < 0:
+            raise ValueError(f"{key} must be a non-negative number")
+    return result
+
+
+def _configured_batch_targets(operation: str) -> List[Dict[str, Any]]:
+    """Return safe selectable accounts/models; credentials never leave the backend."""
+    default = _provider_config(operation)
+    candidates = []
+    with get_memory_db_context() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT c.id,c.name,c.task_type,c.model_name,c.provider_id,c.extra_config_json,c.is_active,
+                   p.provider,p.name AS provider_name,p.api_base_url,p.api_key_encrypted
+            FROM memory_llm_configs c
+            JOIN memory_llm_providers p ON p.id=c.provider_id
+            WHERE c.is_active=TRUE
+            ORDER BY p.name,c.name,c.model_name
+        """)
+        rows = [dict(row) for row in cur.fetchall()]
+    seen = set()
+    for row in rows:
+        if default.get("task_type") and row.get("task_type") != default.get("task_type"):
+            continue
+        try:
+            config = get_llm_config_by_id(str(row["id"])) or {}
+            cap = provider_adapter(config).capabilities()
+            if not cap.supported or row["id"] in seen:
+                continue
+        except Exception:
+            continue
+        seen.add(row["id"])
+        candidates.append({
+            "config_id": row["id"], "provider_id": row.get("provider_id"),
+            "provider": cap.provider, "provider_name": row.get("provider_name") or cap.provider,
+            "config_name": row.get("name") or row.get("model_name"), "model_name": row.get("model_name"),
+            "is_default": str(row["id"]) == str(default.get("id")),
+            "pricing": _pricing(config),
+        })
+    return candidates
 
 
 def capabilities() -> Dict[str, Any]:
     globally_enabled = str(os.getenv("PROVIDER_BATCH_ENABLED", "true")).lower() in {"1", "true", "yes", "on"}
     result = {}
     for operation in sorted(OPERATION_KEYS):
+        config = {}
         try:
             config = _provider_config(operation)
             cap = provider_adapter(config).capabilities()
@@ -72,19 +145,35 @@ def capabilities() -> Dict[str, Any]:
             "reason": reason,
             "provider": cap.provider if cap else (_provider_config(operation).get("provider") or "unknown"),
             "completion_window": "24h" if supported else None,
+            "default_config_id": config.get("id"),
+            "default_model": config.get("model_name"),
+            "targets": _configured_batch_targets(operation),
         }
     return result
 
 
 def _bounded_total(options: Dict[str, Any]) -> int:
     records = max(1, int(options.get("records_per_batch") or 25))
+    configured_max = max(1, int(options.get("max_records") or 1))
     if options.get("run_all"):
-        return min(1_000_000, int(options.get("max_records") or 1_000_000))
+        return configured_max
     batches = max(1, int(options.get("batches_per_run") or 1))
-    return min(1_000_000, records * batches, int(options.get("max_records") or 1_000_000))
+    return min(records * batches, configured_max)
 
 
-def _embedding_sources(limit: int) -> List[Dict[str, Any]]:
+def _claimed_clause(parent_run_id: Optional[str], alias: str = "") -> tuple[str, list]:
+    if not parent_run_id:
+        return "", []
+    prefix = f"{alias}." if alias else ""
+    return """ AND NOT EXISTS (
+        SELECT 1 FROM memory_provider_batch_request_sources s
+        JOIN memory_provider_batch_requests q ON q.id=s.request_id
+        JOIN memory_provider_batch_runs r ON r.id=q.batch_run_id
+        WHERE r.parent_run_id=%s AND s.source_type=%s AND s.source_id=(""" + prefix + "id)::text)", [parent_run_id]
+
+
+def _embedding_sources(limit: int, parent_run_id: Optional[str] = None,
+                       snapshot_cutoff: Optional[str] = None) -> List[Dict[str, Any]]:
     from memory_embedding import current_embedding_model, serialize_knowledge_for_embedding
     model = current_embedding_model()
     specs = [
@@ -98,24 +187,31 @@ def _embedding_sources(limit: int) -> List[Dict[str, Any]]:
         for table, expr, order, version_time in specs:
             if len(output) >= limit:
                 break
+            claimed, params = _claimed_clause(parent_run_id, table)
+            cutoff_clause = " AND created_at<=%s" if snapshot_cutoff else ""
             cur.execute(f"""
                 SELECT id, {expr} AS text, {version_time} AS updated_at FROM {table}
                 WHERE ({expr}) IS NOT NULL AND BTRIM(({expr})::text) <> ''
                   AND (embedding IS NULL OR embedding_model IS DISTINCT FROM %s
                        OR embedding_dimensions IS DISTINCT FROM vector_dims(embedding))
+                  {claimed}
+                  {cutoff_clause}
                 ORDER BY {order}, id LIMIT %s
-            """, (model, limit - len(output)))
+            """, tuple([model, *params, *([table] if parent_run_id else []), *([snapshot_cutoff] if snapshot_cutoff else []), limit - len(output)]))
             for row in cur.fetchall():
                 output.append({"type": table, "id": str(row["id"]), "text": str(row["text"]),
                                "updated_at": row.get("updated_at")})
         if len(output) < limit:
+            claimed, params = _claimed_clause(parent_run_id, "knowledge")
+            cutoff_clause = " AND created_at<=%s" if snapshot_cutoff else ""
             cur.execute("""
                 SELECT id,name,category,content,summary,signals,tags,metadata,updated_at
                 FROM knowledge WHERE status='active' AND (
                     embedding IS NULL OR embedding_model IS DISTINCT FROM %s
                     OR embedding_dimensions IS DISTINCT FROM vector_dims(embedding))
+                """ + claimed + cutoff_clause + """
                 ORDER BY created_at,id LIMIT %s
-            """, (model, limit - len(output)))
+            """, tuple([model, *params, *(["knowledge"] if parent_run_id else []), *([snapshot_cutoff] if snapshot_cutoff else []), limit - len(output)]))
             for row in cur.fetchall():
                 item = dict(row)
                 output.append({"type": "knowledge", "id": str(item["id"]),
@@ -124,18 +220,55 @@ def _embedding_sources(limit: int) -> List[Dict[str, Any]]:
     return output
 
 
-def _facet_sources(limit: int) -> List[Dict[str, Any]]:
+def _facet_sources(limit: int, parent_run_id: Optional[str] = None,
+                   snapshot_cutoff: Optional[str] = None) -> List[Dict[str, Any]]:
     with get_memory_db_context() as conn:
         cur = conn.cursor()
+        claimed, params = _claimed_clause(parent_run_id, "knowledge")
+        cutoff_clause = " AND created_at<=%s" if snapshot_cutoff else ""
         cur.execute("""
             SELECT id,name,summary,content,version,updated_at FROM knowledge
             WHERE status='active' AND COALESCE(metadata->'facets','{}'::jsonb)='{}'::jsonb
+            """ + claimed + cutoff_clause + """
             ORDER BY created_at,id LIMIT %s
-        """, (limit,))
+        """, tuple([*params, *(["knowledge"] if parent_run_id else []), *([snapshot_cutoff] if snapshot_cutoff else []), limit]))
         return [dict(row) for row in cur.fetchall()]
 
 
-def _generation_sources(limit: int) -> List[Dict[str, Any]]:
+def _eligible_source_count(operation: str) -> int:
+    """Count source records without materializing their content."""
+    from memory_embedding import current_embedding_model
+    model = current_embedding_model()
+    with get_memory_db_context() as conn:
+        cur = conn.cursor()
+        if operation == "knowledge_embedding_backfill":
+            counts = []
+            specs = [
+                ("interactions", "content"), ("memories", "content_summary"),
+                ("intelligence", "COALESCE(name,'') || '. ' || COALESCE(summary,'') || ' ' || COALESCE(content,'')"),
+                ("knowledge", "COALESCE(name,'') || '. ' || COALESCE(summary,'') || ' ' || COALESCE(content,'')"),
+            ]
+            for table, expr in specs:
+                status = " AND status='active'" if table == "knowledge" else ""
+                cur.execute(f"""SELECT COUNT(*) count FROM {table} WHERE ({expr}) IS NOT NULL
+                    AND BTRIM(({expr})::text)<>'' {status} AND (embedding IS NULL OR
+                    embedding_model IS DISTINCT FROM %s OR embedding_dimensions IS DISTINCT FROM vector_dims(embedding))""", (model,))
+                counts.append(int(cur.fetchone()["count"] or 0))
+            return sum(counts)
+        if operation == "backfill_facets":
+            cur.execute("""SELECT COUNT(*) count FROM knowledge WHERE status='active'
+                AND COALESCE(metadata->'facets','{}'::jsonb)='{}'::jsonb""")
+            return int(cur.fetchone()["count"] or 0)
+        if operation == "run_all_knowledge_generation":
+            cur.execute("""SELECT COUNT(*) count FROM intelligence i WHERE status='confirmed'
+                AND NOT EXISTS (SELECT 1 FROM knowledge k WHERE i.id=ANY(k.source_intelligence_ids))""")
+            return int(cur.fetchone()["count"] or 0)
+        cur.execute("SELECT COUNT(*) count FROM knowledge WHERE status='active'")
+        return int(cur.fetchone()["count"] or 0)
+
+
+def _generation_sources(limit: int, parent_run_id: Optional[str] = None,
+                        snapshot_cutoff: Optional[str] = None) -> List[Dict[str, Any]]:
     """Freeze declarative evidence groups; other producers remain independently visible.
 
     A request represents one threshold-sized group and reuses the configured
@@ -149,29 +282,40 @@ def _generation_sources(limit: int) -> List[Dict[str, Any]]:
     groups = []
     with get_memory_db_context() as conn:
         cur = conn.cursor()
+        claimed = """ AND NOT EXISTS (
+            SELECT 1 FROM memory_provider_batch_request_sources s
+            JOIN memory_provider_batch_requests q ON q.id=s.request_id
+            JOIN memory_provider_batch_runs r ON r.id=q.batch_run_id
+            WHERE r.parent_run_id=%s AND s.source_type='intelligence' AND s.source_id=i.id::text
+        )""" if parent_run_id else ""
+        cutoff_clause = " AND i.created_at<=%s" if snapshot_cutoff else ""
         cur.execute("""
             SELECT primary_entity_type, COUNT(*) AS count FROM intelligence i
             WHERE status='confirmed' AND NOT EXISTS (
                 SELECT 1 FROM knowledge k WHERE i.id=ANY(k.source_intelligence_ids))
+            """ + claimed + cutoff_clause + """
             GROUP BY primary_entity_type ORDER BY primary_entity_type
-        """)
+        """, tuple([*([parent_run_id] if parent_run_id else []), *([snapshot_cutoff] if snapshot_cutoff else [])]))
         for count_row in cur.fetchall():
             entity_type = count_row["primary_entity_type"]
             config = _get_entity_type_config(entity_type)
             policy = resolve_generation_policy("declarative_knowledge", settings=settings, entity_config=config)["values"]
             threshold = int(policy["evidence_threshold"])
             remaining = int(count_row["count"] or 0)
-            while remaining >= threshold and len(groups) < limit:
+            while remaining >= threshold and sum(len(g["records"]) for g in groups) < limit:
                 offset = sum(len(g["records"]) for g in groups if g["entity_type"] == entity_type)
                 cur.execute("""
                     SELECT id,name,content,summary,signals,primary_entity_type,primary_entity_id,
                            version,updated_at FROM intelligence i
                     WHERE status='confirmed' AND primary_entity_type=%s AND NOT EXISTS (
                         SELECT 1 FROM knowledge k WHERE i.id=ANY(k.source_intelligence_ids))
+                    """ + claimed + cutoff_clause + """
                     ORDER BY created_at,id OFFSET %s LIMIT %s
-                """, (entity_type, offset, threshold))
+                """, tuple([entity_type, *([parent_run_id] if parent_run_id else []), *([snapshot_cutoff] if snapshot_cutoff else []), offset, threshold]))
                 rows = [dict(r) for r in cur.fetchall()]
                 if len(rows) < threshold:
+                    break
+                if groups and sum(len(g["records"]) for g in groups) + len(rows) > limit:
                     break
                 groups.append({"pathway": "declarative_knowledge", "entity_type": entity_type,
                                "records": rows, "policy": policy})
@@ -179,12 +323,28 @@ def _generation_sources(limit: int) -> List[Dict[str, Any]]:
     return groups
 
 
-def _hygiene_sources(limit: int) -> List[Dict[str, Any]]:
+def _hygiene_sources(limit: int, parent_run_id: Optional[str] = None,
+                     snapshot_cutoff: Optional[str] = None) -> List[Dict[str, Any]]:
     from memory_clustering import discover_candidate_groups
     from memory_consolidation_repository import load_active_records_for_categories
     from memory_embedding import CONSOLIDATABLE_KNOWLEDGE_CATEGORIES
     settings = get_memory_settings() or {}
-    records = load_active_records_for_categories(list(CONSOLIDATABLE_KNOWLEDGE_CATEGORIES), limit=max(limit * 5, limit))
+    discovery_limit = max(limit * 5, limit)
+    if parent_run_id:
+        discovery_limit = min(1_000_000, discovery_limit + int(limit))
+    records = load_active_records_for_categories(list(CONSOLIDATABLE_KNOWLEDGE_CATEGORIES), limit=discovery_limit)
+    if snapshot_cutoff:
+        cutoff = datetime.fromisoformat(str(snapshot_cutoff).replace("Z", "+00:00"))
+        records = [r for r in records if not r.get("created_at") or r["created_at"] <= cutoff]
+    if parent_run_id and records:
+        with get_memory_db_context() as conn:
+            cur = conn.cursor(); cur.execute("""SELECT DISTINCT s.source_id
+                FROM memory_provider_batch_request_sources s
+                JOIN memory_provider_batch_requests q ON q.id=s.request_id
+                JOIN memory_provider_batch_runs r ON r.id=q.batch_run_id
+                WHERE r.parent_run_id=%s AND s.source_type='knowledge'""", (parent_run_id,))
+            claimed = {row["source_id"] for row in cur.fetchall()}
+        records = [r for r in records if str(r["id"]) not in claimed]
     groups = discover_candidate_groups(
         records,
         threshold=float(settings.get("knowledge_hygiene_similarity_threshold", .82)),
@@ -205,7 +365,7 @@ def _chat_body(config: Dict[str, Any], system: str, user: str, max_tokens: int) 
 
 
 def _build_manifest(operation: str, sources: List[Dict[str, Any]], options: Dict[str, Any]) -> List[Dict[str, Any]]:
-    config = _provider_config(operation)
+    config = _provider_config(operation, options)
     requests: List[Dict[str, Any]] = []
     if operation == "knowledge_embedding_backfill":
         size = max(1, min(25, int(options.get("records_per_batch") or 25)))
@@ -283,74 +443,113 @@ def _request_sources(item: Dict[str, Any]) -> List[Dict[str, Any]]:
     return [source for source in output if source["source_id"] not in {"None", ""}]
 
 
+def _filter_claimed_manifest(parent_run_id: str, manifest: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Exclude any request containing a source already claimed by this coordinator."""
+    pairs = {(s["source_type"], s["source_id"]) for item in manifest for s in _request_sources(item)}
+    if not pairs:
+        return manifest
+    claimed = set()
+    with get_memory_db_context() as conn:
+        cur = conn.cursor()
+        for source_type, source_ids in _group_pairs(pairs).items():
+            cur.execute("""SELECT s.source_type,s.source_id FROM memory_provider_batch_request_sources s
+                JOIN memory_provider_batch_requests q ON q.id=s.request_id
+                JOIN memory_provider_batch_runs r ON r.id=q.batch_run_id
+                WHERE r.parent_run_id=%s AND s.source_type=%s AND s.source_id=ANY(%s)""",
+                (parent_run_id, source_type, list(source_ids)))
+            claimed.update((r["source_type"], r["source_id"]) for r in cur.fetchall())
+    return [item for item in manifest if not any((s["source_type"], s["source_id"]) in claimed for s in _request_sources(item))]
+
+
+def _group_pairs(pairs: Iterable[tuple[str, str]]) -> Dict[str, set[str]]:
+    grouped: Dict[str, set[str]] = {}
+    for source_type, source_id in pairs:
+        grouped.setdefault(source_type, set()).add(source_id)
+    return grouped
+
+
 def preview(operation: str, execution_mode: str, options: Optional[Dict[str, Any]] = None,
             actor_id: Optional[str] = None) -> Dict[str, Any]:
     if operation not in OPERATION_KEYS:
         raise ValueError(f"Unsupported Knowledge operation: {operation}")
     options = dict(options or {})
+    options.setdefault("snapshot_cutoff", datetime.now(timezone.utc).isoformat())
     if operation == "knowledge_hygiene_run" and execution_mode == "provider_batch" and options.get("mode") == "analysis_only":
         raise ValueError("Hygiene analysis_only has no LLM requests. Choose Asynchronous local analysis, or change hygiene mode to proposal_only/manual_only.")
     requested_total = _bounded_total(options)
-    try:
-        snapshot_cap = max(100, min(50_000, int(os.getenv("PROVIDER_BATCH_SNAPSHOT_MAX_RECORDS", "10000"))))
-    except (TypeError, ValueError):
-        snapshot_cap = 10_000
-    total = min(requested_total, snapshot_cap) if execution_mode == "provider_batch" else requested_total
+    eligible_total = _eligible_source_count(operation)
+    target_total = min(requested_total, eligible_total)
+    # Preview only a representative bounded sample. The accepted workload is
+    # prepared later in durable child batches and is never capped by this value.
+    sample_limit = min(target_total, max(25, min(1000, int(os.getenv("PROVIDER_BATCH_PREVIEW_SAMPLE_RECORDS", "250")))))
     if operation == "knowledge_embedding_backfill":
-        sources = _embedding_sources(total)
+        sources = _embedding_sources(sample_limit, snapshot_cutoff=options["snapshot_cutoff"])
     elif operation == "backfill_facets":
-        sources = _facet_sources(total)
+        sources = _facet_sources(sample_limit, snapshot_cutoff=options["snapshot_cutoff"])
     elif operation == "run_all_knowledge_generation":
-        sources = _generation_sources(total)
+        sources = _generation_sources(sample_limit, snapshot_cutoff=options["snapshot_cutoff"])
     else:
-        sources = _hygiene_sources(total)
+        sources = _hygiene_sources(sample_limit, snapshot_cutoff=options["snapshot_cutoff"])
     manifest = _build_manifest(operation, sources, options) if execution_mode == "provider_batch" else []
-    file_limit = 190 * 1024 * 1024
-    if execution_mode == "provider_batch" and manifest:
-        bounded_manifest, used_bytes = [], 0
-        for item in manifest:
-            line_bytes = len(_json({"custom_id": item["custom_id"], "method": "POST", "url": item["url"], "body": item["body"]}).encode("utf-8")) + 1
-            if bounded_manifest and used_bytes + line_bytes > file_limit:
-                break
-            bounded_manifest.append(item); used_bytes += line_bytes
-        manifest = bounded_manifest
-    config = _provider_config(operation)
+    config = _provider_config(operation, options)
+    if operation == "knowledge_embedding_backfill":
+        shared_model = (_provider_config(operation) or {}).get("model_name")
+        if shared_model and config.get("model_name") != shared_model:
+            raise ValueError(
+                "Embedding backfill must use the shared semantic-index model. Change the shared embedding model first, then run its coordinated backfill."
+            )
+    pricing = _pricing(config, options)
+    options.update({
+        "provider_config_id": config.get("id"), "model_name": config.get("model_name"),
+        "pricing": pricing, "target_source_count": target_total,
+    })
     warnings = []
-    if requested_total > total:
-        warnings.append(
-            f"This submission is safely capped at {total:,} source records; "
-            f"{requested_total - total:,} remain eligible for later submissions. "
-            "The cap prevents large previews from exhausting application memory."
-        )
-    included_source_count = sum(len(_request_sources(item)) for item in manifest) if manifest else len(sources)
-    if execution_mode == "provider_batch" and included_source_count < len(sources):
-        warnings.append(
-            f"Provider file-size safety retained {included_source_count:,} records in this submission; "
-            f"{len(sources) - included_source_count:,} additional snapshot records remain eligible."
-        )
+    sample_source_count = sum(len(_request_sources(item)) for item in manifest) if manifest else len(sources)
     if operation == "run_all_knowledge_generation":
         warnings.append("The first provider-batch generation stage contains currently eligible declarative evidence groups; dependent telemetry/playbook/skill stages continue as separate registered pathways.")
-    cap = capabilities()[operation]
-    if execution_mode == "provider_batch" and not cap["provider_batch"]:
-        warnings.append(cap["reason"] or "Provider batch is unavailable.")
-    estimated_tokens = sum(len(_json(r.get("body"))) for r in manifest) // 4
-    extra = config.get("extra_config") or {}
-    batch_input_price = extra.get("batch_input_cost_per_million")
+    advertised_capability = capabilities()[operation]
+    if execution_mode == "provider_batch" and not advertised_capability["provider_batch"]:
+        warnings.append(advertised_capability["reason"] or "Provider batch is unavailable.")
+    sample_chars = sum(len(_json(r.get("body"))) for r in manifest)
+    ratio = (target_total / sample_source_count) if sample_source_count else 0
+    estimated_tokens = int((sample_chars // 4) * ratio)
+    if operation == "knowledge_embedding_backfill":
+        request_count = (target_total + max(1, int(options.get("records_per_batch") or 25)) - 1) // max(1, int(options.get("records_per_batch") or 25))
+    else:
+        request_count = max(0, int(round(len(manifest) * ratio)))
+    provider_capability = provider_adapter(config).capabilities() if execution_mode == "provider_batch" else None
+    requests_per_job = provider_capability.max_requests if provider_capability else 50_000
+    if operation == "knowledge_embedding_backfill" and provider_capability:
+        requests_per_job = min(requests_per_job, max(1, provider_capability.max_embedding_inputs // max(1, int(options.get("records_per_batch") or 25))))
+    provider_job_count = (request_count + requests_per_job - 1) // requests_per_job if request_count else 0
     try:
-        estimated_cost = (estimated_tokens * float(batch_input_price) / 1_000_000) if batch_input_price is not None else None
+        preparation_chunk = max(25, min(50_000, int(os.getenv("PROVIDER_BATCH_PREPARATION_CHUNK_RECORDS", "10000"))))
     except (TypeError, ValueError):
-        estimated_cost = None
+        preparation_chunk = 10_000
+    if target_total:
+        provider_job_count = max(provider_job_count, (target_total + preparation_chunk - 1) // preparation_chunk)
+    input_price = pricing.get("embedding_cost_per_million") if operation == "knowledge_embedding_backfill" else pricing.get("batch_input_cost_per_million")
+    estimated_output_tokens = 0 if operation == "knowledge_embedding_backfill" else int(request_count * int(options.get("estimated_output_tokens_per_request") or 600))
+    estimated_cost = None
+    if input_price is not None:
+        estimated_cost = estimated_tokens * input_price / 1_000_000
+        output_price = pricing.get("batch_output_cost_per_million")
+        if estimated_output_tokens and output_price is not None:
+            estimated_cost += estimated_output_tokens * output_price / 1_000_000
     estimates = {
-        "requested_records": requested_total, "eligible_records": included_source_count,
-        "deferred_records": max(0, requested_total - included_source_count), "snapshot_cap": snapshot_cap,
-        "provider_job_count": 1 if manifest else 0,
-        "input_characters": sum(len(_json(r.get("body"))) for r in manifest),
+        "requested_records": requested_total, "available_records": eligible_total,
+        "eligible_records": target_total, "deferred_records": max(0, eligible_total - target_total),
+        "sampled_records": sample_source_count, "request_count": request_count,
+        "provider_job_count": provider_job_count,
+        "input_characters": int(sample_chars * ratio),
         "estimated_input_tokens": estimated_tokens,
+        "estimated_output_tokens": estimated_output_tokens,
         "estimated_cost_usd": estimated_cost,
         "completion_window": "24h" if execution_mode == "provider_batch" else None,
+        "provider": config.get("provider"), "model": config.get("model_name"), "pricing": pricing,
     }
-    snapshot = [{"source_hash": r.get("source_hash"), "pathway": r.get("pathway")} for r in manifest]
-    checksum = _hash({"operation": operation, "options": options, "manifest": manifest})
+    snapshot = {"sample_hashes": [r.get("source_hash") for r in manifest], "eligible_at": datetime.now(timezone.utc).isoformat()}
+    checksum = _hash({"operation": operation, "options": options, "estimates": estimates, "snapshot": snapshot})
     preview_id = str(uuid.uuid4())
     expires = datetime.now(timezone.utc) + timedelta(minutes=30)
     with get_memory_db_context() as conn:
@@ -361,10 +560,10 @@ def preview(operation: str, execution_mode: str, options: Optional[Dict[str, Any
             VALUES (%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s::jsonb,%s::jsonb,%s::jsonb,%s::jsonb,%s,%s)
         """, (preview_id, operation, execution_mode, actor_id, _json(options),
               _json({"provider": config.get("provider"), "model": config.get("model_name")}),
-              _json(snapshot), _json(manifest), _json(estimates), _json(warnings), checksum, expires))
+              _json(snapshot), _json([]), _json(estimates), _json(warnings), checksum, expires))
     return {"id": preview_id, "operation_key": operation, "execution_mode": execution_mode,
             "options": options, "estimates": estimates, "warnings": warnings,
-            "manifest_checksum": checksum, "expires_at": expires.isoformat(), "capability": cap}
+            "manifest_checksum": checksum, "expires_at": expires.isoformat(), "capability": advertised_capability}
 
 
 def _load_preview(preview_id: str) -> Dict[str, Any]:
@@ -384,58 +583,101 @@ async def submit(preview_id: str) -> Dict[str, Any]:
     preview_row = _load_preview(preview_id)
     if preview_row["execution_mode"] != "provider_batch":
         raise ValueError("This preview is not an asynchronous provider batch")
-    manifest = preview_row.get("request_manifest") or []
-    if not manifest:
+    estimates = preview_row.get("estimates") or {}
+    if not int(estimates.get("request_count") or 0):
         raise ValueError("No eligible provider requests were found")
     operation = preview_row["operation_key"]
     advertised = capabilities()[operation]
     if not advertised["provider_batch"]:
         raise ValueError(advertised.get("reason") or "Asynchronous provider batch is unavailable")
-    config = _provider_config(operation)
+    options = preview_row.get("options") or {}
+    config = _provider_config(operation, options)
     adapter = provider_adapter(config)
     cap = adapter.capabilities()
     if not cap.supported:
         raise ValueError(cap.reason or "Provider batch is unavailable")
-    if len(manifest) > cap.max_requests:
-        raise ValueError(f"This preview has {len(manifest)} requests; provider limit is {cap.max_requests}")
-    source_hashes = [item["source_hash"] for item in manifest]
+    run_id = str(uuid.uuid4())
     with get_memory_db_context() as conn:
         cur = conn.cursor()
-        cur.execute("""
-            SELECT r.id FROM memory_provider_batch_requests q
-            JOIN memory_provider_batch_runs r ON r.id=q.batch_run_id
-            WHERE r.operation_key=%s AND r.local_status=ANY(%s)
-              AND q.source_hash=ANY(%s) LIMIT 1
-        """, (operation, list(ACTIVE_LOCAL), source_hashes))
+        cur.execute("""SELECT id FROM memory_provider_batch_runs WHERE parent_run_id IS NULL
+            AND operation_key=%s AND local_status NOT IN ('completed','partially_completed','failed','expired','cancelled')
+            LIMIT 1""", (operation,))
         conflict = cur.fetchone()
     if conflict:
-        raise ValueError(f"Another active run already owns part of this source snapshot ({conflict['id']})")
-    run_id = str(uuid.uuid4())
+        raise ValueError(f"An asynchronous {operation} operation is already active ({conflict['id']})")
     from memory_db_writes import log_pipeline_run
     pipeline_id = log_pipeline_run(operation, "started", trigger="provider_batch",
                                    detail={"execution_mode": "provider_batch", "preview_id": preview_id})
-    endpoint = manifest[0]["url"]
-    if any(item["url"] != endpoint for item in manifest):
-        raise ValueError("A provider batch can contain only one endpoint")
+    endpoint = "/v1/embeddings" if operation == "knowledge_embedding_backfill" else "/v1/chat/completions"
     with get_memory_db_context() as conn:
         cur = conn.cursor()
         cur.execute("""
             INSERT INTO memory_provider_batch_runs
               (id,pipeline_run_id,preview_id,operation_key,pathway,provider,endpoint,model,
-               local_status,request_count,estimated_usage,manifest_checksum)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'uploading',%s,%s::jsonb,%s)
-        """, (run_id, pipeline_id, preview_id, operation, "mixed" if len({m['pathway'] for m in manifest}) > 1 else manifest[0]["pathway"],
-              cap.provider, endpoint, config.get("model_name"), len(manifest),
-              _json(preview_row.get("estimates") or {}), preview_row["manifest_checksum"]))
-        for item in manifest:
-            cur.execute("""
-                INSERT INTO memory_provider_batch_requests
-                  (batch_run_id,custom_id,operation_key,pathway,ordinal,request_hash,source_hash,request_body,apply_context,attempt)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s)
-                RETURNING id
-            """, (run_id, item["custom_id"], operation, item["pathway"], item["ordinal"],
-                  item["request_hash"], item["source_hash"], _json(item["body"]), _json(item["context"]),
-                  int(item.get("attempt") or 1)))
+               local_status,request_count,estimated_usage,manifest_checksum,is_coordinator,
+               target_source_count,run_options,pricing_snapshot,next_poll_at)
+            VALUES (%s,%s,%s,%s,'all',%s,%s,%s,'preparing',%s,%s::jsonb,%s,TRUE,%s,%s::jsonb,%s::jsonb,NOW())
+        """, (run_id, pipeline_id, preview_id, operation, cap.provider, endpoint,
+              config.get("model_name"), int(estimates.get("request_count") or 0),
+              _json(estimates), preview_row["manifest_checksum"],
+              int(options.get("target_source_count") or estimates.get("eligible_records") or 0),
+              _json(options), _json(_pricing(config, options))))
+        cur.execute("UPDATE memory_operation_previews SET state='submitted',submitted_at=NOW() WHERE id=%s", (preview_id,))
+    return get_run(run_id)
+
+
+def _provider_safe_manifest(manifest: List[Dict[str, Any]], cap: Any,
+                            operation: str, records_per_batch: int) -> List[Dict[str, Any]]:
+    selected, used_bytes, embedding_inputs = [], 0, 0
+    for item in manifest:
+        line_bytes = len(_json({"custom_id": item["custom_id"], "method": "POST", "url": item["url"], "body": item["body"]}).encode("utf-8")) + 1
+        item_inputs = len(item.get("body", {}).get("input") or []) if operation == "knowledge_embedding_backfill" else 0
+        if selected and (len(selected) >= cap.max_requests or used_bytes + line_bytes > int(cap.max_file_bytes * .95)
+                         or embedding_inputs + item_inputs > cap.max_embedding_inputs):
+            break
+        selected.append(item); used_bytes += line_bytes; embedding_inputs += item_inputs
+    return selected
+
+
+def _limit_manifest_sources(manifest: List[Dict[str, Any]], source_limit: int) -> List[Dict[str, Any]]:
+    selected, used = [], 0
+    for item in manifest:
+        count = len(_request_sources(item)) or 1
+        if selected and used + count > source_limit:
+            break
+        selected.append(item); used += count
+        if used >= source_limit:
+            break
+    return selected
+
+
+async def _submit_child(parent: Dict[str, Any], manifest: List[Dict[str, Any]],
+                        count_prepared_sources: bool = True) -> Dict[str, Any]:
+    operation, options = parent["operation_key"], parent.get("run_options") or {}
+    config = _provider_config(operation, options)
+    adapter = provider_adapter(config); cap = adapter.capabilities()
+    manifest = _provider_safe_manifest(manifest, cap, operation, int(options.get("records_per_batch") or 25))
+    if not manifest:
+        raise ValueError("A provider-safe child manifest could not be created")
+    run_id = str(uuid.uuid4()); endpoint = manifest[0]["url"]
+    source_count = sum(len(_request_sources(item)) for item in manifest)
+    checksum = _hash({"parent": parent["id"], "child": parent.get("child_count", 0) + 1, "manifest": manifest})
+    with get_memory_db_context() as conn:
+        cur = conn.cursor()
+        cur.execute("""INSERT INTO memory_provider_batch_runs
+            (id,preview_id,parent_run_id,operation_key,pathway,provider,endpoint,model,local_status,
+             request_count,estimated_usage,manifest_checksum,run_options,pricing_snapshot)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'uploading',%s,%s::jsonb,%s,%s::jsonb,%s::jsonb)""",
+            (run_id, parent.get("preview_id"), parent["id"], operation,
+             "mixed" if len({m["pathway"] for m in manifest}) > 1 else manifest[0]["pathway"],
+             cap.provider, endpoint, config.get("model_name"), len(manifest),
+             _json({"source_count": source_count}), checksum, _json(options), _json(parent.get("pricing_snapshot") or {})))
+        for ordinal, item in enumerate(manifest):
+            cur.execute("""INSERT INTO memory_provider_batch_requests
+                (batch_run_id,custom_id,operation_key,pathway,ordinal,request_hash,source_hash,request_body,apply_context,attempt)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s) RETURNING id""",
+                (run_id, item["custom_id"], operation, item["pathway"], ordinal, item["request_hash"],
+                 item["source_hash"], _json(item["body"]), _json(item["context"]), int(item.get("attempt") or 1)))
             request_id = cur.fetchone()["id"]
             for source in _request_sources(item):
                 cur.execute("""INSERT INTO memory_provider_batch_request_sources
@@ -446,27 +688,66 @@ async def submit(preview_id: str) -> Dict[str, Any]:
                      source["source_updated_at"]))
     try:
         file_id = await adapter.upload(manifest, f"masteragent-{run_id}.jsonl")
-        with get_memory_db_context() as conn:
-            conn.cursor().execute("UPDATE memory_provider_batch_runs SET provider_input_file_id=%s,local_status='submitted',updated_at=NOW() WHERE id=%s", (file_id, run_id))
         provider = await adapter.submit(file_id, endpoint, metadata={
-            "masteragent_run_id": run_id, "operation": operation,
-            "manifest": preview_row["manifest_checksum"][:32],
+            "masteragent_run_id": run_id, "parent_run_id": parent["id"], "operation": operation,
         })
         with get_memory_db_context() as conn:
             cur = conn.cursor()
-            cur.execute("""UPDATE memory_provider_batch_runs SET provider_batch_id=%s,provider_status=%s,
-                local_status=%s,submitted_at=NOW(),next_poll_at=NOW()+INTERVAL '30 seconds',updated_at=NOW() WHERE id=%s""",
-                (provider["id"], provider.get("status"), _local_from_provider(provider.get("status")), run_id))
-            cur.execute("UPDATE memory_operation_previews SET state='submitted',submitted_at=NOW() WHERE id=%s", (preview_id,))
+            cur.execute("""UPDATE memory_provider_batch_runs SET provider_input_file_id=%s,provider_batch_id=%s,
+                provider_status=%s,local_status=%s,submitted_at=NOW(),next_poll_at=NOW()+INTERVAL '30 seconds',updated_at=NOW()
+                WHERE id=%s""", (file_id, provider["id"], provider.get("status"),
+                _local_from_provider(provider.get("status")), run_id))
+            cur.execute("""UPDATE memory_provider_batch_runs SET prepared_source_count=prepared_source_count+%s,
+                child_count=child_count+1,updated_at=NOW(),next_poll_at=NOW()+INTERVAL '1 second' WHERE id=%s""",
+                (source_count if count_prepared_sources else 0, parent["id"]))
     except Exception as exc:
         with get_memory_db_context() as conn:
-            conn.cursor().execute("UPDATE memory_provider_batch_runs SET local_status='failed',provider_error=%s::jsonb,finished_at=NOW(),updated_at=NOW() WHERE id=%s", (_json({"message": str(exc)}), run_id))
-        if pipeline_id:
-            from memory_db_writes import update_pipeline_run
-            update_pipeline_run(pipeline_id, status="failed", outcome="failed", reason_code="provider_batch_submit_failed",
-                                detail={"provider_batch_run_id": run_id, "message": str(exc)})
+            cur = conn.cursor()
+            cur.execute("UPDATE memory_provider_batch_runs SET local_status='failed',provider_error=%s::jsonb,finished_at=NOW(),updated_at=NOW() WHERE id=%s", (_json({"message": str(exc)}), run_id))
+            cur.execute("UPDATE memory_provider_batch_runs SET pause_requested=TRUE,provider_error=%s::jsonb,updated_at=NOW() WHERE id=%s", (_json({"message": str(exc), "child_run_id": run_id}), parent["id"]))
         raise
     return get_run(run_id)
+
+
+async def prepare_next_child(parent_id: str) -> Dict[str, Any]:
+    parent = _load_run(parent_id)
+    if not parent.get("is_coordinator") or parent.get("preparation_complete") or parent.get("pause_requested") or parent.get("cancel_requested"):
+        return get_run(parent_id)
+    remaining = max(0, int(parent.get("target_source_count") or 0) - int(parent.get("prepared_source_count") or 0))
+    if not remaining:
+        with get_memory_db_context() as conn:
+            conn.cursor().execute("UPDATE memory_provider_batch_runs SET preparation_complete=TRUE,updated_at=NOW() WHERE id=%s", (parent_id,))
+        return _aggregate_parent(parent_id)
+    try:
+        max_concurrent = max(1, min(50, int(os.getenv("PROVIDER_BATCH_MAX_CONCURRENT_JOBS", "5"))))
+    except (TypeError, ValueError):
+        max_concurrent = 5
+    with get_memory_db_context() as conn:
+        cur = conn.cursor(); cur.execute("""SELECT COUNT(*) count FROM memory_provider_batch_runs
+            WHERE parent_run_id=%s AND local_status<>ALL(%s)""", (parent_id, list(LOCAL_TERMINAL)))
+        if int(cur.fetchone()["count"] or 0) >= max_concurrent:
+            return _aggregate_parent(parent_id)
+    try:
+        chunk = max(25, min(50_000, int(os.getenv("PROVIDER_BATCH_PREPARATION_CHUNK_RECORDS", "10000"))))
+    except (TypeError, ValueError):
+        chunk = 10_000
+    limit = min(remaining, chunk); operation = parent["operation_key"]
+    if operation == "knowledge_embedding_backfill":
+        sources = _embedding_sources(limit, parent_id, (parent.get("run_options") or {}).get("snapshot_cutoff"))
+    elif operation == "backfill_facets":
+        sources = _facet_sources(limit, parent_id, (parent.get("run_options") or {}).get("snapshot_cutoff"))
+    elif operation == "run_all_knowledge_generation":
+        sources = _generation_sources(limit, parent_id, (parent.get("run_options") or {}).get("snapshot_cutoff"))
+    else:
+        sources = _hygiene_sources(limit, parent_id, (parent.get("run_options") or {}).get("snapshot_cutoff"))
+    manifest = _filter_claimed_manifest(parent_id, _build_manifest(operation, sources, parent.get("run_options") or {}))
+    manifest = _limit_manifest_sources(manifest, remaining)
+    if not manifest:
+        with get_memory_db_context() as conn:
+            conn.cursor().execute("UPDATE memory_provider_batch_runs SET preparation_complete=TRUE,updated_at=NOW() WHERE id=%s", (parent_id,))
+        return _aggregate_parent(parent_id)
+    await _submit_child(parent, manifest)
+    return _aggregate_parent(parent_id)
 
 
 def _local_from_provider(status: Optional[str]) -> str:
@@ -499,7 +780,7 @@ async def _apply_request(row: Dict[str, Any], result: Any) -> Dict[str, Any]:
         sources = context.get("sources") or []
         if len(vectors) != len(sources):
             raise ValueError(f"Expected {len(sources)} vectors, received {len(vectors)}")
-        model = _provider_config(operation).get("model_name")
+        model = row.get("run_model") or _provider_config(operation).get("model_name")
         applied = 0
         with get_memory_db_context() as conn:
             cur = conn.cursor()
@@ -626,7 +907,8 @@ async def _apply_request(row: Dict[str, Any], result: Any) -> Dict[str, Any]:
         preview_id = insert_preview(origin="provider_batch", actor_type="system", actor_id=None,
             category=row.get("pathway") or "trade_knowledge", source_ids=list(snapshot), source_snapshot=snapshot,
             metrics=(context.get("group") or {}).get("metrics") or {}, options={}, settings_snapshot={},
-            model_provider=_provider_config(operation).get("provider"), model_name=_provider_config(operation).get("model_name"),
+            model_provider=row.get("run_provider") or _provider_config(operation).get("provider"),
+            model_name=row.get("run_model") or _provider_config(operation).get("model_name"),
             prompt_version=context.get("prompt_version") or "v1", raw_response=parsed,
             proposal=proposal_to_dict(proposal) if proposal else None, validation_errors=errors,
             expires_at=datetime.now(timezone.utc) + timedelta(hours=24))
@@ -647,9 +929,24 @@ async def _apply_request(row: Dict[str, Any], result: Any) -> Dict[str, Any]:
 
 async def reconcile(run_id: str) -> Dict[str, Any]:
     run = _load_run(run_id)
+    if run.get("is_coordinator"):
+        with get_memory_db_context() as conn:
+            cur = conn.cursor(); cur.execute("""SELECT id FROM memory_provider_batch_runs
+                WHERE parent_run_id=%s AND local_status=ANY(%s) AND provider_batch_id IS NOT NULL
+                ORDER BY created_at LIMIT 10""", (run_id, list(ACTIVE_LOCAL)))
+            child_ids = [row["id"] for row in cur.fetchall()]
+        for child_id in child_ids:
+            try:
+                await reconcile(child_id)
+            except Exception as exc:
+                logger.warning("Child reconciliation failed for %s: %s", child_id, exc)
+        run = _load_run(run_id)
+        if not run.get("preparation_complete") and not run.get("pause_requested") and not run.get("cancel_requested"):
+            return await prepare_next_child(run_id)
+        return _aggregate_parent(run_id)
     if run["local_status"] in LOCAL_TERMINAL:
         return get_run(run_id)
-    adapter = provider_adapter(_provider_config(run["operation_key"]))
+    adapter = provider_adapter(_provider_config(run["operation_key"], run.get("run_options") or {}))
     provider = await adapter.status(run["provider_batch_id"])
     status = provider.get("status")
     try:
@@ -671,6 +968,8 @@ async def reconcile(run_id: str) -> Dict[str, Any]:
         await _import_file(run_id, await adapter.file_content(provider["error_file_id"]))
     await _apply_pending(run_id)
     _finish(run_id, provider_status=status)
+    if run.get("parent_run_id"):
+        _aggregate_parent(run["parent_run_id"])
     settings = get_memory_settings() or {}
     delete_files = settings.get("provider_batch_delete_files_after_import")
     if delete_files is None:
@@ -681,6 +980,60 @@ async def reconcile(run_id: str) -> Dict[str, Any]:
                 try: await adapter.delete_file(file_id)
                 except Exception: logger.warning("Could not delete provider batch file %s", file_id)
     return get_run(run_id)
+
+
+def _aggregate_parent(parent_id: str) -> Dict[str, Any]:
+    """Roll child progress into one user-facing durable operation."""
+    with get_memory_db_context() as conn:
+        cur = conn.cursor()
+        cur.execute("""SELECT COUNT(*) child_count,
+            COALESCE(SUM(request_count),0) requests,
+            COALESCE(SUM(completed_count),0) completed,
+            COALESCE(SUM(applied_count),0) applied,
+            COALESCE(SUM(failed_count),0) failed,
+            COUNT(*) FILTER (WHERE local_status<>ALL(%s)) active,
+            COUNT(*) FILTER (WHERE local_status IN ('failed','expired','cancelled','partially_completed')) problem
+            FROM memory_provider_batch_runs WHERE parent_run_id=%s""", (list(LOCAL_TERMINAL), parent_id))
+        counts = cur.fetchone()
+        cur.execute("SELECT actual_usage FROM memory_provider_batch_runs WHERE parent_run_id=%s", (parent_id,))
+        usages = [row.get("actual_usage") or {} for row in cur.fetchall()]
+        aggregate_usage = {
+            "input_tokens": sum(int(u.get("input_tokens") or 0) for u in usages),
+            "output_tokens": sum(int(u.get("output_tokens") or 0) for u in usages),
+            "total_tokens": sum(int(u.get("total_tokens") or 0) for u in usages),
+            "estimated_cost_usd_from_actual_tokens": sum(float(u.get("estimated_cost_usd_from_actual_tokens") or 0) for u in usages),
+        }
+        cur.execute("SELECT preparation_complete,cancel_requested,pause_requested,pipeline_run_id,target_source_count,prepared_source_count FROM memory_provider_batch_runs WHERE id=%s", (parent_id,))
+        parent = cur.fetchone()
+        finished = bool(parent["preparation_complete"] and not counts["active"])
+        if parent["cancel_requested"] and not counts["active"]:
+            status = "cancelled"
+        elif finished and counts["problem"]:
+            status = "partially_completed" if counts["applied"] else "failed"
+        elif finished:
+            status = "completed"
+        elif parent["pause_requested"]:
+            status = "paused"
+        else:
+            status = "provider_in_progress" if counts["child_count"] else "preparing"
+        cur.execute("""UPDATE memory_provider_batch_runs SET local_status=%s,child_count=%s,
+            request_count=%s,completed_count=%s,applied_count=%s,failed_count=%s,
+            actual_usage=%s::jsonb,finished_at=CASE WHEN %s THEN COALESCE(finished_at,NOW()) ELSE NULL END,updated_at=NOW()
+            WHERE id=%s""", (status, counts["child_count"], counts["requests"], counts["completed"],
+                               counts["applied"], counts["failed"], _json(aggregate_usage), finished, parent_id))
+    if parent.get("pipeline_run_id"):
+        from memory_db_writes import update_pipeline_run
+        update_pipeline_run(
+            parent["pipeline_run_id"], status=("completed" if status in {"completed", "partially_completed"} else status),
+            outcome=status if finished else None,
+            records_created=int(counts["applied"] or 0),
+            progress_total=int(parent.get("target_source_count") or 0),
+            progress_completed=int(parent.get("prepared_source_count") or 0),
+            progress_failed=int(counts["failed"] or 0),
+            detail={"provider_batch_run_id": parent_id, "child_count": int(counts["child_count"] or 0),
+                    "actual_usage": aggregate_usage},
+        )
+    return get_run(parent_id)
 
 
 async def _import_file(run_id: str, content: bytes) -> None:
@@ -697,7 +1050,9 @@ async def _import_file(run_id: str, content: bytes) -> None:
 
 async def _apply_pending(run_id: str) -> None:
     with get_memory_db_context() as conn:
-        cur = conn.cursor(); cur.execute("SELECT * FROM memory_provider_batch_requests WHERE batch_run_id=%s AND status='received' ORDER BY ordinal", (run_id,)); rows = [dict(r) for r in cur.fetchall()]
+        cur = conn.cursor(); cur.execute("""SELECT q.*,r.provider AS run_provider,r.model AS run_model
+            FROM memory_provider_batch_requests q JOIN memory_provider_batch_runs r ON r.id=q.batch_run_id
+            WHERE q.batch_run_id=%s AND q.status='received' ORDER BY q.ordinal""", (run_id,)); rows = [dict(r) for r in cur.fetchall()]
     for row in rows:
         try:
             refs = await _apply_request(row, row.get("response_body"))
@@ -710,6 +1065,8 @@ async def _apply_pending(run_id: str) -> None:
 
 def _finish(run_id: str, provider_status: str) -> None:
     with get_memory_db_context() as conn:
+        run_cur = conn.cursor(); run_cur.execute("SELECT operation_key,pricing_snapshot FROM memory_provider_batch_runs WHERE id=%s", (run_id,))
+        run_meta = run_cur.fetchone() or {}
         cur = conn.cursor(); cur.execute("""SELECT COUNT(*) count,
             COUNT(*) FILTER(WHERE status='applied') applied,
             COUNT(*) FILTER(WHERE status IN ('failed','apply_failed')) failed
@@ -721,6 +1078,13 @@ def _finish(run_id: str, provider_status: str) -> None:
             "output_tokens": sum(int(u.get("completion_tokens") or u.get("output_tokens") or 0) for u in usage_rows),
             "total_tokens": sum(int(u.get("total_tokens") or 0) for u in usage_rows),
         }
+        pricing = run_meta.get("pricing_snapshot") or {}
+        input_price = pricing.get("embedding_cost_per_million") if run_meta.get("operation_key") == "knowledge_embedding_backfill" else pricing.get("batch_input_cost_per_million")
+        output_price = pricing.get("batch_output_cost_per_million")
+        actual_usage["estimated_cost_usd_from_actual_tokens"] = (
+            (actual_usage["input_tokens"] * float(input_price or 0) + actual_usage["output_tokens"] * float(output_price or 0)) / 1_000_000
+            if input_price is not None else None
+        )
         local = (
             "completed" if counts["applied"] == counts["count"]
             else "partially_completed" if counts["applied"]
@@ -755,28 +1119,56 @@ def get_run(run_id: str) -> Dict[str, Any]:
     run = _load_run(run_id)
     with get_memory_db_context() as conn:
         cur = conn.cursor(); cur.execute("SELECT status,COUNT(*) count FROM memory_provider_batch_requests WHERE batch_run_id=%s GROUP BY status", (run_id,)); run["request_statuses"] = {r["status"]: r["count"] for r in cur.fetchall()}
+        if run.get("is_coordinator"):
+            cur.execute("""SELECT id,provider,model,local_status,provider_status,provider_batch_id,
+                request_count,completed_count,applied_count,failed_count,submitted_at,finished_at,created_at
+                FROM memory_provider_batch_runs WHERE parent_run_id=%s ORDER BY created_at""", (run_id,))
+            run["children"] = [dict(row) for row in cur.fetchall()]
     return run
 
 
 def list_runs(limit: int = 30) -> List[Dict[str, Any]]:
     with get_memory_db_context() as conn:
-        cur = conn.cursor(); cur.execute("SELECT * FROM memory_provider_batch_runs ORDER BY created_at DESC LIMIT %s", (max(1, min(limit, 100)),)); return [dict(r) for r in cur.fetchall()]
+        cur = conn.cursor(); cur.execute("SELECT * FROM memory_provider_batch_runs WHERE parent_run_id IS NULL ORDER BY created_at DESC LIMIT %s", (max(1, min(limit, 100)),)); return [dict(r) for r in cur.fetchall()]
 
 
 def list_requests(run_id: str, limit: int = 200) -> List[Dict[str, Any]]:
     with get_memory_db_context() as conn:
-        cur = conn.cursor(); cur.execute("""SELECT id,custom_id,pathway,ordinal,status,attempt,provider_request_id,
-            usage,error,output_references,validated_at,applied_at,created_at,updated_at
-            FROM memory_provider_batch_requests WHERE batch_run_id=%s ORDER BY ordinal LIMIT %s""", (run_id, max(1, min(limit, 1000)))); return [dict(r) for r in cur.fetchall()]
+        cur = conn.cursor(); cur.execute("SELECT is_coordinator FROM memory_provider_batch_runs WHERE id=%s", (run_id,))
+        run = cur.fetchone()
+        if run and run.get("is_coordinator"):
+            cur.execute("""SELECT q.id,q.custom_id,q.pathway,q.ordinal,q.status,q.attempt,q.provider_request_id,
+                q.usage,q.error,q.output_references,q.validated_at,q.applied_at,q.created_at,q.updated_at,
+                q.batch_run_id FROM memory_provider_batch_requests q
+                JOIN memory_provider_batch_runs r ON r.id=q.batch_run_id
+                WHERE r.parent_run_id=%s ORDER BY r.created_at,q.ordinal LIMIT %s""",
+                (run_id, max(1, min(limit, 1000))))
+        else:
+            cur.execute("""SELECT id,custom_id,pathway,ordinal,status,attempt,provider_request_id,
+                usage,error,output_references,validated_at,applied_at,created_at,updated_at,batch_run_id
+                FROM memory_provider_batch_requests WHERE batch_run_id=%s ORDER BY ordinal LIMIT %s""",
+                (run_id, max(1, min(limit, 1000))))
+        return [dict(r) for r in cur.fetchall()]
 
 
 async def cancel(run_id: str) -> Dict[str, Any]:
     run = _load_run(run_id)
     if run["local_status"] in LOCAL_TERMINAL: return get_run(run_id)
     with get_memory_db_context() as conn:
-        conn.cursor().execute("UPDATE memory_provider_batch_runs SET cancel_requested=TRUE,local_status='cancelling',updated_at=NOW() WHERE id=%s", (run_id,))
+        cur = conn.cursor()
+        cur.execute("UPDATE memory_provider_batch_runs SET cancel_requested=TRUE,preparation_complete=CASE WHEN is_coordinator THEN TRUE ELSE preparation_complete END,local_status='cancelling',updated_at=NOW() WHERE id=%s", (run_id,))
+        if run.get("is_coordinator"):
+            cur.execute("SELECT id FROM memory_provider_batch_runs WHERE parent_run_id=%s AND local_status<>ALL(%s)", (run_id, list(LOCAL_TERMINAL)))
+            child_ids = [row["id"] for row in cur.fetchall()]
+        else:
+            child_ids = []
+    for child_id in child_ids:
+        try:
+            await cancel(child_id)
+        except Exception as exc:
+            logger.warning("Could not cancel child batch %s: %s", child_id, exc)
     if run.get("provider_batch_id"):
-        await provider_adapter(_provider_config(run["operation_key"])).cancel(run["provider_batch_id"])
+        await provider_adapter(_provider_config(run["operation_key"], run.get("run_options") or {})).cancel(run["provider_batch_id"])
     return get_run(run_id)
 
 
@@ -789,6 +1181,22 @@ async def retry(run_id: str, actor_id: Optional[str] = None) -> Dict[str, Any]:
     previous = _load_run(run_id)
     if previous["local_status"] not in {"failed", "expired", "cancelled", "partially_completed"}:
         raise ValueError("Only failed, expired, cancelled, or partially completed runs can be retried")
+    if previous.get("is_coordinator"):
+        with get_memory_db_context() as conn:
+            cur = conn.cursor(); cur.execute("""SELECT id FROM memory_provider_batch_runs
+                WHERE parent_run_id=%s AND local_status IN ('failed','expired','cancelled','partially_completed')
+                ORDER BY created_at""", (run_id,))
+            failed_children = [row["id"] for row in cur.fetchall()]
+        retried = 0
+        for child_id in failed_children:
+            child_result = await retry(child_id, actor_id=actor_id)
+            retried += int(bool(child_result))
+        with get_memory_db_context() as conn:
+            conn.cursor().execute("""UPDATE memory_provider_batch_runs SET cancel_requested=FALSE,
+                pause_requested=FALSE,preparation_complete=CASE WHEN prepared_source_count<target_source_count THEN FALSE ELSE TRUE END,
+                local_status='preparing',next_poll_at=NOW(),provider_error='{}'::jsonb,finished_at=NULL,updated_at=NOW()
+                WHERE id=%s""", (run_id,))
+        return _aggregate_parent(run_id)
     # A validated provider result that failed only during local application is
     # retried locally and must never be billed a second time.
     with get_memory_db_context() as conn:
@@ -802,8 +1210,6 @@ async def retry(run_id: str, actor_id: Optional[str] = None) -> Dict[str, Any]:
         previous = _load_run(run_id)
     with get_memory_db_context() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT options,settings_snapshot FROM memory_operation_previews WHERE id=%s", (previous["preview_id"],))
-        old_preview = cur.fetchone() or {}
         cur.execute("""SELECT * FROM memory_provider_batch_requests
             WHERE batch_run_id=%s AND status NOT IN ('applied','apply_failed') ORDER BY ordinal""", (run_id,))
         unresolved = [dict(row) for row in cur.fetchall()]
@@ -819,41 +1225,34 @@ async def retry(run_id: str, actor_id: Optional[str] = None) -> Dict[str, Any]:
             "ordinal": ordinal, "request_hash": row["request_hash"],
             "source_hash": row["source_hash"], "attempt": attempt,
         })
-    preview_id = str(uuid.uuid4())
-    checksum = _hash({"parent_run": run_id, "attempt": attempt, "manifest": manifest})
-    expires = datetime.now(timezone.utc) + timedelta(minutes=30)
-    estimates = {"eligible_records": sum(len(_request_sources(item)) for item in manifest),
-                 "request_count": len(manifest), "provider_job_count": 1,
-                 "completion_window": "24h", "retry_of": run_id, "attempt": attempt}
-    with get_memory_db_context() as conn:
-        conn.cursor().execute("""INSERT INTO memory_operation_previews
-            (id,operation_key,execution_mode,actor_id,options,settings_snapshot,source_snapshot,
-             request_manifest,estimates,warnings,manifest_checksum,expires_at)
-            VALUES (%s,%s,'provider_batch',%s,%s::jsonb,%s::jsonb,'[]'::jsonb,%s::jsonb,%s::jsonb,'[]'::jsonb,%s,%s)""",
-            (preview_id, previous["operation_key"], actor_id, _json(old_preview.get("options") or {}),
-             _json(old_preview.get("settings_snapshot") or {}), _json(manifest), _json(estimates), checksum, expires))
-    retried = await submit(preview_id)
-    with get_memory_db_context() as conn:
-        conn.cursor().execute("UPDATE memory_provider_batch_runs SET parent_run_id=%s WHERE id=%s", (run_id, retried["id"]))
-    return get_run(retried["id"])
+    if not previous.get("parent_run_id"):
+        raise ValueError("This legacy standalone batch cannot be retried automatically; review a fresh asynchronous operation")
+    parent = _load_run(previous["parent_run_id"])
+    retried = await _submit_child(parent, manifest, count_prepared_sources=False)
+    _aggregate_parent(parent["id"])
+    return retried
 
 
 def pause(run_id: str) -> Dict[str, Any]:
     with get_memory_db_context() as conn:
-        conn.cursor().execute("UPDATE memory_provider_batch_runs SET pause_requested=TRUE,updated_at=NOW() WHERE id=%s AND local_status NOT IN ('completed','failed','cancelled','expired')", (run_id,))
+        conn.cursor().execute("UPDATE memory_provider_batch_runs SET pause_requested=TRUE,local_status=CASE WHEN is_coordinator THEN 'paused' ELSE local_status END,updated_at=NOW() WHERE id=%s AND local_status NOT IN ('completed','failed','cancelled','expired')", (run_id,))
     return get_run(run_id)
 
 
 def resume(run_id: str) -> Dict[str, Any]:
     with get_memory_db_context() as conn:
-        conn.cursor().execute("UPDATE memory_provider_batch_runs SET pause_requested=FALSE,next_poll_at=NOW(),updated_at=NOW() WHERE id=%s AND cancel_requested=FALSE", (run_id,))
+        conn.cursor().execute("UPDATE memory_provider_batch_runs SET pause_requested=FALSE,local_status=CASE WHEN is_coordinator THEN 'preparing' ELSE local_status END,next_poll_at=NOW(),updated_at=NOW() WHERE id=%s AND cancel_requested=FALSE", (run_id,))
     return get_run(run_id)
 
 
 async def recover_nonterminal() -> int:
     """Reconcile submitted work after a deployment; safe to call repeatedly."""
     with get_memory_db_context() as conn:
-        cur = conn.cursor(); cur.execute("SELECT id FROM memory_provider_batch_runs WHERE local_status=ANY(%s) AND provider_batch_id IS NOT NULL AND COALESCE(next_poll_at,NOW())<=NOW() LIMIT 10", (list(ACTIVE_LOCAL),)); ids = [r["id"] for r in cur.fetchall()]
+        cur = conn.cursor(); cur.execute("""SELECT id FROM memory_provider_batch_runs
+            WHERE ((is_coordinator=TRUE AND preparation_complete=FALSE AND pause_requested=FALSE AND cancel_requested=FALSE)
+               OR (is_coordinator=FALSE AND local_status=ANY(%s) AND provider_batch_id IS NOT NULL))
+              AND COALESCE(next_poll_at,NOW())<=NOW() ORDER BY is_coordinator DESC,created_at LIMIT 10""",
+            (list(ACTIVE_LOCAL),)); ids = [r["id"] for r in cur.fetchall()]
     for run_id in ids:
         try: await reconcile(run_id)
         except Exception as exc: logger.warning("Provider batch recovery failed for %s: %s", run_id, exc)
