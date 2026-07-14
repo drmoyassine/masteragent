@@ -1391,6 +1391,114 @@ def _create_knowledge_attachment_schema(cursor):
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_attachments_sha ON knowledge_attachments(sha256)")
 
 
+def _create_provider_batch_schema(cursor):
+    """Persist asynchronous Knowledge-operation previews and provider work.
+
+    Redis only wakes reconciliation jobs; PostgreSQL is the authoritative state
+    so deployments and queue cleanup cannot strand a submitted provider batch.
+    """
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS memory_operation_previews (
+            id                  TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            operation_key       TEXT NOT NULL,
+            execution_mode      TEXT NOT NULL,
+            origin              TEXT NOT NULL DEFAULT 'admin',
+            actor_id            TEXT,
+            options             JSONB NOT NULL DEFAULT '{}',
+            settings_snapshot   JSONB NOT NULL DEFAULT '{}',
+            source_snapshot     JSONB NOT NULL DEFAULT '[]',
+            request_manifest    JSONB NOT NULL DEFAULT '[]',
+            estimates           JSONB NOT NULL DEFAULT '{}',
+            exclusions          JSONB NOT NULL DEFAULT '{}',
+            warnings            JSONB NOT NULL DEFAULT '[]',
+            manifest_checksum   TEXT NOT NULL,
+            state               TEXT NOT NULL DEFAULT 'previewed',
+            expires_at          TIMESTAMPTZ NOT NULL,
+            created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            submitted_at        TIMESTAMPTZ
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_operation_previews_state ON memory_operation_previews(state, expires_at)")
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS memory_provider_batch_runs (
+            id                      TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            pipeline_run_id         TEXT,
+            preview_id              TEXT REFERENCES memory_operation_previews(id) ON DELETE SET NULL,
+            parent_run_id           TEXT,
+            operation_key           TEXT NOT NULL,
+            pathway                 TEXT,
+            provider                TEXT NOT NULL,
+            endpoint                TEXT NOT NULL,
+            model                   TEXT NOT NULL,
+            completion_window       TEXT NOT NULL DEFAULT '24h',
+            local_status            TEXT NOT NULL DEFAULT 'preparing',
+            provider_status         TEXT,
+            provider_batch_id       TEXT,
+            provider_input_file_id  TEXT,
+            provider_output_file_id TEXT,
+            provider_error_file_id  TEXT,
+            request_count           INT NOT NULL DEFAULT 0,
+            completed_count         INT NOT NULL DEFAULT 0,
+            failed_count            INT NOT NULL DEFAULT 0,
+            applied_count           INT NOT NULL DEFAULT 0,
+            estimated_usage         JSONB NOT NULL DEFAULT '{}',
+            actual_usage            JSONB NOT NULL DEFAULT '{}',
+            manifest_checksum       TEXT NOT NULL,
+            pause_requested         BOOLEAN NOT NULL DEFAULT FALSE,
+            cancel_requested        BOOLEAN NOT NULL DEFAULT FALSE,
+            provider_error          JSONB NOT NULL DEFAULT '{}',
+            last_polled_at          TIMESTAMPTZ,
+            next_poll_at            TIMESTAMPTZ,
+            submitted_at            TIMESTAMPTZ,
+            finished_at             TIMESTAMPTZ,
+            created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_provider_batch_runs_status ON memory_provider_batch_runs(local_status, next_poll_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_provider_batch_runs_preview ON memory_provider_batch_runs(preview_id)")
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS memory_provider_batch_requests (
+            id                  TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            batch_run_id        TEXT REFERENCES memory_provider_batch_runs(id) ON DELETE CASCADE,
+            custom_id           TEXT NOT NULL,
+            operation_key       TEXT NOT NULL,
+            pathway             TEXT,
+            ordinal             INT NOT NULL,
+            request_hash        TEXT NOT NULL,
+            source_hash         TEXT NOT NULL,
+            request_body        JSONB NOT NULL,
+            apply_context       JSONB NOT NULL DEFAULT '{}',
+            status              TEXT NOT NULL DEFAULT 'pending',
+            attempt             INT NOT NULL DEFAULT 1,
+            provider_request_id TEXT,
+            response_body       JSONB,
+            usage               JSONB NOT NULL DEFAULT '{}',
+            error               JSONB NOT NULL DEFAULT '{}',
+            output_references   JSONB NOT NULL DEFAULT '{}',
+            validated_at        TIMESTAMPTZ,
+            applied_at          TIMESTAMPTZ,
+            created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE(batch_run_id, custom_id)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_provider_batch_requests_status ON memory_provider_batch_requests(batch_run_id, status)")
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS memory_provider_batch_request_sources (
+            request_id          TEXT REFERENCES memory_provider_batch_requests(id) ON DELETE CASCADE,
+            source_type         TEXT NOT NULL,
+            source_id           TEXT NOT NULL,
+            source_version      TEXT,
+            source_updated_at   TIMESTAMPTZ,
+            source_role         TEXT NOT NULL DEFAULT 'primary',
+            source_metadata     JSONB NOT NULL DEFAULT '{}',
+            PRIMARY KEY(request_id, source_type, source_id, source_role)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_provider_batch_sources_source ON memory_provider_batch_request_sources(source_type, source_id)")
+
+
 def init_memory_db():
     """Initialize all memory system tables in PostgreSQL. Idempotent."""
     with get_memory_db_context() as conn:
@@ -1430,6 +1538,7 @@ def init_memory_db():
         _create_consolidation_schema(cursor)
         _create_evidence_schema(cursor)
         _create_knowledge_attachment_schema(cursor)
+        _create_provider_batch_schema(cursor)
 
         # Operational hardening migrations are additive and safe on existing
         # production tables.

@@ -133,6 +133,15 @@ async def _background_loop():
             today = now_utc.date()
             from memory.queue import knowledge_queue
 
+            # Submitted provider batches survive deployments in PostgreSQL.
+            # Reconciliation is a bounded poll/import step, never a worker held
+            # open for the provider's completion window.
+            try:
+                from memory_operation_service import recover_nonterminal
+                await recover_nonterminal()
+            except Exception as exc:
+                logger.warning("Provider batch reconciliation sweep failed: %s", exc)
+
             # ── Tier 0→1: Memory generation (true nightly flush) ──────────────
             if _time_reached(now_utc, settings.get("memory_generation_time", "02:00"), (2, 0)):
                 if claim_job_date("daily_memory_generation", today):

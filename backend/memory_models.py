@@ -872,4 +872,18 @@ class ConsolidationAnalyzeRequest(BaseModel):
     run_all: bool = False
 
 
+class KnowledgeOperationPreviewRequest(BaseModel):
+    operation_key: Literal[
+        "knowledge_embedding_backfill", "run_all_knowledge_generation",
+        "knowledge_hygiene_run", "backfill_facets",
+    ]
+    execution_mode: Literal["synchronous_calibration", "provider_batch", "local_async"]
+    options: Dict[str, Any] = Field(default_factory=dict)
+
+
+class KnowledgeOperationRunRequest(BaseModel):
+    preview_id: str
+    manifest_checksum: Optional[str] = None
+
+
 

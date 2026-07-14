@@ -34,6 +34,7 @@ from memory_models import (
     AdminInstruction, PlaybookFeedback,
     ConsolidationPreviewRequest, ConsolidationApplyRequest, ConsolidationAnalyzeRequest,
     KnowledgeAttachmentProposalRequest, KnowledgeDraftProposalRequest,
+    KnowledgeOperationPreviewRequest, KnowledgeOperationRunRequest,
 )
 from memory_services import (
     generate_embedding, search_memories_by_vector,
@@ -50,6 +51,111 @@ router = APIRouter()
 # route's require_auth never saw fastapi-mcp's internal service-key call). See memory/__init__.py.
 admin_crud = APIRouter(prefix="/admin")
 logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# Shared Knowledge operations (calibration / local async / provider batch)
+# ============================================================
+
+@router.get("/admin/knowledge/operations/capabilities")
+async def knowledge_operation_capabilities(admin: dict = Depends(require_admin_auth)):
+    from memory_operation_service import capabilities
+    return {"operations": capabilities()}
+
+
+@router.post("/admin/knowledge/operations/preview")
+async def preview_knowledge_operation(
+    body: KnowledgeOperationPreviewRequest,
+    admin: dict = Depends(require_admin_auth),
+):
+    from memory_operation_service import preview
+    try:
+        return preview(body.operation_key, body.execution_mode, body.options,
+                       actor_id=str(admin.get("id") or admin.get("sub") or "admin"))
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+@router.post("/admin/knowledge/operations/runs")
+async def submit_knowledge_operation(
+    body: KnowledgeOperationRunRequest,
+    admin: dict = Depends(require_admin_auth),
+):
+    from memory_operation_service import _load_preview, submit
+    try:
+        row = _load_preview(body.preview_id)
+        if body.manifest_checksum and body.manifest_checksum != row.get("manifest_checksum"):
+            raise ValueError("Preview checksum changed; review the batch again")
+        return await submit(body.preview_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+@router.get("/admin/knowledge/operations/runs")
+async def list_knowledge_operation_runs(
+    limit: int = Query(30, ge=1, le=100), admin: dict = Depends(require_admin_auth),
+):
+    from memory_operation_service import list_runs
+    return {"runs": list_runs(limit)}
+
+
+@router.get("/admin/knowledge/operations/runs/{run_id}")
+async def get_knowledge_operation_run(run_id: str, admin: dict = Depends(require_admin_auth)):
+    from memory_operation_service import get_run
+    try: return get_run(run_id)
+    except KeyError as exc: raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.get("/admin/knowledge/operations/runs/{run_id}/requests")
+async def get_knowledge_operation_requests(
+    run_id: str, limit: int = Query(200, ge=1, le=1000),
+    admin: dict = Depends(require_admin_auth),
+):
+    from memory_operation_service import get_run, list_requests
+    try: get_run(run_id)
+    except KeyError as exc: raise HTTPException(status_code=404, detail=str(exc))
+    return {"requests": list_requests(run_id, limit)}
+
+
+@router.post("/admin/knowledge/operations/runs/{run_id}/sync-status")
+async def sync_knowledge_operation(run_id: str, admin: dict = Depends(require_admin_auth)):
+    from memory_operation_service import reconcile
+    try: return await reconcile(run_id)
+    except KeyError as exc: raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc: raise HTTPException(status_code=502, detail=str(exc))
+
+
+@router.post("/admin/knowledge/operations/runs/{run_id}/pause")
+async def pause_knowledge_operation(run_id: str, admin: dict = Depends(require_admin_auth)):
+    from memory_operation_service import pause
+    try: return pause(run_id)
+    except KeyError as exc: raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.post("/admin/knowledge/operations/runs/{run_id}/resume")
+async def resume_knowledge_operation(run_id: str, admin: dict = Depends(require_admin_auth)):
+    from memory_operation_service import resume
+    try: return resume(run_id)
+    except KeyError as exc: raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.post("/admin/knowledge/operations/runs/{run_id}/cancel")
+async def cancel_knowledge_operation(run_id: str, admin: dict = Depends(require_admin_auth)):
+    from memory_operation_service import cancel
+    try: return await cancel(run_id)
+    except KeyError as exc: raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc: raise HTTPException(status_code=502, detail=str(exc))
+
+
+@router.post("/admin/knowledge/operations/runs/{run_id}/retry")
+async def retry_knowledge_operation(run_id: str, admin: dict = Depends(require_admin_auth)):
+    from memory_operation_service import retry
+    try:
+        return await retry(run_id, actor_id=str(admin.get("id") or admin.get("sub") or "admin"))
+    except KeyError as exc: raise HTTPException(status_code=404, detail=str(exc))
+    except (ValueError, RuntimeError) as exc: raise HTTPException(status_code=422, detail=str(exc))
 
 
 # ============================================================
