@@ -1,11 +1,59 @@
 import json
 import asyncio
+from contextlib import contextmanager
 import pytest
 
+import memory_operation_service as operation_service
 from services.provider_batch import OpenAIBatchAdapter, parse_jsonl
 from memory_operation_service import (
     _bounded_total, _extract_result, _local_from_provider, _pricing, _provider_safe_manifest,
 )
+
+
+def test_batch_target_query_matches_additive_llm_config_schema(monkeypatch):
+    queries = []
+
+    class Cursor:
+        def execute(self, query, params=None):
+            queries.append(query)
+
+        def fetchall(self):
+            return []
+
+    class Connection:
+        def cursor(self):
+            return Cursor()
+
+    @contextmanager
+    def fake_db():
+        yield Connection()
+
+    monkeypatch.setattr(operation_service, "get_memory_db_context", fake_db)
+    monkeypatch.setattr(operation_service, "_provider_config", lambda operation: {})
+
+    assert operation_service._configured_batch_targets("knowledge_embedding_backfill") == []
+    assert queries
+    assert "c.name" not in queries[0]
+    assert "c.task_type AS config_name" in queries[0]
+
+
+def test_capabilities_isolates_optional_target_enumeration_failure(monkeypatch):
+    class Capability:
+        supported = True
+        provider = "test"
+        reason = None
+
+    monkeypatch.setattr(operation_service, "_provider_config", lambda operation: {
+        "id": "cfg", "provider": "test", "model_name": "model", "extra_config": {},
+    })
+    monkeypatch.setattr(operation_service, "provider_adapter", lambda config: type("Adapter", (), {"capabilities": lambda self: Capability()})())
+    monkeypatch.setattr(operation_service, "_configured_batch_targets", lambda operation: (_ for _ in ()).throw(RuntimeError("schema mismatch")))
+
+    result = operation_service.capabilities()
+
+    assert set(result) == operation_service.OPERATION_KEYS
+    assert all(item["provider_batch"] is False for item in result.values())
+    assert all(item["targets"] == [] for item in result.values())
 
 
 def test_openai_jsonl_preserves_custom_ids_and_request_bodies():

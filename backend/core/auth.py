@@ -17,9 +17,11 @@ from typing import Optional
 
 import bcrypt
 import hashlib
+import psycopg2
 from fastapi import Header, HTTPException, Security
 from fastapi.security import APIKeyHeader
 from jose import jwt, JWTError
+from psycopg2.pool import PoolError
 
 from core.db import get_db_context
 
@@ -115,6 +117,11 @@ def get_current_user(authorization: str = Header(None)) -> Optional[dict]:
             user = cursor.fetchone()
             if user:
                 return dict(user)
+    except (PoolError, psycopg2.Error) as e:
+        logger.error(f"Authentication database temporarily unavailable: {e}")
+        raise HTTPException(status_code=503, detail="Authentication database temporarily unavailable")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error in get_current_user: {e}")
     return None

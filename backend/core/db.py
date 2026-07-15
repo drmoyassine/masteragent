@@ -17,7 +17,7 @@ from typing import Optional, Dict, Any
 import psycopg2
 import psycopg2.extras
 from core.secrets import decrypt_secret
-from core.db_pool import get_pool, return_connection
+from core.db_pool import acquire_connection, return_connection
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ def redact_database_url(url: str) -> str:
 
 def get_db() -> psycopg2.extensions.connection:
     """Borrow and return a psycopg2 connection from the process pool."""
-    return get_pool(DATABASE_URL).getconn()
+    return acquire_connection(DATABASE_URL)
 
 
 @contextmanager

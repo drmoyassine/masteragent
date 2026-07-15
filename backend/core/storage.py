@@ -20,7 +20,7 @@ import psycopg2
 import psycopg2.extras
 import redis as redis_lib
 from core.secrets import decrypt_secret, encrypt_secret
-from core.db_pool import get_pool, return_connection
+from core.db_pool import acquire_connection, return_connection
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +91,7 @@ def get_memory_db_context():
     Commits on success, rolls back on exception.
     """
     url = get_postgres_url()
-    conn = get_pool(url).getconn()
+    conn = acquire_connection(url)
     try:
         yield conn
         conn.commit()

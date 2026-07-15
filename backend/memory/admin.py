@@ -1458,37 +1458,9 @@ async def maintenance_controls(admin: dict = Depends(require_admin_auth)):
 @router.get("/maintenance/eligible-counts")
 async def maintenance_eligible_counts(admin: dict = Depends(require_admin_auth)):
     """Snapshot eligible work so an exhaustive run has a finite start boundary."""
-    from memory_embedding_backfill import preview_backfill
-    embedding = preview_backfill()
-    with get_memory_db_context() as conn:
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT COUNT(*) AS count FROM intelligence i
-            WHERE i.status='confirmed'
-              AND NOT EXISTS (
-                  SELECT 1 FROM knowledge_source_links l
-                  WHERE l.source_type='intelligence' AND l.source_id=i.id
-              )
-        """)
-        generation = int(cur.fetchone()["count"] or 0)
-        cur.execute("""
-            SELECT COUNT(*) AS count FROM knowledge
-            WHERE status='active' AND COALESCE(metadata->'facets', '{}'::jsonb) = '{}'::jsonb
-        """)
-        facets = int(cur.fetchone()["count"] or 0)
-        cur.execute("""
-            SELECT COUNT(*) AS count FROM knowledge
-            WHERE status='active'
-              AND category IN ('best_practices','lessons_learned','trade_knowledge','skill','playbook')
-        """)
-        hygiene = int(cur.fetchone()["count"] or 0)
-    return {
-        "embedding_backfill": int(embedding.get("stale") or 0),
-        "knowledge_generation": generation,
-        "hygiene_analysis": hygiene,
-        "facet_backfill": facets,
-        "snapshot_at": datetime.now(timezone.utc).isoformat(),
-    }
+    from memory_operation_service import eligible_counts
+    counts = eligible_counts()
+    return {**counts, "snapshot_at": datetime.now(timezone.utc).isoformat()}
 
 
 @router.post("/maintenance-controls/{job}/{command}")

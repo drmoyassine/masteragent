@@ -92,12 +92,12 @@ def _configured_batch_targets(operation: str) -> List[Dict[str, Any]]:
     with get_memory_db_context() as conn:
         cur = conn.cursor()
         cur.execute("""
-            SELECT c.id,c.name,c.task_type,c.model_name,c.provider_id,c.extra_config_json,c.is_active,
+            SELECT c.id,c.task_type,c.task_type AS config_name,c.model_name,c.provider_id,c.extra_config_json,c.is_active,
                    p.provider,p.name AS provider_name,p.api_base_url,p.api_key_encrypted
             FROM memory_llm_configs c
             JOIN memory_llm_providers p ON p.id=c.provider_id
             WHERE c.is_active=TRUE
-            ORDER BY p.name,c.name,c.model_name
+            ORDER BY p.name,c.task_type,c.model_name
         """)
         rows = [dict(row) for row in cur.fetchall()]
     seen = set()
@@ -115,7 +115,7 @@ def _configured_batch_targets(operation: str) -> List[Dict[str, Any]]:
         candidates.append({
             "config_id": row["id"], "provider_id": row.get("provider_id"),
             "provider": cap.provider, "provider_name": row.get("provider_name") or cap.provider,
-            "config_name": row.get("name") or row.get("model_name"), "model_name": row.get("model_name"),
+            "config_name": row.get("config_name") or row.get("model_name"), "model_name": row.get("model_name"),
             "is_default": str(row["id"]) == str(default.get("id")),
             "pricing": _pricing(config),
         })
@@ -139,15 +139,25 @@ def capabilities() -> Dict[str, Any]:
             )
         except Exception as exc:
             cap, supported, reason = None, False, str(exc)
+        try:
+            targets = _configured_batch_targets(operation)
+        except Exception as exc:
+            # A broken optional provider target must not take down the complete
+            # capabilities endpoint or the synchronous operation UI.
+            logger.exception("Could not enumerate batch targets for %s", operation)
+            targets = []
+            if supported:
+                supported = False
+                reason = f"Configured provider targets are temporarily unavailable: {exc}"
         result[operation] = {
             "provider_batch": supported,
             "local_async": operation == "knowledge_hygiene_run",
             "reason": reason,
-            "provider": cap.provider if cap else (_provider_config(operation).get("provider") or "unknown"),
+            "provider": cap.provider if cap else (config.get("provider") or "unknown"),
             "completion_window": "24h" if supported else None,
             "default_config_id": config.get("id"),
             "default_model": config.get("model_name"),
-            "targets": _configured_batch_targets(operation),
+            "targets": targets,
         }
     return result
 
@@ -261,10 +271,22 @@ def _eligible_source_count(operation: str) -> int:
             return int(cur.fetchone()["count"] or 0)
         if operation == "run_all_knowledge_generation":
             cur.execute("""SELECT COUNT(*) count FROM intelligence i WHERE status='confirmed'
-                AND NOT EXISTS (SELECT 1 FROM knowledge k WHERE i.id=ANY(k.source_intelligence_ids))""")
+                AND NOT EXISTS (SELECT 1 FROM knowledge_source_links l
+                    WHERE l.source_type='intelligence' AND l.source_id=i.id)""")
             return int(cur.fetchone()["count"] or 0)
-        cur.execute("SELECT COUNT(*) count FROM knowledge WHERE status='active'")
+        cur.execute("""SELECT COUNT(*) count FROM knowledge WHERE status='active'
+            AND category IN ('best_practices','lessons_learned','trade_knowledge','skill','playbook')""")
         return int(cur.fetchone()["count"] or 0)
+
+
+def eligible_counts() -> Dict[str, int]:
+    """Return counts using the exact eligibility rules used by operation previews."""
+    return {
+        "embedding_backfill": _eligible_source_count("knowledge_embedding_backfill"),
+        "knowledge_generation": _eligible_source_count("run_all_knowledge_generation"),
+        "hygiene_analysis": _eligible_source_count("knowledge_hygiene_run"),
+        "facet_backfill": _eligible_source_count("backfill_facets"),
+    }
 
 
 def _generation_sources(limit: int, parent_run_id: Optional[str] = None,
@@ -292,7 +314,8 @@ def _generation_sources(limit: int, parent_run_id: Optional[str] = None,
         cur.execute("""
             SELECT primary_entity_type, COUNT(*) AS count FROM intelligence i
             WHERE status='confirmed' AND NOT EXISTS (
-                SELECT 1 FROM knowledge k WHERE i.id=ANY(k.source_intelligence_ids))
+                SELECT 1 FROM knowledge_source_links l
+                WHERE l.source_type='intelligence' AND l.source_id=i.id)
             """ + claimed + cutoff_clause + """
             GROUP BY primary_entity_type ORDER BY primary_entity_type
         """, tuple([*([parent_run_id] if parent_run_id else []), *([snapshot_cutoff] if snapshot_cutoff else [])]))
@@ -308,7 +331,8 @@ def _generation_sources(limit: int, parent_run_id: Optional[str] = None,
                     SELECT id,name,content,summary,signals,primary_entity_type,primary_entity_id,
                            version,updated_at FROM intelligence i
                     WHERE status='confirmed' AND primary_entity_type=%s AND NOT EXISTS (
-                        SELECT 1 FROM knowledge k WHERE i.id=ANY(k.source_intelligence_ids))
+                        SELECT 1 FROM knowledge_source_links l
+                        WHERE l.source_type='intelligence' AND l.source_id=i.id)
                     """ + claimed + cutoff_clause + """
                     ORDER BY created_at,id OFFSET %s LIMIT %s
                 """, tuple([entity_type, *([parent_run_id] if parent_run_id else []), *([snapshot_cutoff] if snapshot_cutoff else []), offset, threshold]))
