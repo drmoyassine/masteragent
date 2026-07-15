@@ -1457,10 +1457,28 @@ async def maintenance_controls(admin: dict = Depends(require_admin_auth)):
 
 @router.get("/maintenance/eligible-counts")
 async def maintenance_eligible_counts(admin: dict = Depends(require_admin_auth)):
-    """Snapshot eligible work so an exhaustive run has a finite start boundary."""
-    from memory_operation_service import eligible_counts
-    counts = eligible_counts()
-    return {**counts, "snapshot_at": datetime.now(timezone.utc).isoformat()}
+    """Return the last persisted eligibility snapshot without scanning source tables."""
+    from memory_operation_metrics import get_snapshot
+    return get_snapshot()
+
+
+@router.post("/maintenance/eligible-counts/refresh", status_code=202)
+async def refresh_maintenance_eligible_counts(admin: dict = Depends(require_admin_auth)):
+    """Queue one guarded exact refresh; callers poll the cheap GET for completion."""
+    from memory.queue import knowledge_queue
+    from memory_operation_metrics import get_snapshot, mark_refresh_error, request_refresh
+
+    queued = request_refresh()
+    if queued:
+        try:
+            await knowledge_queue.add(
+                "refresh_operation_metrics", {},
+                {"priority": 4},
+            )
+        except Exception as exc:
+            mark_refresh_error(f"Could not queue eligibility refresh: {exc}")
+            raise HTTPException(status_code=503, detail="Could not queue eligibility refresh") from exc
+    return {"queued": queued, **get_snapshot()}
 
 
 @router.post("/maintenance-controls/{job}/{command}")

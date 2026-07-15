@@ -112,7 +112,7 @@ async def _process_bulk_job(job: Job, token: str):
         singleton_jobs = {
             "knowledge_embedding_backfill", "backfill_facets", "backfill_telemetry",
             "run_all_knowledge_generation", "run_consolidation", "knowledge_hygiene_run",
-            "extract_playbooks", "interaction_retention",
+            "extract_playbooks", "interaction_retention", "refresh_operation_metrics",
         }
         if job.name in singleton_jobs:
             from services.job_safety import try_acquire_singleton_job
@@ -310,6 +310,10 @@ async def _process_bulk_job(job: Job, token: str):
                 progress_run_id=run_id,
             )
 
+        elif job.name == "refresh_operation_metrics":
+            from memory_operation_metrics import refresh_snapshots
+            operation_result = refresh_snapshots()
+
         elif job.name == "run_intelligence_sweep":
             from memory_compaction import run_compaction_check
             await run_compaction_check(min_count=job.data.get("min_count"))
@@ -355,6 +359,21 @@ async def _process_bulk_job(job: Job, token: str):
                                     detail=detail)
             else:
                 log_pipeline_run(job.name, "completed", detail=detail, trigger="queue")
+
+            # Eligibility changes when any Knowledge operation completes. Keep
+            # the persisted UI snapshot current even when no browser is open;
+            # the guard collapses simultaneous completion/UI refresh requests.
+            if job.name in {
+                "knowledge_embedding_backfill", "run_all_knowledge_generation",
+                "knowledge_hygiene_run", "backfill_facets",
+            }:
+                from memory_operation_metrics import mark_refresh_error, request_refresh
+                if request_refresh():
+                    try:
+                        await knowledge_queue.add("refresh_operation_metrics", {}, {"priority": 4})
+                    except Exception as refresh_exc:
+                        mark_refresh_error(f"Could not queue post-operation eligibility refresh: {refresh_exc}")
+                        logger.warning("Could not queue eligibility refresh: %s", refresh_exc)
         
         # Mathematical rate limiting sequential block
         sleep_interval = 60.0 / (rpm if rpm and rpm > 0 else 60)

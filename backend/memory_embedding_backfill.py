@@ -49,6 +49,8 @@ def _select_stale_rows(
     configured_version: int,
     configured_model: str,
     exclude_ids: Optional[List[str]] = None,
+    after_created_at: Optional[Any] = None,
+    after_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Active records whose embedding version is missing/stale, oldest first.
 
@@ -61,11 +63,12 @@ def _select_stale_rows(
         # early whenever the first page happened to contain current records.
         cursor.execute(
             """
-            SELECT id, name, category, content, summary, signals, tags, metadata
+            SELECT id, name, category, content, summary, signals, tags, metadata, created_at
             FROM knowledge
             WHERE status = 'active'
               AND category IN ('best_practices','lessons_learned','trade_knowledge','skill','playbook')
               AND NOT (id = ANY(%s))
+              AND (%s::timestamptz IS NULL OR (created_at, id) > (%s::timestamptz, %s))
               AND (
                     embedding IS NULL
                  OR COALESCE(metadata->'embedding'->>'version', '1') <> %s
@@ -75,7 +78,8 @@ def _select_stale_rows(
             ORDER BY created_at ASC, id ASC
             LIMIT %s
             """,
-            (exclude_ids or [], str(configured_version), configured_model or "", batch_size),
+            (exclude_ids or [], after_created_at, after_created_at, after_id,
+             str(configured_version), configured_model or "", batch_size),
         )
         return [dict(r) for r in cursor.fetchall()]
 
@@ -109,6 +113,8 @@ async def run_embedding_backfill(
     # ids out of later selections; retaining every attempted id made the SQL
     # parameter grow throughout large production backfills.
     failed_ids: List[str] = []
+    after_created_at = None
+    after_id = None
 
     while True:
         from services.job_controls import get_command
@@ -123,9 +129,16 @@ async def run_embedding_backfill(
         this_batch = min(batch_size, remaining) if remaining is not None else batch_size
         this_batch = min(this_batch, EMBEDDING_API_BATCH_SIZE)
 
-        rows = _select_stale_rows(this_batch, cv, configured_model, failed_ids)
+        rows = _select_stale_rows(
+            this_batch, cv, configured_model, failed_ids,
+            after_created_at=after_created_at, after_id=after_id,
+        )
         if not rows:
             break
+        # Keyset progress prevents every small provider batch from rescanning
+        # all previously updated rows from the beginning of the table.
+        after_created_at = rows[-1]["created_at"]
+        after_id = str(rows[-1]["id"])
 
         processed += len(rows)
         seen += len(rows)
@@ -201,6 +214,8 @@ async def _backfill_source_tiers(*, batch_size: int, max_records: Optional[int],
             break
         processed = succeeded = failed = 0
         failed_ids: set[str] = set()
+        after_order = None
+        after_id = None
         table_budget = None if max_records is None else max_records - global_processed
         while table_budget is None or processed < table_budget:
             limit = min(batch_size, table_budget - processed) if table_budget is not None else batch_size
@@ -208,16 +223,21 @@ async def _backfill_source_tiers(*, batch_size: int, max_records: Optional[int],
             with get_memory_db_context() as conn:
                 cur = conn.cursor()
                 cur.execute(f"""
-                    SELECT id, {text_expr} AS embedding_text FROM {table}
+                    SELECT id, {text_expr} AS embedding_text, {order_col} AS source_order FROM {table}
                     WHERE NOT (id = ANY(%s)) AND ({text_expr}) IS NOT NULL
                       AND BTRIM(({text_expr})::text) <> ''
+                      AND (%s::timestamptz IS NULL OR ({order_col}, id) > (%s::timestamptz, %s))
                       AND (embedding IS NULL OR embedding_model IS DISTINCT FROM %s
                            OR embedding_dimensions IS DISTINCT FROM vector_dims(embedding))
                     ORDER BY {order_col} ASC, id ASC LIMIT %s
-                """, (list(failed_ids), model, limit))
+                """, (list(failed_ids), after_order, after_order, after_id, model, limit))
                 rows = [dict(r) for r in cur.fetchall()]
             if not rows:
                 break
+            # Advance by the ordered source cursor, not by success state. Failed
+            # rows are reported but cannot trap a run in a repeated first page.
+            after_order = rows[-1]["source_order"]
+            after_id = str(rows[-1]["id"])
             processed += len(rows)
             try:
                 texts = [str(row.get("embedding_text") or "") for row in rows]

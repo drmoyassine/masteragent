@@ -1,0 +1,822 @@
+/* 
+ * EasyPanel MCP Documentation - Custom Styles
+ * Premium Monochrome Design (Black & White)
+ * Optimized for readability, usability, and visual excellence
+ */
+
+/* ============================================
+   CSS Variables - Monochrome Premium Palette
+   ============================================ */
+:root {
+  /* Brand grayscale primary */
+  --md-primary-fg-color: #000000 !important;
+  --md-primary-fg-color--light: #374151 !important;
+  --md-primary-fg-color--dark: #000000 !important;
+
+  /* Accent grayscale */
+  --md-accent-fg-color: #111827 !important;
+  --md-accent-fg-color--transparent: rgba(17, 24, 39, 0.05) !important;
+
+  /* Background colors */
+  --md-default-bg-color: #FFFFFF !important;
+  --md-default-bg-color--light: #F9FAFB !important;
+  --md-default-bg-color--dark: #111827 !important;
+
+  /* Text colors */
+  --md-typeset-color: #111827 !important;
+  --md-typeset-color--light: #4B5563 !important;
+
+  /* Code blocks - High contrast for light mode */
+  --md-code-bg-color: #F8FAFC !important;
+  --md-code-fg-color: #0F172A !important;
+  --md-code-hl-color: #334155 !important;
+
+  /* Header & Navigation Translúcido (Glassmorphism) */
+  --md-header-bg-color: rgba(255, 255, 255, 0.85) !important;
+  --md-header-fg-color: #000000 !important;
+  --md-search-bg-color: rgba(0, 0, 0, 0.05) !important;
+
+  /* Borders & Dividers */
+  --md-border-color-sutil: #E5E7EB !important;
+  --md-th-bg-color: #111827 !important;
+  --md-th-fg-color: #FFFFFF !important;
+
+  /* Buttons */
+  --md-button-bg-color: #000000 !important;
+  --md-button-fg-color: #FFFFFF !important;
+  --md-button-border-color: #000000 !important;
+  --md-button-hover-bg-color: #374151 !important;
+  --md-button-hover-fg-color: #FFFFFF !important;
+
+  /* Shadows */
+  --md-shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --md-shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.08);
+  --md-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+
+  /* Border radius */
+  --md-border-radius: 8px;
+  --md-border-radius-lg: 12px;
+}
+
+/* Dark mode adjustments - Pure Black Theme */
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #FFFFFF !important;
+  --md-primary-fg-color--light: #E5E7EB !important;
+  --md-primary-fg-color--dark: #FFFFFF !important;
+
+  --md-accent-fg-color: #FFFFFF !important;
+  --md-accent-fg-color--transparent: rgba(255, 255, 255, 0.08) !important;
+
+  --md-default-bg-color: #000000 !important;
+  --md-default-bg-color--light: #0D0D0D !important;
+  --md-default-bg-color--dark: #000000 !important;
+
+  --md-typeset-color: #F9FAFB !important;
+  --md-typeset-color--light: #9CA3AF !important;
+
+  /* Code blocks - High contrast for dark mode */
+  --md-code-bg-color: #0F0F0F !important;
+  --md-code-fg-color: #F1F5F9 !important;
+  --md-code-hl-color: #FFFFFF !important;
+
+  --md-header-bg-color: rgba(0, 0, 0, 0.9) !important;
+  --md-header-fg-color: #FFFFFF !important;
+  --md-search-bg-color: #1A1A1A !important;
+
+  --md-border-color-sutil: #222222 !important;
+  --md-th-bg-color: #121212 !important;
+  --md-th-fg-color: #FFFFFF !important;
+
+  --md-button-bg-color: #FFFFFF !important;
+  --md-button-fg-color: #000000 !important;
+  --md-button-border-color: #FFFFFF !important;
+  --md-button-hover-bg-color: #E5E7EB !important;
+  --md-button-hover-fg-color: #000000 !important;
+}
+
+/* Forzar fondos negros en modo oscuro para los componentes de la interfaz de Material */
+[data-md-color-scheme="slate"] body, 
+[data-md-color-scheme="slate"] .md-container, 
+[data-md-color-scheme="slate"] .md-main,
+[data-md-color-scheme="slate"] .md-sidebar,
+[data-md-color-scheme="slate"] .md-footer,
+[data-md-color-scheme="slate"] .md-footer-meta,
+[data-md-color-scheme="slate"] .md-nav {
+  background-color: #000000 !important;
+}
+
+/* ============================================
+   Typography
+   ============================================ */
+.md-typeset {
+  font-size: 0.95rem;
+  line-height: 1.7;
+  color: var(--md-typeset-color);
+}
+
+/* Center main title on homepage */
+.md-content[data-md-component="content"] h1:first-of-type {
+  text-align: center;
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3,
+.md-typeset h4,
+.md-typeset h5,
+.md-typeset h6 {
+  font-weight: 700;
+  color: var(--md-primary-fg-color) !important;
+  letter-spacing: -0.025em;
+  background: none !important;
+  -webkit-text-fill-color: initial !important;
+}
+
+[data-md-color-scheme="slate"] .md-typeset h1,
+[data-md-color-scheme="slate"] .md-typeset h2,
+[data-md-color-scheme="slate"] .md-typeset h3 {
+  color: var(--md-primary-fg-color);
+}
+
+.md-typeset h1 {
+  font-size: 2.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.md-typeset h2 {
+  font-size: 1.875rem;
+  margin-top: 2.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--md-border-color-sutil);
+}
+
+.md-typeset h3 {
+  font-size: 1.5rem;
+  margin-top: 2rem;
+}
+
+.md-typeset p {
+  margin-bottom: 1.25rem;
+}
+
+.md-typeset a {
+  color: var(--md-primary-fg-color);
+  text-decoration: none;
+  font-weight: 500;
+  border-bottom: 1px dotted var(--md-border-color-sutil);
+  transition: all 0.2s ease;
+}
+
+.md-typeset a:hover {
+  color: var(--md-accent-fg-color);
+  border-bottom: 1px solid var(--md-accent-fg-color);
+}
+
+
+/* ============================================
+   Header & Navigation
+   ============================================ */
+.md-header {
+  background-color: var(--md-header-bg-color) !important;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--md-border-color-sutil) !important;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05) !important;
+  color: var(--md-header-fg-color) !important;
+  transition: background-color 0.3s, border-color 0.3s;
+}
+
+[data-md-color-scheme="slate"] .md-header {
+  border-bottom: 1px solid #1F1F1F !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.45) !important;
+}
+
+.md-header__button {
+  color: var(--md-header-fg-color) !important;
+}
+
+.md-header__topic,
+.md-header__title,
+.md-header__title .md-ellipsis {
+  color: var(--md-header-fg-color) !important;
+  font-weight: 600 !important;
+}
+
+.md-tabs {
+  background-color: var(--md-default-bg-color--light);
+  border-bottom: 1px solid var(--md-border-color-sutil);
+}
+
+.md-nav__link--active {
+  color: var(--md-primary-fg-color) !important;
+  font-weight: 600;
+}
+
+.md-nav__link:hover {
+  color: var(--md-accent-fg-color) !important;
+}
+
+/* ============================================
+   Search Bar
+   ============================================ */
+.md-search__input {
+  background-color: var(--md-search-bg-color) !important;
+  color: var(--md-typeset-color) !important;
+  border-radius: var(--md-border-radius);
+  border: 1px solid var(--md-border-color-sutil) !important;
+}
+
+.md-search__input::placeholder {
+  color: var(--md-typeset-color--light) !important;
+}
+
+.md-search__icon {
+  color: var(--md-typeset-color--light) !important;
+}
+
+/* ============================================
+   Code Blocks
+   ============================================ */
+.md-typeset pre {
+  margin: 1.5rem 0 !important;
+}
+
+.md-typeset pre>code {
+  border-radius: var(--md-border-radius);
+  box-shadow: var(--md-shadow-sm);
+  font-size: 0.85rem;
+  border: 1px solid var(--md-border-color-sutil) !important;
+  background-color: var(--md-code-bg-color) !important;
+  color: var(--md-code-fg-color) !important;
+  padding: 1rem !important;
+}
+
+.md-typeset code {
+  background-color: var(--md-default-bg-color--light);
+  padding: 0.2em 0.4em;
+  border-radius: 4px;
+  font-size: 0.875em;
+  color: var(--md-primary-fg-color);
+  border: 1px solid var(--md-border-color-sutil);
+}
+
+[data-md-color-scheme="slate"] .md-typeset code {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+/* Code block header */
+.md-typeset .highlight span.filename {
+  background-color: var(--md-code-bg-color) !important;
+  border-bottom: 1px solid var(--md-border-color-sutil) !important;
+  padding: 0.5rem 1rem;
+  font-size: 0.75rem;
+  color: var(--md-typeset-color--light) !important;
+  border-radius: var(--md-border-radius) var(--md-border-radius) 0 0;
+  font-weight: 600;
+}
+
+/* Copy button */
+.md-clipboard {
+  color: var(--md-typeset-color--light) !important;
+  transition: color 0.2s ease;
+}
+
+.md-clipboard:hover {
+  color: var(--md-primary-fg-color) !important;
+}
+
+/* ============================================
+   Admonitions (Notes, Warnings, Tips)
+   ============================================ */
+.md-typeset .admonition {
+  border-radius: var(--md-border-radius);
+  box-shadow: var(--md-shadow-sm);
+  border-left: 4px solid;
+  border-top: 1px solid var(--md-border-color-sutil);
+  border-right: 1px solid var(--md-border-color-sutil);
+  border-bottom: 1px solid var(--md-border-color-sutil);
+}
+
+/* Notes: Monocromáticas */
+.md-typeset .admonition.note {
+  border-left-color: var(--md-primary-fg-color--light);
+  background-color: var(--md-default-bg-color--light);
+}
+
+.md-typeset .admonition.note .admonition-title {
+  background-color: var(--md-accent-fg-color--transparent);
+  color: var(--md-primary-fg-color);
+  font-weight: 600;
+}
+
+/* Tips: Sutiles verdes */
+.md-typeset .admonition.tip {
+  border-left-color: #10B981;
+  background-color: rgba(16, 185, 129, 0.03);
+}
+
+.md-typeset .admonition.tip .admonition-title {
+  background-color: rgba(16, 185, 129, 0.08);
+  color: #047857;
+}
+
+/* Warnings: Sutiles amarillos */
+.md-typeset .admonition.warning {
+  border-left-color: #F59E0B;
+  background-color: rgba(245, 158, 11, 0.03);
+}
+
+.md-typeset .admonition.warning .admonition-title {
+  background-color: rgba(245, 158, 11, 0.08);
+  color: #B45309;
+}
+
+/* Danger: Sutiles rojos */
+.md-typeset .admonition.danger,
+.md-typeset .admonition.failure {
+  border-left-color: #EF4444;
+  background-color: rgba(239, 68, 68, 0.03);
+}
+
+.md-typeset .admonition.danger .admonition-title,
+.md-typeset .admonition.failure .admonition-title {
+  background-color: rgba(239, 68, 68, 0.08);
+  color: #B91C1C;
+}
+
+/* ============================================
+   Tables
+   ============================================ */
+.md-typeset table:not([class]) {
+  border-radius: var(--md-border-radius);
+  overflow: hidden;
+  box-shadow: var(--md-shadow-sm);
+  border: 1px solid var(--md-border-color-sutil);
+}
+
+.md-typeset table:not([class]) th {
+  background-color: var(--md-th-bg-color);
+  color: var(--md-th-fg-color);
+  font-weight: 600;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--md-border-color-sutil);
+}
+
+.md-typeset table:not([class]) td {
+  padding: 0.75rem 1rem;
+  border-top: 1px solid var(--md-border-color-sutil);
+}
+
+.md-typeset table:not([class]) tr:hover {
+  background-color: var(--md-default-bg-color--light);
+}
+
+
+/* ============================================
+   Buttons
+   ============================================ */
+.md-typeset .md-button {
+  background: var(--md-button-bg-color) !important;
+  color: var(--md-button-fg-color) !important;
+  border-radius: var(--md-border-radius);
+  padding: 0.6rem 1.5rem;
+  font-weight: 600;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: var(--md-shadow-sm);
+  border: 1px solid var(--md-button-border-color) !important;
+}
+
+.md-typeset .md-button:hover {
+  background-color: var(--md-button-hover-bg-color) !important;
+  color: var(--md-button-hover-fg-color) !important;
+  box-shadow: var(--md-shadow-md);
+  transform: translateY(-1px);
+}
+
+.md-typeset .md-button--secondary {
+  background: transparent !important;
+  color: var(--md-primary-fg-color) !important;
+  border: 1px solid var(--md-primary-fg-color) !important;
+}
+
+.md-typeset .md-button--secondary:hover {
+  background: var(--md-primary-fg-color) !important;
+  color: var(--md-default-bg-color) !important;
+}
+
+/* ============================================
+   Cards & Feature Grid
+   ============================================ */
+.md-typeset .grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.5rem;
+  margin: 1.5rem 0;
+}
+
+.md-typeset .grid .card {
+  background: var(--md-default-bg-color--light);
+  border-radius: var(--md-border-radius-lg);
+  padding: 1.5rem;
+  box-shadow: var(--md-shadow-sm);
+  border: 1px solid var(--md-border-color-sutil);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.md-typeset .grid .card:hover {
+  background: var(--md-default-bg-color);
+  box-shadow: var(--md-shadow-lg);
+  transform: translateY(-3px);
+  border-color: var(--md-primary-fg-color);
+}
+
+.md-typeset .grid .card h3 {
+  color: var(--md-primary-fg-color);
+  font-size: 1.25rem;
+  margin-top: 0;
+  font-weight: 700;
+}
+
+/* ============================================
+   Badges
+   ============================================ */
+.md-typeset .badge {
+  display: inline-block;
+  padding: 0.3em 0.8em;
+  border-radius: 4px !important;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border: 1px solid var(--md-border-color-sutil) !important;
+  transition: all 0.2s ease;
+}
+
+/* Modo claro - Badges */
+.md-typeset .badge--primary {
+  background-color: #000000 !important;
+  color: #FFFFFF !important;
+  border-color: #000000 !important;
+}
+
+.md-typeset .badge--success,
+.md-typeset .badge--warning {
+  background-color: #F3F4F6 !important;
+  color: #111827 !important;
+  border-color: #E5E7EB !important;
+}
+
+/* Modo oscuro - Badges */
+[data-md-color-scheme="slate"] .md-typeset .badge--primary {
+  background-color: #FFFFFF !important;
+  color: #000000 !important;
+  border-color: #FFFFFF !important;
+}
+
+[data-md-color-scheme="slate"] .md-typeset .badge--success,
+[data-md-color-scheme="slate"] .md-typeset .badge--warning {
+  background-color: #121212 !important;
+  color: #F9FAFB !important;
+  border-color: #222222 !important;
+}
+
+/* ============================================
+   Hero Section (Homepage)
+   ============================================ */
+.hero-section {
+  text-align: center;
+  padding: 5rem 2rem;
+  background: var(--md-default-bg-color--light);
+  border-radius: var(--md-border-radius-lg);
+  margin-bottom: 2.5rem;
+  border: 1px solid var(--md-border-color-sutil);
+}
+
+.hero-section h1 {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+  font-weight: 800;
+}
+
+.hero-section p {
+  font-size: 1.25rem;
+  color: var(--md-typeset-color--light);
+  max-width: 650px;
+  margin: 0 auto 2.5rem;
+}
+
+/* ============================================
+   Feature Icons
+   ============================================ */
+.feature-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  background: var(--md-primary-fg-color);
+  border-radius: var(--md-border-radius-lg);
+  margin-bottom: 1.25rem;
+  box-shadow: var(--md-shadow-sm);
+  transition: transform 0.25s ease;
+}
+
+.grid .card:hover .feature-icon {
+  transform: scale(1.05);
+}
+
+.feature-icon svg {
+  width: 30px;
+  height: 30px;
+  fill: var(--md-default-bg-color);
+}
+
+/* ============================================
+   Quick Links Section
+   ============================================ */
+.quick-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: center;
+  margin: 2.5rem 0;
+}
+
+.quick-links a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.5rem;
+  background: var(--md-default-bg-color);
+  border-radius: var(--md-border-radius);
+  color: var(--md-primary-fg-color) !important;
+  font-weight: 600;
+  text-decoration: none;
+  border-bottom: none !important;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  border: 1px solid var(--md-border-color-sutil) !important;
+  box-shadow: var(--md-shadow-sm);
+}
+
+.quick-links a:hover {
+  background: var(--md-primary-fg-color);
+  color: var(--md-default-bg-color) !important;
+  transform: translateY(-2px);
+  box-shadow: var(--md-shadow-md);
+  border-color: var(--md-primary-fg-color) !important;
+}
+
+/* ============================================
+   Footer
+   ============================================ */
+.md-footer {
+  background-color: var(--md-default-bg-color--light) !important;
+  border-top: 1px solid var(--md-border-color-sutil) !important;
+}
+
+.md-footer-meta {
+  background-color: var(--md-default-bg-color) !important;
+  border-top: 1px solid var(--md-border-color-sutil);
+}
+
+.md-social__link svg {
+  fill: var(--md-typeset-color--light) !important;
+  transition: fill 0.2s ease;
+}
+
+.md-social__link:hover svg {
+  fill: var(--md-primary-fg-color) !important;
+}
+
+/* ============================================
+   Animations
+   ============================================ */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(15px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.md-main__inner {
+  animation: fadeIn 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ============================================
+   Responsive Design
+   ============================================ */
+@media (max-width: 768px) {
+  .md-typeset h1 {
+    font-size: 2rem;
+  }
+
+  .md-typeset h2 {
+    font-size: 1.5rem;
+  }
+
+  .hero-section {
+    padding: 2.5rem 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .hero-section h1 {
+    font-size: 2rem;
+  }
+
+  .md-typeset .grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ============================================
+   Print Styles
+   ============================================ */
+@media print {
+  .md-header,
+  .md-tabs,
+  .md-footer {
+    display: none;
+  }
+
+  .md-typeset pre>code {
+    box-shadow: none;
+    border: 1px solid #ccc;
+  }
+}
+
+/* ============================================
+   UX Improvements: Centered Footer & Social Icons
+   ============================================ */
+.md-footer-meta__inner {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  text-align: center !important;
+  gap: 1.25rem !important;
+  padding: 1.5rem 0 !important;
+}
+
+.md-copyright {
+  margin: 0 auto !important;
+  text-align: center !important;
+}
+
+.md-social {
+  margin: 0 auto !important;
+}
+
+/* ============================================
+   UX Improvements: Dynamic Link List (Compact Grid)
+   ============================================ */
+.doc-link-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  margin-top: 1rem;
+}
+
+.doc-link-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.8rem !important;
+  border-radius: 6px !important;
+  background-color: var(--md-default-bg-color) !important;
+  border: 1px solid var(--md-border-color-sutil) !important;
+  color: var(--md-typeset-color) !important;
+  text-decoration: none !important;
+  font-weight: 500 !important;
+  border-bottom: none !important;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  box-shadow: var(--md-shadow-sm);
+  box-sizing: border-box;
+}
+
+.doc-link-item:hover {
+  background-color: var(--md-accent-fg-color--transparent) !important;
+  border-color: var(--md-primary-fg-color) !important;
+  padding-left: 1rem !important;
+  transform: translateY(-1px);
+  box-shadow: var(--md-shadow-md);
+}
+
+.doc-link-item svg {
+  fill: var(--md-typeset-color--light) !important;
+  width: 14px;
+  height: 14px;
+  transition: fill 0.2s ease;
+}
+
+.doc-link-item:hover svg {
+  fill: var(--md-primary-fg-color) !important;
+}
+
+/* ============================================
+   UX Improvements: Navigation & Table of Contents Hover Highlights
+   ============================================ */
+.md-nav__link {
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  border-radius: 6px !important;
+  padding: 0.35rem 0.50rem !important;
+}
+
+.md-nav__link:hover {
+  background-color: var(--md-accent-fg-color--transparent) !important;
+  color: var(--md-primary-fg-color) !important;
+  padding-left: 0.85rem !important;
+}
+
+.md-nav__link--active:hover {
+  padding-left: 0.85rem !important;
+}
+
+/* ============================================
+   UX Improvements: Integration Buttons Spacing
+   ============================================ */
+.quick-links {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 1.25rem 1.5rem !important;
+  justify-content: center !important;
+  margin: 3rem 0 !important;
+}
+
+.quick-links a {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  min-height: 48px !important;
+  padding: 0.75rem 1.75rem !important;
+  box-sizing: border-box !important;
+  margin: 0 !important;
+}
+
+/* ============================================
+   UX Improvements: Premium Language Switch Button & Hidden Translation Frames
+   ============================================ */
+/* Hide Google Translate Banner and Iframe */
+iframe.goog-te-banner-frame,
+iframe.goog-te-banner,
+.goog-te-banner-frame,
+.goog-te-balloon-frame {
+  display: none !important;
+}
+
+body {
+  top: 0px !important;
+}
+
+.skiptranslate iframe {
+  display: none !important;
+}
+
+.goog-te-gadget {
+  display: none !important;
+}
+
+.goog-te-menu-value {
+  display: none !important;
+}
+
+/* Custom Lang Toggle Button Styling */
+.lang-toggle-btn {
+  background: transparent;
+  border: 1px solid var(--md-border-color-sutil) !important;
+  border-radius: 6px;
+  padding: 0.35rem 0.75rem !important;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  cursor: pointer;
+  color: var(--md-header-fg-color) !important;
+  font-weight: 700;
+  font-size: 0.75rem;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  margin-right: 0.75rem;
+  height: 32px;
+  box-shadow: var(--md-shadow-sm);
+  outline: none;
+}
+
+.lang-toggle-btn:hover {
+  background-color: var(--md-search-bg-color) !important;
+  transform: translateY(-1px);
+}
+
+.lang-toggle-btn svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+
+.lang-toggle-btn .lang-text {
+  letter-spacing: 0.05em;
+}

@@ -1,0 +1,178 @@
+# MkDocs Configuration for EasyPanel MCP
+# Optimized for SEO and AI search engines
+
+site_name: EasyPanel MCP - Gestión de Infraestructura con IA
+site_description: "EasyPanel MCP es el conector oficial de Model Context Protocol (MCP) desarrollado por Danny Maaz. Permite a agentes de Inteligencia Artificial (Claude, Cursor, n8n) gestionar y desplegar contenedores Docker, bases de datos y redes aisladas en EasyPanel usando lenguaje natural."
+site_url: https://dannymaaz.github.io/easypanel-mcp/
+site_author: Danny Maaz
+site_dir: _site
+
+# Repository
+repo_name: EasyPanel MCP
+repo_url: https://github.com/dannymaaz/easypanel-mcp
+edit_uri: edit/main/docs/
+
+# Copyright
+copyright: "Desarrollado y mantenido por Danny Maaz &copy; <span id='current-year'>2026</span>. Todos los derechos reservados."
+
+# Theme configuration
+theme:
+  name: material
+  language: en
+  palette:
+    # Light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: white
+      accent: grey
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    # Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: grey
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  font:
+    text: Inter
+    code: JetBrains Mono
+  icon:
+    repo: fontawesome/brands/github
+    logo: fontawesome/solid/server
+  favicon: assets/images/favicon.ico
+  features:
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.tracking
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - content.tooltips
+
+# Custom CSS
+extra_css:
+  - assets/css/custom.css
+
+# Custom JS
+extra_javascript:
+  - assets/js/custom.js
+
+# SEO & Social Meta Tags
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/dannymaaz
+    - icon: fontawesome/brands/linkedin
+      link: https://linkedin.com/in/dannymaaz
+    - icon: fontawesome/solid/envelope
+      link: mailto:dannymaaz200@gmail.com
+  generator: false
+  analytics:
+    provider: google
+    property: G-XXXXXXXXXX  # Replace with your GA4 property
+
+# SEO Optimization
+plugins:
+  - search:
+      separator: '[\s\-,:!=\[\]()"`/]+|\.(?!\d)|&[lg]t;|(?!\b)(?=[A-Z][a-z])'
+      lang:
+        - en
+  # Social cards plugin disabled - requires cairosvg (optional)
+  # - social:
+  #     cards: true
+  #     cards_layout_options:
+  #       background_color: "#1E3A8A"
+  #       color: "#FFFFFF"
+
+# Markdown Extensions
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - def_list
+  - footnotes
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.magiclink:
+      repo_url_shorthand: true
+      user: dannymaaz
+      repo: easypanel-mcp
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.snippets:
+      auto_append:
+        - includes/mkdocs.md
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+      combine_header_slug: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+# Navigation Structure
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Configuration: getting-started/configuration.md
+    - Quick Start: getting-started/quickstart.md
+  - Tools Reference:
+    - Overview: tools/overview.md
+    - Services: tools/services.md
+    - Deployments: tools/deployments.md
+    - Networks: tools/networks.md
+    - Projects: tools/projects.md
+  - Integration:
+    - AI Agents (All): integration/ai-agents.md
+    - Claude Desktop: integration/claude-desktop.md
+    - n8n Workflows: integration/n8n.md
+    - GitHub Actions: integration/github-actions.md
+    - Custom Clients: integration/custom-clients.md
+    - Security: integration/security.md
+  - Advanced Features:
+    - Security & Networks: advanced/features.md
+  - Examples:
+    - Basic Examples: examples/basic.md
+    - Advanced Workflows: examples/advanced.md
+    - Real-World Cases: examples/real-world.md
+  - FAQ & Support:
+    - FAQ: faq.md
+    - Troubleshooting: troubleshooting.md
+    - Changelog: changelog.md
+
+# Validation
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn

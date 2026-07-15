@@ -848,6 +848,22 @@ def _run_migrations(cursor):
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_pipeline_runs_job ON memory_pipeline_runs (job, created_at DESC)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_pipeline_runs_created ON memory_pipeline_runs (created_at DESC)")
 
+    # Persisted Knowledge-operation eligibility metrics. Exact counts can scan
+    # the large interactions table, so read endpoints serve this small snapshot
+    # and an explicit singleton worker refreshes it in the background.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS memory_operation_metrics (
+            operation_key       TEXT PRIMARY KEY,
+            eligible_count      BIGINT,
+            status              TEXT NOT NULL DEFAULT 'unavailable',
+            calculated_at       TIMESTAMPTZ,
+            refresh_started_at  TIMESTAMPTZ,
+            last_error          TEXT,
+            updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_operation_metrics_status ON memory_operation_metrics(status, updated_at)")
+
     # Operator controls for bounded maintenance runs. State is intentionally
     # separate from the append-only run log so pause/cancel survives restarts.
     cursor.execute("""

@@ -427,7 +427,14 @@ export default function MemoryExplorerPage() {
 
   // ─── Knowledge Handlers ─────────────────────────────────────
   const handleCreateKnowledge = async () => {
-    if (!newKnowledge.name || (!newKnowledge.content?.trim() && !(newKnowledge.attachment_ids || []).length)) {
+    const hasName = Boolean(newKnowledge.name?.trim());
+    const hasContent = Boolean(newKnowledge.content?.trim());
+    const hasAttachment = Boolean((newKnowledge.attachment_ids || []).length);
+    const hasStructuredContent = ["skill", "playbook"].includes(newKnowledge.category)
+      && Object.values(newKnowledge.metadata || {}).some(value => (
+        Array.isArray(value) ? value.length > 0 : Boolean(String(value || "").trim())
+      ));
+    if (!hasName || (!hasContent && !hasAttachment && !hasStructuredContent)) {
       toast.error("Please provide a name and either content or an extracted source document");
       return;
     }

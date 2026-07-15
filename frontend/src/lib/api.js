@@ -202,6 +202,7 @@ export const importSkillMd = (data) => api.post('/memory/skills/import', data);
 export const getPipelineRuns = (params) => api.get('/memory/pipeline-runs', { params });
 export const getMaintenanceControls = () => api.get('/memory/maintenance-controls');
 export const getMaintenanceEligibleCounts = () => api.get('/memory/maintenance/eligible-counts');
+export const refreshMaintenanceEligibleCounts = () => api.post('/memory/maintenance/eligible-counts/refresh');
 export const setMaintenanceControl = (job, command) => api.post(`/memory/maintenance-controls/${encodeURIComponent(job)}/${command}`);
 export const getKnowledgeOperationCapabilities = () => api.get('/memory/admin/knowledge/operations/capabilities');
 export const previewKnowledgeOperation = (payload) => api.post('/memory/admin/knowledge/operations/preview', payload);

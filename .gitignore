@@ -92,5 +92,9 @@ android-sdk/
 .claude/settings.local.json
 .claude/worktrees/
 
+# Local Codex MCP configuration contains service credentials.
+/.codex/config.toml
+
 # Scratch / untracked side projects
 /sr.html
+/tools/easypanel-mcp-src/
