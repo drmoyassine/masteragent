@@ -31,7 +31,7 @@ Everything here is deterministic: shuffled input produces identical output.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Iterable, List, Sequence, Set
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 
 from memory_similarity import (
     centroid,
@@ -236,7 +236,7 @@ def discover_candidate_groups(
     *,
     threshold: float,
     min_size: int = 2,
-    max_size: int = 5,
+    max_size: Optional[int] = 5,
     min_cohesion: float = 0.72,
     weak_link_threshold: float = 0.65,
 ) -> List[Dict[str, Any]]:
@@ -258,6 +258,10 @@ def discover_candidate_groups(
     groups: List[Dict[str, Any]] = []
     for category in sorted(by_category.keys()):
         recs = by_category[category]
+        # NULL explicitly disables size-based splitting. Other coherence
+        # controls remain active, so unbounded does not mean one weakly linked
+        # topic is accepted blindly.
+        effective_max_size = max_size if max_size is not None else max(2, len(recs))
         ids = sorted(r["id"] for r in recs)
         vectors = {r["id"]: r["embedding"] for r in recs}
         pair_all = pairwise_similarities(vectors)
@@ -271,7 +275,7 @@ def discover_candidate_groups(
             else:
                 resolved = _resolve_component(
                     members, pair_all, vectors,
-                    max_size=max_size, min_cohesion=min_cohesion,
+                    max_size=effective_max_size, min_cohesion=min_cohesion,
                     weak_link_threshold=weak_link_threshold,
                 )
                 # _resolve_component may itself emit singletons when an edge

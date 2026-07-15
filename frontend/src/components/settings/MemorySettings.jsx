@@ -1823,7 +1823,7 @@ const KNOWLEDGE_SETTING_HELP = {
     evidence_high: "Very-high evidence match threshold. At or above this value, enforced mode may link evidence to one existing canonical record without generating another record.",
     evidence_coverage: "Share of source items that must meet the very-high threshold before evidence can be linked automatically.",
     cluster_min: "Smallest number of Knowledge records that can form a consolidation candidate cluster.",
-    cluster_max: "Largest automatically handled cluster. Larger connected components are split or sent for review to avoid weak chains combining a broad topic.",
+    cluster_max: "Largest automatically handled cluster. Choose Unbounded to remove the size ceiling; cohesion and weak-link safeguards still split incoherent components.",
     cohesion: "Minimum average similarity within a cluster. It guards against transitively connected but incoherent groups.",
     weak_link: "Similarity below which a graph edge is treated as weak during cluster splitting.",
     preview_ttl: "How long a non-mutating consolidation preview remains valid before source changes require regeneration.",
@@ -2213,6 +2213,13 @@ function KnowledgeHygieneCard({ settings, onUpdateSettings }) {
     const CATEGORIES = ["best_practices", "lessons_learned", "trade_knowledge", "skill", "playbook"];
     const enabledCats = settings.knowledge_hygiene_enabled_categories || CATEGORIES;
     const catPolicies = settings.knowledge_hygiene_category_policies || {};
+    const hygieneModes = [
+        { value: "analysis_only", label: "Analysis only", description: "Find candidate relationships, components, clusters, and similarity metrics. Does not call the LLM or change Knowledge." },
+        { value: "proposal_only", label: "Proposal only", description: "Find clusters and ask the LLM for consolidation proposals. Saves proposals but never applies them." },
+        { value: "manual_only", label: "Manual — recommended", description: "Generate proposals, then require a user to review, edit, and confirm every consolidation before anything changes." },
+        { value: "auto_conservative", label: "Auto (conservative)", description: "Apply only high-cohesion, policy-eligible proposals with no unresolved contradictions and sufficient LLM confidence." },
+        { value: "auto_synthesis", label: "Auto (synthesis)", description: "Allow broader automatic consolidation of related or complementary records. Use only after proposal results are production-calibrated." },
+    ];
 
     const toggleCategory = (cat) => {
         const next = enabledCats.includes(cat) ? enabledCats.filter((c) => c !== cat) : [...enabledCats, cat];
@@ -2248,11 +2255,16 @@ function KnowledgeHygieneCard({ settings, onUpdateSettings }) {
                         <Select value={settings.knowledge_hygiene_mode || "manual_only"} onValueChange={(v) => onUpdateSettings("knowledge_hygiene_mode", v)}>
                             <SelectTrigger><SelectValue /></SelectTrigger>
                             <SelectContent>
-                                <SelectItem value="analysis_only">Analysis only (no proposals)</SelectItem>
-                                <SelectItem value="proposal_only">Proposal only (no apply)</SelectItem>
-                                <SelectItem value="manual_only">Manual (review + apply) — recommended</SelectItem>
-                                <SelectItem value="auto_conservative">Auto (conservative)</SelectItem>
-                                <SelectItem value="auto_synthesis">Auto (synthesis)</SelectItem>
+                                <TooltipProvider delayDuration={150}>
+                                    {hygieneModes.map((mode) => (
+                                        <SelectItem key={mode.value} value={mode.value} title={mode.description}>
+                                            <Tooltip>
+                                                <TooltipTrigger asChild><span className="block w-full">{mode.label}</span></TooltipTrigger>
+                                                <TooltipContent side="right" className="max-w-sm leading-relaxed">{mode.description}</TooltipContent>
+                                            </Tooltip>
+                                        </SelectItem>
+                                    ))}
+                                </TooltipProvider>
                             </SelectContent>
                         </Select>
                         <p className="text-[10px] text-muted-foreground">Auto modes apply only when policy gates pass (high confidence, no contradictions). Start manual.</p>
@@ -2274,8 +2286,17 @@ function KnowledgeHygieneCard({ settings, onUpdateSettings }) {
                     </div>
                     <div className="space-y-1">
                         <SettingLabel help="cluster_max" className="text-xs font-mono">Max cluster</SettingLabel>
-                        <Input type="number" min="2" max="20" value={settings.knowledge_hygiene_max_cluster_size ?? 5}
-                            onChange={(e) => onUpdateSettings("knowledge_hygiene_max_cluster_size", parseInt(e.target.value) || 5)} />
+                        <div className="flex gap-2">
+                            <Input type="number" min="2" disabled={settings.knowledge_hygiene_max_cluster_size == null}
+                                value={settings.knowledge_hygiene_max_cluster_size ?? ""}
+                                placeholder="Unbounded"
+                                onChange={(e) => onUpdateSettings("knowledge_hygiene_max_cluster_size", Math.max(2, parseInt(e.target.value, 10) || 2))} />
+                            <Button type="button" size="sm" variant="outline" className="h-9 whitespace-nowrap"
+                                onClick={() => onUpdateSettings("knowledge_hygiene_max_cluster_size", settings.knowledge_hygiene_max_cluster_size == null ? 5 : null)}>
+                                {settings.knowledge_hygiene_max_cluster_size == null ? "Use limit" : "Unbounded"}
+                            </Button>
+                        </div>
+                        <p className="text-[10px] text-muted-foreground">Unbounded removes only the size cap; cohesion and weak-link splitting still apply.</p>
                     </div>
                     <div className="space-y-1">
                         <SettingLabel help="cohesion" className="text-xs font-mono">Min cohesion</SettingLabel>

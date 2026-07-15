@@ -206,11 +206,12 @@ def _enforce_automated_controls(metrics: Dict[str, Any], settings: Dict[str, Any
     """
     min_cohesion = float(settings.get("knowledge_hygiene_min_cluster_cohesion", 0.72))
     min_size = int(settings.get("knowledge_hygiene_min_cluster_size", 2))
-    max_size = int(settings.get("knowledge_hygiene_max_cluster_size", 5))
+    raw_max_size = settings.get("knowledge_hygiene_max_cluster_size", 5)
+    max_size = None if raw_max_size is None else int(raw_max_size)
     size = metrics.get("size", 0)
     if size < min_size:
         raise ConsolidationError("below_min_size", f"Cluster size {size} below minimum {min_size}", 400)
-    if size > max_size:
+    if max_size is not None and size > max_size:
         raise ConsolidationError("above_max_size", f"Cluster size {size} above maximum {max_size}", 400)
     if metrics.get("cohesion", 0.0) < min_cohesion:
         raise ConsolidationError("low_cohesion", "Cluster cohesion below threshold", 400)
@@ -504,7 +505,8 @@ async def discover_and_propose(
     if category_filter:
         categories = [category_filter] if category_filter in categories else []
     threshold = float(settings.get("knowledge_hygiene_similarity_threshold", 0.82))
-    max_size = int(settings.get("knowledge_hygiene_max_cluster_size", 5))
+    raw_max_size = settings.get("knowledge_hygiene_max_cluster_size", 5)
+    max_size = None if raw_max_size is None else int(raw_max_size)
     min_cohesion = float(settings.get("knowledge_hygiene_min_cluster_cohesion", 0.72))
     weak_link = float(settings.get("knowledge_hygiene_weak_link_threshold", 0.65))
     min_size = int(settings.get("knowledge_hygiene_min_cluster_size", 2))

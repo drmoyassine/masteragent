@@ -176,6 +176,20 @@ class TestClustering:
         # every subgroup ≤ max_size
         assert all(len(x["member_ids"]) <= 2 for x in manual)
 
+    def test_unbounded_cluster_size_does_not_force_size_split(self):
+        recs = [
+            {"id": chr(ord("a") + i), "category": "trade_knowledge", "embedding": [1.0, float(i) * 0.0001, 0.0]}
+            for i in range(4)
+        ]
+        groups = discover_candidate_groups(
+            recs, threshold=0.9, min_size=2, max_size=None,
+            min_cohesion=0.5, weak_link_threshold=0.3,
+        )
+        accepted = accepted_proposal_groups(groups, 2)
+        assert len(accepted) == 1
+        assert accepted[0]["member_ids"] == ["a", "b", "c", "d"]
+        assert accepted[0]["split_reason"] is None
+
     def test_weak_chain_splits(self):
         # a-b tight, b-c tight, but a-c weak → at high min_cohesion the trio splits
         recs = [
@@ -418,6 +432,13 @@ class TestSettingsModels:
         assert r.knowledge_hygiene_mode == "manual_only"
         assert r.knowledge_hygiene_creation_time_enabled is False
         assert len(r.knowledge_hygiene_enabled_categories) == 5
+
+    def test_max_cluster_size_accepts_unbounded(self):
+        from memory_models import MemorySettingsResponse, MemorySettingsUpdate
+        update = MemorySettingsUpdate(knowledge_hygiene_max_cluster_size=None)
+        response = MemorySettingsResponse(knowledge_hygiene_max_cluster_size=None)
+        assert update.knowledge_hygiene_max_cluster_size is None
+        assert response.knowledge_hygiene_max_cluster_size is None
 
     def test_rejects_invalid_hygiene_ranges_and_cluster_order(self):
         from pydantic import ValidationError

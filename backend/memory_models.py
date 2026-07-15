@@ -255,7 +255,8 @@ class MemorySettingsUpdate(BaseModel):
     knowledge_hygiene_enabled_categories: Optional[List[str]] = None
     knowledge_hygiene_similarity_threshold: Optional[float] = Field(0.82, ge=0, le=1)
     knowledge_hygiene_min_cluster_size: Optional[int] = Field(2, ge=2, le=20)
-    knowledge_hygiene_max_cluster_size: Optional[int] = Field(5, ge=2, le=20)
+    # NULL means unbounded. Cohesion and weak-link safeguards still apply.
+    knowledge_hygiene_max_cluster_size: Optional[int] = Field(5, ge=2)
     knowledge_hygiene_min_cluster_cohesion: Optional[float] = Field(0.72, ge=0, le=1)
     knowledge_hygiene_weak_link_threshold: Optional[float] = Field(0.65, ge=0, le=1)
     knowledge_hygiene_embedding_version: Optional[int] = Field(2, ge=1)
@@ -360,7 +361,7 @@ class MemorySettingsResponse(BaseModel):
     knowledge_hygiene_enabled_categories: List[str] = ["best_practices", "lessons_learned", "trade_knowledge", "skill", "playbook"]
     knowledge_hygiene_similarity_threshold: float = 0.82
     knowledge_hygiene_min_cluster_size: int = 2
-    knowledge_hygiene_max_cluster_size: int = 5
+    knowledge_hygiene_max_cluster_size: Optional[int] = 5
     knowledge_hygiene_min_cluster_cohesion: float = 0.72
     knowledge_hygiene_weak_link_threshold: float = 0.65
     knowledge_hygiene_embedding_version: int = 2

@@ -369,11 +369,12 @@ def _hygiene_sources(limit: int, parent_run_id: Optional[str] = None,
                 WHERE r.parent_run_id=%s AND s.source_type='knowledge'""", (parent_run_id,))
             claimed = {row["source_id"] for row in cur.fetchall()}
         records = [r for r in records if str(r["id"]) not in claimed]
+    raw_max_size = settings.get("knowledge_hygiene_max_cluster_size", 5)
     groups = discover_candidate_groups(
         records,
         threshold=float(settings.get("knowledge_hygiene_similarity_threshold", .82)),
         min_size=int(settings.get("knowledge_hygiene_min_cluster_size", 2)),
-        max_size=int(settings.get("knowledge_hygiene_max_cluster_size", 5)),
+        max_size=None if raw_max_size is None else int(raw_max_size),
         min_cohesion=float(settings.get("knowledge_hygiene_min_cluster_cohesion", .72)),
         weak_link_threshold=float(settings.get("knowledge_hygiene_weak_link_threshold", .65)),
     )
