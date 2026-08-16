@@ -4,6 +4,13 @@ backend/__pycache__
 backend/*.pyc
 backend/*.pyo
 
+# Python caches, test caches, and local virtualenvs (never ship in the context;
+# a locked .pytest_cache once broke the whole build with "Access is denied")
+**/__pycache__
+**/.pytest_cache
+.venv*
+**/.venv*
+
 # Build outputs
 frontend/build
 

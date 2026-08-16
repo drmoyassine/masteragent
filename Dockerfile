@@ -1,6 +1,8 @@
 # Multi-stage Dockerfile for PromptSRC
 # Stage 1: Build Frontend
-FROM node:20-alpine AS frontend-builder
+# Node 24 LTS: newer transitive deps (e.g. nanoid@6 via @milkdown 7.22) require
+# node ^22 || ^24 || >=26, and node 20 is EOL.
+FROM node:24-alpine AS frontend-builder
 
 WORKDIR /app/frontend
 
