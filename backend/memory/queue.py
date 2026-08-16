@@ -304,7 +304,9 @@ async def _process_bulk_job(job: Job, token: str):
 
         elif job.name == "interaction_retention":
             from memory_interaction_retention import run_interaction_retention
-            operation_result = run_interaction_retention(
+            # Sync batched deletes must not block the shared event loop.
+            operation_result = await asyncio.to_thread(
+                run_interaction_retention,
                 batch_size=int(job.data.get("batch_size", 500)),
                 max_records=int(job.data.get("max_records", 5000)),
                 progress_run_id=run_id,
@@ -312,7 +314,8 @@ async def _process_bulk_job(job: Job, token: str):
 
         elif job.name == "refresh_operation_metrics":
             from memory_operation_metrics import refresh_snapshots
-            operation_result = refresh_snapshots()
+            # Exact-eligibility aggregation is a synchronous table scan.
+            operation_result = await asyncio.to_thread(refresh_snapshots)
 
         elif job.name == "run_intelligence_sweep":
             from memory_compaction import run_compaction_check
