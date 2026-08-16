@@ -1,3 +1,4 @@
+import { format } from "date-fns";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -196,6 +197,16 @@ export default function KnowledgeTab({
                               return <TableCell key={col.key} className={`font-mono ${color}`}>{qs != null ? qs.toFixed(2) : "—"}</TableCell>;
                             }
                             case "merge_count": return <TableCell key={col.key} className="text-center">{k.merge_count || 0}</TableCell>;
+                            case "created_at": return (
+                              <TableCell key={col.key} className="whitespace-nowrap text-muted-foreground" title={k.created_at || undefined}>
+                                {k.created_at ? format(new Date(k.created_at), "MMM d, yyyy") : "—"}
+                              </TableCell>
+                            );
+                            case "updated_at": return (
+                              <TableCell key={col.key} className="whitespace-nowrap text-muted-foreground" title={k.updated_at || undefined}>
+                                {k.updated_at ? format(new Date(k.updated_at), "MMM d, yyyy") : "—"}
+                              </TableCell>
+                            );
                             case "source_pathway": return (<TableCell key={col.key}><Badge variant="outline" className="text-xs">{k.source_pathway || "—"}</Badge></TableCell>);
                             case "status": return (<TableCell key={col.key}><Badge variant={k.status === "active" || k.visibility === "approved" ? "default" : "secondary"}>{k.status || k.visibility}</Badge></TableCell>);
                             case "actions": {

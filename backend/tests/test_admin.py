@@ -191,6 +191,29 @@ class TestLessonsCRUD:
         print("✓ Delete lesson OK")
 
 
+# ── Stats & Knowledge Filters ──────────────────────────────────────────────────
+
+class TestStatsAndKnowledgeFilters:
+
+    def test_stats_last_24h_breakdowns(self, admin, base_url):
+        resp = admin.get(f"{base_url}/api/memory/admin/stats")
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        for tier in ("interactions", "memories", "intelligence", "knowledge"):
+            assert "last_24h" in data[tier], f"{tier} missing last_24h"
+            assert isinstance(data[tier]["last_24h"], int)
+        print("✓ Stats last_24h breakdown for all tiers OK")
+
+    def test_list_knowledge_since_filter(self, admin, base_url):
+        resp = admin.get(f"{base_url}/api/memory/admin/knowledge", params={"since": "2000-01-01T00:00:00Z"})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["total"] > 0
+        future = admin.get(f"{base_url}/api/memory/admin/knowledge", params={"since": "2999-01-01T00:00:00Z"})
+        assert future.status_code == 200, future.text
+        assert future.json()["total"] == 0
+        print("✓ Knowledge since filter OK")
+
+
 # ── Entity Type Config ─────────────────────────────────────────────────────────
 
 class TestEntityTypeConfig:

@@ -74,6 +74,13 @@ function CountCard({ label, value, sub, active }) {
   );
 }
 
+// Compose card sub-lines: joinSubs("667 active", "4 last 24h") → "667 active · 4 last 24h"
+const joinSubs = (...parts) => {
+  const out = parts.filter(Boolean);
+  return out.length ? out.join(" · ") : null;
+};
+const last24hSub = (v) => (v != null ? `${v} last 24h` : null);
+
 export default function MemoryExplorerPage() {
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -209,6 +216,8 @@ export default function MemoryExplorerPage() {
       { key: "always_inject", label: "Always On" },
       { key: "quality_score", label: "Quality" },
       { key: "merge_count", label: "Merges" },
+      { key: "created_at", label: "Created" },
+      { key: "updated_at", label: "Updated" },
       { key: "source_pathway", label: "Source" },
       { key: "status", label: "Status" },
       { key: "actions", label: "Actions", fixed: true },
@@ -791,10 +800,16 @@ export default function MemoryExplorerPage() {
 
       {/* Live counts across all tiers (from /admin/stats) */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <CountCard label="Interactions" value={stats?.interactions?.total} sub={stats?.interactions?.last_24h != null ? `${stats.interactions.last_24h} last 24h` : null} active={activeTab === "interactions"} />
-        <CountCard label="Memories" value={stats?.memories?.total} active={activeTab === "memories"} />
-        <CountCard label="Intelligence" value={stats?.intelligence?.total} sub={stats?.intelligence?.confirmed != null ? `${stats.intelligence.confirmed} confirmed` : null} active={activeTab === "intelligence"} />
-        <CountCard label="Knowledge" value={stats?.knowledge?.total} sub={stats?.knowledge?.active != null ? `${stats.knowledge.active} active` : null} active={activeTab === "knowledge"} />
+        <CountCard label="Interactions" value={stats?.interactions?.total} sub={last24hSub(stats?.interactions?.last_24h)} active={activeTab === "interactions"} />
+        <CountCard label="Memories" value={stats?.memories?.total} sub={last24hSub(stats?.memories?.last_24h)} active={activeTab === "memories"} />
+        <CountCard label="Intelligence" value={stats?.intelligence?.total} sub={joinSubs(
+          stats?.intelligence?.confirmed != null ? `${stats.intelligence.confirmed} confirmed` : null,
+          last24hSub(stats?.intelligence?.last_24h),
+        )} active={activeTab === "intelligence"} />
+        <CountCard label="Knowledge" value={stats?.knowledge?.total} sub={joinSubs(
+          stats?.knowledge?.active != null ? `${stats.knowledge.active} active` : null,
+          last24hSub(stats?.knowledge?.last_24h),
+        )} active={activeTab === "knowledge"} />
       </div>
 
       <Tabs value={activeTab} onValueChange={(tab) => {

@@ -387,6 +387,7 @@ async def list_knowledge(
     status: Optional[str] = Query(None),
     visibility: Optional[str] = Query(None),
     tags: Optional[str] = Query(None),
+    since: Optional[str] = Query(None),
     limit: int = Query(30, le=100),
     offset: int = Query(0),
     admin: dict = Depends(require_admin_auth)
@@ -405,6 +406,10 @@ async def list_knowledge(
             conditions.append("status = %s"); params.append(status)
         if visibility:
             conditions.append("visibility = %s"); params.append(visibility)
+        if since:
+            # Global FilterBar time range (e.g. "Last 24 Hours") filters on
+            # creation date, matching the last-24h stats card.
+            conditions.append("created_at >= %s"); params.append(since)
         if tags:
             tag_list = [t.strip() for t in tags.split(",") if t.strip()]
             if tag_list:
@@ -1960,15 +1965,43 @@ async def get_stats(admin: dict = Depends(require_admin_auth)):
         """)
         interactions_7d = cursor.fetchone()["total"]
 
+        # Records created in the last 24h for the remaining tiers (mirrors the
+        # interactions last_24h card).
+        cursor.execute("""
+            SELECT COUNT(*) as total FROM memories
+            WHERE created_at >= NOW() - INTERVAL '24 hours'
+        """)
+        memories_24h = cursor.fetchone()["total"]
+
+        cursor.execute("""
+            SELECT COUNT(*) as total FROM intelligence
+            WHERE created_at >= NOW() - INTERVAL '24 hours'
+        """)
+        insights_24h = cursor.fetchone()["total"]
+
+        cursor.execute("""
+            SELECT COUNT(*) as total FROM knowledge
+            WHERE created_at >= NOW() - INTERVAL '24 hours'
+        """)
+        knowledge_24h = cursor.fetchone()["total"]
+
     return {
         "interactions": {
             "total": total_interactions,
             "last_24h": interactions_24h,
             "last_7d": interactions_7d,
         },
-        "memories": {"total": total_memories},
-        "intelligence": {"total": total_insights, "confirmed": confirmed_insights},
-        "knowledge": {"total": total_knowledge, "active": active_knowledge},
+        "memories": {"total": total_memories, "last_24h": memories_24h},
+        "intelligence": {
+            "total": total_insights,
+            "confirmed": confirmed_insights,
+            "last_24h": insights_24h,
+        },
+        "knowledge": {
+            "total": total_knowledge,
+            "active": active_knowledge,
+            "last_24h": knowledge_24h,
+        },
         "agents": {"total": total_agents, "active": active_agents},
     }
 
