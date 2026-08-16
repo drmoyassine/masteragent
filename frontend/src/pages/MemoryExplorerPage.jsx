@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { useBulkSelection } from "@/hooks/useBulkSelection";
 import { useColumnConfig } from "@/hooks/useColumnConfig";
 import { useSearchParams } from "react-router-dom";
@@ -88,7 +89,6 @@ export default function MemoryExplorerPage() {
   const validTabs = ["interactions", "memories", "intelligence", "knowledge"];
   const urlTab = searchParams.get("tab");
   const [activeTab, setActiveTab] = useState(validTabs.includes(urlTab) ? urlTab : "interactions");
-  const [loading, setLoading] = useState(false);
   const [processingBulk, setProcessingBulk] = useState(false);
 
   // Global filters
@@ -103,13 +103,6 @@ export default function MemoryExplorerPage() {
 
   // Config meta & Dynamic Options
   const [entityTypes, setEntityTypes] = useState([]);
-  const [filterOptions, setFilterOptions] = useState({ entity_types: [], interaction_types: [] });
-
-  // Datasets
-  const [interactions, setInteractions] = useState([]);
-  const [memories, setMemories] = useState([]);
-  const [intelligence, setInsights] = useState([]);
-  const [knowledge, setKnowledge] = useState([]);
 
   // Additional knowledge state
   const [knowledgeStatusFilter, setKnowledgeStatusFilter] = useState("all");
@@ -119,9 +112,116 @@ export default function MemoryExplorerPage() {
   // Pagination (shared across tiers; resets to page 0 on tab/filter change)
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(20);
-  const [totals, setTotals] = useState({ interactions: 0, memories: 0, intelligence: 0, knowledge: 0 });
+
+  // ─── Server data via React Query ─────────────────────────────
+  // Every query is keyed by its full parameter set and inherits the app-wide
+  // 5-minute staleTime, so tab switches, paging back, and filter toggles reuse
+  // cached pages instead of refetching. Only the active tab's list is fetched.
+  const qc = useQueryClient();
+
+  const fetchParams = useMemo(() => {
+    const params = {};
+    if (appliedFilter.entity_types && appliedFilter.entity_types.length > 0) {
+      params.entity_types = appliedFilter.entity_types.join(",");
+    }
+    if (appliedFilter.interaction_types && appliedFilter.interaction_types.length > 0) {
+      params.interaction_types = appliedFilter.interaction_types.join(",");
+    }
+    if (appliedFilter.entity_id && appliedFilter.entity_id.trim() !== "") {
+      params.entity_id = appliedFilter.entity_id.trim();
+    }
+    if (appliedFilter.time_range && appliedFilter.time_range !== "all") {
+      const now = new Date();
+      let sinceDate;
+      switch (appliedFilter.time_range) {
+        case 'last_24h': sinceDate = subDays(now, 1); break;
+        case 'last_3d': sinceDate = subDays(now, 3); break;
+        case 'last_7d': sinceDate = subDays(now, 7); break;
+        case 'last_30d': sinceDate = subDays(now, 30); break;
+        case 'last_60d': sinceDate = subDays(now, 60); break;
+        default: break;
+      }
+      if (sinceDate) {
+        params.since = formatISO(sinceDate);
+      }
+    }
+    return params;
+  }, [appliedFilter]);
+
+  const listPageParams = useMemo(
+    () => ({ ...fetchParams, limit: pageSize, offset: page * pageSize }),
+    [fetchParams, pageSize, page],
+  );
+  const knowledgeParams = useMemo(() => {
+    const params = { ...listPageParams };
+    if (knowledgeStatusFilter !== "all") params.status = knowledgeStatusFilter;
+    if (categoryFilter !== "all") params.category = categoryFilter;
+    if (tagSearch.trim()) params.tags = tagSearch.trim();
+    return params;
+  }, [listPageParams, knowledgeStatusFilter, categoryFilter, tagSearch]);
+
+  const statsQuery = useQuery({
+    queryKey: ["memory", "stats"],
+    queryFn: () => getMemoryStats().then((res) => res.data),
+  });
+  const filterOptionsQuery = useQuery({
+    queryKey: ["memory", "filter-options", fetchParams],
+    queryFn: () => getInteractionFilterOptionsAdmin(fetchParams).then((res) => res.data),
+  });
+  const interactionsQuery = useQuery({
+    queryKey: ["memory", "interactions", listPageParams],
+    queryFn: () => getInteractionsAdmin(listPageParams).then((res) => res.data),
+    enabled: activeTab === "interactions",
+    placeholderData: keepPreviousData,
+  });
+  const memoriesQuery = useQuery({
+    queryKey: ["memory", "memories", listPageParams],
+    queryFn: () => getMemoriesAdmin(listPageParams).then((res) => res.data),
+    enabled: activeTab === "memories",
+    placeholderData: keepPreviousData,
+  });
+  const insightsQuery = useQuery({
+    queryKey: ["memory", "intelligence", listPageParams],
+    queryFn: () => getInsightsAdmin(listPageParams).then((res) => res.data),
+    enabled: activeTab === "intelligence",
+    placeholderData: keepPreviousData,
+  });
+  const knowledgeQuery = useQuery({
+    queryKey: ["memory", "knowledge", knowledgeParams],
+    queryFn: () => getKnowledgeAdmin(knowledgeParams).then((res) => res.data),
+    enabled: activeTab === "knowledge",
+    placeholderData: keepPreviousData,
+  });
+
   // Cross-tier live counts (from /admin/stats)
-  const [stats, setStats] = useState(null);
+  const stats = statsQuery.data ?? null;
+  const filterOptions = useMemo(() => ({
+    entity_types: (filterOptionsQuery.data?.entity_types || []).map((e) => ({ label: e, value: e })),
+    interaction_types: (filterOptionsQuery.data?.interaction_types || []).map((i) => ({ label: i, value: i })),
+  }), [filterOptionsQuery.data]);
+  const interactions = useMemo(() => interactionsQuery.data?.interactions || [], [interactionsQuery.data]);
+  const memories = useMemo(() => memoriesQuery.data?.memories || [], [memoriesQuery.data]);
+  const intelligence = useMemo(() => insightsQuery.data?.intelligence || [], [insightsQuery.data]);
+  const knowledge = useMemo(() => knowledgeQuery.data?.knowledge || [], [knowledgeQuery.data]);
+  const totals = {
+    interactions: interactionsQuery.data?.total ?? 0,
+    memories: memoriesQuery.data?.total ?? 0,
+    intelligence: insightsQuery.data?.total ?? 0,
+    knowledge: knowledgeQuery.data?.total ?? 0,
+  };
+
+  // Mutations invalidate the affected tier (all its cached pages/filter
+  // variants) plus the tier counts, so both refresh together.
+  const refreshTier = useCallback((tier) => {
+    qc.invalidateQueries({ queryKey: ["memory", tier] });
+    qc.invalidateQueries({ queryKey: ["memory", "stats"] });
+  }, [qc]);
+
+  // Surface fetch failures as toasts (same messages the old loaders used).
+  useEffect(() => { if (interactionsQuery.error) toast.error("Failed to load interactions"); }, [interactionsQuery.error]);
+  useEffect(() => { if (memoriesQuery.error) toast.error("Failed to load memories"); }, [memoriesQuery.error]);
+  useEffect(() => { if (insightsQuery.error) toast.error("Failed to load intelligence"); }, [insightsQuery.error]);
+  useEffect(() => { if (knowledgeQuery.error) console.error("Failed to load knowledge:", knowledgeQuery.error); }, [knowledgeQuery.error]);
 
   // Changing tab or any filter resets to page 0 in the same batched update as the
   // filter change, so the loader fetches the correct page (no wasted double-fetch).
@@ -130,9 +230,6 @@ export default function MemoryExplorerPage() {
   const changeTagSearch = useCallback((v) => { setTagSearch(v); setPage(0); }, []);
   const changeAppliedFilter = useCallback((v) => { setAppliedFilter(v); setPage(0); }, []);
   const changePageSize = useCallback((v) => { setPageSize(v); setPage(0); }, []);
-  const loadStats = useCallback(async () => {
-    try { const res = await getMemoryStats(); setStats(res.data); } catch { setStats(null); }
-  }, []);
   const [editingKnowledge, setEditingKnowledge] = useState(null);
   const [newKnowledge, setNewKnowledge] = useState({ name: "", category: "trade_knowledge", content: "", summary: "", tags: [], signals: [], metadata: {}, attachment_ids: [], status: "draft" });
   const [showNewKnowledgeDialog, setShowNewKnowledgeDialog] = useState(false);
@@ -318,122 +415,6 @@ export default function MemoryExplorerPage() {
     return () => clearTimeout(handler);
   }, [entityIdInput]);
 
-  const getFetchParams = useCallback(() => {
-    const params = {};
-    if (appliedFilter.entity_types && appliedFilter.entity_types.length > 0) {
-      params.entity_types = appliedFilter.entity_types.join(",");
-    }
-    if (appliedFilter.interaction_types && appliedFilter.interaction_types.length > 0) {
-      params.interaction_types = appliedFilter.interaction_types.join(",");
-    }
-    if (appliedFilter.entity_id && appliedFilter.entity_id.trim() !== "") {
-      params.entity_id = appliedFilter.entity_id.trim();
-    }
-    if (appliedFilter.time_range && appliedFilter.time_range !== "all") {
-        const now = new Date();
-        let sinceDate;
-        switch(appliedFilter.time_range) {
-            case 'last_24h': sinceDate = subDays(now, 1); break;
-            case 'last_3d': sinceDate = subDays(now, 3); break;
-            case 'last_7d': sinceDate = subDays(now, 7); break;
-            case 'last_30d': sinceDate = subDays(now, 30); break;
-            case 'last_60d': sinceDate = subDays(now, 60); break;
-            default: break;
-        }
-        if (sinceDate) {
-            params.since = formatISO(sinceDate);
-        }
-    }
-    return params;
-  }, [appliedFilter]);
-
-  const loadFilterOptions = useCallback(async () => {
-      try {
-          const res = await getInteractionFilterOptionsAdmin(getFetchParams());
-          if (res.data) {
-              setFilterOptions({
-                  entity_types: (res.data.entity_types || []).map(e => ({ label: e, value: e })),
-                  interaction_types: (res.data.interaction_types || []).map(i => ({ label: i, value: i }))
-              });
-          }
-      } catch (error) {
-          console.error("Failed to load filter options", error);
-      }
-  }, [getFetchParams]);
-
-  // Loaders
-  const loadInteractions = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params = { ...getFetchParams(), limit: pageSize, offset: page * pageSize };
-      const res = await getInteractionsAdmin(params);
-      setInteractions(res.data?.interactions || []);
-      setTotals(prev => ({ ...prev, interactions: res.data?.total ?? 0 }));
-    } catch (error) {
-      toast.error("Failed to load interactions");
-      setInteractions([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [getFetchParams, page, pageSize]);
-
-  const loadMemories = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params = { ...getFetchParams(), limit: pageSize, offset: page * pageSize };
-      const res = await getMemoriesAdmin(params);
-      setMemories(res.data?.memories || []);
-      setTotals(prev => ({ ...prev, memories: res.data?.total ?? 0 }));
-    } catch (error) {
-      toast.error("Failed to load memories");
-      setMemories([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [getFetchParams, page, pageSize]);
-
-  const loadInsights = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params = { ...getFetchParams(), limit: pageSize, offset: page * pageSize };
-      const res = await getInsightsAdmin(params);
-      setInsights(res.data?.intelligence || []);
-      setTotals(prev => ({ ...prev, intelligence: res.data?.total ?? 0 }));
-    } catch (error) {
-      toast.error("Failed to load intelligence");
-      setInsights([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [getFetchParams, page, pageSize]);
-
-  const loadKnowledge = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params = { ...getFetchParams(), limit: pageSize, offset: page * pageSize };
-      if (knowledgeStatusFilter !== "all") params.status = knowledgeStatusFilter;
-      if (categoryFilter !== "all") params.category = categoryFilter;
-      if (tagSearch.trim()) params.tags = tagSearch.trim();
-      const res = await getKnowledgeAdmin(params);
-      setKnowledge(res.data?.knowledge || []);
-      setTotals(prev => ({ ...prev, knowledge: res.data?.total ?? 0 }));
-    } catch (error) {
-      console.error("Failed to load knowledge:", error);
-      setKnowledge([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [getFetchParams, page, pageSize, knowledgeStatusFilter, categoryFilter, tagSearch]);
-
-  useEffect(() => {
-    loadFilterOptions();
-    loadStats();
-    if (activeTab === "interactions") loadInteractions();
-    else if (activeTab === "memories") loadMemories();
-    else if (activeTab === "intelligence") loadInsights();
-    else if (activeTab === "knowledge") loadKnowledge();
-  }, [activeTab, loadInteractions, loadMemories, loadInsights, loadKnowledge, loadFilterOptions, loadStats]);
-
   // ─── Knowledge Handlers ─────────────────────────────────────
   const handleCreateKnowledge = async () => {
     const hasName = Boolean(newKnowledge.name?.trim());
@@ -456,7 +437,7 @@ export default function MemoryExplorerPage() {
       toast.success("Knowledge created");
       setShowNewKnowledgeDialog(false);
       setNewKnowledge({ name: "", category: "trade_knowledge", content: "", summary: "", tags: [], signals: [], metadata: {}, attachment_ids: [], status: "draft" });
-      loadKnowledge();
+      refreshTier("knowledge");
     } catch (error) {
       toast.error(error?.response?.data?.detail || "Failed to create knowledge");
     }
@@ -477,7 +458,7 @@ export default function MemoryExplorerPage() {
       });
       toast.success("Knowledge updated");
       setEditingKnowledge(null);
-      loadKnowledge();
+      refreshTier("knowledge");
     } catch (error) {
       toast.error("Failed to update knowledge");
     }
@@ -487,7 +468,7 @@ export default function MemoryExplorerPage() {
     try {
       await updateKnowledgeAdmin(knowledgeId, { status: "active" });
       toast.success("Knowledge activated");
-      loadKnowledge();
+      refreshTier("knowledge");
     } catch (error) {
       toast.error("Failed to activate knowledge");
     }
@@ -498,7 +479,7 @@ export default function MemoryExplorerPage() {
     try {
       await deleteKnowledgeAdmin(knowledgeId);
       toast.success("Knowledge deleted");
-      loadKnowledge();
+      refreshTier("knowledge");
     } catch (error) {
       toast.error("Failed to delete knowledge");
     }
@@ -508,7 +489,7 @@ export default function MemoryExplorerPage() {
     try {
       await updateKnowledgeAdmin(knowledgeId, { status: retire ? "retired" : "active" });
       toast.success(retire ? "Archived" : "Restored");
-      loadKnowledge();
+      refreshTier("knowledge");
     } catch (error) {
       toast.error("Failed to update status");
     }
@@ -519,7 +500,7 @@ export default function MemoryExplorerPage() {
     try {
       await updateKnowledgeAdmin(k.id, { always_inject: next });
       toast.success(next ? "Pinned as always-on" : "Always-on removed");
-      loadKnowledge();
+      refreshTier("knowledge");
     } catch (error) {
       toast.error(error?.response?.data?.detail || "Failed to toggle always-on");
     }
@@ -536,7 +517,7 @@ export default function MemoryExplorerPage() {
       const res = await importSkillMd({ skill_md: importText, category: importCategory, status: "draft" });
       toast.success(res.data?.status === "merged" ? "Merged into an existing record" : "Skill imported");
       setShowImportDialog(false); setImportText("");
-      loadKnowledge();
+      refreshTier("knowledge");
     } catch (error) {
       toast.error(error?.response?.data?.detail || "Import failed");
     } finally {
@@ -559,7 +540,7 @@ export default function MemoryExplorerPage() {
       });
       toast.success("Interaction updated successfully");
       setEditingInteraction(null);
-      loadInteractions();
+      refreshTier("interactions");
     } catch (error) {
       toast.error(error?.response?.data?.detail || "Failed to update interaction");
     }
@@ -572,7 +553,7 @@ export default function MemoryExplorerPage() {
       await deleteInteractionAdmin(editingInteraction.id);
       toast.success("Interaction deleted successfully");
       setEditingInteraction(null);
-      loadInteractions();
+      refreshTier("interactions");
     } catch (error) {
       toast.error(error?.response?.data?.detail || "Failed to delete interaction");
     }
@@ -587,7 +568,7 @@ export default function MemoryExplorerPage() {
       });
       toast.success("Memory updated successfully");
       setEditingMemory(null);
-      loadMemories();
+      refreshTier("memories");
     } catch (error) {
       toast.error(error?.response?.data?.detail || "Failed to update memory");
     }
@@ -600,7 +581,7 @@ export default function MemoryExplorerPage() {
       await deleteMemoryAdmin(editingMemory.id);
       toast.success("Memory deleted successfully");
       setEditingMemory(null);
-      loadMemories();
+      refreshTier("memories");
     } catch (error) {
       toast.error(error?.response?.data?.detail || "Failed to delete memory");
     }
@@ -618,7 +599,7 @@ export default function MemoryExplorerPage() {
       });
       toast.success("Intelligence updated");
       setEditingIntelligence(null);
-      loadInsights();
+      refreshTier("intelligence");
     } catch (error) {
       toast.error(error?.response?.data?.detail || "Failed to update intelligence");
     }
@@ -628,7 +609,7 @@ export default function MemoryExplorerPage() {
     try {
       await updateInsightAdmin(id, { status: "confirmed" });
       toast.success("Intelligence confirmed");
-      loadInsights();
+      refreshTier("intelligence");
     } catch (error) {
       toast.error("Failed to confirm intelligence");
     }
@@ -641,7 +622,7 @@ export default function MemoryExplorerPage() {
       await deleteInsightAdmin(editingIntelligence.id);
       toast.success("Intelligence deleted");
       setEditingIntelligence(null);
-      loadInsights();
+      refreshTier("intelligence");
     } catch (error) {
       toast.error(error?.response?.data?.detail || "Failed to delete intelligence");
     }
@@ -655,7 +636,7 @@ export default function MemoryExplorerPage() {
       const res = await bulkDeleteInteractionsAdmin({ interaction_ids: selectedInteractionIds });
       toast.success(`Deleted ${res.data.deleted} interactions`);
       clearInteractionSelection();
-      loadInteractions();
+      refreshTier("interactions");
     } catch (error) {
       toast.error("Failed to delete interactions");
     } finally {
@@ -670,7 +651,7 @@ export default function MemoryExplorerPage() {
       const res = await bulkReprocessInteractionsAdmin({ interaction_ids: selectedInteractionIds });
       toast.success(`Queued ${res.data.queued} interactions sequentially`);
       clearInteractionSelection();
-      loadInteractions();
+      refreshTier("interactions");
     } catch (error) {
       toast.error("Failed to queue interactions");
     } finally {
@@ -685,7 +666,7 @@ export default function MemoryExplorerPage() {
       const res = await bulkDeleteMemoriesAdmin({ memory_ids: selectedMemoryIds });
       toast.success(`Deleted ${res.data.deleted} memories`);
       clearMemorySelection();
-      loadMemories();
+      refreshTier("memories");
     } catch (error) {
       toast.error("Failed to delete memories");
     } finally {
@@ -700,8 +681,8 @@ export default function MemoryExplorerPage() {
       const res = await bulkReprocessMemoriesAdmin({ memory_ids: selectedMemoryIds });
       toast.success(`Dropped memories and re-queued ${res.data.queued} generation jobs`);
       clearMemorySelection();
-      loadMemories();
-      loadInteractions();
+      refreshTier("memories");
+      refreshTier("interactions");
     } catch (error) {
       toast.error("Failed to queue memories");
     } finally {
@@ -716,7 +697,7 @@ export default function MemoryExplorerPage() {
       const res = await bulkDeleteIntelligenceAdmin({ intelligence_ids: selectedIntelligenceIds });
       toast.success(`Deleted ${res.data.deleted} intelligence records`);
       clearIntelligenceSelection();
-      loadInsights();
+      refreshTier("intelligence");
     } catch (error) {
       toast.error("Failed to delete intelligence");
     } finally {
@@ -743,7 +724,7 @@ export default function MemoryExplorerPage() {
       const res = await bulkApproveIntelligenceAdmin({ intelligence_ids: selectedIntelligenceIds });
       toast.success(`Approved ${res.data.approved} intelligence records`);
       clearIntelligenceSelection();
-      loadInsights();
+      refreshTier("intelligence");
     } catch (error) {
       toast.error("Failed to approve intelligence");
     } finally {
@@ -758,7 +739,7 @@ export default function MemoryExplorerPage() {
       const res = await bulkDeleteKnowledgeAdmin({ knowledge_ids: selectedKnowledgeIds });
       toast.success(`Deleted ${res.data.deleted} knowledge records`);
       clearKnowledgeSelection();
-      loadKnowledge();
+      refreshTier("knowledge");
     } catch (error) {
       toast.error("Failed to delete knowledge");
     } finally {
@@ -841,10 +822,10 @@ export default function MemoryExplorerPage() {
             onEdit={setEditingInteraction}
             onBulkDelete={handleBulkDelete}
             onBulkReprocess={handleBulkReprocess}
-            loading={loading}
+            loading={interactionsQuery.isFetching}
             visCols={visCols}
             renderColumnToggle={renderColumnToggle}
-            onLoad={loadInteractions}
+            onLoad={() => interactionsQuery.refetch()}
             processingBulk={processingBulk}
             page={page}
             pageSize={pageSize}
@@ -863,10 +844,10 @@ export default function MemoryExplorerPage() {
             onEdit={setEditingMemory}
             onBulkDelete={handleBulkDeleteMemories}
             onBulkReprocess={handleBulkReprocessMemories}
-            loading={loading}
+            loading={memoriesQuery.isFetching}
             visCols={visCols}
             renderColumnToggle={renderColumnToggle}
-            onLoad={loadMemories}
+            onLoad={() => memoriesQuery.refetch()}
             processingBulk={processingBulk}
             page={page}
             pageSize={pageSize}
@@ -887,10 +868,10 @@ export default function MemoryExplorerPage() {
             onBulkDelete={handleBulkDeleteIntelligence}
             onBulkApprove={handleBulkApproveIntelligence}
             onBulkReprocess={handleBulkReprocessIntelligence}
-            loading={loading}
+            loading={insightsQuery.isFetching}
             visCols={visCols}
             renderColumnToggle={renderColumnToggle}
-            onLoad={loadInsights}
+            onLoad={() => insightsQuery.refetch()}
             processingBulk={processingBulk}
             page={page}
             pageSize={pageSize}
@@ -921,7 +902,7 @@ export default function MemoryExplorerPage() {
             onShowImportDialog={() => setShowImportDialog(true)}
             onArchive={handleArchiveKnowledge}
             onToggleAlwaysInject={handleToggleAlwaysInject}
-            loading={loading}
+            loading={knowledgeQuery.isFetching}
             visCols={visCols}
             renderColumnToggle={renderColumnToggle}
             page={page}
@@ -978,7 +959,7 @@ export default function MemoryExplorerPage() {
         onFeedback={async (id, outcome) => {
           try {
             await submitKnowledgeFeedback(id, { outcome });
-            loadKnowledge();
+            refreshTier("knowledge");
             toast.success("Feedback recorded");
           } catch (e) {
             toast.error("Failed to record feedback");
@@ -990,7 +971,7 @@ export default function MemoryExplorerPage() {
         open={showConsolidationDialog}
         onOpenChange={setShowConsolidationDialog}
         selectedIds={consolidationIds}
-        onApplied={() => { clearKnowledgeSelection(); loadKnowledge(); }}
+        onApplied={() => { clearKnowledgeSelection(); refreshTier("knowledge"); }}
       />
     </div>
   );
