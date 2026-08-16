@@ -11,6 +11,7 @@ reversible.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -520,11 +521,17 @@ async def discover_and_propose(
 
     max_records = max(1, int(max_records))
     max_clusters = max(1, int(max_clusters))
-    all_records = load_active_records_for_categories(categories, limit=max_records)
+    # Record load and pairwise clustering are synchronous CPU/DB work over up
+    # to max_records embeddings; run them off the shared event loop (the web
+    # process also serves HTTP and the other queue workers).
+    all_records = await asyncio.to_thread(
+        load_active_records_for_categories, categories, limit=max_records
+    )
     configured_version = int(settings.get("knowledge_hygiene_embedding_version", 2))
     records = [r for r in all_records if is_embedding_compatible(r, configured_version, current_embedding_model())]
     incompatible_skipped = len(all_records) - len(records)
-    groups = discover_candidate_groups(
+    groups = await asyncio.to_thread(
+        discover_candidate_groups,
         records, threshold=threshold, min_size=min_size, max_size=max_size,
         min_cohesion=min_cohesion, weak_link_threshold=weak_link,
     )

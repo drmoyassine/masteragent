@@ -5,6 +5,7 @@ and idempotent. Existing synchronous endpoints remain available unchanged.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -757,14 +758,20 @@ async def prepare_next_child(parent_id: str) -> Dict[str, Any]:
     except (TypeError, ValueError):
         chunk = 10_000
     limit = min(remaining, chunk); operation = parent["operation_key"]
+    # Source discovery (up to chunk records, incl. pairwise hygiene clustering)
+    # is synchronous CPU/DB work; run it off the shared event loop.
     if operation == "knowledge_embedding_backfill":
-        sources = _embedding_sources(limit, parent_id, (parent.get("run_options") or {}).get("snapshot_cutoff"))
+        sources = await asyncio.to_thread(
+            _embedding_sources, limit, parent_id, (parent.get("run_options") or {}).get("snapshot_cutoff"))
     elif operation == "backfill_facets":
-        sources = _facet_sources(limit, parent_id, (parent.get("run_options") or {}).get("snapshot_cutoff"))
+        sources = await asyncio.to_thread(
+            _facet_sources, limit, parent_id, (parent.get("run_options") or {}).get("snapshot_cutoff"))
     elif operation == "run_all_knowledge_generation":
-        sources = _generation_sources(limit, parent_id, (parent.get("run_options") or {}).get("snapshot_cutoff"))
+        sources = await asyncio.to_thread(
+            _generation_sources, limit, parent_id, (parent.get("run_options") or {}).get("snapshot_cutoff"))
     else:
-        sources = _hygiene_sources(limit, parent_id, (parent.get("run_options") or {}).get("snapshot_cutoff"))
+        sources = await asyncio.to_thread(
+            _hygiene_sources, limit, parent_id, (parent.get("run_options") or {}).get("snapshot_cutoff"))
     manifest = _filter_claimed_manifest(parent_id, _build_manifest(operation, sources, parent.get("run_options") or {}))
     manifest = _limit_manifest_sources(manifest, remaining)
     if not manifest:

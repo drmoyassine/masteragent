@@ -11,6 +11,7 @@ Provides:
 
 Auth: Admin JWT (require_admin_auth)
 """
+import asyncio
 import json
 import logging
 import uuid
@@ -70,8 +71,11 @@ async def preview_knowledge_operation(
 ):
     from memory_operation_service import preview
     try:
-        return preview(body.operation_key, body.execution_mode, body.options,
-                       actor_id=str(admin.get("id") or admin.get("sub") or "admin"))
+        # Preview runs bounded source discovery incl. hygiene clustering —
+        # synchronous work that must stay off the shared event loop.
+        return await asyncio.to_thread(
+            preview, body.operation_key, body.execution_mode, body.options,
+            actor_id=str(admin.get("id") or admin.get("sub") or "admin"))
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
@@ -1076,7 +1080,9 @@ async def hygiene_run_detail(run_id: str, admin: dict = Depends(require_admin_au
 async def embedding_coverage(admin: dict = Depends(require_admin_auth)):
     """Embedding-version coverage gauge for the settings UI."""
     from memory_embedding_backfill import preview_backfill
-    return preview_backfill()
+    # Full-table aggregate scans (vector_dims per row) run in a thread: the web
+    # process also hosts the queue workers, so sync SQL here blocks every request.
+    return await asyncio.to_thread(preview_backfill)
 
 
 @admin_crud.post("/knowledge/consolidations/backfill-embeddings")
@@ -1518,72 +1524,77 @@ async def trigger_backfill_profiles(admin: dict = Depends(require_admin_auth)):
     Scans all entity types, finds interactions matching profile_sync_triggers,
     and extracts entity profile data using the configured metadata_field_map.
     """
-    from memory_ingestion import _sync_entity_profile
-    backfilled = 0
-    skipped = 0
-    errors = []
-
-    with get_memory_db_context() as conn:
-        cursor = conn.cursor()
-        # Get all entity type configs
-        cursor.execute("SELECT * FROM memory_entity_type_config")
-        configs = [dict(r) for r in cursor.fetchall()]
-
-    for config in configs:
-        entity_type = config["entity_type"]
-        field_map = config.get("metadata_field_map") or {}
-        if isinstance(field_map, str):
-            import json as _json
-            field_map = _json.loads(field_map)
-
-        sync_triggers = field_map.get("profile_sync_triggers", ["initial_memory_context"])
-        if not sync_triggers:
-            continue
+    def _run() -> dict:
+        from memory_ingestion import _sync_entity_profile
+        backfilled = 0
+        skipped = 0
+        errors = []
 
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
-            # For each unique entity, get the LATEST matching interaction
-            cursor.execute("""
-                SELECT DISTINCT ON (primary_entity_id) *
-                FROM interactions
-                WHERE primary_entity_type = %s
-                  AND interaction_type = ANY(%s)
-                ORDER BY primary_entity_id, timestamp DESC
-            """, (entity_type, sync_triggers))
-            rows = cursor.fetchall()
+            # Get all entity type configs
+            cursor.execute("SELECT * FROM memory_entity_type_config")
+            configs = [dict(r) for r in cursor.fetchall()]
 
-        for row in rows:
-            try:
-                _sync_entity_profile(dict(row))
-                backfilled += 1
-            except Exception as e:
-                skipped += 1
-                errors.append(f"{entity_type}/{row['primary_entity_id']}: {str(e)[:100]}")
+        for config in configs:
+            entity_type = config["entity_type"]
+            field_map = config.get("metadata_field_map") or {}
+            if isinstance(field_map, str):
+                import json as _json
+                field_map = _json.loads(field_map)
 
-    # Mass-backfill primary_entity_subtype on ALL interactions from entity_profiles
-    subtypes_updated = 0
-    try:
-        with get_memory_db_context() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                UPDATE interactions i
-                SET primary_entity_subtype = ep.subtype
-                FROM entity_profiles ep
-                WHERE i.primary_entity_type = ep.entity_type
-                  AND i.primary_entity_id = ep.entity_id
-                  AND i.primary_entity_subtype IS NULL
-                  AND ep.subtype IS NOT NULL
-            """)
-            subtypes_updated = cursor.rowcount
-    except Exception as e:
-        errors.append(f"Subtype backfill failed: {str(e)[:100]}")
+            sync_triggers = field_map.get("profile_sync_triggers", ["initial_memory_context"])
+            if not sync_triggers:
+                continue
 
-    return {
-        "backfilled": backfilled,
-        "skipped": skipped,
-        "subtypes_updated": subtypes_updated,
-        "errors": errors[:20],
-    }
+            with get_memory_db_context() as conn:
+                cursor = conn.cursor()
+                # For each unique entity, get the LATEST matching interaction
+                cursor.execute("""
+                    SELECT DISTINCT ON (primary_entity_id) *
+                    FROM interactions
+                    WHERE primary_entity_type = %s
+                      AND interaction_type = ANY(%s)
+                    ORDER BY primary_entity_id, timestamp DESC
+                """, (entity_type, sync_triggers))
+                rows = cursor.fetchall()
+
+            for row in rows:
+                try:
+                    _sync_entity_profile(dict(row))
+                    backfilled += 1
+                except Exception as e:
+                    skipped += 1
+                    errors.append(f"{entity_type}/{row['primary_entity_id']}: {str(e)[:100]}")
+
+        # Mass-backfill primary_entity_subtype on ALL interactions from entity_profiles
+        subtypes_updated = 0
+        try:
+            with get_memory_db_context() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE interactions i
+                    SET primary_entity_subtype = ep.subtype
+                    FROM entity_profiles ep
+                    WHERE i.primary_entity_type = ep.entity_type
+                      AND i.primary_entity_id = ep.entity_id
+                      AND i.primary_entity_subtype IS NULL
+                      AND ep.subtype IS NOT NULL
+                """)
+                subtypes_updated = cursor.rowcount
+        except Exception as e:
+            errors.append(f"Subtype backfill failed: {str(e)[:100]}")
+
+        return {
+            "backfilled": backfilled,
+            "skipped": skipped,
+            "subtypes_updated": subtypes_updated,
+            "errors": errors[:20],
+        }
+
+    # Full-table scans + per-row profile sync are long and fully synchronous;
+    # keep them off the shared event loop (the web process runs the workers).
+    return await asyncio.to_thread(_run)
 
 
 # ============================================================
