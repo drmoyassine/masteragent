@@ -68,6 +68,11 @@ async def ingest_interaction(
     # Insert bare row (state=pending) to PostgreSQL
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
+        # Telemetry fast-path: internal_ai_* rows are stored for reflection only.
+        # They are never distilled, so skip the BullMQ job entirely and land them
+        # as done (keeps the pending backlog = real conversations only).
+        is_telemetry = (body.interaction_type or "").startswith("internal_ai")
+        initial_status = "done" if is_telemetry else "pending"
         cursor.execute("""
             INSERT INTO interactions (
                 id, timestamp, interaction_type, agent_id, agent_name,
@@ -79,17 +84,18 @@ async def ingest_interaction(
             interaction_id, now, body.interaction_type, agent["id"], body.agent_name or agent.get("name"),
             content, body.primary_entity_type, body.primary_entity_subtype, body.primary_entity_id,
             json.dumps(body.metadata or {}, ensure_ascii=False), json.dumps(body.metadata_field_map or {}, ensure_ascii=False),
-            body.has_attachments, json.dumps(attachment_refs, ensure_ascii=False), json.dumps({}), body.source, "pending", now
+            body.has_attachments, json.dumps(attachment_refs, ensure_ascii=False), json.dumps({}), body.source, initial_status, now
         ))
         # Ensure commit happens here seamlessly by context manager exiting before passing to BullMQ
 
-    # Enqueue standard DLQ compliant backend task
-    from memory.queue import interactions_queue
-    await interactions_queue.add(
-        "ingest_interaction", 
-        {"interaction_id": interaction_id}, 
-        {"attempts": 3, "backoff": {"type": "exponential", "delay": 2000}}
-    )
+    if not is_telemetry:
+        # Enqueue standard DLQ compliant backend task
+        from memory.queue import interactions_queue
+        await interactions_queue.add(
+            "ingest_interaction", 
+            {"interaction_id": interaction_id}, 
+            {"attempts": 3, "backoff": {"type": "exponential", "delay": 2000}}
+        )
 
     log_audit(agent["id"], "ingest_interaction", "interaction", interaction_id, {
         "interaction_type": body.interaction_type,
@@ -104,7 +110,7 @@ async def ingest_interaction(
         agent_id=agent["id"], agent_name=body.agent_name or agent.get("name"),
         primary_entity_type=body.primary_entity_type, primary_entity_id=body.primary_entity_id,
         primary_entity_subtype=body.primary_entity_subtype, has_attachments=body.has_attachments,
-        source=body.source, status="pending", created_at=now
+        source=body.source, status=initial_status, created_at=now
     )
 
 
@@ -162,9 +168,11 @@ async def ingest_interactions_bulk(
                 ids = list(receipt["interaction_ids"] or [])
                 replayed = True
 
+        enqueue_ids: List[str] = []
         if not replayed:
             ids = [str(uuid.uuid4()) for _ in items]
             for interaction_id, item in zip(ids, items):
+                initial_status = "done" if (item.interaction_type or "").startswith("internal_ai") else "pending"
                 cursor.execute("""
                     INSERT INTO interactions (
                         id, timestamp, interaction_type, agent_id, agent_name,
@@ -177,8 +185,10 @@ async def ingest_interactions_bulk(
                     item.content, item.primary_entity_type, item.primary_entity_subtype, item.primary_entity_id,
                     json.dumps(item.metadata or {}, ensure_ascii=False), json.dumps(item.metadata_field_map or {}, ensure_ascii=False),
                     item.has_attachments, json.dumps(list(item.attachment_refs or []), ensure_ascii=False),
-                    json.dumps({}), item.source, "pending", now
+                    json.dumps({}), item.source, initial_status, now
                 ))
+                if initial_status == "pending":
+                    enqueue_ids.append(interaction_id)
             if idempotency_key:
                 cursor.execute("""
                     INSERT INTO interaction_ingestion_requests
@@ -187,7 +197,7 @@ async def ingest_interactions_bulk(
                 """, (agent["id"], idempotency_key, request_hash, ids))
 
     from memory.queue import interactions_queue
-    for interaction_id in ids:
+    for interaction_id in enqueue_ids:
         await interactions_queue.add(
             "ingest_interaction",
             {"interaction_id": interaction_id},
