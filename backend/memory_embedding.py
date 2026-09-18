@@ -34,6 +34,14 @@ logger = logging.getLogger(__name__)
 # ``knowledge_hygiene_embedding_version`` default setting.
 EMBEDDING_VERSION = 2
 
+# Interaction types that are machine telemetry: captured for knowledge
+# generation (telemetry reflection), never for vector search. Excluded from
+# real-time interaction embedding, from the resumable embedding backfill,
+# and counted as ineligible in the coverage gauge. Prefix match so future
+# internal_ai_* types inherit the policy automatically.
+TELEMETRY_INTERACTION_PREFIX = "internal_ai_"
+TELEMETRY_INTERACTION_EXCLUSION_SQL = "interaction_type NOT LIKE 'internal_ai%'"
+
 # Categories that go through the consolidatable pipeline.
 CONSOLIDATABLE_KNOWLEDGE_CATEGORIES = {
     "best_practices",

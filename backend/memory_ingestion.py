@@ -119,10 +119,14 @@ async def process_interaction(interaction_id: str):
 
         attachment["inferred_mime"] = mime_type
 
-    # Real-time Embeddings generation for Pending Interactions (Ephemeral Vectors)
+    # Real-time Embeddings generation for Pending Interactions (Ephemeral
+    # Vectors). Telemetry rows are never embedded — they feed knowledge
+    # generation, not vector search (TELEMETRY_INTERACTION_PREFIX).
+    from memory_embedding import TELEMETRY_INTERACTION_PREFIX
+    is_telemetry = str(interaction.get("interaction_type") or "").startswith(TELEMETRY_INTERACTION_PREFIX)
     embedding = None
     try:
-        if content.strip():
+        if content.strip() and not is_telemetry:
             embedding = await generate_embedding(content)
     except Exception as e:
         logger.warning(f"Failed to generate ephemeral interaction embedding: {e}")

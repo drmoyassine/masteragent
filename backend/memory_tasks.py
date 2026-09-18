@@ -123,6 +123,7 @@ async def _background_loop():
       memory_generation_time      (default 02:00) → memories + intra-day intel trigger
       intelligence_generation_time(default 02:30) → intelligence schedule sweep (floor)
       knowledge_generation_time   (default 03:00) → all enabled Knowledge pathways
+      interaction retention       (02:00 window) → raw-tier age cutoff (Tier 0 hygiene)
 
     Threshold valves still fire intra-day (independent of this loop). Consolidation
     stays a periodic (weekly) maintenance job — pruning, not learning."""
@@ -131,7 +132,7 @@ async def _background_loop():
             settings = get_memory_settings() or {}
             now_utc = datetime.now(timezone.utc)
             today = now_utc.date()
-            from memory.queue import knowledge_queue
+            from memory.queue import interactions_queue, knowledge_queue
 
             # Submitted provider batches survive deployments in PostgreSQL.
             # Reconciliation is a bounded poll/import step, never a worker held
@@ -194,6 +195,26 @@ async def _background_loop():
                     complete_job_date("consolidation", today)
                 except Exception as exc:
                     fail_job_date("consolidation", today, exc)
+                    raise
+
+            # ── Tier 0 hygiene: raw interaction retention (daily) ─────────────
+            # Age-qualified cleanup of the raw interactions tier. Nothing else
+            # in the codebase schedules this — without it the table grows
+            # unbounded (the 16 GB incident). Days<=0 disables the schedule.
+            retention_days = int(settings.get("interaction_retention_days", 30) or 0)
+            if retention_days > 0 and \
+               _time_reached(now_utc, settings.get("memory_generation_time", "02:00"), (2, 0)) and \
+               claim_job_date("interaction_retention", today):
+                logger.info(f"Firing daily interaction retention (days={retention_days})")
+                try:
+                    await interactions_queue.add(
+                        "interaction_retention",
+                        {"batch_size": 500, "max_records": 50000},
+                        {"priority": 5},
+                    )
+                    complete_job_date("interaction_retention", today)
+                except Exception as exc:
+                    fail_job_date("interaction_retention", today, exc)
                     raise
 
         except Exception as e:

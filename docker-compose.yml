@@ -63,9 +63,12 @@ services:
   postgres:
     image: pgvector/pgvector:pg16
     # Keep PostgreSQL maintenance operations from exhausting host memory.
-    # Both values are configurable in the deployment environment.
-    shm_size: ${POSTGRES_SHM_SIZE:-512m}
-    mem_limit: ${POSTGRES_MEM_LIMIT:-4g}
+    # Defaults sized for the retained working set after raw-interaction
+    # retention + the telemetry embedding diet (live data well under 1 GB;
+    # page cache counts toward mem_limit). Both values remain configurable
+    # in the deployment environment.
+    shm_size: ${POSTGRES_SHM_SIZE:-128m}
+    mem_limit: ${POSTGRES_MEM_LIMIT:-1g}
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}

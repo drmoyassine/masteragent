@@ -202,14 +202,18 @@ async def _backfill_source_tiers(*, batch_size: int, max_records: Optional[int],
                                  progress_offset: int = 0) -> Dict[str, Dict[str, int]]:
     """Persist missing/stale embeddings for tiers 0–2 using their canonical text."""
     model = current_embedding_model()
+    # Telemetry interactions (internal_ai_*) are captured for knowledge
+    # generation, not vector search — excluded from (re-)embedding here so
+    # the backfill can never undo the telemetry embedding diet.
+    from memory_embedding import TELEMETRY_INTERACTION_EXCLUSION_SQL
     specs = {
-        "interactions": ("content", "timestamp"),
-        "memories": ("content_summary", "created_at"),
-        "intelligence": ("COALESCE(name,'') || '. ' || COALESCE(summary,'') || ' ' || COALESCE(content,'')", "created_at"),
+        "interactions": ("content", "timestamp", f"AND {TELEMETRY_INTERACTION_EXCLUSION_SQL}"),
+        "memories": ("content_summary", "created_at", ""),
+        "intelligence": ("COALESCE(name,'') || '. ' || COALESCE(summary,'') || ' ' || COALESCE(content,'')", "created_at", ""),
     }
     results: Dict[str, Dict[str, int]] = {}
     global_processed = 0
-    for table, (text_expr, order_col) in specs.items():
+    for table, (text_expr, order_col, extra_where) in specs.items():
         if max_records is not None and global_processed >= max_records:
             break
         processed = succeeded = failed = 0
@@ -229,6 +233,7 @@ async def _backfill_source_tiers(*, batch_size: int, max_records: Optional[int],
                       AND (%s::timestamptz IS NULL OR ({order_col}, id) > (%s::timestamptz, %s))
                       AND (embedding IS NULL OR embedding_model IS DISTINCT FROM %s
                            OR embedding_dimensions IS DISTINCT FROM vector_dims(embedding))
+                      {extra_where}
                     ORDER BY {order_col} ASC, id ASC LIMIT %s
                 """, (list(failed_ids), after_order, after_order, after_id, model, limit))
                 rows = [dict(r) for r in cur.fetchall()]
@@ -433,20 +438,24 @@ def preview_backfill(configured_version: Optional[int] = None) -> Dict[str, Any]
     current = int(row.get("current") or 0)
     stale = int(row.get("stale") or 0)
     tiers = {"knowledge": {"total": total, "compatible": current, "stale": stale}}
+    # Telemetry interactions count as ineligible (never embedded by design),
+    # not stale — keeps the coverage gauge honest after the telemetry diet.
+    from memory_embedding import TELEMETRY_INTERACTION_EXCLUSION_SQL
     tier_specs = {
-        "interactions": "content",
-        "memories": "content_summary",
-        "intelligence": "COALESCE(name,'') || '. ' || COALESCE(summary,'') || ' ' || COALESCE(content,'')",
+        "interactions": ("content", f" AND {TELEMETRY_INTERACTION_EXCLUSION_SQL}"),
+        "memories": ("content_summary", ""),
+        "intelligence": ("COALESCE(name,'') || '. ' || COALESCE(summary,'') || ' ' || COALESCE(content,'')", ""),
     }
-    for table, text_expr in tier_specs.items():
+    for table, (text_expr, extra_eligible) in tier_specs.items():
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
+            eligible = f"BTRIM(COALESCE(({text_expr})::text, '')) <> ''{extra_eligible}"
             cursor.execute(f"""
-                SELECT COUNT(*) FILTER (WHERE BTRIM(COALESCE(({text_expr})::text, '')) <> '') AS total,
-                       COUNT(*) FILTER (WHERE BTRIM(COALESCE(({text_expr})::text, '')) = '') AS ineligible,
+                SELECT COUNT(*) FILTER (WHERE {eligible}) AS total,
+                       COUNT(*) FILTER (WHERE NOT ({eligible})) AS ineligible,
                        COUNT(*) FILTER (WHERE embedding IS NOT NULL AND embedding_model=%s
                          AND embedding_dimensions=vector_dims(embedding)
-                         AND BTRIM(COALESCE(({text_expr})::text, '')) <> '') AS compatible
+                         AND {eligible}) AS compatible
                 FROM {table}
             """, (configured_model,))
             tier = cursor.fetchone() or {}
