@@ -200,14 +200,12 @@ async def run_embedding_backfill(
 async def _backfill_source_tiers(*, batch_size: int, max_records: Optional[int],
                                  progress_run_id: Optional[str] = None,
                                  progress_offset: int = 0) -> Dict[str, Dict[str, int]]:
-    """Persist missing/stale embeddings for tiers 0–2 using their canonical text."""
+    """Persist missing/stale embeddings for the distilled tiers (memories, intelligence)."""
     model = current_embedding_model()
-    # Telemetry interactions (internal_ai_*) are captured for knowledge
-    # generation, not vector search — excluded from (re-)embedding here so
-    # the backfill can never undo the telemetry embedding diet.
-    from memory_embedding import TELEMETRY_INTERACTION_EXCLUSION_SQL
+    # Interactions are never embedded (vectors live on the distilled tiers
+    # only) — the backfill has no interactions tier, so it can never re-embed
+    # the raw tier after a sweep clears legacy vectors.
     specs = {
-        "interactions": ("content", "timestamp", f"AND {TELEMETRY_INTERACTION_EXCLUSION_SQL}"),
         "memories": ("content_summary", "created_at", ""),
         "intelligence": ("COALESCE(name,'') || '. ' || COALESCE(summary,'') || ' ' || COALESCE(content,'')", "created_at", ""),
     }
@@ -438,11 +436,9 @@ def preview_backfill(configured_version: Optional[int] = None) -> Dict[str, Any]
     current = int(row.get("current") or 0)
     stale = int(row.get("stale") or 0)
     tiers = {"knowledge": {"total": total, "compatible": current, "stale": stale}}
-    # Telemetry interactions count as ineligible (never embedded by design),
-    # not stale — keeps the coverage gauge honest after the telemetry diet.
-    from memory_embedding import TELEMETRY_INTERACTION_EXCLUSION_SQL
+    # Interactions are never embedded by design — the coverage gauge covers
+    # the distilled tiers only.
     tier_specs = {
-        "interactions": ("content", f" AND {TELEMETRY_INTERACTION_EXCLUSION_SQL}"),
         "memories": ("content_summary", ""),
         "intelligence": ("COALESCE(name,'') || '. ' || COALESCE(summary,'') || ' ' || COALESCE(content,'')", ""),
     }

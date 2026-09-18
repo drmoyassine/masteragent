@@ -3,7 +3,6 @@ import json
 import logging
 
 from core.storage import get_memory_db_context, flush_interaction_cache, cache_interaction
-from memory_services import generate_embedding
 from memory_helpers import _get_entity_type_config
 
 logger = logging.getLogger(__name__)
@@ -12,7 +11,8 @@ logger = logging.getLogger(__name__)
 async def process_interaction(interaction_id: str):
     """
     Worker Task: Fetches a pending interaction, extracts attachments, runs vision AI,
-    computes ephemeral embeddings, and flags the interaction as processed or failed.
+    and flags the interaction as processed or failed. Interactions are never
+    embedded — vectors live on the distilled tiers only.
     """
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -119,49 +119,24 @@ async def process_interaction(interaction_id: str):
 
         attachment["inferred_mime"] = mime_type
 
-    # Real-time Embeddings generation for Pending Interactions (Ephemeral
-    # Vectors). Telemetry rows are never embedded — they feed knowledge
-    # generation, not vector search (TELEMETRY_INTERACTION_PREFIX).
-    from memory_embedding import TELEMETRY_INTERACTION_PREFIX
-    is_telemetry = str(interaction.get("interaction_type") or "").startswith(TELEMETRY_INTERACTION_PREFIX)
-    embedding = None
-    try:
-        if content.strip() and not is_telemetry:
-            embedding = await generate_embedding(content)
-    except Exception as e:
-        logger.warning(f"Failed to generate ephemeral interaction embedding: {e}")
-        processing_errors["embeddings"] = str(e)
-        content += f"\n\n[Processing Error: Embedding Failed - {e}]"
+    # Interactions are never embedded: the raw tier is recalled via get-context
+    # (the full uncompacted payload reaches the LLM's own context) and fulltext
+    # search; vectors live on the distilled tiers (memories / intelligence /
+    # knowledge) only.
 
     # Save outputs to Database
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE interactions
+            SET content = %s, attachment_refs = %s, processing_errors = %s, is_enriched = TRUE
+            WHERE id = %s
+        """, (
+            content, json.dumps(attachment_refs, ensure_ascii=False),
+            json.dumps(processing_errors, ensure_ascii=False), interaction_id
+        ))
 
-        if embedding:
-            from memory_embedding import current_embedding_model
-            cursor.execute("""
-                UPDATE interactions
-                SET content = %s, attachment_refs = %s, embedding = %s,
-                    embedding_model = %s, embedding_version = 1,
-                    embedding_dimensions = %s, embedded_at = NOW(),
-                    processing_errors = %s, is_enriched = TRUE
-                WHERE id = %s
-            """, (
-                content, json.dumps(attachment_refs, ensure_ascii=False), embedding,
-                current_embedding_model(), len(embedding),
-                json.dumps(processing_errors, ensure_ascii=False), interaction_id
-            ))
-        else:
-            cursor.execute("""
-                UPDATE interactions
-                SET content = %s, attachment_refs = %s, processing_errors = %s, is_enriched = TRUE
-                WHERE id = %s
-            """, (
-                content, json.dumps(attachment_refs, ensure_ascii=False),
-                json.dumps(processing_errors, ensure_ascii=False), interaction_id
-            ))
-
-    # Cache invalidation to reflect accurate embedding in ephemeral searches
+    # Cache invalidation to reflect updated content in ephemeral reads
     try:
         mfm = interaction.get("metadata_field_map")
         mfm_parsed = json.loads(mfm) if isinstance(mfm, str) else (mfm or {})

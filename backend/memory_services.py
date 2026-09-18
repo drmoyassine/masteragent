@@ -19,7 +19,6 @@ from services import (  # noqa: F401
     get_system_prompt,
     parse_document,
     scrub_pii,
-    search_interactions_by_vector,
     search_interactions_by_fulltext,
     search_intelligence_by_vector,
     search_intelligence_by_fulltext,

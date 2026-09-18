@@ -30,7 +30,6 @@ from memory_services import (
     generate_embedding,
     get_memory_settings,
     parse_document,
-    search_interactions_by_vector,
     search_interactions_by_fulltext,
     search_memories_by_vector,
     search_memories_by_fulltext,
@@ -700,10 +699,10 @@ async def get_context(
             cursor.execute(f"""
                 WITH qv AS (
                     SELECT AVG(embedding) AS v FROM (
-                        SELECT embedding FROM interactions
+                        SELECT embedding FROM memories
                         WHERE primary_entity_type = %s AND primary_entity_id = %s
                           AND embedding IS NOT NULL
-                        ORDER BY timestamp DESC LIMIT 10
+                        ORDER BY date DESC LIMIT 10
                     ) t
                 )
                 SELECT k.id, k.name, k.category, k.signals, k.content, k.summary,
@@ -1246,14 +1245,11 @@ async def search_memory_semantic(
         return SearchResponse(results=[], total=0, query=request.query)
 
     results: list[SearchResult] = []
-    
-    if "interactions" in request.layers:
-        hits = await search_interactions_by_vector(query_embedding, request.entity_id, request.entity_type, request.entity_subtype, request.start_date, request.end_date, request.limit)
-        for hit in hits:
-            results.append(SearchResult(
-                id=hit["id"], layer="interaction", score=float(hit.get("score", 0)), name=None, snippet=(hit.get("content_summary") or "")[:200], entity_id=hit["primary_entity_id"], entity_type=hit["primary_entity_type"], created_at=str(hit.get("created_at", ""))
-            ))
-            
+
+    # Raw interactions are never embedded (vectors live on memories /
+    # intelligence / knowledge only) — there is no interaction layer in
+    # semantic search. Uncompacted same-day recall is served by /get-context,
+    # which returns the full pending payload into the caller's own context.
     if "memories" in request.layers:
         hits = await search_memories_by_vector(query_embedding, request.entity_id, request.entity_type, request.entity_subtype, request.start_date, request.end_date, request.limit)
         for hit in hits:

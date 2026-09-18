@@ -10,48 +10,12 @@ logger = logging.getLogger(__name__)
 DECAY_RATE = 0.005
 
 # ============================================
-# TIER 0: Interactions (Pending)
+# TIER 0: Interactions (Pending) — fulltext only.
+# Raw interactions are never embedded: the raw tier is recalled via
+# get-context (the full uncompacted payload reaches the LLM's own context)
+# and keyword fulltext search. Vectors live on the distilled tiers only
+# (memories / intelligence / knowledge).
 # ============================================
-
-async def search_interactions_by_vector(
-    query_vector: List[float],
-    entity_id: str = None,
-    entity_type: str = None,
-    entity_subtype: str = None,
-    since: str = None,
-    until: str = None,
-    limit: int = 10,
-) -> List[Dict[str, Any]]:
-    if not query_vector: return []
-    try:
-        with get_memory_db_context() as conn:
-            cursor = conn.cursor()
-            conditions, params = ["embedding IS NOT NULL", "status = 'pending'"], []
-            if entity_id:
-                conditions.append("primary_entity_id = %s"); params.append(entity_id)
-            if entity_type:
-                conditions.append("primary_entity_type = %s"); params.append(entity_type)
-            if entity_subtype:
-                conditions.append("primary_entity_subtype = %s"); params.append(entity_subtype)
-            if since:
-                conditions.append("timestamp >= %s"); params.append(since)
-            if until:
-                conditions.append("timestamp <= %s"); params.append(until)
-            
-            where = " AND ".join(conditions)
-            decay_sql = f"(EXTRACT(EPOCH FROM (NOW() - timestamp))/86400) * {DECAY_RATE}"
-            
-            cursor.execute(f"""
-                SELECT id, timestamp as date, primary_entity_type, primary_entity_id,
-                       content as content_summary, created_at,
-                       GREATEST(0, (1 - (embedding <=> %s::vector)) - {decay_sql}) AS score
-                FROM interactions WHERE {where}
-                ORDER BY score DESC LIMIT %s
-            """, [query_vector] + params + [limit])
-            return [dict(r) for r in cursor.fetchall()]
-    except Exception as e:
-        logger.error(f"pgvector interaction search error: {e}")
-        return []
 
 async def search_interactions_by_fulltext(
     query: str,

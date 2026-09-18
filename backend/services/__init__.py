@@ -18,7 +18,6 @@ from services.processing import (
     summarize_text,
 )
 from services.search import (
-    search_interactions_by_vector,
     search_interactions_by_fulltext,
     search_intelligence_by_vector,
     search_intelligence_by_fulltext,
@@ -32,7 +31,7 @@ __all__ = [
     "get_llm_config", "get_memory_settings", "get_system_prompt",
     "call_llm", "call_llm_vision", "call_llm_with_thinking",
     "generate_embedding", "generate_embeddings_batch",
-    "search_interactions_by_vector", "search_interactions_by_fulltext",
+    "search_interactions_by_fulltext",
     "search_memories_by_vector", "search_memories_by_fulltext",
     "search_intelligence_by_vector", "search_intelligence_by_fulltext",
     "search_knowledge_by_vector", "search_knowledge_by_fulltext",
