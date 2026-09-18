@@ -183,6 +183,22 @@ async def _background_loop():
                         fail_job_date("knowledge_generation_all", today, exc)
                         raise
 
+            # ── Telemetry reflection: daily at telemetry_reflection_time ─────
+            # The worker handles `reflect_telemetry` but nothing scheduled it —
+            # these settings advertised a time no code consumed, so the pathway
+            # only ever ran via the manual admin trigger (last: 2026-07-12).
+            # Wired here with the same claim-ledger idiom as the sweep above.
+            if settings.get("telemetry_reflection_enabled", True) and \
+               _time_reached(now_utc, settings.get("telemetry_reflection_time", "04:00"), (4, 0)):
+                if claim_job_date("telemetry_reflection_schedule", today):
+                    logger.info("Firing nightly telemetry reflection")
+                    try:
+                        await knowledge_queue.add("reflect_telemetry", {}, {"priority": 3})
+                        complete_job_date("telemetry_reflection_schedule", today)
+                    except Exception as exc:
+                        fail_job_date("telemetry_reflection_schedule", today, exc)
+                        raise
+
             # ── Consolidation: periodic maintenance (weekly, not nightly) ─────
             consolidation_interval = settings.get("consolidation_run_interval_days", 7)
             last_consol = get_job_last_date("consolidation")
