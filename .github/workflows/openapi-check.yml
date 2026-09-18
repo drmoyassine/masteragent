@@ -1,0 +1,37 @@
+name: OpenAPI Contract Staleness & Hygiene Check
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  openapi-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Verify OpenAPI Contract Drift (--check)
+        run: |
+          python backend/scripts/export_openapi.py --check
+
+      - name: Run OpenAPI Hygiene Ratchet
+        run: |
+          python backend/scripts/openapi_check.py
+
+      - name: Test Hygiene Ratchet Mutation Harness (--mutate)
+        run: |
+          python backend/scripts/openapi_check.py --mutate
