@@ -89,15 +89,20 @@ async def call_llm(
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
 
-    # Use max_completion_tokens as it's supported by all major providers now
+    # Use max_completion_tokens as it's supported by all major providers now.
+    # Temperature: config-overridable via extra_config_json; null OMITS the
+    # parameter entirely (reasoning-model families like gpt-5.6 reject custom
+    # values — "Only the default (1) value is supported").
+    temperature = (config.get("extra_config") or {}).get("temperature", 0.3)
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             request_body = {
                 "model": model,
                 "messages": messages,
-                "temperature": 0.3,
                 "max_completion_tokens": max_tokens,
             }
+            if temperature is not None:
+                request_body["temperature"] = temperature
 
             response = await client.post(
                 f"{api_base}/chat/completions",
@@ -151,6 +156,7 @@ async def call_llm_with_thinking(
     messages.append({"role": "user", "content": prompt})
 
     think_steps = 0
+    temperature = (config.get("extra_config") or {}).get("temperature", 0.3)
 
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
@@ -158,11 +164,12 @@ async def call_llm_with_thinking(
                 request_body = {
                     "model": model,
                     "messages": messages,
-                    "temperature": 0.3,
                     "max_completion_tokens": max_tokens,
                     "tools": [_THINK_TOOL],
                     "tool_choice": "auto",
                 }
+                if temperature is not None:
+                    request_body["temperature"] = temperature
 
                 response = await client.post(
                     f"{api_base}/chat/completions",
@@ -201,15 +208,17 @@ async def call_llm_with_thinking(
 
                 if think_steps >= max_think_steps:
                     # Budget exhausted — force final answer without tools
+                    final_body = {
+                        "model": model,
+                        "messages": messages,
+                        "max_completion_tokens": max_tokens,
+                    }
+                    if temperature is not None:
+                        final_body["temperature"] = temperature
                     final_resp = await client.post(
                         f"{api_base}/chat/completions",
                         headers=_build_llm_headers(api_key),
-                        json={
-                            "model": model,
-                            "messages": messages,
-                            "temperature": 0.3,
-                            "max_completion_tokens": max_tokens,
-                        },
+                        json=final_body,
                     )
                     if final_resp.status_code == 200:
                         return final_resp.json()["choices"][0]["message"].get("content") or ""
@@ -246,10 +255,15 @@ async def call_llm_vision(prompt: str, image_base64: str, mime_type: str = "imag
         {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{image_base64}"}},
     ]}]
 
-    # Use max_completion_tokens as it's supported by all major providers now
+    # Use max_completion_tokens as it's supported by all major providers now.
+    # Same temperature rule as call_llm: extra_config_json overrides, null omits
+    # (reasoning-model vision variants reject custom values).
+    temperature = (config.get("extra_config") or {}).get("temperature", 0.1)
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
-            request_body = {"model": model, "messages": messages, "temperature": 0.1, "max_completion_tokens": 4000}
+            request_body = {"model": model, "messages": messages, "max_completion_tokens": 4000}
+            if temperature is not None:
+                request_body["temperature"] = temperature
 
             response = await client.post(
                 f"{api_base}/chat/completions",
