@@ -110,17 +110,25 @@ def get_system_prompt_by_config_id(config_id: str) -> Optional[str]:
     if inline_prompt and inline_prompt.strip():
         return inline_prompt
     
-    # Priority 2: linked Prompt Manager template
+    # Priority 2: linked Prompt Engine prompt (DB-backed sections, ordered by
+    # the NN_ filename prefix). Read directly from pm_files — no storage-mode
+    # or user-scoping dependency, so the pipeline resolves identically no
+    # matter which editor backend owns the prompt.
     if prompt_id:
         try:
-            from storage_service import get_storage_service
-            storage = get_storage_service("default")
-            import asyncio
-            prompt_data = asyncio.get_event_loop().run_until_complete(
-                storage.get_prompt_content(f"prompts/{prompt_id}", prompt_version)
-            )
-            if prompt_data:
-                return "\n\n".join(s.get("content", "") for s in prompt_data.get("sections", []))
+            from core.db import get_db_context
+            with get_db_context() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT f.content
+                    FROM pm_files f
+                    JOIN prompts p ON p.folder_path = f.folder_path AND p.id = %s
+                    WHERE f.version = %s AND f.filename <> 'manifest.json'
+                    ORDER BY f.filename ASC
+                """, (prompt_id, prompt_version))
+                rows = cursor.fetchall()
+                if rows:
+                    return "\n\n".join(r["content"] for r in rows)
         except Exception as e:
             logger.error(f"Error fetching prompt {prompt_id}: {e}")
     

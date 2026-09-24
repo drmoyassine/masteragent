@@ -87,6 +87,23 @@ def init_db():
             )
         """)
 
+
+        # Prompt engine file store (zero-git mode): every editor "file"
+        # (manifest.json, NN_section.md) is a row keyed by path+version+name.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS pm_files (
+                id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                folder_path TEXT NOT NULL,
+                version TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                content TEXT NOT NULL,
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE (folder_path, version, filename)
+            )
+        """)
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pm_files_path_version ON pm_files (folder_path, version)"
+        )
         # Templates table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS templates (

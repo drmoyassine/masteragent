@@ -654,13 +654,140 @@ class LocalStorageService(StorageService):
         return prompts
 
 
+class DatabaseStorageService(StorageService):
+    """Zero-git prompt storage: sections and manifests live as Postgres rows.
+
+    Implements the same file semantics as the filesystem backends — every
+    "file" (manifest.json, NN_section.md) is a row keyed by
+    (folder_path, version, filename) — so the editor routes and the pipeline
+    resolver work unchanged. Versioning stays append-only: creating a version
+    copies rows into the new version; nothing is mutated in place by
+    versioning, so any version remains a complete, restorable snapshot
+    (lightweight-prompt-engine design, docs/plans/lightweight-prompt-engine-design.md).
+    """
+
+    def __init__(self, user_id: str = None):
+        self.user_id = user_id
+
+    async def _write_file(self, folder_path: str, version: str, filename: str, content: str) -> None:
+        validate_storage_component(filename, "section filename")
+        with get_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO pm_files (folder_path, version, filename, content, updated_at)
+                VALUES (%s, %s, %s, %s, NOW())
+                ON CONFLICT (folder_path, version, filename)
+                DO UPDATE SET content = EXCLUDED.content, updated_at = NOW()
+                """,
+                (folder_path, version, filename, content),
+            )
+
+    async def create_prompt(
+        self,
+        folder_path: str,
+        name: str,
+        description: str,
+        sections: List[Dict],
+        variables: Dict,
+    ) -> bool:
+        manifest = {
+            "prompt_id": name.lower().replace(" ", "-"),
+            "name": name,
+            "description": description,
+            "version": "v1",
+            "sections": [],
+            "variables": variables or {},
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        # Replace any prior content for this folder (fresh prompt creation).
+        await self.delete_prompt(folder_path)
+        for section in sections:
+            filename = section.get("filename", f"{section.get('order', 1):02d}_{section.get('name', 'section')}.md")
+            manifest["sections"].append(filename)
+            await self._write_file(folder_path, "v1", filename, section.get("content", ""))
+        await self._write_file(folder_path, "v1", "manifest.json", json.dumps(manifest, indent=2))
+        return True
+
+    async def get_prompt_content(self, folder_path: str, version: str = "v1") -> Optional[Dict]:
+        with get_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT filename, content FROM pm_files WHERE folder_path = %s AND version = %s ORDER BY filename ASC",
+                (folder_path, version),
+            )
+            rows = [dict(r) for r in cursor.fetchall()]
+        if not rows:
+            return None
+        manifest: Dict[str, Any] = {}
+        by_name = {r["filename"]: r["content"] for r in rows}
+        if "manifest.json" in by_name:
+            try:
+                manifest = json.loads(by_name["manifest.json"])
+            except Exception:
+                manifest = {}
+        names = manifest.get("sections") or [r["filename"] for r in rows if r["filename"] != "manifest.json"]
+        sections = [{"filename": n, "content": by_name[n]} for n in names if n in by_name]
+        return {"manifest": manifest, "sections": sections}
+
+    async def get_section(self, folder_path: str, filename: str, version: str = "v1") -> Optional[Dict]:
+        with get_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT content FROM pm_files WHERE folder_path = %s AND version = %s AND filename = %s",
+                (folder_path, version, filename),
+            )
+            row = cursor.fetchone()
+        if not row:
+            return None
+        return {"filename": filename, "content": row["content"]}
+
+    async def create_section(self, folder_path: str, filename: str, content: str, version: str = "v1") -> bool:
+        await self._write_file(folder_path, version, filename, content)
+        return True
+
+    async def update_section(self, folder_path: str, filename: str, content: str, version: str = "v1") -> bool:
+        await self._write_file(folder_path, version, filename, content)
+        return True
+
+    async def delete_section(self, folder_path: str, filename: str, version: str = "v1") -> bool:
+        with get_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "DELETE FROM pm_files WHERE folder_path = %s AND version = %s AND filename = %s",
+                (folder_path, version, filename),
+            )
+        return True
+
+    async def update_manifest(self, folder_path: str, manifest: Dict, version: str = "v1") -> bool:
+        await self._write_file(folder_path, version, "manifest.json", json.dumps(manifest, indent=2))
+        return True
+
+    async def delete_prompt(self, folder_path: str) -> bool:
+        with get_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM pm_files WHERE folder_path = %s", (folder_path,))
+        return True
+
+    async def list_prompts(self) -> List[Dict]:
+        with get_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT DISTINCT folder_path FROM pm_files ORDER BY folder_path ASC"
+            )
+            return [{"folder_path": r["folder_path"]} for r in cursor.fetchall()]
+
+
 def get_storage_service(user_id: str) -> StorageService:
     """Factory function to get the appropriate storage service based on user settings.
-    
+
     Falls back to local storage if GitHub is not configured.
     """
     storage_mode = get_storage_mode(user_id)
-    
+
+    if storage_mode == "db":
+        return DatabaseStorageService(user_id)
     if storage_mode == "local":
         return LocalStorageService(user_id)
     else:
