@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import api, { triggerMemoryGeneration, triggerIntelligenceCheck, triggerKnowledgeCheck, triggerPlaybookExtraction, exportKnowledgePack, triggerBackfillFacets, triggerReflectTelemetry, triggerInteractionRetention, fetchProviderModels, analyzeHygieneNow, backfillEmbeddings, getEmbeddingCoverage, getPipelineRuns, getMaintenanceControls, getMaintenanceEligibleCounts, refreshMaintenanceEligibleCounts, setMaintenanceControl, getKnowledgeOperationCapabilities, previewKnowledgeOperation, submitKnowledgeOperation, getKnowledgeOperationRuns, syncKnowledgeOperation, controlKnowledgeOperation, getKnowledgeOperationRequests } from "@/lib/api";
+import api, { triggerMemoryGeneration, triggerIntelligenceCheck, triggerKnowledgeCheck, triggerPlaybookExtraction, exportKnowledgePack, triggerBackfillFacets, triggerReflectTelemetry, triggerInteractionRetention, fetchProviderModels, analyzeHygieneNow, backfillEmbeddings, getEmbeddingCoverage, getPipelineRuns, getMaintenanceControls, getMaintenanceEligibleCounts, refreshMaintenanceEligibleCounts, setMaintenanceControl, getPipelineHealth, getKnowledgeOperationCapabilities, previewKnowledgeOperation, submitKnowledgeOperation, getKnowledgeOperationRuns, syncKnowledgeOperation, controlKnowledgeOperation, getKnowledgeOperationRequests } from "@/lib/api";
 import { useEffect, useMemo, useRef } from "react";
 
 const apiErrorMessage = (error, fallback) => {
@@ -469,6 +469,68 @@ function RawInteractionsTab({ settings, onUpdateSettings, llmConfigs, llmProvide
 }
 
 // â”€â”€â”€ Memories Tab â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function PipelineHealthCard() {
+    const [health, setHealth] = useState(null);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState("");
+
+    const refresh = useCallback(async () => {
+        setLoading(true);
+        try {
+            const { data } = await getPipelineHealth();
+            setHealth(data || null);
+            setError("");
+        } catch (err) {
+            setError(apiErrorMessage(err, "Pipeline health is temporarily unavailable"));
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    useEffect(() => { refresh(); }, [refresh]);
+
+    const stat = (label, value) => (
+        <div key={label} className="space-y-0.5">
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
+            <p className="text-sm font-semibold">{value ?? "\u2014"}</p>
+        </div>
+    );
+
+    return (
+        <Card>
+            <CardHeader className="pb-3 flex flex-row items-start justify-between">
+                <div>
+                    <CardTitle className="text-base">Pipeline health</CardTitle>
+                    <CardDescription className="text-xs mt-1">
+                        Backlog drain state: pending work, the last daily memory produced, and empty rows that would indicate silent failures.
+                    </CardDescription>
+                </div>
+                <Button size="sm" variant="outline" className="gap-1.5" onClick={refresh} disabled={loading}>
+                    <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+                    Refresh
+                </Button>
+            </CardHeader>
+            <CardContent>
+                {error ? (
+                    <p className="text-xs text-destructive">{error}</p>
+                ) : !health ? (
+                    <p className="text-xs text-muted-foreground">Loading…</p>
+                ) : (
+                    <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
+                        {stat("Pending interactions", health.pending_interactions)}
+                        {stat("Failed interactions", health.failed_interactions)}
+                        {stat("Pending entity-days", health.pending_entity_days)}
+                        {stat("Empty memories", health.empty_summary_memories)}
+                        {stat("Last memory", health.last_memory_at ? new Date(health.last_memory_at).toLocaleString() : "none")}
+                        {stat("Queue waiting/failed", health.memory_ops_queue ? `${health.memory_ops_queue.waiting ?? 0} / ${health.memory_ops_queue.failed ?? 0}` : "n/a")}
+                    </div>
+                )}
+            </CardContent>
+        </Card>
+    );
+}
+
+
 function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, onDeleteConfig, onAddConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline }) {
     const [isTriggering, setIsTriggering] = useState(false);
     const pipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "memories" && c.task_type !== "embedding").sort((a,b) => a.execution_order - b.execution_order);
@@ -496,6 +558,9 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
                     Transforms Interactions into structured daily memories via NER and LLM summarization.
                 </p>
             </div>
+
+            {/* Pipeline health */}
+            <PipelineHealthCard />
 
             {/* Unified Memories Configuration */}
             <Card>

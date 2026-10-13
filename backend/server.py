@@ -139,7 +139,20 @@ _meta_router = APIRouter() # Removed prefix="/api" to avoid double prefixing
 
 @_meta_router.get("/health")
 async def health_check():
-    return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
+    # Additive, non-secret label for the credential-encryption key source so a
+    # JWT-fallback or dev-default deployment is visible from the outside
+    # (Docker HEALTHCHECK only needs the 200 + "status", which never change).
+    if os.environ.get("DATA_ENCRYPTION_KEY"):
+        credential_encryption = "data_key"
+    elif os.environ.get("JWT_SECRET_KEY"):
+        credential_encryption = "jwt_fallback"
+    else:
+        credential_encryption = "dev_default"
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "credential_encryption": credential_encryption,
+    }
 
 @_meta_router.get("/")
 async def root():

@@ -133,6 +133,13 @@ async def run_orphan_sweeper():
 
 # ── Daily Memory Generation ──────────────────────────────────────────────────
 
+# Poison-pill ceiling for deterministically-failing entity-days. Each anti-husk
+# raise bumps a generation_cycle stamp on the day's interactions; with the
+# queue's 3 attempts per nightly job this is ~3 nights of retries before the
+# day is quarantined (see run_daily_memory_generation).
+MAX_GENERATION_CYCLES = 9
+
+
 async def run_daily_memory_generation(include_today: bool = False):
     """
     For each entity with pending interactions from yesterday (or older),
@@ -140,6 +147,44 @@ async def run_daily_memory_generation(include_today: bool = False):
     One memory per entity per day — written once (not upserted).
     """
     cutoff_date = date.today().isoformat() if include_today else (date.today() - timedelta(days=1)).isoformat()
+
+    # Husk self-heal: a memory row with an empty summary AND recorded node
+    # errors is a failed distillation (a "poisoned husk"). The existence check
+    # in the loop below would otherwise treat it as final forever — delete the
+    # husk and re-arm its interactions so the day flows through the normal
+    # enqueue. Truthfully-empty days (no recorded errors) and quarantined days
+    # stay closed.
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT date, primary_entity_type, primary_entity_id FROM memories
+            WHERE COALESCE(processing_errors, '{}'::jsonb) <> '{}'::jsonb
+              AND (content_summary IS NULL OR btrim(content_summary) = '')
+              AND compacted = FALSE
+              AND NOT (processing_errors ? 'quarantine')
+              AND date <= %s
+        """, (cutoff_date,))
+        poisoned_days = cursor.fetchall()
+
+    for row in poisoned_days:
+        with get_memory_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                DELETE FROM memories
+                WHERE date = %s AND primary_entity_type = %s AND primary_entity_id = %s
+            """, (row["date"], row["primary_entity_type"], row["primary_entity_id"]))
+            # Status only — generation_cycle stamps survive so the poison-pill
+            # cap still counts attempts across nights.
+            cursor.execute("""
+                UPDATE interactions SET status = 'pending'
+                WHERE primary_entity_type = %s AND primary_entity_id = %s
+                  AND DATE(timestamp) = %s AND status IN ('done', 'failed')
+            """, (row["primary_entity_type"], row["primary_entity_id"], row["date"]))
+    if poisoned_days:
+        logger.warning(
+            f"Husk self-heal: re-armed {len(poisoned_days)} poisoned memory days "
+            f"(empty summary + node errors); their interactions are pending again"
+        )
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -175,6 +220,54 @@ async def run_daily_memory_generation(include_today: bool = False):
                 """, (entity_type, entity_id, interaction_date))
                 continue
 
+        # Poison-pill cap: a day whose generation keeps failing (cycle stamp on
+        # its interactions, bumped by every anti-husk raise) is quarantined
+        # once the cap is hit instead of retrying forever. The quarantine husk
+        # carries the reason in processing_errors and stays repairable (empty
+        # summary + not compacted → any later successful re-run heals it; bulk
+        # reprocess deletes the row and re-arms the interactions).
+        with get_memory_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT COALESCE(MAX((processing_errors->>'generation_cycle')::int), 0) AS cycles
+                FROM interactions
+                WHERE primary_entity_type = %s AND primary_entity_id = %s
+                  AND DATE(timestamp) = %s
+            """, (entity_type, entity_id, interaction_date))
+            cycles = (cursor.fetchone()["cycles"] or 0)
+
+        if cycles >= MAX_GENERATION_CYCLES:
+            logger.error(
+                f"Memory generation quarantined for {entity_type}/{entity_id} on "
+                f"{interaction_date} after {cycles} failed generation cycles"
+            )
+            insert_memory(
+                memory_id=str(uuid.uuid4()),
+                interaction_date=interaction_date,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                interaction_ids=[],
+                content_summary="",
+                related_entities=[],
+                intents=[],
+                relationships=[],
+                embedding=None,
+                processing_errors={
+                    "quarantine": (
+                        f"generation failed {cycles} cycles; interactions marked done "
+                        f"to stop nightly retry churn. Repair via bulk reprocess."
+                    )
+                },
+            )
+            with get_memory_db_context() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE interactions SET status = 'done'
+                    WHERE primary_entity_type = %s AND primary_entity_id = %s
+                      AND DATE(timestamp) = %s AND status IN ('pending', 'failed')
+                """, (entity_type, entity_id, interaction_date))
+            continue
+
         try:
             settings = get_memory_settings()
             retries = int(settings.get("memory_queue_retries", 3))
@@ -194,25 +287,26 @@ async def _generate_memory_for_entity(entity_type: str, entity_id: str, interact
     """Generate a single daily memory record for one entity on one date.
     Uses the sequential pipeline executor to process nodes in DB-defined order.
 
-    Acquires the per-entity memory lock so outbound webhooks for the same entity
-    wait until the job completes (then re-read context with the freshly-generated
-    memory included). Released in a finally block."""
+    Acquires the per-entity+date memory lock so the same entity-day cannot be
+    generated twice concurrently (outbound webhooks gate on the entity across
+    all dates via memory_lock.is_locked). Released in a finally block."""
     from services import memory_lock
 
-    # Best-effort: if another memory job is already holding the lock for this
-    # entity, skip — that job will produce the memory. The daily scheduler will
-    # also retry on the next run.
-    lock_token = memory_lock.acquire(entity_type, entity_id)
+    # Best-effort: if another job is already generating this entity-day, skip —
+    # that job will produce the memory. The daily scheduler will also retry on
+    # the next run.
+    lock_token = memory_lock.acquire(entity_type, entity_id, interaction_date)
     if not lock_token:
         logger.info(
-            f"Memory lock held for {entity_type}/{entity_id}; another job in flight. Skipping."
+            f"Memory lock held for {entity_type}/{entity_id} on {interaction_date}; "
+            f"another job in flight. Skipping."
         )
         return
 
     try:
         await _generate_memory_for_entity_impl(entity_type, entity_id, interaction_date)
     finally:
-        memory_lock.release(entity_type, entity_id, lock_token)
+        memory_lock.release(entity_type, entity_id, lock_token, interaction_date)
 
 
 async def _generate_memory_for_entity_impl(entity_type: str, entity_id: str, interaction_date: str):
@@ -300,8 +394,33 @@ async def _generate_memory_for_entity_impl(entity_type: str, entity_id: str, int
     relationships = ctx["ner_results"]["relationships"]
     processing_errors = ctx["processing_errors"]
 
+    if not content_summary and processing_errors:
+        # Do NOT write an empty "husk": a row with an empty summary marks its
+        # interactions done and (via the daily sweep's existence check) blocks
+        # regeneration of this entity-day forever, silently. Raise so BullMQ
+        # retries with backoff and the interactions stay pending instead. Each
+        # raise bumps a generation-cycle stamp on the day's interactions; the
+        # nightly sweep quarantines the day once MAX_GENERATION_CYCLES is hit.
+        with get_memory_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE interactions
+                SET processing_errors = jsonb_set(
+                        COALESCE(processing_errors, '{}'::jsonb),
+                        '{generation_cycle}',
+                        to_jsonb(COALESCE((processing_errors->>'generation_cycle')::int, 0) + 1))
+                WHERE primary_entity_type = %s AND primary_entity_id = %s
+                  AND DATE(timestamp) = %s
+                  AND status IN ('pending', 'failed')
+            """, (entity_type, entity_id, interaction_date))
+        raise RuntimeError(
+            f"Memory generation produced no summary for {entity_type}/{entity_id} on "
+            f"{interaction_date} ({len(processing_errors)} pipeline node errors: "
+            f"{sorted(processing_errors.keys())})"
+        )
+
     memory_id = str(uuid.uuid4())
-    insert_memory(
+    stored_id = insert_memory(
         memory_id=memory_id,
         interaction_date=interaction_date,
         entity_type=entity_type,
@@ -319,7 +438,7 @@ async def _generate_memory_for_entity_impl(entity_type: str, entity_id: str, int
         flush_interaction_cache(iid)
 
     logger.info(
-        f"Generated memory {memory_id} for {entity_type}/{entity_id} on {interaction_date} "
+        f"Generated memory {stored_id} for {entity_type}/{entity_id} on {interaction_date} "
         f"({len(interaction_ids)} interactions, {len(pipeline_nodes)} pipeline nodes)"
     )
 
@@ -400,22 +519,33 @@ async def _execute_pipeline_node(node: dict, ctx: dict):
             "date": ctx["interaction_date"],
         })
         llm_fn, llm_kwargs = _llm_call(node)
-        ctx["derived_text"] = await llm_fn(
+        result = await llm_fn(
             llm_context[:10000],
             system_prompt=system_prompt,
             max_tokens=(ctx.get("settings") or {}).get("memory_generation_max_tokens") or 1200,
             config_id=node_id,
             **llm_kwargs,
         )
+        if result is None or not str(result).strip():
+            # A 200-with-empty-content LLM response (e.g. a reasoning model that
+            # spent its whole completion budget on invisible reasoning tokens)
+            # must not fall through as a "successful" node — that writes an
+            # empty husk with no recorded errors and blocks this entity-day
+            # forever. Raise so the node error is recorded and the job retries.
+            raise RuntimeError(f"Memory-generation LLM returned empty output (node {node_id})")
+        ctx["derived_text"] = result
         logger.info(f"Memory generation node {node_id}: produced summary")
 
     elif task_type == "summarization":
         system_prompt = get_system_prompt_by_config_id(node_id) or "Summarize this in 1-2 sentences:\n\n{{text}}"
         prompt = system_prompt.replace("{{text}}", ctx["derived_text"][:4000])
         llm_fn, llm_kwargs = _llm_call(node)
-        ctx["derived_text"] = await llm_fn(
+        result = await llm_fn(
             prompt, max_tokens=200, config_id=node_id, **llm_kwargs,
         )
+        if result is None or not str(result).strip():
+            raise RuntimeError(f"Summarization LLM returned empty output (node {node_id})")
+        ctx["derived_text"] = result
         logger.info(f"Summarization node {node_id}: summarized text")
 
     elif task_type == "pii_scrubbing":

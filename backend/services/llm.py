@@ -61,6 +61,50 @@ def _build_llm_headers(api_key: str) -> dict:
     return headers
 
 
+# Reasoning-model families reject custom temperature ("Only the default (1)
+# value is supported") and reject function tools unless reasoning_effort is
+# sent explicitly. Detected by name so existing and future config rows are
+# protected without a data migration per task_type. An explicit
+# extra_config.temperature always wins (null = omit the parameter).
+REASONING_MODEL_PATTERNS = (
+    "luna",        # GLM reasoning family (e.g. gpt-6-luna)
+    "gpt-5",
+    "o1",
+    "o3",
+    "o4-",
+    "deepseek-r",
+    "qwq",
+)
+
+
+def _is_reasoning_model(model: str) -> bool:
+    name = (model or "").lower()
+    return any(pattern in name for pattern in REASONING_MODEL_PATTERNS)
+
+
+def _temperature_for(config: dict, default: float):
+    """Resolve request temperature. Explicit extra_config.temperature wins
+    (null = omit); when the key is absent, omit for reasoning-model families
+    and fall back to `default` otherwise."""
+    extra = (config or {}).get("extra_config") or {}
+    if "temperature" in extra:
+        return extra.get("temperature")
+    if _is_reasoning_model((config or {}).get("model_name", "")):
+        return None
+    return default
+
+
+def _reasoning_effort_for(config: dict) -> Optional[str]:
+    """reasoning_effort to send alongside tool calls, or None. Reasoning
+    families reject function tools unless reasoning_effort is explicit
+    ("none" = no native reasoning, think-tool steps still work); a config
+    value overrides the safe default."""
+    if not _is_reasoning_model((config or {}).get("model_name", "")):
+        return None
+    configured = (config or {}).get("extra_config") or {}
+    return configured.get("reasoning_effort") or "none"
+
+
 async def call_llm(
     prompt: str,
     system_prompt: str = None,
@@ -91,9 +135,9 @@ async def call_llm(
 
     # Use max_completion_tokens as it's supported by all major providers now.
     # Temperature: config-overridable via extra_config_json; null OMITS the
-    # parameter entirely (reasoning-model families like gpt-5.6 reject custom
-    # values — "Only the default (1) value is supported").
-    temperature = (config.get("extra_config") or {}).get("temperature", 0.3)
+    # parameter entirely; absent key omits for reasoning-model families
+    # (they reject custom values — "Only the default (1) value is supported").
+    temperature = _temperature_for(config, 0.3)
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             request_body = {
@@ -156,7 +200,8 @@ async def call_llm_with_thinking(
     messages.append({"role": "user", "content": prompt})
 
     think_steps = 0
-    temperature = (config.get("extra_config") or {}).get("temperature", 0.3)
+    temperature = _temperature_for(config, 0.3)
+    reasoning_effort = _reasoning_effort_for(config)
 
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
@@ -170,6 +215,10 @@ async def call_llm_with_thinking(
                 }
                 if temperature is not None:
                     request_body["temperature"] = temperature
+                if reasoning_effort is not None:
+                    # Reasoning families reject function tools unless
+                    # reasoning_effort is sent explicitly.
+                    request_body["reasoning_effort"] = reasoning_effort
 
                 response = await client.post(
                     f"{api_base}/chat/completions",
@@ -256,9 +305,9 @@ async def call_llm_vision(prompt: str, image_base64: str, mime_type: str = "imag
     ]}]
 
     # Use max_completion_tokens as it's supported by all major providers now.
-    # Same temperature rule as call_llm: extra_config_json overrides, null omits
-    # (reasoning-model vision variants reject custom values).
-    temperature = (config.get("extra_config") or {}).get("temperature", 0.1)
+    # Same temperature rule as call_llm: extra_config_json overrides, null omits,
+    # absent key omits for reasoning-model vision variants.
+    temperature = _temperature_for(config, 0.1)
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
             request_body = {"model": model, "messages": messages, "max_completion_tokens": 4000}

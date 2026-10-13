@@ -42,7 +42,16 @@ def _bounded_inputs(texts: List[str]) -> List[str]:
 
 async def generate_embedding(text: str) -> List[float]:
     """Generate embedding using admin-configured API."""
-    config = get_llm_config("embedding")
+    try:
+        config = get_llm_config("embedding")
+    except Exception as e:
+        # get_llm_config decrypts the stored provider key; an undecryptable
+        # envelope (e.g. after a JWT/DEK rotation) must fail loudly: write
+        # paths record it as a pipeline error (retried nightly) and search
+        # maps it to a 503. Returning [] here would let /search/semantic
+        # report "no knowledge" as ground truth during an outage.
+        logger.error(f"Embedding config unavailable: {e}")
+        raise RuntimeError(f"Embedding config unavailable: {e}") from e
     if not config:
         logger.warning("Embedding config not configured")
         return []

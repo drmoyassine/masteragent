@@ -35,8 +35,17 @@ def insert_memory(
     relationships: list,
     embedding: Optional[list],
     processing_errors: dict,
-) -> None:
-    """INSERT a memory and retain source embeddings for semantic lineage."""
+) -> str:
+    """INSERT a memory and retain source embeddings for semantic lineage.
+
+    Conflicting rows are only overwritten when the stored row is an empty
+    "husk" (no summary, not compacted) — the self-heal that lets a re-run of a
+    once-poisoned entity-day repair the row instead of being silently ignored.
+    Real memories and compacted lineage are never touched; the source
+    interactions are still marked done either way (the day is covered).
+
+    Returns the id of the stored row (the pre-existing row's id on heal).
+    """
     emodel, eversion, edims, embedded_at = _embedding_provenance(embedding)
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -47,7 +56,23 @@ def insert_memory(
                 related_entities, intents, relationships, embedding, processing_errors,
                 embedding_model, embedding_version, embedding_dimensions, embedded_at
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (date, primary_entity_type, primary_entity_id) DO NOTHING
+            ON CONFLICT (date, primary_entity_type, primary_entity_id) DO UPDATE SET
+                interaction_ids = EXCLUDED.interaction_ids,
+                interaction_count = EXCLUDED.interaction_count,
+                content_summary = EXCLUDED.content_summary,
+                related_entities = EXCLUDED.related_entities,
+                intents = EXCLUDED.intents,
+                relationships = EXCLUDED.relationships,
+                embedding = COALESCE(EXCLUDED.embedding, memories.embedding),
+                embedding_model = COALESCE(EXCLUDED.embedding_model, memories.embedding_model),
+                embedding_version = COALESCE(EXCLUDED.embedding_version, memories.embedding_version),
+                embedding_dimensions = COALESCE(EXCLUDED.embedding_dimensions, memories.embedding_dimensions),
+                embedded_at = COALESCE(EXCLUDED.embedded_at, memories.embedded_at),
+                processing_errors = EXCLUDED.processing_errors,
+                updated_at = NOW()
+            WHERE (memories.content_summary IS NULL OR btrim(memories.content_summary) = '')
+              AND memories.compacted = FALSE
+            RETURNING id
         """, (
             memory_id, interaction_date, entity_type, entity_id,
             interaction_ids, len(interaction_ids), content_summary,
@@ -55,11 +80,25 @@ def insert_memory(
             json.dumps(relationships), embedding, json.dumps(processing_errors),
             emodel, eversion, edims, embedded_at,
         ))
+        row = cursor.fetchone()
+        if row is None:
+            # Conflict with a real (non-husk) memory or a compacted row: the
+            # stored row wins. Resolve its id so the caller's success log names
+            # a row that actually exists.
+            cursor.execute(
+                "SELECT id FROM memories "
+                "WHERE date = %s AND primary_entity_type = %s AND primary_entity_id = %s",
+                (interaction_date, entity_type, entity_id),
+            )
+            row = cursor.fetchone()
+        stored_id = row["id"] if row else memory_id
 
         cursor.execute("""
             UPDATE interactions SET status = 'done'
             WHERE id = ANY(%s) AND status IN ('pending', 'failed')
         """, (interaction_ids,))
+
+        return stored_id
 
 
 def insert_intelligence(

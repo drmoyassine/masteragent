@@ -17,7 +17,18 @@ def validate_runtime_configuration() -> None:
     if os.environ.get("POSTGRES_PASSWORD", "") in {"postgres", ""}:
         insecure.append("POSTGRES_PASSWORD")
     if not os.environ.get("DATA_ENCRYPTION_KEY"):
-        logger.warning("DATA_ENCRYPTION_KEY is unset; JWT_SECRET_KEY is being used to encrypt stored credentials")
+        source = ("JWT_SECRET_KEY" if os.environ.get("JWT_SECRET_KEY")
+                  else "a hardcoded development fallback literal")
+        message = (
+            f"DATA_ENCRYPTION_KEY is unset: stored credentials (enc:v1:) are being encrypted "
+            f"with {source}. Rotating that secret will permanently orphan every stored "
+            f"credential — distillation, search and all provider calls then fail with "
+            f"'Stored credential cannot be decrypted'. Set an explicit DATA_ENCRYPTION_KEY "
+            f"(it must never rotate with auth secrets) and re-enter credentials via the admin UI."
+        )
+        if os.environ.get("STRICT_STARTUP_VALIDATION", "false").lower() in {"1", "true", "yes"}:
+            raise RuntimeError(message)
+        logger.warning(message)
     if insecure:
         message = f"Insecure or missing runtime settings: {', '.join(insecure)}"
         if os.environ.get("STRICT_STARTUP_VALIDATION", "false").lower() in {"1", "true", "yes"}:

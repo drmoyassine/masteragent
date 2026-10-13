@@ -211,8 +211,11 @@ async def _maybe_trigger_threshold_memory(interaction: dict) -> None:
     entity_type = interaction["primary_entity_type"]
     entity_id = interaction["primary_entity_id"]
 
-    if memory_lock.is_locked(entity_type, entity_id):
-        # Another threshold job is already in flight for this entity; skip.
+    if memory_lock.is_locked(entity_type, entity_id, date.today().isoformat()):
+        # Another threshold job is already generating this entity's today
+        # bucket; skip. (Exact entity-day check — threshold jobs always
+        # enqueue today's bucket.) Over-locking here only skips an enqueue,
+        # never data.
         return
 
     with get_memory_db_context() as conn:

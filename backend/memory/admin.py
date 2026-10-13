@@ -17,7 +17,7 @@ import logging
 import uuid
 import hashlib
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body, UploadFile, File, Response
@@ -1490,6 +1490,54 @@ async def refresh_maintenance_eligible_counts(admin: dict = Depends(require_admi
             mark_refresh_error(f"Could not queue eligibility refresh: {exc}")
             raise HTTPException(status_code=503, detail="Could not queue eligibility refresh") from exc
     return {"queued": queued, **get_snapshot()}
+
+
+@router.get("/pipeline-health")
+async def pipeline_health(admin: dict = Depends(require_admin_auth)):
+    """Bounded snapshot of memory-pipeline drain state.
+
+    All counts are index-backed or on small tables — safe for occasional UI
+    polling (unlike /maintenance/eligible-counts, whose exact scans stay behind
+    the persisted-snapshot + queued-refresh pattern). pending_entity_days is
+    the nightly sweep's own selection: how many entity-days still need a
+    Tier-1 memory. memory_ops_queue counts are bounded by BullMQ job retention.
+    """
+    cutoff = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT
+              COUNT(*) FILTER (WHERE status = 'pending') AS pending_interactions,
+              COUNT(*) FILTER (WHERE status = 'failed') AS failed_interactions,
+              COUNT(DISTINCT (primary_entity_type, primary_entity_id, DATE(timestamp)))
+                FILTER (WHERE DATE(timestamp) <= %s) AS pending_entity_days
+            FROM interactions
+            WHERE status IN ('pending', 'failed')
+        """, (cutoff,))
+        row = cursor.fetchone()
+        cursor.execute("SELECT MAX(created_at) AS last_memory_at FROM memories")
+        last_memory_at = cursor.fetchone()["last_memory_at"]
+        cursor.execute("""
+            SELECT COUNT(*) AS husks FROM memories
+            WHERE content_summary IS NULL OR btrim(content_summary) = ''
+        """)
+        husks = cursor.fetchone()["husks"]
+
+    queue_counts = None
+    try:
+        from memory.queue import memory_queue
+        queue_counts = {k: int(v) for k, v in dict(await memory_queue.getJobCounts()).items()}
+    except Exception as exc:
+        logger.warning(f"pipeline_health: memory_ops queue counts unavailable: {exc}")
+
+    return {
+        "pending_interactions": row["pending_interactions"] or 0,
+        "failed_interactions": row["failed_interactions"] or 0,
+        "pending_entity_days": row["pending_entity_days"] or 0,
+        "last_memory_at": last_memory_at.isoformat() if last_memory_at else None,
+        "empty_summary_memories": husks or 0,
+        "memory_ops_queue": queue_counts,
+    }
 
 
 @router.post("/maintenance-controls/{job}/{command}")

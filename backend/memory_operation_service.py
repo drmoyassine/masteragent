@@ -16,6 +16,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from core.storage import get_memory_db_context
 from services.config_helpers import get_llm_config, get_llm_config_by_id, get_memory_settings, get_system_prompt_by_config_id, get_pipeline_configs
+from services.llm import _temperature_for
 from services.provider_batch import TERMINAL_PROVIDER_STATES, parse_jsonl, provider_adapter
 
 logger = logging.getLogger(__name__)
@@ -385,9 +386,15 @@ def _hygiene_sources(limit: int, parent_run_id: Optional[str] = None,
 
 
 def _chat_body(config: Dict[str, Any], system: str, user: str, max_tokens: int) -> Dict[str, Any]:
-    return {"model": config.get("model_name"), "messages": [
+    # Batch transport never sends tools, so only the temperature rule applies:
+    # omit for reasoning-model families (same helper the synchronous path uses).
+    body: Dict[str, Any] = {"model": config.get("model_name"), "messages": [
         {"role": "system", "content": system}, {"role": "user", "content": user}],
-        "temperature": .3, "max_completion_tokens": max_tokens}
+        "max_completion_tokens": max_tokens}
+    temperature = _temperature_for(config, 0.3)
+    if temperature is not None:
+        body["temperature"] = temperature
+    return body
 
 
 def _build_manifest(operation: str, sources: List[Dict[str, Any]], options: Dict[str, Any]) -> List[Dict[str, Any]]:

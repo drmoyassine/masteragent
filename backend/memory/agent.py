@@ -1250,9 +1250,20 @@ async def search_memory_semantic(
         if not request.entity_type or not request.entity_id:
             raise HTTPException(403, "Scoped searches require entity_type and entity_id")
         ensure_entity_access(agent, request.entity_type, request.entity_id)
-    query_embedding = await generate_embedding(request.query)
+    try:
+        query_embedding = await generate_embedding(request.query)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # A broken embedding provider/credential is an availability problem,
+        # not "no results" — fail loudly as 503 instead of a bare 500.
+        logger.error(f"search/semantic: embedding generation failed: {exc}")
+        raise HTTPException(status_code=503, detail="Embedding provider unavailable") from exc
     if not query_embedding:
-        return SearchResponse(results=[], total=0, query=request.query)
+        # Empty here can only mean "provider not configured" (config failures
+        # raise above) — still an availability problem for semantic search,
+        # not a truthful "no results" answer.
+        raise HTTPException(status_code=503, detail="Embedding provider unavailable")
 
     results: list[SearchResult] = []
 
@@ -1288,7 +1299,11 @@ async def search_memory_semantic(
     results.sort(key=lambda r: r.score, reverse=True)
     paginated = results[request.offset: request.offset + request.limit]
 
-    log_audit(agent["id"], "search_semantic", "memory", None, {"query": request.query, "layers": request.layers})
+    try:
+        log_audit(agent["id"], "search_semantic", "memory", None, {"query": request.query, "layers": request.layers})
+    except Exception as exc:
+        # Results are already computed; an audit-insert failure must not 500 the request.
+        logger.warning(f"search/semantic: audit log failed: {exc}")
     return SearchResponse(results=paginated, total=len(results), query=request.query)
 
 @router.post("/search/fulltext", response_model=SearchResponse, tags=["🔍 Global Search"])
