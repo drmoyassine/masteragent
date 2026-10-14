@@ -12,6 +12,7 @@ from typing import Optional
 
 from core.storage import get_memory_db_context
 from memory_services import call_llm, generate_embedding, get_memory_settings
+from memory_similarity import connected_components
 from services.llm import parse_llm_json
 from memory_db_writes import insert_knowledge
 from memory_helpers import _get_entity_type_config
@@ -53,28 +54,6 @@ _SKILL_GEN_PROMPT = (
     "contradictions, source_support, confidence. trigger_desc must state both what the skill does "
     "and concrete contexts/keywords for when to use it."
 )
-
-
-# ---------------------------------------------------------------------------
-# Union-Find for clustering pairwise similarity results
-# ---------------------------------------------------------------------------
-
-class UnionFind:
-    def __init__(self):
-        self.parent = {}
-
-    def find(self, x):
-        if x not in self.parent:
-            self.parent[x] = x
-        while self.parent[x] != x:
-            self.parent[x] = self.parent[self.parent[x]]
-            x = self.parent[x]
-        return x
-
-    def union(self, a, b):
-        ra, rb = self.find(a), self.find(b)
-        if ra != rb:
-            self.parent[ra] = rb
 
 
 # ---------------------------------------------------------------------------
@@ -162,28 +141,24 @@ async def _process_entity_type(
         logger.info(f"No similar intelligence pairs found for {entity_type}")
         return
 
-    # 2. Union-Find clustering
-    uf = UnionFind()
-    for p in pairs:
-        uf.union(p["aid"], p["bid"])
-
-    clusters = {}
-    for p in pairs:
-        root = uf.find(p["aid"])
-        clusters.setdefault(root, set()).update([p["aid"], p["bid"]])
+    # 2. Cluster similar pairs via the shared union-find (memory_similarity)
+    all_ids = {p["aid"] for p in pairs} | {p["bid"] for p in pairs}
+    edges = [(p["aid"], p["bid"], 0.0) for p in pairs]
+    components = connected_components(all_ids, edges)
 
     # 3. Filter: cluster must span >= min_entities distinct entities
     qualifying = []
-    for root, ids in clusters.items():
+    for component in components:
+        ids = list(component)
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT DISTINCT primary_entity_id FROM intelligence
                 WHERE id = ANY(%s)
-            """, (list(ids),))
+            """, (ids,))
             entity_ids = [r["primary_entity_id"] for r in cursor.fetchall()]
         if len(entity_ids) >= min_entities:
-            qualifying.append((list(ids), entity_ids))
+            qualifying.append((ids, entity_ids))
 
     logger.info(f"Found {len(qualifying)} qualifying clusters for {entity_type}")
 

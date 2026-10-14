@@ -8,9 +8,10 @@ FIRST-CLASS, per-entity nightly path to knowledge.
 Design principles:
   - Reflection before codification: raw telemetry is never dumped into knowledge.
     One LLM reflection per entity-day condenses it into typed candidates.
-  - Recurrence builds conviction: each candidate enters as a DRAFT with
-    evidence_breadth=1; the existing dedup + refine-on-merge machinery promotes
-    and strengthens it as the same pattern recurs (merge_count → quality).
+  - Candidates enter with evidence_breadth=1 and the status dictated by the
+    entity's generation policy (approval_status). There is NO automatic
+    dedup/promotion pass: a recurring pattern re-surfaces as a new candidate on
+    a later reflection; activation follows the generation-policy approval flow.
   - Outcome-aware: the day's actual conversation is included so the reflection
     can judge whether the agent's actions/discoveries were effective.
 

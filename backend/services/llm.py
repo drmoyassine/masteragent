@@ -168,7 +168,6 @@ async def call_llm(
     except Exception as e:
         logger.error(f"LLM call error: {e}")
         raise RuntimeError(str(e))
-    return ""
 
 
 async def call_llm_with_thinking(
@@ -284,7 +283,6 @@ async def call_llm_with_thinking(
     except Exception as e:
         logger.error(f"LLM thinking call error: {e}")
         raise RuntimeError(str(e))
-    return ""
 
 
 async def call_llm_vision(prompt: str, image_base64: str, mime_type: str = "image/png") -> str:
@@ -334,4 +332,3 @@ async def call_llm_vision(prompt: str, image_base64: str, mime_type: str = "imag
     except Exception as e:
         logger.error(f"Vision LLM call error: {e}")
         raise RuntimeError(str(e))
-    return ""

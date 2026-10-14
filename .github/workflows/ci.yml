@@ -45,3 +45,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker compose config --quiet
+
+  repo-hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail on tracked clone junk (DESKTOP clones, SQLite dbs)
+        run: |
+          bad=$(git ls-files | grep -E -e '-DESKTOP-' -e '\.db$' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::Tracked files matching *-DESKTOP-* or *.db are forbidden (clone junk):"
+            echo "$bad"
+            exit 1
+          fi

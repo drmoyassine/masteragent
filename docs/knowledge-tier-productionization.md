@@ -156,7 +156,7 @@ Surface in the System Monitor page. This is the difference between this month's 
 Once knowledge generates and stabilizes:
 
 - [ ] Finish the naming migration (`lessons`→`knowledge`, `insights`→`intelligence` remnants in routes, ARCHITECTURE.md, admin UI labels)
-- [ ] Remove git-tracked OneDrive conflict copies (`backend/*-DESKTOP-3M67GL2.py`) and gitignore the pattern
+- [x] Remove git-tracked OneDrive conflict copies (backend clone files) and gitignore the pattern (done 2026-10-14; CI `repo-hygiene` job now guards the pattern)
 - [ ] Freeze the four-tier schema and document it as the contract
 - [ ] Capture **golden fixtures**: real (PII-scrubbed) inputs/outputs at each tier boundary from prod — these become the conformance test suite for the TypeScript port
 - [ ] Update README (stale `memory/services/` reference) and ARCHITECTURE.md (still describes `insights`/`lessons` tables; missing playbooks, skills, consolidation, Hermes)

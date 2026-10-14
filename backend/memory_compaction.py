@@ -163,7 +163,7 @@ async def compact_entity(entity_type: str, entity_id: str):
     })
 
     if not pk_gen_node:
-        llm_config = get_llm_config("intelligence_generation") or get_llm_config("intelligence_generation")
+        llm_config = get_llm_config("intelligence_generation")
         if not llm_config:
             logger.warning(f"No LLM config for intelligence_generation — skipping compaction for {entity_type}/{entity_id}")
             return
