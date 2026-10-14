@@ -1087,6 +1087,36 @@
         "title": "ContextStatusResponse",
         "type": "object"
       },
+      "CredentialHealthResponse": {
+        "additionalProperties": true,
+        "description": "Counts only \u2014 secret values never enter the response.",
+        "properties": {
+          "current_source": {
+            "title": "Current Source",
+            "type": "string"
+          },
+          "decryptable": {
+            "title": "Decryptable",
+            "type": "integer"
+          },
+          "orphaned": {
+            "title": "Orphaned",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "decryptable",
+          "orphaned",
+          "current_source"
+        ],
+        "title": "CredentialHealthResponse",
+        "type": "object"
+      },
       "EntitySubtypeCreate": {
         "properties": {
           "description": {
@@ -5228,6 +5258,59 @@
         "title": "ParseDocumentRequest",
         "type": "object"
       },
+      "PipelineHealthResponse": {
+        "properties": {
+          "empty_summary_memories": {
+            "title": "Empty Summary Memories",
+            "type": "integer"
+          },
+          "failed_interactions": {
+            "title": "Failed Interactions",
+            "type": "integer"
+          },
+          "last_memory_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Memory At"
+          },
+          "memory_ops_queue": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memory Ops Queue"
+          },
+          "pending_entity_days": {
+            "title": "Pending Entity Days",
+            "type": "integer"
+          },
+          "pending_interactions": {
+            "title": "Pending Interactions",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pending_interactions",
+          "failed_interactions",
+          "pending_entity_days",
+          "empty_summary_memories"
+        ],
+        "title": "PipelineHealthResponse",
+        "type": "object"
+      },
       "PipelineReorderRequest": {
         "properties": {
           "ordered_ids": {
@@ -5582,6 +5665,54 @@
           "sections_used"
         ],
         "title": "RenderResponse",
+        "type": "object"
+      },
+      "RewrapCredentialsResponse": {
+        "properties": {
+          "current_source": {
+            "title": "Current Source",
+            "type": "string"
+          },
+          "provider_credentials": {
+            "$ref": "#/components/schemas/RewrapStoreReport"
+          },
+          "supabase_db_url": {
+            "$ref": "#/components/schemas/RewrapStoreReport"
+          },
+          "webhook_secrets": {
+            "$ref": "#/components/schemas/RewrapStoreReport"
+          }
+        },
+        "required": [
+          "provider_credentials",
+          "supabase_db_url",
+          "webhook_secrets",
+          "current_source"
+        ],
+        "title": "RewrapCredentialsResponse",
+        "type": "object"
+      },
+      "RewrapStoreReport": {
+        "properties": {
+          "already_current": {
+            "title": "Already Current",
+            "type": "integer"
+          },
+          "rewrapped": {
+            "title": "Rewrapped",
+            "type": "integer"
+          },
+          "undecryptable": {
+            "title": "Undecryptable",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rewrapped",
+          "already_current",
+          "undecryptable"
+        ],
+        "title": "RewrapStoreReport",
         "type": "object"
       },
       "SearchRequest": {
@@ -7189,6 +7320,7 @@
     },
     "/api/health": {
       "get": {
+        "description": "Real liveness probe (fast: ~1s worst case per leg).\n\nLegs: Postgres SELECT 1, Redis PING, scheduler-tick freshness, BullMQ job\ncounts, credential-envelope decryptability. 503 when a hard leg fails \u2014\nthe Docker HEALTHCHECK must reflect actual serviceability, not a static\nhandler. Secret values never appear in the payload (counts/labels only).",
         "operationId": "health_check_api_health_get",
         "responses": {
           "200": {
@@ -7394,6 +7526,50 @@
           "General"
         ],
         "x-surface": "library"
+      }
+    },
+    "/api/memory/admin/credential-health": {
+      "get": {
+        "description": "Stored-credential envelope health. Counts only \u2014 secret values never\nenter the response.",
+        "operationId": "credential_health_api_memory_admin_credential_health_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialHealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Credential Health",
+        "tags": [
+          "Memory Admin"
+        ],
+        "x-surface": "console"
       }
     },
     "/api/memory/admin/daily/{date_str}": {
@@ -10483,6 +10659,50 @@
           }
         },
         "summary": "Admin Update Memory",
+        "tags": [
+          "Memory Admin"
+        ],
+        "x-surface": "console"
+      }
+    },
+    "/api/memory/admin/rewrap-credentials": {
+      "post": {
+        "description": "Re-encrypt every stored credential envelope under DATA_ENCRYPTION_KEY_NEXT.\n\nEnv-transition pattern \u2014 the new key never passes through an API body or a\nlog line:\n  1. Set DATA_ENCRYPTION_KEY_NEXT in the container environment (the value\n     the new DATA_ENCRYPTION_KEY will take).\n  2. POST /api/memory/admin/rewrap-credentials\n  3. GET /api/memory/admin/credential-health \u2192 orphaned must be 0\n  4. Promote: set DATA_ENCRYPTION_KEY=<next>, remove DATA_ENCRYPTION_KEY_NEXT\n  5. Restart the container.\nIdempotent: envelopes already decryptable under the NEXT key are skipped.",
+        "operationId": "rewrap_credentials_api_memory_admin_rewrap_credentials_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RewrapCredentialsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rewrap Credentials",
         "tags": [
           "Memory Admin"
         ],
@@ -16106,6 +16326,50 @@
         "tags": [
           "\ud83e\udde0 Memory",
           "\ud83d\udd04 Interactions"
+        ],
+        "x-surface": "library"
+      }
+    },
+    "/api/memory/pipeline-health": {
+      "get": {
+        "description": "Bounded snapshot of memory-pipeline drain state.\n\nAll counts are index-backed or on small tables \u2014 safe for occasional UI\npolling (unlike /maintenance/eligible-counts, whose exact scans stay behind\nthe persisted-snapshot + queued-refresh pattern). pending_entity_days is\nthe nightly sweep's own selection: how many entity-days still need a\nTier-1 memory. memory_ops_queue counts are bounded by BullMQ job retention.",
+        "operationId": "pipeline_health_api_memory_pipeline_health_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineHealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Pipeline Health",
+        "tags": [
+          "\ud83e\udde0 Memory"
         ],
         "x-surface": "library"
       }

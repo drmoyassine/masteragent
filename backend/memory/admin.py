@@ -18,10 +18,10 @@ import uuid
 import hashlib
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body, UploadFile, File, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from core.storage import get_memory_db_context
 from memory_models import (
@@ -1492,7 +1492,17 @@ async def refresh_maintenance_eligible_counts(admin: dict = Depends(require_admi
     return {"queued": queued, **get_snapshot()}
 
 
-@router.get("/pipeline-health")
+class PipelineHealthResponse(BaseModel):
+    pending_interactions: int
+    failed_interactions: int
+    pending_entity_days: int
+    last_memory_at: Optional[str] = None
+    empty_summary_memories: int
+    # None when the BullMQ client can't reach Redis (leg degrades, endpoint doesn't).
+    memory_ops_queue: Optional[Dict[str, int]] = None
+
+
+@router.get("/pipeline-health", response_model=PipelineHealthResponse)
 async def pipeline_health(admin: dict = Depends(require_admin_auth)):
     """Bounded snapshot of memory-pipeline drain state.
 
@@ -2316,7 +2326,18 @@ async def bulk_reprocess_memories(
     return {"queued": queued_count, "rearmed_interactions": rearmed_count}
 
 
-@router.get("/admin/credential-health")
+class CredentialHealthResponse(BaseModel):
+    """Counts only — secret values never enter the response."""
+    total: int
+    decryptable: int
+    orphaned: int
+    current_source: str
+    # Per-store breakdown keys (<label>_total) come from _ENVELOPE_QUERIES and
+    # evolve with the store list; allow them without typing each one.
+    model_config = ConfigDict(extra="allow")
+
+
+@router.get("/admin/credential-health", response_model=CredentialHealthResponse)
 async def credential_health(admin: dict = Depends(require_admin_auth)):
     """Stored-credential envelope health. Counts only — secret values never
     enter the response."""
@@ -2324,7 +2345,20 @@ async def credential_health(admin: dict = Depends(require_admin_auth)):
     return envelope_health()
 
 
-@router.post("/admin/rewrap-credentials")
+class RewrapStoreReport(BaseModel):
+    rewrapped: int
+    already_current: int
+    undecryptable: int
+
+
+class RewrapCredentialsResponse(BaseModel):
+    provider_credentials: RewrapStoreReport
+    supabase_db_url: RewrapStoreReport
+    webhook_secrets: RewrapStoreReport
+    current_source: str
+
+
+@router.post("/admin/rewrap-credentials", response_model=RewrapCredentialsResponse)
 async def rewrap_credentials(admin: dict = Depends(require_admin_auth)):
     """Re-encrypt every stored credential envelope under DATA_ENCRYPTION_KEY_NEXT.
 
