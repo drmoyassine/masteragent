@@ -16,6 +16,8 @@ services:
       # JWT & Auth
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-change_this_secret_in_production}
       - DATA_ENCRYPTION_KEY=${DATA_ENCRYPTION_KEY:-}
+      # Rotation transition key (rewrap runbook step 1); normally unset.
+      - DATA_ENCRYPTION_KEY_NEXT=${DATA_ENCRYPTION_KEY_NEXT:-}
       - STRICT_STARTUP_VALIDATION=${STRICT_STARTUP_VALIDATION:-true}
       - ALLOW_PUBLIC_SIGNUP=${ALLOW_PUBLIC_SIGNUP:-true}
       - ENFORCE_AGENT_SCOPE=${ENFORCE_AGENT_SCOPE:-false}
@@ -23,6 +25,9 @@ services:
       - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@promptsrc.com}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}
       - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      # STRICT gate reads this in the app container; the postgres service
+      # already consumes it, so forward it here too or STRICT boots fail.
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-}
       - MCP_SERVICE_KEY=${MCP_SERVICE_KEY:-}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
