@@ -21,6 +21,18 @@ def init_db():
     with get_db_context() as conn:
         cursor = conn.cursor()
 
+        # Pin the database default timezone: the entity-day key is
+        # DATE(timestamp), which is session-TZ dependent. Compose pins TZ/PGTZ
+        # for the app's own connections; this covers every other client.
+        try:
+            cursor.execute("""
+                DO $$ BEGIN
+                    EXECUTE format('ALTER DATABASE %I SET timezone TO %L', current_database(), 'UTC');
+                END $$;
+            """)
+        except Exception as exc:
+            logger.warning("Could not pin database timezone to UTC: %s", exc)
+
         # Users table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (

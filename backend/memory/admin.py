@@ -2248,6 +2248,7 @@ async def bulk_reprocess_memories(
         return {"queued": 0}
 
     queued_count = 0
+    rearmed_count = 0
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT id, primary_entity_type, primary_entity_id, date, interaction_ids FROM memories WHERE id = ANY(%s)", (memory_ids,))
@@ -2272,10 +2273,33 @@ async def bulk_reprocess_memories(
             
             if i_ids:
                 cursor.execute(
-                    "UPDATE interactions SET status = 'pending', processing_errors = '{}', embedding = NULL WHERE id = ANY(%s)", 
+                    "UPDATE interactions SET status = 'pending', processing_errors = '{}', embedding = NULL WHERE id = ANY(%s)",
                     (i_ids,)
                 )
-            
+            else:
+                # Quarantine husk: inserted with interaction_ids=[] after the
+                # day's interactions were marked done, so re-arm by entity+DATE
+                # predicate. processing_errors is deliberately NOT wiped: the
+                # generation_cycle stamps are the poison-pill counter and must
+                # keep bounding automated churn (the direct generate_memory
+                # enqueue below bypasses the nightly scan's cap check, so the
+                # operator-initiated repair still runs).
+                cursor.execute(
+                    "UPDATE interactions SET status = 'pending', embedding = NULL "
+                    "WHERE primary_entity_type = %s AND primary_entity_id = %s "
+                    "AND DATE(timestamp) = %s AND status IN ('done', 'failed')",
+                    (mem["primary_entity_type"], mem["primary_entity_id"], mem["date"])
+                )
+                rearmed_count += cursor.rowcount
+                # Also drop any other empty non-compacted husk rows for the day
+                # (the (date, entity) upsert normally keeps this to the one
+                # already being deleted below).
+                cursor.execute(
+                    "DELETE FROM memories WHERE primary_entity_type = %s AND primary_entity_id = %s "
+                    "AND date = %s AND compacted = FALSE AND btrim(COALESCE(content_summary, '')) = ''",
+                    (mem["primary_entity_type"], mem["primary_entity_id"], mem["date"])
+                )
+
             cursor.execute("DELETE FROM memories WHERE id = %s", (mem["id"],))
             
             # Requeue background job for generation
@@ -2289,7 +2313,91 @@ async def bulk_reprocess_memories(
             
         conn.commit()
         
-    return {"queued": queued_count}
+    return {"queued": queued_count, "rearmed_interactions": rearmed_count}
+
+
+@router.get("/admin/credential-health")
+async def credential_health(admin: dict = Depends(require_admin_auth)):
+    """Stored-credential envelope health. Counts only — secret values never
+    enter the response."""
+    from core.secrets import envelope_health
+    return envelope_health()
+
+
+@router.post("/admin/rewrap-credentials")
+async def rewrap_credentials(admin: dict = Depends(require_admin_auth)):
+    """Re-encrypt every stored credential envelope under DATA_ENCRYPTION_KEY_NEXT.
+
+    Env-transition pattern — the new key never passes through an API body or a
+    log line:
+      1. Set DATA_ENCRYPTION_KEY_NEXT in the container environment (the value
+         the new DATA_ENCRYPTION_KEY will take).
+      2. POST /api/memory/admin/rewrap-credentials
+      3. GET /api/memory/admin/credential-health → orphaned must be 0
+      4. Promote: set DATA_ENCRYPTION_KEY=<next>, remove DATA_ENCRYPTION_KEY_NEXT
+      5. Restart the container.
+    Idempotent: envelopes already decryptable under the NEXT key are skipped."""
+    from core.db import get_db_context
+    from core.secrets import (
+        _PREFIX, _decrypts_under, _fernet_from_source, _sources, key_source,
+    )
+
+    next_key = os.environ.get("DATA_ENCRYPTION_KEY_NEXT")
+    if not next_key:
+        raise HTTPException(status_code=400, detail="DATA_ENCRYPTION_KEY_NEXT is not set in the environment")
+    next_fernet = _fernet_from_source(next_key)
+    current_chain = [_fernet_from_source(source) for source in _sources()]
+
+    stores = (
+        ("provider_credentials",
+         "SELECT id, api_key_encrypted AS v FROM memory_llm_providers WHERE api_key_encrypted LIKE 'enc:v1:%'",
+         "UPDATE memory_llm_providers SET api_key_encrypted = %s WHERE id = %s"),
+        ("supabase_db_url",
+         "SELECT id, supabase_db_url AS v FROM memory_settings WHERE supabase_db_url LIKE 'enc:v1:%'",
+         "UPDATE memory_settings SET supabase_db_url = %s WHERE id = %s"),
+        ("webhook_secrets",
+         "SELECT id, secret_encrypted AS v FROM memory_webhook_sources WHERE secret_encrypted LIKE 'enc:v1:%'",
+         "UPDATE memory_webhook_sources SET secret_encrypted = %s WHERE id = %s"),
+    )
+
+    report = {}
+    with get_db_context() as conn:
+        cursor = conn.cursor()
+        for label, select_sql, update_sql in stores:
+            cursor.execute(select_sql)
+            rows = cursor.fetchall()
+            already_current = 0
+            undecryptable = 0
+            updates = []
+            for row in rows:
+                if _decrypts_under(row["v"], next_fernet):
+                    already_current += 1
+                    continue
+                plaintext = None
+                for fernet in current_chain:
+                    try:
+                        plaintext = fernet.decrypt(row["v"][len(_PREFIX):].encode("ascii")).decode("utf-8")
+                        break
+                    except Exception:
+                        continue
+                if plaintext is None:
+                    undecryptable += 1
+                    continue
+                updates.append((
+                    f"{_PREFIX}{next_fernet.encrypt(plaintext.encode('utf-8')).decode('ascii')}",
+                    row["id"],
+                ))
+            for params in updates:
+                cursor.execute(update_sql, params)
+            report[label] = {
+                "rewrapped": len(updates),
+                "already_current": already_current,
+                "undecryptable": undecryptable,
+            }
+        conn.commit()
+    report["current_source"] = key_source()
+    return report
+
 
 @router.post("/admin/search", response_model=SearchResponse)
 async def admin_search_memories(

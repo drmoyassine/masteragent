@@ -132,26 +132,90 @@ from routes.variables import router as variables_router
 from memory import memory_router
 
 # Health check and root (minimal, defined inline)
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 from datetime import datetime, timezone
 
 _meta_router = APIRouter() # Removed prefix="/api" to avoid double prefixing
 
 @_meta_router.get("/health")
-async def health_check():
-    # Additive, non-secret label for the credential-encryption key source so a
-    # JWT-fallback or dev-default deployment is visible from the outside
-    # (Docker HEALTHCHECK only needs the 200 + "status", which never change).
-    if os.environ.get("DATA_ENCRYPTION_KEY"):
-        credential_encryption = "data_key"
-    elif os.environ.get("JWT_SECRET_KEY"):
-        credential_encryption = "jwt_fallback"
-    else:
-        credential_encryption = "dev_default"
+async def health_check(response: Response):
+    """Real liveness probe (fast: ~1s worst case per leg).
+
+    Legs: Postgres SELECT 1, Redis PING, scheduler-tick freshness, BullMQ job
+    counts, credential-envelope decryptability. 503 when a hard leg fails —
+    the Docker HEALTHCHECK must reflect actual serviceability, not a static
+    handler. Secret values never appear in the payload (counts/labels only)."""
+    checks = {}
+    healthy = True
+
+    # ── Postgres ────────────────────────────────────────────────────────────
+    try:
+        from core.db import get_db_context
+        with get_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+        checks["postgres"] = "ok"
+    except Exception as exc:
+        checks["postgres"] = f"error: {type(exc).__name__}"
+        healthy = False
+
+    # ── Redis ───────────────────────────────────────────────────────────────
+    try:
+        from memory.queue import REDIS_URL
+        import redis.asyncio as aioredis
+        client = aioredis.Redis.from_url(
+            REDIS_URL, socket_timeout=1.0, socket_connect_timeout=1.0
+        )
+        try:
+            await client.ping()
+            checks["redis"] = "ok"
+        finally:
+            await client.aclose()
+    except Exception as exc:
+        checks["redis"] = f"error: {type(exc).__name__}"
+        healthy = False
+
+    # ── Scheduler freshness (a dead loop stops ticking) ────────────────────
+    try:
+        from memory_tasks import scheduler_last_tick
+        tick = scheduler_last_tick()
+        if tick is None:
+            checks["scheduler"] = "never_ran"
+            healthy = False
+        else:
+            age = (datetime.now(timezone.utc) - tick).total_seconds()
+            checks["scheduler"] = {"last_tick_utc": tick.isoformat(), "age_seconds": int(age)}
+            if age > 120:
+                checks["scheduler"] = "stale"
+                healthy = False
+    except Exception as exc:
+        checks["scheduler"] = f"error: {type(exc).__name__}"
+        healthy = False
+
+    # ── BullMQ queue depth (best-effort — never gates health) ──────────────
+    try:
+        from memory.queue import knowledge_queue
+        counts = await knowledge_queue.getJobCounts()
+        checks["queue_jobs"] = {k: counts.get(k) for k in ("waiting", "active", "failed", "delayed")}
+    except Exception as exc:
+        checks["queue_jobs"] = f"error: {type(exc).__name__}"
+
+    # ── Credential envelopes + key source (labels/counts only, no values) ──
+    try:
+        from core.secrets import envelope_health, key_source
+        checks["credential_envelopes"] = envelope_health()
+        credential_encryption = key_source()
+    except Exception:
+        credential_encryption = "unknown"
+
+    if not healthy:
+        response.status_code = 503
     return {
-        "status": "healthy",
+        "status": "healthy" if healthy else "unhealthy",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "credential_encryption": credential_encryption,
+        "checks": checks,
     }
 
 @_meta_router.get("/")

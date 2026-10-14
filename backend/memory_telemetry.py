@@ -20,7 +20,7 @@ telemetry that day and hasn't been reflected on yet.
 """
 import logging
 import uuid
-from datetime import date, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from core.storage import get_memory_db_context
@@ -77,7 +77,7 @@ async def run_telemetry_reflection(reflection_date: Optional[str] = None, entity
     if not policy["enabled"]:
         return 0
     confidence_min = float(policy["min_confidence"])
-    target_day = reflection_date or (date.today() - timedelta(days=1)).isoformat()
+    target_day = reflection_date or (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
 
     # Entities with unreflected telemetry on target_day
     with get_memory_db_context() as conn:
@@ -353,7 +353,7 @@ async def backfill_telemetry(max_days: int = 7) -> dict:
         log_pipeline_run("telemetry_reflection_backfill", "skipped", reason_code="no_telemetry")
         return {"days_processed": 0, "candidates": 0}
 
-    yesterday = date.today() - timedelta(days=1)
+    yesterday = datetime.now(timezone.utc).date() - timedelta(days=1)
     if max_d > yesterday:
         max_d = yesterday
     # Most-recent window of max_days (oldest-first iteration within the window)

@@ -2,7 +2,7 @@
 import json
 import logging
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from core.storage import get_memory_db_context, flush_interaction_cache
@@ -79,6 +79,14 @@ def claim_job_date(job_name: str, run_date: date) -> bool:
                   status = 'running', last_error = NULL
             WHERE memory_job_log.last_date IS DISTINCT FROM EXCLUDED.last_date
                OR memory_job_log.status = 'failed'
+               -- Reclaim: a 'running' claim older than 15 min means the claimant
+               -- died between claim and complete (the claim only spans the
+               -- enqueue/scan, so 15 min is generous). Without this, the UTC day
+               -- silently skips until tomorrow.
+               OR (
+                    memory_job_log.status = 'running'
+                    AND memory_job_log.last_run < NOW() - INTERVAL '15 minutes'
+                  )
             RETURNING job_name
         """, (job_name, run_date))
         return cursor.fetchone() is not None
@@ -107,14 +115,22 @@ def fail_job_date(job_name: str, run_date: date, error: Exception) -> None:
 # ── Orphan Sweeper ──────────────────────────────────────────────────────────
 
 async def run_orphan_sweeper():
-    """Find interactions stuck in pending state for > 6 hours and re-enqueue them."""
+    """Re-enqueue interactions whose enrichment never completed.
+
+    A 'pending' row older than 6h means stuck enrichment; enriched rows resting
+    in 'pending' await distillation and must NOT be replayed (a replay
+    duplicates attachment text and re-bills vision OCR). Stale 'queued' rows are
+    included: a worker that died between claim and save leaves them behind.
+    Capped per night to bound a pathological replay storm."""
     try:
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT id FROM interactions
-                WHERE status = 'pending'
+                WHERE status IN ('pending', 'queued')
+                  AND COALESCE(is_enriched, FALSE) = FALSE
                   AND CAST(created_at AS timestamp) < NOW() - INTERVAL '6 hours'
+                LIMIT 500
             """)
             orphans = [row["id"] for row in cursor.fetchall()]
 
@@ -146,7 +162,8 @@ async def run_daily_memory_generation(include_today: bool = False):
     build a NER-enriched, embedded daily memory record.
     One memory per entity per day — written once (not upserted).
     """
-    cutoff_date = date.today().isoformat() if include_today else (date.today() - timedelta(days=1)).isoformat()
+    today_utc = datetime.now(timezone.utc).date()
+    cutoff_date = today_utc.isoformat() if include_today else (today_utc - timedelta(days=1)).isoformat()
 
     # Husk self-heal: a memory row with an empty summary AND recorded node
     # errors is a failed distillation (a "poisoned husk"). The existence check
@@ -209,16 +226,71 @@ async def run_daily_memory_generation(include_today: bool = False):
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT id FROM memories
+                SELECT interaction_ids, compacted,
+                       COALESCE(processing_errors, '{}'::jsonb) AS processing_errors
+                FROM memories
                 WHERE date = %s AND primary_entity_type = %s AND primary_entity_id = %s
             """, (interaction_date, entity_type, entity_id))
-            if cursor.fetchone():
+            existing = cursor.fetchone()
+
+        if existing:
+            covered = list(existing["interaction_ids"] or [])
+            with get_memory_db_context() as conn:
+                cursor = conn.cursor()
                 cursor.execute("""
-                    UPDATE interactions SET status = 'done'
+                    SELECT id FROM interactions
                     WHERE primary_entity_type = %s AND primary_entity_id = %s
                       AND DATE(timestamp) = %s AND status IN ('pending', 'failed')
-                """, (entity_type, entity_id, interaction_date))
+                      AND NOT (id = ANY(%s))
+                """, (entity_type, entity_id, interaction_date, covered))
+                uncovered = [r["id"] for r in cursor.fetchall()]
+
+            if not uncovered:
+                # The memory covers every interaction still pending/failed for
+                # the day — close it (previous behavior, now coverage-checked).
+                with get_memory_db_context() as conn:
+                    conn.cursor().execute("""
+                        UPDATE interactions SET status = 'done'
+                        WHERE primary_entity_type = %s AND primary_entity_id = %s
+                          AND DATE(timestamp) = %s AND status IN ('pending', 'failed')
+                    """, (entity_type, entity_id, interaction_date))
                 continue
+
+            if existing["compacted"] or existing["processing_errors"].get("quarantine"):
+                # Regenerating would dangle intelligence/knowledge lineage (or
+                # undo a deliberate quarantine). Discard the late rows with an
+                # audit note instead of silently closing them.
+                with get_memory_db_context() as conn:
+                    conn.cursor().execute("""
+                        UPDATE interactions SET status = 'done',
+                          processing_errors = COALESCE(processing_errors, '{}'::jsonb)
+                            || '{"discarded_late": "day memory compacted/quarantined before this interaction arrived; not re-distilled"}'::jsonb
+                        WHERE primary_entity_type = %s AND primary_entity_id = %s
+                          AND DATE(timestamp) = %s AND status IN ('pending', 'failed')
+                          AND NOT (id = ANY(%s))
+                    """, (entity_type, entity_id, interaction_date, covered))
+                logger.warning(
+                    f"Existence check: {len(uncovered)} late interaction(s) for "
+                    f"{entity_type}/{entity_id} on {interaction_date} arrived after the day "
+                    f"was compacted/quarantined; marked done with a discarded_late note"
+                )
+                continue
+
+            # Late arrivals after the day distilled: regenerate the day so
+            # nothing silently drops (same pattern as the husk self-heal).
+            # generation_cycle stamps survive, so the poison-pill cap below
+            # still bounds a pathology loop. Deleting the memory can leave a
+            # dangling source_memory_ids in intelligence that already cited it —
+            # acceptable at nightly cadence (lineage columns are advisory).
+            with get_memory_db_context() as conn:
+                conn.cursor().execute("""
+                    DELETE FROM memories
+                    WHERE date = %s AND primary_entity_type = %s AND primary_entity_id = %s
+                """, (interaction_date, entity_type, entity_id))
+            logger.warning(
+                f"Existence check: memory for {entity_type}/{entity_id} on {interaction_date} "
+                f"does not cover {len(uncovered)} pending interaction(s); regenerating the day"
+            )
 
         # Poison-pill cap: a day whose generation keeps failing (cycle stamp on
         # its interactions, bumped by every anti-husk raise) is quarantined

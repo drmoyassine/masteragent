@@ -36,6 +36,30 @@ def validate_runtime_configuration() -> None:
         logger.warning(message)
 
 
+def _validate_credential_envelopes() -> None:
+    """Fail closed when stored credentials aren't guaranteed decryptable.
+
+    Runs ALWAYS once envelopes exist — silent credential orphaning is a
+    data-loss event, not a preference gated behind STRICT_STARTUP_VALIDATION.
+    Fresh installs (nothing stored yet, or schema still initializing) pass."""
+    from core.secrets import envelope_health, envelopes_exist, rotation_safe
+
+    if not envelopes_exist():
+        return
+    if rotation_safe():
+        return
+    health = envelope_health()
+    raise RuntimeError(
+        "Stored credential envelopes are not rotation-safe: "
+        f"{health['orphaned']} of {health['total']} stored credential envelope(s) cannot be "
+        f"guaranteed decryptable (current DATA_ENCRYPTION_KEY source: {health['current_source']}). "
+        "Rotating JWT_SECRET_KEY — or setting DATA_ENCRYPTION_KEY later — would permanently orphan "
+        "them ('Stored credential cannot be decrypted' on every provider call). Set a dedicated "
+        "DATA_ENCRYPTION_KEY and migrate envelopes via POST /api/memory/admin/rewrap-credentials "
+        "(DATA_ENCRYPTION_KEY_NEXT transition), or re-enter credentials via the admin UI."
+    )
+
+
 def initialize_application() -> None:
     """Run idempotent schema work under a cross-process PostgreSQL lock."""
     from db_init import init_db, seed_admin_user
@@ -51,3 +75,4 @@ def initialize_application() -> None:
             seed_admin_user()
         finally:
             cursor.execute("SELECT pg_advisory_unlock(%s)", (_MIGRATION_LOCK_ID,))
+    _validate_credential_envelopes()

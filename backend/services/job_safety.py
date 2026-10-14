@@ -127,9 +127,12 @@ def try_acquire_singleton_job(job_name: str) -> bool:
             """, (job_name, job_name, stale_minutes))
             return cursor.fetchone() is not None
     except Exception as exc:
-        # Do not turn observability-table trouble into a production outage.
-        logger.warning("Could not acquire maintenance lock for %s: %s", job_name, exc)
-        return True
+        # Fail CLOSED: if the lock table is unreachable we cannot know another
+        # run isn't active. Skipping this tick is safe (the scheduler re-fires
+        # in 60s); double-running a maintenance job is not.
+        logger.warning("Could not acquire maintenance lock for %s — skipping this tick: %s",
+                       job_name, exc)
+        return False
 
 
 def release_singleton_job(job_name: str) -> None:

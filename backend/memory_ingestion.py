@@ -28,6 +28,24 @@ async def process_interaction(interaction_id: str):
         logger.info(f"Interaction {interaction_id} is already in status: {interaction['status']}")
         return
 
+    # CAS claim: pending → queued. Guards the replay modes that double-run
+    # enrichment (duplicate job racing a completed run, sweeper racing an
+    # in-flight worker): only one attempt can move the row out of 'pending',
+    # and the claim is released atomically with the enrichment save below.
+    # A row already 'queued' is a previous attempt that died between claim and
+    # save (BullMQ retry) — the claim is still ours to finish; the orphan
+    # sweeper re-arms rows stuck in 'queued' beyond the stale window.
+    if interaction["status"] == "pending":
+        with get_memory_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE interactions SET status = 'queued' WHERE id = %s AND status = 'pending'",
+                (interaction_id,),
+            )
+            if cursor.rowcount != 1:
+                logger.info(f"Interaction {interaction_id} lost the enrichment claim; skipping.")
+                return
+
     content = interaction.get("content") or ""
     try:
         attachment_refs = json.loads(interaction["attachment_refs"]) if isinstance(interaction.get("attachment_refs"), str) else (interaction.get("attachment_refs") or [])
@@ -45,6 +63,14 @@ async def process_interaction(interaction_id: str):
     from memory_services import parse_document
     for attachment in attachment_refs:
         if not isinstance(attachment, dict):
+            continue
+        # Idempotency markers persist on attachment_refs (saved with the
+        # enrichment below): an attachment with parsed_content or parse_failed
+        # was already processed in a completed prior attempt — skip re-parsing
+        # (re-billed vision OCR) and skip re-appending (duplicated text). A
+        # crashed attempt never saved, so its attachments carry no marker and
+        # are re-processed cleanly from the original content.
+        if attachment.get("parsed_content") or attachment.get("parse_failed"):
             continue
 
         attach_type = attachment.get("type", "base64")
@@ -87,6 +113,7 @@ async def process_interaction(interaction_id: str):
             logger.error(f"Vision/Processing failed for {filename}: {e}")
             processing_errors["vision"] = str(e)
             parsed = {}
+            attachment["parse_failed"] = True
 
         url_context = f" ({url})" if attach_type == "url" and url else ""
         pages_context = f" (Parsed {parsed.get('parsed_pages', parsed.get('pages', 1))} out of {parsed.get('pages', 1)} pages)" if mime_type == "application/pdf" and parsed.get("pages", 0) > 0 else ""
@@ -116,6 +143,7 @@ async def process_interaction(interaction_id: str):
         else:
             err_msg = processing_errors.get("vision", "Parsing Failed or Document is Empty")
             content += f"\n\n---\n[Attachment ({mime_type}): {filename}]{url_context}{pages_context}\n[Error: {err_msg}]"
+            attachment["parse_failed"] = True
 
         attachment["inferred_mime"] = mime_type
 
@@ -124,12 +152,15 @@ async def process_interaction(interaction_id: str):
     # search; vectors live on the distilled tiers (memories / intelligence /
     # knowledge) only.
 
-    # Save outputs to Database
+    # Save outputs to Database. status='pending' releases the enrichment claim
+    # in the same statement — distillation selects pending/failed, so the row
+    # becomes visible to the nightly run only once enrichment actually landed.
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             UPDATE interactions
-            SET content = %s, attachment_refs = %s, processing_errors = %s, is_enriched = TRUE
+            SET content = %s, attachment_refs = %s, processing_errors = %s,
+                is_enriched = TRUE, status = 'pending'
             WHERE id = %s
         """, (
             content, json.dumps(attachment_refs, ensure_ascii=False),
@@ -189,7 +220,7 @@ async def _maybe_trigger_threshold_memory(interaction: dict) -> None:
     """
     from memory_services import get_memory_settings
     from services import memory_lock
-    from datetime import date
+    from datetime import datetime, timezone
 
     settings = get_memory_settings() or {}
     threshold = int(settings.get("memory_threshold") or 0)
@@ -211,7 +242,8 @@ async def _maybe_trigger_threshold_memory(interaction: dict) -> None:
     entity_type = interaction["primary_entity_type"]
     entity_id = interaction["primary_entity_id"]
 
-    if memory_lock.is_locked(entity_type, entity_id, date.today().isoformat()):
+    today_utc = datetime.now(timezone.utc).date()
+    if memory_lock.is_locked(entity_type, entity_id, today_utc.isoformat()):
         # Another threshold job is already generating this entity's today
         # bucket; skip. (Exact entity-day check — threshold jobs always
         # enqueue today's bucket.) Over-locking here only skips an enqueue,
@@ -242,7 +274,7 @@ async def _maybe_trigger_threshold_memory(interaction: dict) -> None:
             {
                 "entity_type": entity_type,
                 "entity_id": entity_id,
-                "interaction_date": date.today().isoformat(),
+                "interaction_date": today_utc.isoformat(),
                 "trigger": "threshold",
             },
             {"priority": 4, "attempts": retries, "backoff": {"type": "exponential", "delay": delay}}

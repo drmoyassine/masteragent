@@ -412,7 +412,15 @@ async def _process_bulk_job(job: Job, token: str):
         if attempts_made >= max_attempts:
             logger.error(f"Job {job.id} exhausted {max_attempts} retries. Moving to DLQ.")
             from core.storage import get_memory_db_context
+            from memory_db_writes import log_pipeline_run
             try:
+                # Every terminal failure leaves a pipeline-run row — the BullMQ
+                # failed-set cap (BULL_REMOVE_ON_FAIL_COUNT) is not a durable
+                # record, and Tier-2/3 jobs previously left none at all.
+                log_pipeline_run(job.name, "failed", reason_code="job_failed",
+                                 detail={"error": str(e)[:500], "queue_job_id": str(job.id),
+                                         "attempts": attempts_made},
+                                 trigger="queue")
                 # Basic DLQ effort for interactions
                 if job.name in ["ingest_interaction", "reprocess"]:
                     i_id = job.data.get("interaction_id")
@@ -435,6 +443,29 @@ def _handle_completed(job, result):
 
 def _handle_failed(job, error):
     logger.error(f"Job {job.id} failed with error: {error}")
+    # Sticky alert on the FINAL attempt only — per-attempt noise stays in logs,
+    # but a job that exhausted its retries is worth a banner until acknowledged.
+    try:
+        attempts_made = job.attemptsMade + 1
+        max_attempts = job.opts.get("attempts", 1)
+        if attempts_made < max_attempts:
+            return
+        from core.storage import get_memory_db_context
+        code = f"queue_job_failed:{job.name}"
+        with get_memory_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO memory_system_alerts
+                    (code, severity, title, message, source, detail, active, first_seen_at, last_seen_at)
+                VALUES (%s, 'error', %s, %s, 'queue', %s::jsonb, TRUE, NOW(), NOW())
+                ON CONFLICT (code) DO UPDATE SET active=TRUE, message=EXCLUDED.message,
+                    detail=EXCLUDED.detail, last_seen_at=NOW()
+            """, (code, f"Queue job '{job.name}' exhausted its retries",
+                  str(error)[:500],
+                  json.dumps({"job_id": str(job.id), "attempts": attempts_made})))
+    except Exception as exc:
+        logger.warning("Could not stamp queue-failure alert for %s: %s",
+                       getattr(job, "name", "?"), exc)
 
 async def start_bullmq_workers():
     global interactions_worker, memory_worker, knowledge_worker

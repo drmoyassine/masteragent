@@ -14,7 +14,7 @@ from memory_services import (
 from services.config_helpers import get_pipeline_configs, get_system_prompt_by_config_id
 from services.llm import parse_llm_json
 from services.prompt_renderer import inject_variables
-from memory_db_writes import insert_intelligence
+from memory_db_writes import insert_intelligence, log_pipeline_run
 from memory_prior_context import fetch_prior_intelligence, fetch_prior_knowledge_semantic
 from memory_helpers import _get_entity_type_config, _format_signal_definitions
 
@@ -84,7 +84,10 @@ async def _check_compaction_trigger(entity_type: str, entity_id: str, config: di
 async def compact_entity(entity_type: str, entity_id: str):
     """Generate an Intelligence from the N most recent uncompacted memories."""
     config = _get_entity_type_config(entity_type)
-    threshold = config.get("compaction_threshold", 10)
+    # intelligence_extraction_threshold is the canonical key (compaction_threshold
+    # was renamed to it in memory_db.init_db); reading the old key here made the
+    # trigger fire at the configured count while compaction always consumed 10.
+    threshold = config.get("intelligence_extraction_threshold") or 10
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -93,6 +96,8 @@ async def compact_entity(entity_type: str, entity_id: str):
             FROM memories
             WHERE primary_entity_type = %s AND primary_entity_id = %s
               AND compacted = FALSE
+              AND btrim(COALESCE(content_summary, '')) <> ''
+              AND NOT COALESCE(processing_errors, '{}'::jsonb) ? 'quarantine'
             ORDER BY date ASC
             LIMIT %s
         """, (entity_type, entity_id, threshold))
@@ -102,6 +107,26 @@ async def compact_entity(entity_type: str, entity_id: str):
         return
 
     memory_ids = [m["id"] for m in memories]
+
+    # Double-run guard: intelligence has no natural key, so a duplicated
+    # generate_insight delivery (retry racing completion) would clone rows.
+    # Skip when any prior intelligence already cites this batch — a successful
+    # insert marks the memories compacted, so a later genuine batch re-selects
+    # only uncompacted rows.
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT 1 FROM intelligence
+            WHERE primary_entity_type = %s AND primary_entity_id = %s
+              AND source_memory_ids && %s
+            LIMIT 1
+        """, (entity_type, entity_id, memory_ids))
+        if cursor.fetchone():
+            logger.warning(
+                f"Intelligence overlap for {entity_type}/{entity_id}: prior intelligence "
+                f"already cites this memory batch; skipping (double-run guard)"
+            )
+            return
 
     context_parts = []
     for m in memories:
@@ -188,7 +213,15 @@ async def compact_entity(entity_type: str, entity_id: str):
         results = parsed if isinstance(parsed, list) else [parsed]
     except Exception as e:
         logger.error(f"Intelligence LLM call failed: {e}")
-        return
+        log_pipeline_run("intelligence_compaction", "failed",
+                         reason_code="llm_call_failed",
+                         detail={"entity_type": entity_type, "entity_id": entity_id,
+                                 "message": str(e)[:500]},
+                         trigger="queue")
+        # Raise, don't swallow: the memories stay uncompacted either way, and
+        # raising lets the queue's retry/backoff (and DLQ on final failure)
+        # observe the failure instead of a silent no-op.
+        raise
 
     auto_approve = config.get("intelligence_auto_approve", False)
     status = "confirmed" if auto_approve else "draft"
@@ -243,6 +276,12 @@ async def compact_entity(entity_type: str, entity_id: str):
         created += 1
 
     logger.info(f"Created {created} Intelligence item(s) ({status}) for {entity_type}/{entity_id} from {len(memory_ids)} memories")
+    log_pipeline_run("intelligence_compaction", "created" if created else "skipped",
+                     reason_code=None if created else "no_intelligence_extracted",
+                     records_created=created,
+                     detail={"entity_type": entity_type, "entity_id": entity_id,
+                             "memories_used": len(memory_ids)},
+                     trigger="queue")
 
     # Intra-day knowledge threshold trigger: if this entity type now has enough
     # unused confirmed intelligence, enqueue a knowledge check immediately rather

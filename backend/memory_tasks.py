@@ -16,6 +16,7 @@ Modules:
   memory_prior_context — prior-context fetchers (chrono + semantic)
 """
 import asyncio
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Optional
@@ -76,6 +77,44 @@ _fetch_prior_context = fetch_prior_memories
 
 # ── Background task loop control ─────────────────────────────────────────────
 _task_handle: Optional[asyncio.Task] = None
+_scheduler_last_tick: Optional[datetime] = None
+
+
+def scheduler_last_tick() -> Optional[datetime]:
+    """UTC time of the background loop's most recent iteration top — the
+    freshness signal /api/health checks (a dead loop stops ticking)."""
+    return _scheduler_last_tick
+
+
+def _loop_done_callback(task: asyncio.Task) -> None:
+    """The scheduler loop exited — surface it loudly (log + sticky alert row);
+    without this a dead loop stays invisible until tiers silently stop firing."""
+    reason = "cancelled"
+    try:
+        exc = task.exception()
+        if exc is not None:
+            reason = f"{type(exc).__name__}: {exc}"
+    except asyncio.CancelledError:
+        pass
+    logger.critical(
+        f"Memory background scheduler loop DIED ({reason}) — scheduled "
+        f"memory/intelligence/knowledge runs stopped until restart"
+    )
+    try:
+        from core.storage import get_memory_db_context
+        with get_memory_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO memory_system_alerts
+                    (code, severity, title, message, source, detail, active, first_seen_at, last_seen_at)
+                VALUES ('scheduler_loop_dead', 'critical', 'Memory scheduler loop died', %s,
+                        'memory_tasks', %s::jsonb, TRUE, NOW(), NOW())
+                ON CONFLICT (code) DO UPDATE SET active=TRUE, message=EXCLUDED.message,
+                    detail=EXCLUDED.detail, last_seen_at=NOW()
+            """, (f"Background scheduler loop exited ({reason}); nightly tiers will not fire until restart.",
+                  json.dumps({"reason": reason})))
+    except Exception as exc:
+        logger.critical(f"Failed to persist scheduler-death alert: {exc}")
 
 
 async def start_background_tasks():
@@ -85,6 +124,7 @@ async def start_background_tasks():
         logger.warning("Background tasks already running")
         return
     _task_handle = asyncio.create_task(_background_loop())
+    _task_handle.add_done_callback(_loop_done_callback)
     logger.info("Memory system background tasks started")
 
 
@@ -127,7 +167,9 @@ async def _background_loop():
 
     Threshold valves still fire intra-day (independent of this loop). Consolidation
     stays a periodic (weekly) maintenance job — pruning, not learning."""
+    global _scheduler_last_tick
     while True:
+        _scheduler_last_tick = datetime.now(timezone.utc)
         try:
             settings = get_memory_settings() or {}
             now_utc = datetime.now(timezone.utc)
@@ -164,7 +206,9 @@ async def _background_loop():
                     floor = int(settings.get("intelligence_schedule_floor", 2))
                     logger.info(f"Firing nightly intelligence sweep (floor={floor})")
                     try:
-                        await knowledge_queue.add("run_intelligence_sweep", {"min_count": floor}, {"priority": 3})
+                        await knowledge_queue.add("run_intelligence_sweep", {"min_count": floor},
+                                                  {"priority": 3, "attempts": 3,
+                                                   "backoff": {"type": "exponential", "delay": 60000}})
                         complete_job_date("intelligence_schedule", today)
                     except Exception as exc:
                         fail_job_date("intelligence_schedule", today, exc)
@@ -177,7 +221,9 @@ async def _background_loop():
                     floor = int(settings.get("knowledge_schedule_floor", 2))
                     logger.info(f"Firing nightly knowledge sweep (floor={floor})")
                     try:
-                        await knowledge_queue.add("run_all_knowledge_generation", {"min_count": floor}, {"priority": 3})
+                        await knowledge_queue.add("run_all_knowledge_generation", {"min_count": floor},
+                                                  {"priority": 3, "attempts": 3,
+                                                   "backoff": {"type": "exponential", "delay": 60000}})
                         complete_job_date("knowledge_generation_all", today)
                     except Exception as exc:
                         fail_job_date("knowledge_generation_all", today, exc)
@@ -193,7 +239,9 @@ async def _background_loop():
                 if claim_job_date("telemetry_reflection_schedule", today):
                     logger.info("Firing nightly telemetry reflection")
                     try:
-                        await knowledge_queue.add("reflect_telemetry", {}, {"priority": 3})
+                        await knowledge_queue.add("reflect_telemetry", {},
+                                                  {"priority": 3, "attempts": 3,
+                                                   "backoff": {"type": "exponential", "delay": 60000}})
                         complete_job_date("telemetry_reflection_schedule", today)
                     except Exception as exc:
                         fail_job_date("telemetry_reflection_schedule", today, exc)
@@ -207,7 +255,9 @@ async def _background_loop():
                days_since_consol >= consolidation_interval and claim_job_date("consolidation", today):
                 logger.info(f"Triggering consolidation (days_since={days_since_consol})")
                 try:
-                    await knowledge_queue.add("run_consolidation", {}, {"priority": 4})
+                    await knowledge_queue.add("run_consolidation", {},
+                                              {"priority": 4, "attempts": 3,
+                                               "backoff": {"type": "exponential", "delay": 60000}})
                     complete_job_date("consolidation", today)
                 except Exception as exc:
                     fail_job_date("consolidation", today, exc)
@@ -226,7 +276,8 @@ async def _background_loop():
                     await interactions_queue.add(
                         "interaction_retention",
                         {"batch_size": 500, "max_records": 50000},
-                        {"priority": 5},
+                        {"priority": 5, "attempts": 3,
+                         "backoff": {"type": "exponential", "delay": 60000}},
                     )
                     complete_job_date("interaction_retention", today)
                 except Exception as exc:

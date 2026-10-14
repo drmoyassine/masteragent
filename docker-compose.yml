@@ -8,12 +8,15 @@ services:
     # For local/manual runs: docker run -p 8080:80 or set PORT env var.
     ports:
       - "${PORT:-8080}:80"
+    # Keep a runnaway pipeline (embedding spikes, LLM buffers) from exhausting
+    # host memory alongside the postgres/redis limits.
+    mem_limit: ${MASTERAGENT_MEM_LIMIT:-2g}
 
     environment:
       # JWT & Auth
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-change_this_secret_in_production}
       - DATA_ENCRYPTION_KEY=${DATA_ENCRYPTION_KEY:-}
-      - STRICT_STARTUP_VALIDATION=${STRICT_STARTUP_VALIDATION:-false}
+      - STRICT_STARTUP_VALIDATION=${STRICT_STARTUP_VALIDATION:-true}
       - ALLOW_PUBLIC_SIGNUP=${ALLOW_PUBLIC_SIGNUP:-true}
       - ENFORCE_AGENT_SCOPE=${ENFORCE_AGENT_SCOPE:-false}
       - LEGACY_PROMPT_KEYS_GLOBAL=${LEGACY_PROMPT_KEYS_GLOBAL:-true}
@@ -49,6 +52,10 @@ services:
       # GLiNER NER Service (optional)
       - ENABLE_GLINER=${ENABLE_GLINER:-false}
       - GLINER_URL=${GLINER_URL:-http://gliner:8002}
+      # Timezone pin: the entity-day key is DATE(timestamp), which follows the
+      # session timezone — everything must bucket on UTC (see db_init too).
+      - TZ=UTC
+      - PGTZ=UTC
     volumes:
       - promptsrc_data:/app/backend/data
       - promptsrc_prompts:/app/backend/local_prompts
