@@ -11,7 +11,7 @@ import logging
 import os
 import uuid
 from datetime import datetime, timezone
-from typing import List, Optional, Any
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from pydantic import BaseModel
@@ -46,6 +46,50 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 # ============================================
+# TASK-258 (DEC-106): comm-dedup on a carried key
+# ============================================
+# n8nclaw posts each comm fire with metadata.crm_dedup_key = "<comm_id>|<tier>|<itype>"
+# (the exact key its webhook gate computes; tier = c<applicant_id>/o<org_id>). The partial
+# unique index (uq_interactions_crm_dedup_key, built concurrently at boot) makes the DB —
+# not the webhook — the dedup authority: a replayed fire collapses onto the existing row
+# instead of inserting a second interaction for the same (comm, entity, type). Rows
+# WITHOUT the key (every other API consumer, all legacy data) are unaffected: the partial
+# predicate excludes them and the plain INSERT path is byte-identical to before.
+
+_INTERACTIONS_INSERT_SQL = """
+    INSERT INTO interactions (
+        id, timestamp, interaction_type, agent_id, agent_name,
+        content, primary_entity_type, primary_entity_subtype, primary_entity_id,
+        metadata, metadata_field_map, has_attachments, attachment_refs,
+        processing_errors, source, status, created_at
+    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+"""
+
+# The conflict target must mirror the partial index expression exactly.
+_INTERACTIONS_DEDUP_TAIL = """
+    ON CONFLICT (COALESCE(metadata->>'crm_dedup_key', ''))
+        WHERE COALESCE(metadata->>'crm_dedup_key', '') <> ''
+    DO UPDATE SET
+        content = EXCLUDED.content,
+        source = EXCLUDED.source,
+        metadata = interactions.metadata || jsonb_build_object(
+            'crm_replays',
+            CASE WHEN interactions.metadata->>'crm_replays' ~ '^[0-9]+$'
+                 THEN (interactions.metadata->>'crm_replays')::int ELSE 0 END + 1,
+            'crm_last_replay_at', (NOW() AT TIME ZONE 'UTC')::text
+        )
+    RETURNING id, status, timestamp, created_at, (xmax = 0) AS inserted
+"""
+
+
+def _extract_crm_dedup_key(metadata: Optional[Dict[str, Any]]) -> Optional[str]:
+    """Return n8nclaw's comm-dedup carrier, or None. Non-empty strings only."""
+    key = metadata.get("crm_dedup_key") if metadata else None
+    if isinstance(key, str) and key.strip():
+        return key.strip()
+    return None
+
+# ============================================
 # TIER 0: 🔄 Interactions
 # ============================================
 
@@ -73,44 +117,54 @@ async def ingest_interaction(
         # as done (keeps the pending backlog = real conversations only).
         is_telemetry = (body.interaction_type or "").startswith("internal_ai")
         initial_status = "done" if is_telemetry else "pending"
-        cursor.execute("""
-            INSERT INTO interactions (
-                id, timestamp, interaction_type, agent_id, agent_name,
-                content, primary_entity_type, primary_entity_subtype, primary_entity_id,
-                metadata, metadata_field_map, has_attachments, attachment_refs,
-                processing_errors, source, status, created_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """, (
+        insert_params = (
             interaction_id, now, body.interaction_type, agent["id"], body.agent_name or agent.get("name"),
             content, body.primary_entity_type, body.primary_entity_subtype, body.primary_entity_id,
             json.dumps(body.metadata or {}, ensure_ascii=False), json.dumps(body.metadata_field_map or {}, ensure_ascii=False),
             body.has_attachments, json.dumps(attachment_refs, ensure_ascii=False), json.dumps({}), body.source, initial_status, now
-        ))
+        )
+        if _extract_crm_dedup_key(body.metadata):
+            # TASK-258: a duplicate comm fire collapses onto the existing row —
+            # content/source refreshed, original timestamp/status/created_at kept,
+            # crm_replays stamped — and is NOT re-enqueued (the pipeline already
+            # processed, or is processing, that row).
+            cursor.execute(_INTERACTIONS_INSERT_SQL + _INTERACTIONS_DEDUP_TAIL, insert_params)
+            row = cursor.fetchone()
+            interaction_id = row["id"]
+            inserted = row["inserted"]
+            row_status = row["status"]
+            row_timestamp = row["timestamp"].isoformat() if row["timestamp"] else now
+            row_created_at = row["created_at"].isoformat() if row["created_at"] else now
+        else:
+            cursor.execute(_INTERACTIONS_INSERT_SQL, insert_params)
+            inserted = True
+            row_status, row_timestamp, row_created_at = initial_status, now, now
         # Ensure commit happens here seamlessly by context manager exiting before passing to BullMQ
 
-    if not is_telemetry:
-        # Enqueue standard DLQ compliant backend task
+    if not is_telemetry and inserted:
+        # Enqueue standard DLQ compliant backend task (dedup replays are already processed)
         from memory.queue import interactions_queue
         await interactions_queue.add(
-            "ingest_interaction", 
-            {"interaction_id": interaction_id}, 
+            "ingest_interaction",
+            {"interaction_id": interaction_id},
             {"attempts": 3, "backoff": {"type": "exponential", "delay": 2000}}
         )
 
     log_audit(agent["id"], "ingest_interaction", "interaction", interaction_id, {
         "interaction_type": body.interaction_type,
         "entity": f"{body.primary_entity_type}/{body.primary_entity_id}",
+        **({} if inserted else {"dedup": "replayed"}),
     })
     grant_entity(agent["id"], body.primary_entity_type, body.primary_entity_id)
 
-    # Return HTTP 202 Accepted instantly
+    # Return HTTP 202 Accepted instantly (replays report the existing row's state)
     response.status_code = 202
     return InteractionResponse(
-        id=interaction_id, timestamp=now, interaction_type=body.interaction_type,
+        id=interaction_id, timestamp=row_timestamp, interaction_type=body.interaction_type,
         agent_id=agent["id"], agent_name=body.agent_name or agent.get("name"),
         primary_entity_type=body.primary_entity_type, primary_entity_id=body.primary_entity_id,
         primary_entity_subtype=body.primary_entity_subtype, has_attachments=body.has_attachments,
-        source=body.source, status=initial_status, created_at=now
+        source=body.source, status=row_status, created_at=row_created_at
     )
 
 
@@ -169,25 +223,34 @@ async def ingest_interactions_bulk(
                 replayed = True
 
         enqueue_ids: List[str] = []
+        dedup_replays = 0
         if not replayed:
             ids = [str(uuid.uuid4()) for _ in items]
-            for interaction_id, item in zip(ids, items):
+            for idx, item in enumerate(items):
+                interaction_id = ids[idx]
                 initial_status = "done" if (item.interaction_type or "").startswith("internal_ai") else "pending"
-                cursor.execute("""
-                    INSERT INTO interactions (
-                        id, timestamp, interaction_type, agent_id, agent_name,
-                        content, primary_entity_type, primary_entity_subtype, primary_entity_id,
-                        metadata, metadata_field_map, has_attachments, attachment_refs,
-                        processing_errors, source, status, created_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """, (
+                insert_params = (
                     interaction_id, now, item.interaction_type, agent["id"], item.agent_name or agent.get("name"),
                     item.content, item.primary_entity_type, item.primary_entity_subtype, item.primary_entity_id,
                     json.dumps(item.metadata or {}, ensure_ascii=False), json.dumps(item.metadata_field_map or {}, ensure_ascii=False),
                     item.has_attachments, json.dumps(list(item.attachment_refs or []), ensure_ascii=False),
                     json.dumps({}), item.source, initial_status, now
-                ))
-                if initial_status == "pending":
+                )
+                if _extract_crm_dedup_key(item.metadata):
+                    # TASK-258: same comm-dedup contract as the single door — a
+                    # replayed fire collapses onto the existing row and is not
+                    # re-enqueued; the receipt records the row that exists.
+                    cursor.execute(_INTERACTIONS_INSERT_SQL + _INTERACTIONS_DEDUP_TAIL, insert_params)
+                    row = cursor.fetchone()
+                    ids[idx] = row["id"]
+                    inserted = row["inserted"]
+                    interaction_id = row["id"]
+                    if not inserted:
+                        dedup_replays += 1
+                else:
+                    cursor.execute(_INTERACTIONS_INSERT_SQL, insert_params)
+                    inserted = True
+                if initial_status == "pending" and inserted:
                     enqueue_ids.append(interaction_id)
             if idempotency_key:
                 cursor.execute("""
@@ -210,6 +273,7 @@ async def ingest_interactions_bulk(
             "count": len(ids),
             "interaction_types": sorted({i.interaction_type for i in items}),
             "idempotency_key_supplied": bool(idempotency_key),
+            "dedup_replays": dedup_replays,
         })
         for item in items:
             grant_entity(agent["id"], item.primary_entity_type, item.primary_entity_id)

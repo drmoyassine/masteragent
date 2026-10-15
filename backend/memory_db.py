@@ -38,6 +38,12 @@ def _create_operational_indexes_concurrently():
         ("idx_knowledge_fts", "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_knowledge_fts ON knowledge USING GIN (to_tsvector('simple', coalesce(name, '') || ' ' || coalesce(summary, '') || ' ' || coalesce(content, '')))"),
         ("idx_interactions_entity_status_time", "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_interactions_entity_status_time ON interactions (primary_entity_type, primary_entity_id, status, timestamp DESC)"),
         ("idx_intelligence_entity_status_created", "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_intelligence_entity_status_created ON intelligence (primary_entity_type, primary_entity_id, status, created_at DESC)"),
+        # TASK-258 (DEC-106): comm-dedup authority — n8nclaw's carrier key
+        # (metadata.crm_dedup_key = comm_id|tier|itype, the webhook gate's key).
+        # Partial: rows without the key (every other consumer + all legacy data)
+        # are excluded, so the build stays near-empty and dedup never touches
+        # them.
+        ("uq_interactions_crm_dedup_key", "CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS uq_interactions_crm_dedup_key ON interactions ((COALESCE(metadata->>'crm_dedup_key', ''))) WHERE COALESCE(metadata->>'crm_dedup_key', '') <> ''"),
     ]
     conn = psycopg2.connect(get_database_url())
     conn.autocommit = True
