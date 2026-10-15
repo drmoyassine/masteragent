@@ -109,29 +109,18 @@ def _management_skill_body() -> str:
 # ── Schema / config accessors ────────────────────────────────────────────────
 
 def get_facets_schema() -> list:
-    """Global facets schema from memory_settings (empty list = none configured)."""
-    from memory_services import get_memory_settings
-    try:
-        settings = get_memory_settings() or {}
-        schema = settings.get("knowledge_facets_schema")
-        if isinstance(schema, str):
-            schema = json.loads(schema)
-        return schema or []
-    except Exception as e:
-        logger.warning(f"get_facets_schema failed: {e}")
-        return []
+    """Global facets schema (empty list = none configured).
+
+    TASK-257 §6: the knowledge_facets_schema settings knob never had a column,
+    so the read always resolved to [] — facets stay unconfigured until the knob
+    is promoted to a real memory_settings column.
+    """
+    return []
 
 
 def get_profile_facet_map() -> dict:
-    from memory_services import get_memory_settings
-    try:
-        settings = get_memory_settings() or {}
-        m = settings.get("profile_facet_map")
-        if isinstance(m, str):
-            m = json.loads(m)
-        return m or {}
-    except Exception:
-        return {}
+    """TASK-257 §6: profile_facet_map never had a settings column — always {}."""
+    return {}
 
 
 def facet_prompt_instructions() -> str:
@@ -174,13 +163,13 @@ async def extract_facets(name: str, content: str, summary: str) -> dict:
 
     Returns {} when disabled, unconfigured, or on any failure — never blocks
     or alters knowledge creation (zero-regression)."""
-    from memory_services import get_memory_settings, call_llm
+    from memory_services import call_llm
     from services.llm import parse_llm_json
 
     try:
-        settings = get_memory_settings() or {}
-        if not settings.get("facet_extraction_enabled", True):
-            return {}
+        # TASK-257 §6: facet_extraction_enabled never had a settings column, so
+        # the old disable check was dead code — the empty-schema guard below is
+        # what actually gated this function.
         schema = get_facets_schema()
         if not schema:
             return {}

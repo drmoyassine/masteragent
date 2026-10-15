@@ -49,15 +49,15 @@ class StorageModeUpdate(BaseModel):
 
 @router.get("/settings", response_model=SettingsResponse)
 async def get_settings(user: dict = Depends(require_auth)):
-    settings = get_github_settings(user["id"])
-    if settings:
-        storage_mode = settings.get("storage_mode", "local")
-        has_github = bool(settings.get("github_token")) and bool(settings.get("github_repo"))
+    github_settings = get_github_settings(user["id"])
+    if github_settings:
+        storage_mode = github_settings.get("storage_mode", "local")
+        has_github = bool(github_settings.get("github_token")) and bool(github_settings.get("github_repo"))
         is_configured = True if storage_mode == "local" else has_github
         return SettingsResponse(
-            id=settings["id"],
-            github_repo=settings.get("github_repo"),
-            github_owner=settings.get("github_owner"),
+            id=github_settings["id"],
+            github_repo=github_settings.get("github_repo"),
+            github_owner=github_settings.get("github_owner"),
             is_configured=is_configured,
             has_github=has_github,
             storage_mode=storage_mode,

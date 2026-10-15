@@ -165,8 +165,8 @@ async def create_prompt(prompt_data: PromptCreate, user: dict = Depends(require_
 
     storage_mode = get_storage_mode(user["id"])
     if storage_mode == "github":
-        settings = get_github_settings(user["id"])
-        if not settings or not settings.get("github_token"):
+        github_settings = get_github_settings(user["id"])
+        if not github_settings or not github_settings.get("github_token"):
             storage_mode = "local"
 
     sections_to_create = []
@@ -301,8 +301,8 @@ async def import_prompt_markdown(data: PromptMarkdownImport, user: dict = Depend
 
     storage_mode = get_storage_mode(user["id"])
     if storage_mode == "github":
-        settings = get_github_settings(user["id"])
-        if not settings or not settings.get("github_token"):
+        github_settings = get_github_settings(user["id"])
+        if not github_settings or not github_settings.get("github_token"):
             storage_mode = "local"
 
     sections = [

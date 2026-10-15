@@ -43,14 +43,14 @@ class RenderResponse(BaseModel):
 # ─────────────────────────────────────────────
 
 async def github_api_request(method: str, endpoint: str, data: dict = None, user_id: str = None):
-    settings = get_github_settings(user_id)
-    if not settings or not settings.get("github_token"):
+    github_settings = get_github_settings(user_id)
+    if not github_settings or not github_settings.get("github_token"):
         raise HTTPException(status_code=400, detail="GitHub not configured")
     headers = {
-        "Authorization": f"token {settings['github_token']}",
+        "Authorization": f"token {github_settings['github_token']}",
         "Accept": "application/vnd.github.v3+json",
     }
-    base_url = f"https://api.github.com/repos/{settings['github_owner']}/{settings['github_repo']}"
+    base_url = f"https://api.github.com/repos/{github_settings['github_owner']}/{github_settings['github_repo']}"
     url = f"{base_url}{endpoint}"
     async with httpx.AsyncClient() as client:
         if method == "GET":

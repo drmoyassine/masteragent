@@ -722,42 +722,11 @@ function MemoryGenerationTab({ settings, onUpdateSettings, llmConfigs, llmProvid
                         </div>
                     </div>
 
-                    {/* Â§ Processing */}
-                    <div className="space-y-4 pt-2">
-                        <h4 className="text-sm font-semibold flex items-center gap-1.5 border-b pb-1">
-                            <Cpu className="w-4 h-4 text-indigo-500" />
-                            Processing
-                        </h4>
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                                <SettingLabel help="memory_retries" className="text-xs font-mono">Max Retries</SettingLabel>
-                                <Input
-                                    type="number"
-                                    min="0"
-                                    max="10"
-                                    value={settings.memory_queue_retries !== undefined ? settings.memory_queue_retries : 3}
-                                    onChange={(e) =>
-                                        onUpdateSettings("memory_queue_retries", parseInt(e.target.value))
-                                    }
-                                />
-                            </div>
-                            <div className="space-y-2">
-                                <SettingLabel help="memory_retry_delay" className="text-xs font-mono">Retry Delay (ms)</SettingLabel>
-                                <Input
-                                    type="number"
-                                    min="0"
-                                    step="500"
-                                    value={settings.memory_queue_retry_delay !== undefined ? settings.memory_queue_retry_delay : 2000}
-                                    onChange={(e) =>
-                                        onUpdateSettings("memory_queue_retry_delay", parseInt(e.target.value))
-                                    }
-                                />
-                            </div>
-                        </div>
-                        <p className="text-[10px] text-muted-foreground">
-                            BullMQ will exponentially back off using the base delay specified above on failure.
-                        </p>
-                    </div>
+                    {/* TASK-257 §6: the Processing section (max retries / retry
+                        delay) was removed — those knobs never had memory_settings
+                        columns, so every edit here was silently discarded. Retry
+                        behavior is fixed in memory/queue.py (MEMORY_JOB_ATTEMPTS /
+                        MEMORY_JOB_BACKOFF_MS) until the §5 job registry owns it. */}
                 </CardContent>
             </Card>
 
@@ -1604,58 +1573,11 @@ function LegacyKnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProvide
                 </CardContent>
             </Card>
 
-            {/* Queue Performance — consolidated across all pipeline stages */}
-            <Card>
-                <CardHeader className="pb-3">
-                    <div className="flex items-center gap-2">
-                        <Cpu className="w-5 h-5 text-indigo-500" />
-                        <CardTitle className="text-lg">Queue Performance</CardTitle>
-                    </div>
-                    <CardDescription className="text-xs mt-1.5">
-                        BullMQ worker concurrency per pipeline. Reduce if hitting LLM rate limits.
-                    </CardDescription>
-                </CardHeader>
-                <CardContent>
-                    <div className="grid grid-cols-3 gap-4">
-                        <div className="space-y-2">
-                            <Label className="text-xs font-mono">Interactions</Label>
-                            <Input
-                                type="number"
-                                min="1"
-                                max="50"
-                                value={settings.interactions_queue_concurrency || 5}
-                                onChange={(e) =>
-                                    onUpdateSettings("interactions_queue_concurrency", parseInt(e.target.value) || 5)
-                                }
-                            />
-                        </div>
-                        <div className="space-y-2">
-                            <Label className="text-xs font-mono">Memories</Label>
-                            <Input
-                                type="number"
-                                min="1"
-                                max="50"
-                                value={settings.memory_queue_concurrency || 1}
-                                onChange={(e) =>
-                                    onUpdateSettings("memory_queue_concurrency", parseInt(e.target.value) || 1)
-                                }
-                            />
-                        </div>
-                        <div className="space-y-2">
-                            <Label className="text-xs font-mono">Knowledge</Label>
-                            <Input
-                                type="number"
-                                min="1"
-                                max="50"
-                                value={settings.knowledge_queue_concurrency || 1}
-                                onChange={(e) =>
-                                    onUpdateSettings("knowledge_queue_concurrency", parseInt(e.target.value) || 1)
-                                }
-                            />
-                        </div>
-                    </div>
-                </CardContent>
-            </Card>
+            {/* TASK-257 §6: the Queue Performance card (per-pipeline worker
+                concurrency) was removed — those settings keys never had
+                memory_settings columns, so every edit was silently discarded.
+                Concurrency is fixed in memory/queue.py (QUEUE_CONCURRENCY)
+                until the §5 job registry owns it. */}
         </div>
     );
 }
@@ -1852,8 +1774,6 @@ const KNOWLEDGE_SETTING_HELP = {
     memory_max_tokens: "Maximum length of the generated memory output. Higher values retain more detail but use more model tokens.",
     memory_threshold: "Creates a memory before the daily sweep once this many pending interactions accumulate for an entity. Zero disables this early trigger.",
     memory_safe_boundary: "Interaction types that may close a memory window. This prevents an active conversation from being split into separate memories.",
-    memory_retries: "Maximum attempts to retry a failed memory-generation job before it is marked failed.",
-    memory_retry_delay: "Initial wait before retrying a failed memory job. Later retries use exponential backoff from this value.",
     embedding_chunk_size: "Maximum size of an interaction-text chunk sent for embedding. Larger chunks carry more context; smaller chunks make retrieval more precise.",
     embedding_chunk_overlap: "Text repeated between adjacent embedding chunks so information at a boundary is not lost.",
     intelligence_prior_chrono: "Number of the entity's most recent intelligence records included to avoid repeating known findings.",

@@ -2252,7 +2252,11 @@ async def bulk_reprocess_memories(
     admin: dict = Depends(require_admin_auth)
 ):
     """Delete memories and enqueue their interactions back into memory pipeline generation."""
-    from memory.queue import memory_queue
+    from memory.queue import (
+        MEMORY_JOB_ATTEMPTS,
+        MEMORY_JOB_BACKOFF_MS,
+        memory_queue,
+    )
     memory_ids = payload.get("memory_ids", [])
     if not memory_ids:
         return {"queued": 0}
@@ -2264,10 +2268,6 @@ async def bulk_reprocess_memories(
         cursor.execute("SELECT id, primary_entity_type, primary_entity_id, date, interaction_ids FROM memories WHERE id = ANY(%s)", (memory_ids,))
         memories = cursor.fetchall()
 
-        settings = get_memory_settings()
-        retries = int(settings.get("memory_queue_retries", 3))
-        delay = int(settings.get("memory_queue_retry_delay", 2000))
-        
         for mem in memories:
             i_ids = mem.get("interaction_ids", [])
             if hasattr(i_ids, "tolist"):
@@ -2318,7 +2318,7 @@ async def bulk_reprocess_memories(
                 "entity_type": mem["primary_entity_type"],
                 "entity_id": mem["primary_entity_id"],
                 "interaction_date": str(mem["date"])
-            }, {"priority": 5, "attempts": retries, "backoff": {"type": "exponential", "delay": delay}})
+            }, {"priority": 5, "attempts": MEMORY_JOB_ATTEMPTS, "backoff": {"type": "exponential", "delay": MEMORY_JOB_BACKOFF_MS}})
             queued_count += 1
             
         conn.commit()

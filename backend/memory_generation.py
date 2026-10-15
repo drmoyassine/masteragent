@@ -341,15 +341,15 @@ async def run_daily_memory_generation(include_today: bool = False):
             continue
 
         try:
-            settings = get_memory_settings()
-            retries = int(settings.get("memory_queue_retries", 3))
-            delay = int(settings.get("memory_queue_retry_delay", 2000))
-
-            from memory.queue import memory_queue
+            from memory.queue import (
+                MEMORY_JOB_ATTEMPTS,
+                MEMORY_JOB_BACKOFF_MS,
+                memory_queue,
+            )
             await memory_queue.add(
                 "generate_memory",
                 {"entity_type": entity_type, "entity_id": entity_id, "interaction_date": interaction_date},
-                {"priority": 5, "attempts": retries, "backoff": {"type": "exponential", "delay": delay}}
+                {"priority": 5, "attempts": MEMORY_JOB_ATTEMPTS, "backoff": {"type": "exponential", "delay": MEMORY_JOB_BACKOFF_MS}}
             )
         except Exception as e:
             logger.error(f"Memory enqueue failed for {entity_type}/{entity_id} on {interaction_date}: {e}")
@@ -393,7 +393,9 @@ async def _generate_memory_for_entity_impl(entity_type: str, entity_id: str, int
     if isinstance(excluded_types, str):
         import json as _json
         excluded_types = _json.loads(excluded_types)
-    mode = settings.get("memory_generation_interaction_types_mode", "exclude")
+    # TASK-257 §6: memory_generation_interaction_types_mode never had a column,
+    # so the include mode never shipped — hardcode the effective default.
+    mode = "exclude"
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()

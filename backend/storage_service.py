@@ -29,9 +29,9 @@ LOCAL_STORAGE_PATH = ROOT_DIR / "local_prompts"
 
 def get_storage_mode(user_id: str) -> str:
     """Get the storage mode for a user. Defaults to 'local' for new users."""
-    settings = get_github_settings(user_id)
-    if settings:
-        return settings.get("storage_mode", "local")
+    github_settings = get_github_settings(user_id)
+    if github_settings:
+        return github_settings.get("storage_mode", "local")
     return "local"
 
 
@@ -792,8 +792,8 @@ def get_storage_service(user_id: str) -> StorageService:
         return LocalStorageService(user_id)
     else:
         # Check if GitHub is actually configured
-        settings = get_github_settings(user_id)
-        if not settings or not settings.get("github_token"):
+        github_settings = get_github_settings(user_id)
+        if not github_settings or not github_settings.get("github_token"):
             # Fallback to local storage
             return LocalStorageService(user_id)
         return GitHubStorageService(user_id)

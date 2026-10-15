@@ -1009,10 +1009,11 @@ async def reconcile(run_id: str) -> Dict[str, Any]:
     _finish(run_id, provider_status=status)
     if run.get("parent_run_id"):
         _aggregate_parent(run["parent_run_id"])
-    settings = get_memory_settings() or {}
-    delete_files = settings.get("provider_batch_delete_files_after_import")
-    if delete_files is None:
-        delete_files = str(os.getenv("PROVIDER_BATCH_DELETE_FILES_AFTER_IMPORT", "true")).lower() in {"1", "true", "yes", "on"}
+    # TASK-257 §6: provider_batch_delete_files_after_import was read off the
+    # memory_settings row, but the column never existed — the read always
+    # returned None and the env var below was the only live path. Default
+    # stays true; promote it to a real column if it ever needs a UI knob.
+    delete_files = str(os.getenv("PROVIDER_BATCH_DELETE_FILES_AFTER_IMPORT", "true")).lower() in {"1", "true", "yes", "on"}
     if delete_files:
         for file_id in (run.get("provider_input_file_id"), provider.get("output_file_id"), provider.get("error_file_id")):
             if file_id:

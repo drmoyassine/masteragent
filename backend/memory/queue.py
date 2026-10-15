@@ -47,6 +47,15 @@ BULL_DEFAULT_JOB_OPTIONS = {
     "removeOnFail": BULL_REMOVE_ON_FAIL,
 }
 
+# TASK-257 §6: these started as memory_settings knobs whose columns never
+# existed, so every settings.get() silently returned its default. Hardcoded
+# until the §5 job registry owns per-job attempts/backoff. Concurrency binds
+# at Worker start, so a live knob would need a worker restart to take effect
+# anyway.
+QUEUE_CONCURRENCY = {"interactions_ops": 5, "memory_ops": 1, "knowledge_ops": 1}
+MEMORY_JOB_ATTEMPTS = 3
+MEMORY_JOB_BACKOFF_MS = 2000
+
 interactions_queue = Queue("interactions_ops", opts={"connection": REDIS_URL, "defaultJobOptions": BULL_DEFAULT_JOB_OPTIONS})
 memory_queue = Queue("memory_ops", opts={"connection": REDIS_URL, "defaultJobOptions": BULL_DEFAULT_JOB_OPTIONS})
 knowledge_queue = Queue("knowledge_ops", opts={"connection": REDIS_URL, "defaultJobOptions": BULL_DEFAULT_JOB_OPTIONS})
@@ -469,37 +478,26 @@ def _handle_failed(job, error):
 
 async def start_bullmq_workers():
     global interactions_worker, memory_worker, knowledge_worker
-    from core.storage import get_memory_db_context
-    
+
     from services.job_safety import reconcile_stale_maintenance_runs
     reconcile_stale_maintenance_runs()
 
-    settings = {}
-    try:
-        with get_memory_db_context() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM memory_settings LIMIT 1")
-            row = cursor.fetchone()
-            if row:
-                settings = dict(row)
-    except Exception as e:
-        logger.warning(f"Failed to fetch queue settings: {e}")
-        
-    int_conc = int(settings.get("interactions_queue_concurrency", 5))
-    mem_conc = int(settings.get("memory_queue_concurrency", 1))
-    know_conc = int(settings.get("knowledge_queue_concurrency", 1))
-    
-    logger.info(f"Starting BullMQ Workers (Int: {int_conc}, Mem: {mem_conc}, Know: {know_conc})...")
-    
-    interactions_worker = Worker("interactions_ops", _process_bulk_job, opts={"connection": REDIS_URL, "concurrency": int_conc})
+    logger.info(
+        "Starting BullMQ Workers (Int: %s, Mem: %s, Know: %s)...",
+        QUEUE_CONCURRENCY["interactions_ops"],
+        QUEUE_CONCURRENCY["memory_ops"],
+        QUEUE_CONCURRENCY["knowledge_ops"],
+    )
+
+    interactions_worker = Worker("interactions_ops", _process_bulk_job, opts={"connection": REDIS_URL, "concurrency": QUEUE_CONCURRENCY["interactions_ops"]})
     interactions_worker.on("completed", _handle_completed)
     interactions_worker.on("failed", _handle_failed)
 
-    memory_worker = Worker("memory_ops", _process_bulk_job, opts={"connection": REDIS_URL, "concurrency": mem_conc})
+    memory_worker = Worker("memory_ops", _process_bulk_job, opts={"connection": REDIS_URL, "concurrency": QUEUE_CONCURRENCY["memory_ops"]})
     memory_worker.on("completed", _handle_completed)
     memory_worker.on("failed", _handle_failed)
-    
-    knowledge_worker = Worker("knowledge_ops", _process_bulk_job, opts={"connection": REDIS_URL, "concurrency": know_conc})
+
+    knowledge_worker = Worker("knowledge_ops", _process_bulk_job, opts={"connection": REDIS_URL, "concurrency": QUEUE_CONCURRENCY["knowledge_ops"]})
     knowledge_worker.on("completed", _handle_completed)
     knowledge_worker.on("failed", _handle_failed)
 

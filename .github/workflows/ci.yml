@@ -18,7 +18,7 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - run: python -m compileall -q .
-      - run: python -m pytest tests/test_security_hardening.py -q
+      - run: python -m pytest tests/test_security_hardening.py tests/test_settings_drift.py -q
 
   frontend:
     runs-on: ubuntu-latest
