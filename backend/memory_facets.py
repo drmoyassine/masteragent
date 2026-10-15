@@ -327,89 +327,109 @@ async def backfill_facets(batch_size: int = 25, max_records: int = 1000,
 
 # ── Management skill seeding (WS-3) ──────────────────────────────────────────
 
-def seed_management_skill() -> None:
+def seed_management_skill(cursor=None) -> None:
     """Idempotently seed the always-on Knowledge Management skill. Called from
-    the schema migration block on startup."""
-    from core.storage import get_memory_db_context
-    from memory_skill_md import render_skill_md
+    the schema migration block on startup — pass that transaction's cursor:
+    opening a second connection here deadlocks against the caller's
+    uncommitted writes to the same rows (found by the 2026-10-15 boot smoke
+    on an unmigrated volume)."""
     try:
-        with get_memory_db_context() as conn:
-            cursor = conn.cursor()
-            metadata = {
-                "always_inject": True,
-                "skill_type": "soft",
-                "trigger_desc": "Always active — governs how to read and use the injected knowledge index.",
-                "purpose": "Safely use injected knowledge and retrieve authoritative full records when needed.",
-                "inputs": ["injected knowledge index", "conversation and entity profile", "approved retrieval tools"],
-                "outputs": ["grounded response", "explicit uncertainty", "feedback or delegated follow-up"],
-                "prerequisites": ["agent receives injected context", "approved retrieval tools are configured"],
-                "tools": ["GET /knowledge/{id}", "GET /search/semantic", "GET /knowledge/facets"],
-                "permissions": ["read permitted knowledge", "use approved retrieval and delegation tools"],
-                "side_effects": ["may submit usage feedback for non-system knowledge records"],
-                "failure_conditions": ["retrieval timeout", "empty result", "malformed record", "conflicting records"],
-                "safety_requirements": ["do not invent facts or facet values", "preserve scope and privacy", "surface uncertainty"],
-                "environments": ["all MasterAgent agents", "knowledge retrieval and generation pathways"],
-                "entity_types": [],
-                "playbook_ids": [],
-            }
-            body = _management_skill_body()
-            description = (
-                "Always-on protocol governing how to read the injected knowledge index, retrieve "
-                "full records on demand, broaden searches, and extend knowledge. Teaches that an "
-                "empty/sparse index does not mean the knowledge or capability is absent."
-            )
-            content = render_skill_md(
-                name=MANAGEMENT_SKILL_NAME,
-                category="skill",
-                description=description,
-                body=body,
-                metadata=metadata,
-                signals=[],
-                tags=[],
-                version=2,
-            )
-            cursor.execute("SELECT id FROM knowledge WHERE id = %s", (MANAGEMENT_SKILL_ID,))
-            if cursor.fetchone():
-                cursor.execute("""UPDATE knowledge
-                    SET content=%s, summary=%s, metadata=%s, source_pathway='system',
-                        quality_components=%s::jsonb,
-                        extraction_confidence=1.0, quality_score=1.0, status='active', version=2, updated_at=NOW()
-                    WHERE id=%s""", (content, description, json.dumps(metadata), json.dumps({"score_basis": "system_protected", "components": {"system_assurance": 1.0}}), MANAGEMENT_SKILL_ID))
-                logger.info("Updated Knowledge Management skill")
-                return
-            cursor.execute("""
-                INSERT INTO knowledge (
-                    id, source_intelligence_ids, signals, name, content, summary,
-                    visibility, tags, category, metadata, source_pathway,
-                    extraction_confidence, quality_score, quality_components, status, version, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
-                ON CONFLICT (id) DO NOTHING
-            """, (
-                MANAGEMENT_SKILL_ID, [], [], MANAGEMENT_SKILL_NAME, content, description,
-                "shared", [], "skill", json.dumps(metadata), "system",
-                1.0, 1.0, json.dumps({"score_basis": "system_protected", "components": {"system_assurance": 1.0}}), "active", 2,
-            ))
-        logger.info("Seeded Knowledge Management skill")
+        if cursor is not None:
+            _seed_management_skill(cursor)
+        else:
+            from core.storage import get_memory_db_context
+            with get_memory_db_context() as conn:
+                _seed_management_skill(conn.cursor())
     except Exception as e:
         logger.warning(f"seed_management_skill failed: {e}")
 
 
-def seed_default_facets_schema() -> None:
+def _seed_management_skill(cursor) -> None:
+    from memory_skill_md import render_skill_md
+    metadata = {
+        "always_inject": True,
+        "skill_type": "soft",
+        "trigger_desc": "Always active — governs how to read and use the injected knowledge index.",
+        "purpose": "Safely use injected knowledge and retrieve authoritative full records when needed.",
+        "inputs": ["injected knowledge index", "conversation and entity profile", "approved retrieval tools"],
+        "outputs": ["grounded response", "explicit uncertainty", "feedback or delegated follow-up"],
+        "prerequisites": ["agent receives injected context", "approved retrieval tools are configured"],
+        "tools": ["GET /knowledge/{id}", "GET /search/semantic", "GET /knowledge/facets"],
+        "permissions": ["read permitted knowledge", "use approved retrieval and delegation tools"],
+        "side_effects": ["may submit usage feedback for non-system knowledge records"],
+        "failure_conditions": ["retrieval timeout", "empty result", "malformed record", "conflicting records"],
+        "safety_requirements": ["do not invent facts or facet values", "preserve scope and privacy", "surface uncertainty"],
+        "environments": ["all MasterAgent agents", "knowledge retrieval and generation pathways"],
+        "entity_types": [],
+        "playbook_ids": [],
+    }
+    body = _management_skill_body()
+    description = (
+        "Always-on protocol governing how to read the injected knowledge index, retrieve "
+        "full records on demand, broaden searches, and extend knowledge. Teaches that an "
+        "empty/sparse index does not mean the knowledge or capability is absent."
+    )
+    content = render_skill_md(
+        name=MANAGEMENT_SKILL_NAME,
+        category="skill",
+        description=description,
+        body=body,
+        metadata=metadata,
+        signals=[],
+        tags=[],
+        version=2,
+    )
+    cursor.execute("SELECT id FROM knowledge WHERE id = %s", (MANAGEMENT_SKILL_ID,))
+    if cursor.fetchone():
+        cursor.execute("""UPDATE knowledge
+            SET content=%s, summary=%s, metadata=%s, source_pathway='system',
+                quality_components=%s::jsonb,
+                extraction_confidence=1.0, quality_score=1.0, status='active', version=2, updated_at=NOW()
+            WHERE id=%s""", (content, description, json.dumps(metadata), json.dumps({"score_basis": "system_protected", "components": {"system_assurance": 1.0}}), MANAGEMENT_SKILL_ID))
+        logger.info("Updated Knowledge Management skill")
+        return
+    cursor.execute("""
+        INSERT INTO knowledge (
+            id, source_intelligence_ids, signals, name, content, summary,
+            visibility, tags, category, metadata, source_pathway,
+            extraction_confidence, quality_score, quality_components, status, version, created_at, updated_at
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+        ON CONFLICT (id) DO NOTHING
+    """, (
+        MANAGEMENT_SKILL_ID, [], [], MANAGEMENT_SKILL_NAME, content, description,
+        "shared", [], "skill", json.dumps(metadata), "system",
+        1.0, 1.0, json.dumps({"score_basis": "system_protected", "components": {"system_assurance": 1.0}}), "active", 2,
+    ))
+    logger.info("Seeded Knowledge Management skill")
+
+
+def seed_default_facets_schema(cursor=None) -> None:
     """Idempotently seed the global facets schema if unset.
 
     NOTE: profile_facet_map is intentionally NOT auto-seeded — a populated map
     would auto-activate facet hard-filtering on every get-context (deriving
     facets from CRM profiles), which would exclude un-facetted records and
     change injection behavior before backfill runs. The map is opt-in: the
-    admin configures it (see DEFAULT_PROFILE_FACET_MAP) once facets are populated."""
-    from core.storage import get_memory_db_context
+    admin configures it (see DEFAULT_PROFILE_FACET_MAP) once facets are populated.
+
+    Pass the startup seed transaction's cursor when called from there — a
+    second connection deadlocks against its uncommitted memory_settings write
+    (found by the 2026-10-15 boot smoke)."""
     try:
-        with get_memory_db_context() as conn:
-            cursor = conn.cursor()
+        if cursor is not None:
             cursor.execute("""
                 UPDATE memory_settings
                 SET knowledge_facets_schema = %s
                 WHERE (knowledge_facets_schema IS NULL OR knowledge_facets_schema = 'null')
             """, (json.dumps(DEFAULT_FACETS_SCHEMA),))
+        else:
+            from core.storage import get_memory_db_context
+            with get_memory_db_context() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE memory_settings
+                    SET knowledge_facets_schema = %s
+                    WHERE (knowledge_facets_schema IS NULL OR knowledge_facets_schema = 'null')
+                """, (json.dumps(DEFAULT_FACETS_SCHEMA),))
     except Exception as e:
         logger.warning(f"seed_default_facets_schema failed: {e}")

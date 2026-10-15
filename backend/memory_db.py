@@ -2069,11 +2069,14 @@ def _seed_defaults():
                   AND knowledge_signals_prompt IS NULL
             """, (json.dumps(signals), entity_type))
 
-        # Sprint 2.5 — seed global facets schema + always-on Knowledge Management skill
+        # Sprint 2.5 — seed global facets schema + always-on Knowledge Management
+        # skill. Inside this transaction: the seeders must adopt our cursor —
+        # their own connection would self-deadlock on our uncommitted
+        # memory_settings row (found by the 2026-10-15 boot smoke).
         try:
             from memory_facets import seed_default_facets_schema, seed_management_skill
-            seed_default_facets_schema()
-            seed_management_skill()
+            seed_default_facets_schema(cursor)
+            seed_management_skill(cursor)
         except Exception as e:
             logger.warning(f"Sprint 2.5 seeding skipped: {e}")
 
