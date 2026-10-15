@@ -21,23 +21,23 @@ import pytest
 # Ensure backend/ is importable when pytest runs from backend/tests.
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from memory_similarity import (  # noqa: E402
+from memory_system.maintain.similarity import (  # noqa: E402
     centroid, cohesion, connected_components, cosine_similarity, edges_at_threshold,
     l2_normalize, member_to_centroid, min_mean_max, pairwise_similarities, weak_links,
 )
-from memory_clustering import (  # noqa: E402
+from memory_system.maintain.clustering import (  # noqa: E402
     accepted_proposal_groups, discover_candidate_groups, manual_group_metrics,
 )
-from memory_embedding import (  # noqa: E402
+from memory_system.maintain.embedding import (  # noqa: E402
     CONSOLIDATABLE_KNOWLEDGE_CATEGORIES, EMBEDDING_VERSION, build_embedding_metadata,
     embed_knowledge_fields, get_embedding_version, is_embedding_compatible,
     merge_embedding_metadata, serialize_knowledge_for_embedding,
 )
-from memory_consolidation_prompts import (  # noqa: E402
+from memory_system.maintain.consolidation_prompts import (  # noqa: E402
     CONSOLIDATION_PROMPT_VERSION, RECOMMENDATIONS, build_system_prompt, build_user_prompt,
     validate_proposal,
 )
-from memory_consolidation_repository import aggregate_canonical_payload  # noqa: E402
+from memory_system.maintain.consolidation_repository import aggregate_canonical_payload  # noqa: E402
 
 
 # ─── fixtures (golden category source records) ──────────────────────────────
@@ -348,7 +348,7 @@ class TestCanonicalAggregation:
 
 class TestPolicyGating:
     def test_merge_high_confidence_no_contradictions_allowed(self):
-        from memory_consolidation_service import _policy_allows_apply
+        from memory_system.maintain.consolidation_service import _policy_allows_apply
         settings = {
             "knowledge_hygiene_min_auto_confidence": 0.9,
             "knowledge_hygiene_contradiction_policy": "warn_and_merge",
@@ -357,28 +357,28 @@ class TestPolicyGating:
         assert _policy_allows_apply(_proposal(recommendation="merge", confidence=0.95), "trade_knowledge", settings) is True
 
     def test_low_confidence_blocked(self):
-        from memory_consolidation_service import _policy_allows_apply
+        from memory_system.maintain.consolidation_service import _policy_allows_apply
         settings = {"knowledge_hygiene_min_auto_confidence": 0.9, "knowledge_hygiene_contradiction_policy": "warn_and_merge"}
         assert _policy_allows_apply(_proposal(confidence=0.7), "trade_knowledge", settings) is False
 
     def test_contradictions_block(self):
-        from memory_consolidation_service import _policy_allows_apply
+        from memory_system.maintain.consolidation_service import _policy_allows_apply
         settings = {"knowledge_hygiene_min_auto_confidence": 0.5, "knowledge_hygiene_contradiction_policy": "warn_and_merge"}
         assert _policy_allows_apply(_proposal(confidence=0.9, contradictions=["c"]), "trade_knowledge", settings) is False
 
     def test_manual_review_policy_blocks(self):
-        from memory_consolidation_service import _policy_allows_apply
+        from memory_system.maintain.consolidation_service import _policy_allows_apply
         settings = {"knowledge_hygiene_min_auto_confidence": 0.5, "knowledge_hygiene_contradiction_policy": "manual_review"}
         assert _policy_allows_apply(_proposal(confidence=0.99), "trade_knowledge", settings) is False
 
     def test_category_policy_blocks(self):
-        from memory_consolidation_service import _policy_allows_apply
+        from memory_system.maintain.consolidation_service import _policy_allows_apply
         settings = {"knowledge_hygiene_min_auto_confidence": 0.5, "knowledge_hygiene_contradiction_policy": "warn_and_merge",
                     "knowledge_hygiene_category_policies": {"trade_knowledge": "manual_only"}}
         assert _policy_allows_apply(_proposal(confidence=0.99), "trade_knowledge", settings) is False
 
     def test_auto_synthesis_allows_warnings_only_under_explicit_policy(self):
-        from memory_consolidation_service import _policy_allows_apply
+        from memory_system.maintain.consolidation_service import _policy_allows_apply
         settings = {
             "knowledge_hygiene_mode": "auto_synthesis",
             "knowledge_hygiene_min_auto_confidence": 0.9,
@@ -392,7 +392,7 @@ class TestPolicyGating:
         assert _policy_allows_apply(proposal, "trade_knowledge", settings) is True
 
     def test_auto_conservative_never_applies_unresolved_contradictions(self):
-        from memory_consolidation_service import _policy_allows_apply
+        from memory_system.maintain.consolidation_service import _policy_allows_apply
         settings = {
             "knowledge_hygiene_mode": "auto_conservative",
             "knowledge_hygiene_min_auto_confidence": 0.9,
@@ -410,7 +410,7 @@ class TestPolicyGating:
 
 class TestSettingsModels:
     def test_update_accepts_all_hygiene_fields(self):
-        from memory_models import MemorySettingsUpdate
+        from memory_system.store.models import MemorySettingsUpdate
         data = MemorySettingsUpdate(
             knowledge_hygiene_enabled=False,
             knowledge_hygiene_similarity_threshold=0.9,
@@ -424,7 +424,7 @@ class TestSettingsModels:
         assert data.knowledge_hygiene_similarity_threshold == 0.9
 
     def test_response_defaults_match_plan(self):
-        from memory_models import MemorySettingsResponse
+        from memory_system.store.models import MemorySettingsResponse
         r = MemorySettingsResponse()
         assert r.knowledge_hygiene_enabled is True
         assert r.knowledge_hygiene_similarity_threshold == 0.82
@@ -434,7 +434,7 @@ class TestSettingsModels:
         assert len(r.knowledge_hygiene_enabled_categories) == 5
 
     def test_max_cluster_size_accepts_unbounded(self):
-        from memory_models import MemorySettingsResponse, MemorySettingsUpdate
+        from memory_system.store.models import MemorySettingsResponse, MemorySettingsUpdate
         update = MemorySettingsUpdate(knowledge_hygiene_max_cluster_size=None)
         response = MemorySettingsResponse(knowledge_hygiene_max_cluster_size=None)
         assert update.knowledge_hygiene_max_cluster_size is None
@@ -442,7 +442,7 @@ class TestSettingsModels:
 
     def test_rejects_invalid_hygiene_ranges_and_cluster_order(self):
         from pydantic import ValidationError
-        from memory_models import MemorySettingsUpdate
+        from memory_system.store.models import MemorySettingsUpdate
         with pytest.raises(ValidationError):
             MemorySettingsUpdate(knowledge_hygiene_similarity_threshold=1.01)
         with pytest.raises(ValidationError):
@@ -453,7 +453,7 @@ class TestSettingsModels:
 
     def test_rejects_unknown_hygiene_category_policy(self):
         from pydantic import ValidationError
-        from memory_models import MemorySettingsUpdate
+        from memory_system.store.models import MemorySettingsUpdate
         with pytest.raises(ValidationError):
             MemorySettingsUpdate(
                 knowledge_hygiene_category_policies={"unknown": "auto_synthesis"},
@@ -464,7 +464,7 @@ class TestSettingsModels:
 
 class TestRequestModels:
     def test_preview_request_defaults(self):
-        from memory_models import ConsolidationPreviewRequest, ConsolidationOptions
+        from memory_system.store.models import ConsolidationPreviewRequest, ConsolidationOptions
         r = ConsolidationPreviewRequest(knowledge_ids=["a", "b"])
         assert r.origin == "manual"
         assert r.options is None
@@ -472,7 +472,7 @@ class TestRequestModels:
         assert opts.canonical_strategy == "update_existing"
 
     def test_apply_request_requires_approved_canonical(self):
-        from memory_models import ConsolidationApplyRequest, CanonicalFields
+        from memory_system.store.models import ConsolidationApplyRequest, CanonicalFields
         r = ConsolidationApplyRequest(
             preview_id="p1",
             approved_canonical=CanonicalFields(name="X", content="Y"),
@@ -480,7 +480,7 @@ class TestRequestModels:
         assert r.canonical_strategy == "update_existing"
 
     def test_consolidation_error_carries_status(self):
-        from memory_consolidation_repository import ConsolidationError
+        from memory_system.maintain.consolidation_repository import ConsolidationError
         e = ConsolidationError("stale_preview", "changed", 409)
         assert e.code == "stale_preview" and e.status == 409
 
@@ -498,16 +498,16 @@ class TestProposalGeneration:
                 return responses[calls["n"] - 1]
             raise AssertionError("call_llm invoked more times than expected (would hit paid API)")
 
-        import memory_consolidation_service as svc
-        import memory_services
-        monkeypatch.setattr(memory_services, "call_llm", fake_call_llm, raising=True)
+        import memory_system.maintain.consolidation_service as svc
+        import services
+        monkeypatch.setattr(services, "call_llm", fake_call_llm, raising=True)
         monkeypatch.setattr(svc, "_settings", lambda: {"knowledge_max_tokens": 1600})
         monkeypatch.setattr(svc, "_llm_config", lambda: {"provider": "fake", "model_name": "fake-model"})
         return calls
 
     def test_happy_path_returns_validated_proposal(self, monkeypatch):
         self._patch_llm(monkeypatch, [json.dumps(_proposal(recommendation="merge", confidence=0.95))])
-        import memory_consolidation_service as svc
+        import memory_system.maintain.consolidation_service as svc
         rows = [GOLDEN["best_practices"](), _row("bp2", "best_practices", content="related guidance")]
         metrics = {"cohesion": 0.9, "pairwise_min": 0.85, "pairwise_max": 0.99, "weak_links": []}
         proposal, raw, errs, model = asyncio.run(
@@ -520,7 +520,7 @@ class TestProposalGeneration:
     def test_repair_retry_on_invalid_json(self, monkeypatch):
         # First response invalid, second valid → one repair retry succeeds.
         self._patch_llm(monkeypatch, ["not json at all", json.dumps(_proposal(recommendation="merge"))])
-        import memory_consolidation_service as svc
+        import memory_system.maintain.consolidation_service as svc
         rows = [GOLDEN["trade_knowledge"](), _row("tk2", "trade_knowledge")]
         proposal, raw, errs, model = asyncio.run(
             svc._generate_proposal(rows, {"cohesion": 0.9, "pairwise_min": 0.8, "pairwise_max": 0.99, "weak_links": []}, "trade_knowledge"))
@@ -529,7 +529,7 @@ class TestProposalGeneration:
 
     def test_failed_after_retry(self, monkeypatch):
         self._patch_llm(monkeypatch, ["bad1", "bad2"])
-        import memory_consolidation_service as svc
+        import memory_system.maintain.consolidation_service as svc
         rows = [GOLDEN["lessons_learned"](), _row("ll2", "lessons_learned")]
         proposal, raw, errs, model = asyncio.run(
             svc._generate_proposal(rows, {"cohesion": 0.9, "pairwise_min": 0.8, "pairwise_max": 0.99, "weak_links": []}, "lessons_learned"))
@@ -542,7 +542,7 @@ class TestProposalGeneration:
         proposal, errs = validate_proposal(p, "skill")
         assert not errs
         # slug round-trips
-        from memory_skill_md import slugify
+        from memory_system.maintain.skill_md import slugify
         assert slugify("Valid Skill") == "valid-skill"
 
 
@@ -551,19 +551,19 @@ class TestProposalGeneration:
 class TestRepositoryHelpers:
     def test_normalize_ts_handles_iso_and_datetime(self):
         from datetime import datetime, timezone
-        from memory_consolidation_repository import _normalize_ts
+        from memory_system.maintain.consolidation_repository import _normalize_ts
         assert _normalize_ts(None) is None
         d = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         assert _normalize_ts(d).startswith("2026-01-01T00:00:00")
         assert _normalize_ts("2026-01-01T00:00:00Z").startswith("2026-01-01")
 
     def test_distinct_ids_preserves_order_dedups(self):
-        from memory_consolidation_service import _distinct_ids
+        from memory_system.maintain.consolidation_service import _distinct_ids
         assert _distinct_ids(["a", "b", "a", "c", None]) == ["a", "b", "c"]
 
     def test_audit_json_serializes_datetime_and_vector_like_values(self):
         from datetime import datetime, timezone
-        from memory_consolidation_repository import _json
+        from memory_system.maintain.consolidation_repository import _json
 
         class Vector:
             def tolist(self):
@@ -577,7 +577,7 @@ class TestRepositoryHelpers:
         assert encoded["embedding"] == [0.1, 0.2]
 
     def test_manual_metrics_are_flattened_for_gates_and_api(self):
-        from memory_consolidation_service import _flatten_manual_metrics
+        from memory_system.maintain.consolidation_service import _flatten_manual_metrics
         flattened = _flatten_manual_metrics({
             "member_ids": ["a", "b"],
             "embedding_member_ids": ["a", "b"],
@@ -590,32 +590,32 @@ class TestRepositoryHelpers:
         assert flattened["member_ids"] == ["a", "b"]
 
     def test_validate_source_set_rejects_mixed_categories(self):
-        from memory_consolidation_service import _validate_source_set
-        from memory_consolidation_repository import ConsolidationError
+        from memory_system.maintain.consolidation_service import _validate_source_set
+        from memory_system.maintain.consolidation_repository import ConsolidationError
         rows = [_row("a", "skill"), _row("b", "playbook")]
         with pytest.raises(ConsolidationError) as exc:
             _validate_source_set(rows, origin="manual")
         assert exc.value.code == "mixed_categories" and exc.value.status == 400
 
     def test_validate_source_set_rejects_non_allowlist_category(self):
-        from memory_consolidation_service import _validate_source_set
-        from memory_consolidation_repository import ConsolidationError
+        from memory_system.maintain.consolidation_service import _validate_source_set
+        from memory_system.maintain.consolidation_repository import ConsolidationError
         rows = [_row("a", "other"), _row("b", "other")]
         with pytest.raises(ConsolidationError) as exc:
             _validate_source_set(rows, origin="manual")
         assert exc.value.code == "invalid_category"
 
     def test_validate_source_set_rejects_retired(self):
-        from memory_consolidation_service import _validate_source_set
-        from memory_consolidation_repository import ConsolidationError
+        from memory_system.maintain.consolidation_service import _validate_source_set
+        from memory_system.maintain.consolidation_repository import ConsolidationError
         rows = [_row("a", "skill", status="retired"), _row("b", "skill")]
         with pytest.raises(ConsolidationError) as exc:
             _validate_source_set(rows, origin="manual")
         assert exc.value.code == "invalid_status"
 
     def test_validate_approved_canonical_requires_name_and_content(self):
-        from memory_consolidation_service import _validate_approved_canonical
-        from memory_consolidation_repository import ConsolidationError
+        from memory_system.maintain.consolidation_service import _validate_approved_canonical
+        from memory_system.maintain.consolidation_repository import ConsolidationError
         with pytest.raises(ConsolidationError) as exc:
             _validate_approved_canonical({"name": "", "content": ""}, "trade_knowledge")
         assert exc.value.code == "invalid_canonical" and exc.value.status == 422
@@ -624,5 +624,5 @@ class TestRepositoryHelpers:
 # ─── embedding version constant ──────────────────────────────────────────────
 
 def test_embedding_version_matches_default_setting():
-    from memory_models import MemorySettingsResponse
+    from memory_system.store.models import MemorySettingsResponse
     assert MemorySettingsResponse().knowledge_hygiene_embedding_version == EMBEDDING_VERSION

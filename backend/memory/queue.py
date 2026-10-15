@@ -101,11 +101,11 @@ class JobSpec:
 
 
 # Handlers import their collaborators function-locally to avoid circular
-# dependencies at boot — and so tests patching memory_tasks attributes are
+# dependencies at boot — and so tests patching the worker-handler modules' attributes are
 # resolved at dispatch time.
 
 async def _run_ingest_interaction(job: Job, run_id) -> None:
-    from memory_tasks import process_interaction
+    from memory_system.ingest.ingestion import process_interaction
     interaction_id = job.data.get("interaction_id")
     if interaction_id:
         await process_interaction(interaction_id)
@@ -120,7 +120,7 @@ async def _run_fire_outbound_webhook(job: Job, run_id) -> None:
 
 
 async def _run_generate_memory(job: Job, run_id) -> None:
-    from memory_tasks import _generate_memory_for_entity
+    from memory_system.distill.generation import _generate_memory_for_entity
     e_type = job.data.get("entity_type")
     e_id = job.data.get("entity_id")
     date_str = job.data.get("interaction_date")
@@ -129,7 +129,7 @@ async def _run_generate_memory(job: Job, run_id) -> None:
 
 
 async def _run_generate_insight(job: Job, run_id) -> None:
-    from memory_tasks import compact_entity
+    from memory_system.distill.compaction import compact_entity
     e_type = job.data.get("entity_type")
     e_id = job.data.get("entity_id")
     if e_type and e_id:
@@ -138,7 +138,7 @@ async def _run_generate_insight(job: Job, run_id) -> None:
 
 async def _run_knowledge_check(job: Job, run_id):
     """Core knowledge-tier generation shared by the two job names below."""
-    from memory_tasks import run_knowledge_check
+    from memory_system.distill.knowledge import run_knowledge_check
     return await run_knowledge_check(
         drain=bool(job.data.get("drain")), min_count=job.data.get("min_count"),
         max_rounds=int(job.data.get("max_rounds", 50 if job.data.get("drain") else 1)),
@@ -153,8 +153,8 @@ async def _run_all_knowledge_generation(job: Job, run_id):
     # reflection otherwise). The legacy generate_knowledge name runs the
     # tiers only.
     operation_result = await _run_knowledge_check(job, run_id)
-    from memory_playbooks import run_playbook_check
-    from memory_telemetry import run_telemetry_reflection, backfill_telemetry
+    from memory_system.distill.playbooks import run_playbook_check
+    from memory_system.distill.telemetry import run_telemetry_reflection, backfill_telemetry
     await run_playbook_check()
     if job.data.get("drain"):
         await backfill_telemetry(max_days=int(job.data.get("max_days", 7)))
@@ -164,14 +164,14 @@ async def _run_all_knowledge_generation(job: Job, run_id):
 
 
 async def _run_promote_to_knowledge(job: Job, run_id) -> None:
-    from memory_tasks import promote_to_knowledge
+    from memory_system.distill.knowledge import promote_to_knowledge
     i_id = job.data.get("insight_id")
     if i_id:
         await promote_to_knowledge(i_id)
 
 
 async def _run_extract_playbooks(job: Job, run_id) -> None:
-    from memory_playbooks import run_playbook_check
+    from memory_system.distill.playbooks import run_playbook_check
     await run_playbook_check()
 
 
@@ -179,7 +179,7 @@ async def _run_consolidation(job: Job, run_id):
     # Legacy job name kept as a backward-compatible alias: it now starts
     # a hygiene run using the configured mode (no pairwise retirement),
     # plus the non-destructive decay/quality maintenance.
-    from memory_consolidation import run_consolidation
+    from memory_system.maintain.consolidation import run_consolidation
     return await run_consolidation(
         max_records=int(job.data.get("max_records", 1000)),
         max_clusters=int(job.data.get("max_clusters", 100)),
@@ -190,7 +190,7 @@ async def _run_consolidation(job: Job, run_id):
 async def _run_knowledge_hygiene(job: Job, run_id):
     # Knowledge hygiene: discover candidate clusters + generate proposals.
     # Auto-apply only in auto_* modes; manual_only/proposal_only never apply.
-    from memory_consolidation_service import discover_and_propose
+    from memory_system.maintain.consolidation_service import discover_and_propose
     from services.config_helpers import get_memory_settings
     _hsettings = get_memory_settings() or {}
     _mode = job.data.get("mode") or _hsettings.get("knowledge_hygiene_mode", "manual_only")
@@ -214,7 +214,7 @@ async def _run_knowledge_hygiene(job: Job, run_id):
 
 async def _run_embedding_backfill(job: Job, run_id):
     # Resumable, idempotent embedding backfill (never mutates content/status).
-    from memory_embedding_backfill import run_embedding_backfill
+    from memory_system.maintain.embedding_backfill import run_embedding_backfill
     return await run_embedding_backfill(
         batch_size=int(job.data.get("batch_size", 25)),
         max_records=int(job.data.get("max_records", 1000)),
@@ -225,7 +225,7 @@ async def _run_embedding_backfill(job: Job, run_id):
 async def _run_creation_time_consolidation(job: Job, run_id) -> None:
     # Async creation-time consolidation: find candidates for a freshly
     # created record and propose (auto-apply only in auto_* modes).
-    from memory_consolidation_service import creation_time_propose
+    from memory_system.maintain.consolidation_service import creation_time_propose
     from services.config_helpers import get_memory_settings
     _cts = get_memory_settings() or {}
     _cmode = _cts.get("knowledge_hygiene_mode", "manual_only")
@@ -236,7 +236,7 @@ async def _run_creation_time_consolidation(job: Job, run_id) -> None:
 
 
 async def _run_backfill_facets(job: Job, run_id):
-    from memory_facets import backfill_facets
+    from memory_system.distill.facets import backfill_facets
     return await backfill_facets(
         batch_size=int(job.data.get("batch_size", 25)),
         max_records=int(job.data.get("max_records", 250)),
@@ -245,12 +245,12 @@ async def _run_backfill_facets(job: Job, run_id):
 
 
 async def _run_backfill_telemetry(job: Job, run_id) -> None:
-    from memory_telemetry import backfill_telemetry
+    from memory_system.distill.telemetry import backfill_telemetry
     await backfill_telemetry(max_days=int(job.data.get("max_days", 7)))
 
 
 async def _run_interaction_retention(job: Job, run_id):
-    from memory_interaction_retention import run_interaction_retention
+    from memory_system.maintain.interaction_retention import run_interaction_retention
     # Sync batched deletes must not block the shared event loop.
     return await asyncio.to_thread(
         run_interaction_retention,
@@ -261,23 +261,23 @@ async def _run_interaction_retention(job: Job, run_id):
 
 
 async def _run_refresh_operation_metrics(job: Job, run_id):
-    from memory_operation_metrics import refresh_snapshots
+    from memory_system.maintain.operation_metrics import refresh_snapshots
     # Exact-eligibility aggregation is a synchronous table scan.
     return await asyncio.to_thread(refresh_snapshots)
 
 
 async def _run_intelligence_sweep(job: Job, run_id) -> None:
-    from memory_compaction import run_compaction_check
+    from memory_system.distill.compaction import run_compaction_check
     await run_compaction_check(min_count=job.data.get("min_count"))
 
 
 async def _run_reflect_telemetry(job: Job, run_id) -> None:
-    from memory_telemetry import run_telemetry_reflection
+    from memory_system.distill.telemetry import run_telemetry_reflection
     await run_telemetry_reflection(job.data.get("reflection_date"))
 
 
 async def _run_extract_knowledge_attachment(job: Job, run_id):
-    from memory_knowledge_attachments import extract_attachment
+    from memory_system.distill.knowledge_attachments import extract_attachment
     return await extract_attachment(
         str(job.data.get("attachment_id")),
         max_pages=int(job.data.get("max_pages", 200)),
@@ -399,7 +399,7 @@ async def _process_bulk_job(job: Job, token: str):
             # original still executes must not run the sweep twice: if the
             # claimed date already completed, this pickup is a no-op.
             if claim_name:
-                from memory_generation import get_job_claim_status
+                from memory_system.distill.generation import get_job_claim_status
                 if get_job_claim_status(claim_name, claim_date) == "completed":
                     logger.info("Skipping %s (%s): claim %s/%s already completed",
                                 job.name, job.id, claim_name, claim_date)
@@ -425,7 +425,7 @@ async def _process_bulk_job(job: Job, token: str):
                                 "UPDATE knowledge_attachments SET status='blocked', extraction=%s::jsonb, updated_at=NOW() WHERE id=%s",
                                 (json.dumps({"error": provider_block["message"], "reason": provider_block["code"]}), job.data.get("attachment_id")),
                             )
-                    from memory_db_writes import log_pipeline_run
+                    from memory_system.store.writes import log_pipeline_run
                     log_pipeline_run(job.name, "blocked", reason_code=provider_block["code"],
                                      detail={"message": provider_block["message"], "queue_job_id": str(job.id)},
                                      trigger="queue")
@@ -437,7 +437,7 @@ async def _process_bulk_job(job: Job, token: str):
                 command = get_command(spec.controls_key)
                 if command in {"pause", "cancel"}:
                     logger.info("Skipping %s at operator checkpoint (%s)", job.name, command)
-                    from memory_db_writes import log_pipeline_run
+                    from memory_system.store.writes import log_pipeline_run
                     log_pipeline_run(job.name, "skipped", reason_code=f"operator_{command}",
                                      detail={"queue_job_id": str(job.id), "control": command}, trigger="queue")
                     return {"status": command, "reason": f"operator_{command}"}
@@ -445,13 +445,13 @@ async def _process_bulk_job(job: Job, token: str):
             if spec.singleton:
                 from services.job_safety import try_acquire_singleton_job
                 if not try_acquire_singleton_job(job.name):
-                    from memory_db_writes import log_pipeline_run
+                    from memory_system.store.writes import log_pipeline_run
                     log_pipeline_run(job.name, "skipped", reason_code="already_running",
                                      detail={"queue_job_id": str(job.id)}, trigger="queue")
                     logger.warning("Skipping duplicate maintenance job %s (%s)", job.name, job.id)
                     return {"status": "skipped", "reason": "already_running"}
                 singleton_lock_name = job.name
-                from memory_db_writes import log_pipeline_run
+                from memory_system.store.writes import log_pipeline_run
                 max_records = job.data.get("max_records")
                 batch_size = job.data.get("batch_size")
                 if max_records:
@@ -488,18 +488,18 @@ async def _process_bulk_job(job: Job, token: str):
         # a job lost between enqueue and pickup can no longer silently skip
         # the day (the scheduler's 15-min stale reclaim re-fires it instead).
         if claim_name:
-            from memory_generation import complete_job_date
+            from memory_system.distill.generation import complete_job_date
             complete_job_date(claim_name, claim_date)
 
         if singleton_lock_name:
-            from memory_db_writes import log_pipeline_run
+            from memory_system.store.writes import log_pipeline_run
             from services.job_controls import get_command
             control = spec.controls_key and get_command(spec.controls_key)
             stopped = control in {"pause", "cancel"}
             detail = {"queue_job_id": str(job.id), "result": operation_result or {},
                       "control": control or "run"}
             if run_id:
-                from memory_db_writes import update_pipeline_run
+                from memory_system.store.writes import update_pipeline_run
                 if isinstance(operation_result, dict):
                     tier_results = operation_result.get("tiers") or {}
                     base_completed = operation_result.get("processed")
@@ -522,7 +522,7 @@ async def _process_bulk_job(job: Job, token: str):
             # the persisted UI snapshot current even when no browser is open;
             # the guard collapses simultaneous completion/UI refresh requests.
             if spec.refresh_metrics_on_complete:
-                from memory_operation_metrics import mark_refresh_error, request_refresh
+                from memory_system.maintain.operation_metrics import mark_refresh_error, request_refresh
                 if request_refresh():
                     try:
                         await knowledge_queue.add("refresh_operation_metrics", {}, {"priority": 4})
@@ -539,16 +539,16 @@ async def _process_bulk_job(job: Job, token: str):
         logger.error(f"Bulk job {job.id} failed: {e}")
 
         if run_id:
-            from memory_db_writes import update_pipeline_run
+            from memory_system.store.writes import update_pipeline_run
             update_pipeline_run(run_id, status="failed", outcome="failed",
                                 reason_code="job_failed",
                                 detail={"message": str(e), "queue_job_id": str(job.id)})
 
         from services.job_safety import ProviderStopError
         if isinstance(e, ProviderStopError):
-            from memory_db_writes import log_pipeline_run
+            from memory_system.store.writes import log_pipeline_run
             if run_id:
-                from memory_db_writes import update_pipeline_run
+                from memory_system.store.writes import update_pipeline_run
                 update_pipeline_run(run_id, status="blocked", outcome="blocked", reason_code=e.code,
                                     detail={"message": str(e), "queue_job_id": str(job.id)})
             else:
@@ -565,7 +565,7 @@ async def _process_bulk_job(job: Job, token: str):
         if attempts_made >= max_attempts:
             logger.error(f"Job {job.id} exhausted {max_attempts} retries. Moving to DLQ.")
             from core.storage import get_memory_db_context
-            from memory_db_writes import log_pipeline_run
+            from memory_system.store.writes import log_pipeline_run
             try:
                 # Every terminal failure leaves a pipeline-run row — the BullMQ
                 # failed-set cap (BULL_REMOVE_ON_FAIL_COUNT) is not a durable
@@ -592,7 +592,7 @@ async def _process_bulk_job(job: Job, token: str):
             # once the stop lifts or the operator resumes.
             if claim_name:
                 try:
-                    from memory_generation import fail_job_date
+                    from memory_system.distill.generation import fail_job_date
                     fail_job_date(claim_name, claim_date, e)
                 except Exception as claim_exc:
                     logger.error("Failed to stamp claim failure for %s/%s: %s",

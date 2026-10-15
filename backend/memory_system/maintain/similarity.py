@@ -1,4 +1,4 @@
-"""memory_similarity.py — Pure standard-library vector similarity primitives.
+"""memory_system.maintain.similarity.py — Pure standard-library vector similarity primitives.
 
 No numpy / scipy / sklearn (per the implementation mandate). Everything here is
 deterministic: input IDs are sorted before pairing and component labelling so

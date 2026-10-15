@@ -1,4 +1,4 @@
-"""memory_embedding_backfill.py — Resumable, idempotent embedding backfill.
+"""memory_system.maintain.embedding_backfill.py — Resumable, idempotent embedding backfill.
 
 Re-embeds active knowledge records whose ``metadata.embedding.version`` does
 not match the configured ``knowledge_hygiene_embedding_version`` (including
@@ -17,7 +17,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from core.storage import get_memory_db_context
-from memory_embedding import (
+from memory_system.maintain.embedding import (
     EMBEDDING_VERSION,
     current_embedding_model,
     merge_embedding_metadata,
@@ -173,7 +173,7 @@ async def run_embedding_backfill(
 
         batches += 1
         if progress_run_id:
-            from memory_db_writes import update_pipeline_run
+            from memory_system.store.writes import update_pipeline_run
             update_pipeline_run(progress_run_id, progress_completed=seen,
                                 progress_failed=failed,
                                 detail={"batches": batches, "succeeded": succeeded, "failed": failed,
@@ -271,7 +271,7 @@ async def _backfill_source_tiers(*, batch_size: int, max_records: Optional[int],
                 failed_ids.update(row["id"] for row in rows)
                 logger.warning("%s embedding backfill batch failed for %d records: %s", table, len(rows), exc)
             if progress_run_id:
-                from memory_db_writes import update_pipeline_run
+                from memory_system.store.writes import update_pipeline_run
                 update_pipeline_run(progress_run_id, progress_completed=progress_offset + global_processed + processed,
                                     progress_failed=failed,
                                     detail={"tier": table, "tier_processed": processed, "tier_succeeded": succeeded,
@@ -344,7 +344,7 @@ def _apply_embedding_update_with_cursor(
 
 async def _embed_batch(texts: List[str]) -> List[List[float]]:
     """Embed a bounded group using the provider's native multi-input API."""
-    from memory_services import generate_embeddings_batch
+    from services import generate_embeddings_batch
 
     if not texts:
         return []

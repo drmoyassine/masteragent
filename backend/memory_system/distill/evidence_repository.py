@@ -182,7 +182,7 @@ def apply_canonical_revision(
         previous = dict(row)
         stored_content = approved["content"]
         if row.get("category") in ("skill", "playbook"):
-            from memory_skill_md import is_skill_md, render_skill_md
+            from memory_system.maintain.skill_md import is_skill_md, render_skill_md
             if not is_skill_md(stored_content):
                 stored_content = render_skill_md(
                     name=approved["name"], category=row["category"],
@@ -220,6 +220,6 @@ def apply_canonical_revision(
               json.dumps({"proposal": proposal, "approved": approved})))
         cur.execute("UPDATE knowledge_evidence_bundles SET status='revised',canonical_knowledge_id=%s,updated_at=NOW() WHERE id=%s",
                     (canonical_id,bundle_id))
-    from memory_quality import recalculate_knowledge_quality
+    from memory_system.maintain.quality import recalculate_knowledge_quality
     recalculate_knowledge_quality(canonical_id)
     return event_id

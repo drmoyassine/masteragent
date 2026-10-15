@@ -2,7 +2,7 @@
 from collections import defaultdict
 from datetime import datetime, timezone
 
-from memory_services import get_memory_settings
+from services import get_memory_settings
 from core.storage import get_redis_client
 
 _rate_limit_counters: dict = defaultdict(lambda: {"count": 0, "window_start": None})

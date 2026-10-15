@@ -4,7 +4,7 @@ import uuid
 from typing import Optional
 
 from core.storage import get_memory_db_context
-from memory_services import (
+from services import (
     call_llm,
     get_memory_settings,
     get_system_prompt,
@@ -13,10 +13,10 @@ from memory_services import (
 from services.config_helpers import get_pipeline_configs, get_system_prompt_by_config_id
 from services.llm import parse_llm_json
 from services.prompt_renderer import inject_variables
-from memory_db_writes import insert_knowledge, log_pipeline_run
-from memory_helpers import _get_entity_type_config, _format_signal_definitions
-from memory_generation_policy import approval_status, resolve_generation_policy
-from memory_facets import facet_prompt_instructions, validate_generated_facets
+from memory_system.store.writes import insert_knowledge, log_pipeline_run
+from memory_system.store.helpers import _get_entity_type_config, _format_signal_definitions
+from memory_system.distill.policy import approval_status, resolve_generation_policy
+from memory_system.distill.facets import facet_prompt_instructions, validate_generated_facets
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ async def run_knowledge_check(
         )
         total_created += created
         if progress_run_id:
-            from memory_db_writes import update_pipeline_run
+            from memory_system.store.writes import update_pipeline_run
             update_pipeline_run(progress_run_id, progress_completed=total_created,
                                 detail={"round": round_no + 1, "rounds": max_rounds})
         if not created or total_created >= max_records:
@@ -189,7 +189,7 @@ async def generate_knowledge_from_intelligence(intelligence: list) -> int:
         "embedded_at": ins.get("embedded_at"),
     } for ins in intelligence]
     try:
-        from memory_evidence_service import route_evidence_or_link
+        from memory_system.distill.evidence_service import route_evidence_or_link
         routing = await route_evidence_or_link(
             pathway="declarative_knowledge", sources=sources, settings=settings,
             entity_type=entity_type,
@@ -266,7 +266,7 @@ async def generate_knowledge_from_intelligence(intelligence: list) -> int:
         return 0
 
     try:
-        from memory_generation_contracts import validate_declarative
+        from memory_system.distill.contracts import validate_declarative
         candidate = validate_declarative(result)
     except ValueError as exc:
         logger.warning("Rejected invalid declarative Knowledge output: %s", exc)
@@ -310,7 +310,7 @@ async def generate_knowledge_from_intelligence(intelligence: list) -> int:
 
     embedding = None
     try:
-        from memory_embedding import embed_knowledge_fields
+        from memory_system.maintain.embedding import embed_knowledge_fields
         embedding, _model = await embed_knowledge_fields(
             name=name, category=category, content=content,
             summary=summary, signals=signals, tags=tags,

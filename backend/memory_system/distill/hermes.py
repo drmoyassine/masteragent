@@ -7,11 +7,11 @@ import logging
 import uuid
 from typing import Optional
 
-from memory_services import call_llm, generate_embedding, get_memory_settings
+from services import call_llm, generate_embedding, get_memory_settings
 from services.llm import parse_llm_json
-from memory_db_writes import insert_knowledge
-from memory_generation_policy import approval_status, resolve_generation_policy
-from memory_facets import facet_prompt_instructions, validate_generated_facets
+from memory_system.store.writes import insert_knowledge
+from memory_system.distill.policy import approval_status, resolve_generation_policy
+from memory_system.distill.facets import facet_prompt_instructions, validate_generated_facets
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +94,7 @@ async def process_admin_instruction(
     # Generate embedding via the canonical category-aware serializer.
     embedding = None
     try:
-        from memory_embedding import embed_knowledge_fields
+        from memory_system.maintain.embedding import embed_knowledge_fields
         embedding, _model = await embed_knowledge_fields(
             name=name, category=determined_category, content=content, summary=summary,
         )

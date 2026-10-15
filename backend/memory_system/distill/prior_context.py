@@ -8,7 +8,7 @@ import logging
 from typing import Optional
 
 from core.storage import get_memory_db_context
-from memory_services import generate_embedding, get_memory_settings
+from services import generate_embedding, get_memory_settings
 
 logger = logging.getLogger(__name__)
 

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 async def test_agent_interaction_ingestion_queues_job():
     """Verify that hitting the interactions API endpoint enqueues a job without synchronous execution"""
     from memory.agent import ingest_interaction
-    from memory_models import InteractionCreate
+    from memory_system.store.models import InteractionCreate
 
     # Mock dependencies
     req_body = InteractionCreate(
@@ -54,7 +54,7 @@ async def test_bullmq_worker_router():
     mock_job = MockJob("promote_to_lesson", {"intelligence_id": "test-insight"})
 
     with patch("services.config_helpers.get_llm_config", return_value={"rate_limit_rpm": 60}):
-        with patch("memory_tasks.promote_to_lesson", new_callable=AsyncMock) as mock_promote:
+        with patch("memory_system.distill.knowledge.promote_to_lesson", new_callable=AsyncMock) as mock_promote:
             with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
                 
                 # Execute queue worker fn directly
@@ -81,7 +81,7 @@ async def test_dead_letter_queue_failure_logic():
     mock_job = MockFailureJob("ingest_interaction", {"interaction_id": "bad-id"})
     
     # Mock error inside router
-    with patch("memory_tasks.process_interaction", side_effect=Exception("Simulated API Down")):
+    with patch("memory_system.ingest.ingestion.process_interaction", side_effect=Exception("Simulated API Down")):
         with patch("services.config_helpers.get_llm_config", return_value={}):
             with patch("core.storage.get_memory_db_context") as mock_db:
                 mock_cursor = MagicMock()

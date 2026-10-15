@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from pydantic import BaseModel
 
 from core.storage import get_memory_db_context, cache_interaction, flush_interaction_cache
-from memory_models import (
+from memory_system.store.models import (
     InteractionCreate, InteractionResponse, InteractionUpdate,
     BulkInteractionCreate, BulkInteractionResponse,
     MemoryCreate, MemoryUpdate, MemoryResponse,
@@ -26,7 +26,7 @@ from memory_models import (
     SearchRequest, SearchResponse, SearchResult,
     ContextStatusResponse, IntelligenceContextItem, KnowledgeContextItem,
 )
-from memory_services import (
+from services import (
     generate_embedding,
     get_memory_settings,
     parse_document,
@@ -40,7 +40,7 @@ from memory_services import (
 )
 from memory.auth import verify_agent_key, log_audit, require_admin_or_agent
 from memory.access import ensure_entity_access, ensure_record_access, grant_entity, scope_enforced
-from memory_tasks import check_rate_limit
+from memory_system.ingest.rate_limit import check_rate_limit
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -703,7 +703,7 @@ async def get_context(
         k_floor = float(settings.get("context_knowledge_min_similarity") or 0.0)
 
         # Resolve governed facets: explicit param → else derive from CRM profile.
-        from memory_facets import canonicalize_facets
+        from memory_system.distill.facets import canonicalize_facets
         resolved_facets: dict = {}
         facets_from_profile = False
         if knowledge_facets:
@@ -713,7 +713,7 @@ async def get_context(
                 resolved_facets = {}
         if not resolved_facets:
             try:
-                from memory_facets import get_profile_facet_map
+                from memory_system.distill.facets import get_profile_facet_map
                 pmap = get_profile_facet_map() or {}
                 if pmap:
                     cursor.execute(
@@ -1091,8 +1091,8 @@ async def create_knowledge(body: KnowledgeCreate, agent: dict = Depends(verify_a
     """Create a knowledge record. Routes through insert_knowledge so category,
     metadata, status, SKILL.md rendering (skill/playbook) and governed facet
     extraction are applied consistently with every other creation pathway."""
-    from memory_db_writes import insert_knowledge
-    from memory_facets import enrich_metadata_with_facets
+    from memory_system.store.writes import insert_knowledge
+    from memory_system.distill.facets import enrich_metadata_with_facets
 
     knowledge_id = str(uuid.uuid4())
     category = body.category or "trade_knowledge"
@@ -1188,7 +1188,7 @@ async def list_knowledge_facets(
     """Discover the governed facet vocabulary in use across active knowledge.
     No key → {facet_key: [distinct values...]} for every schema key with values.
     ?key=country → ["Malaysia", "United Kingdom", ...]. Values come from metadata.facets."""
-    from memory_facets import get_facets_schema
+    from memory_system.distill.facets import get_facets_schema
     schema = get_facets_schema()
     schema_keys = [s.get("key") for s in schema if s.get("key")]
     keys = [key] if key else schema_keys

@@ -1,4 +1,4 @@
-"""memory_clustering.py — Candidate discovery + deterministic cluster splitting.
+"""memory_system.maintain.clustering.py — Candidate discovery + deterministic cluster splitting.
 
 Embedding similarity is used ONLY to discover and group automated candidates.
 The semantic merge decision always comes from the category-aware LLM proposal
@@ -33,7 +33,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 
-from memory_similarity import (
+from memory_system.maintain.similarity import (
     centroid,
     cohesion,
     connected_components,

@@ -4,7 +4,7 @@ import logging
 import uuid
 
 from core.storage import get_memory_db_context
-from memory_services import (
+from services import (
     call_llm,
     generate_embedding,
     get_llm_config,
@@ -14,9 +14,9 @@ from memory_services import (
 from services.config_helpers import get_pipeline_configs, get_system_prompt_by_config_id
 from services.llm import parse_llm_json
 from services.prompt_renderer import inject_variables
-from memory_db_writes import insert_intelligence, log_pipeline_run
-from memory_prior_context import fetch_prior_intelligence, fetch_prior_knowledge_semantic
-from memory_helpers import _get_entity_type_config, _format_signal_definitions
+from memory_system.store.writes import insert_intelligence, log_pipeline_run
+from memory_system.distill.prior_context import fetch_prior_intelligence, fetch_prior_knowledge_semantic
+from memory_system.store.helpers import _get_entity_type_config, _format_signal_definitions
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ async def run_compaction_check(min_count: int = None):
 
     Two valves (mirrors memory generation):
       - Threshold valve: called intra-day after each memory is generated
-        (via _check_compaction_trigger in memory_generation) — uses the
+        (via _check_compaction_trigger in memory_system.distill.generation) — uses the
         configured intelligence_extraction_threshold.
       - Schedule valve: called nightly with min_count = intelligence_schedule_floor
         so entities BELOW the main threshold still get reflected on (the

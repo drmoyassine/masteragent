@@ -24,7 +24,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Body, UploadFile, 
 from pydantic import BaseModel, ConfigDict
 
 from core.storage import get_memory_db_context
-from memory_models import (
+from memory_system.store.models import (
     IntelligenceCreate, IntelligenceResponse, IntelligenceUpdate,
     KnowledgeCreate, KnowledgeResponse, KnowledgeUpdate,
     EntityTypeConfig, EntityTypeConfigUpdate,
@@ -36,7 +36,7 @@ from memory_models import (
     ConsolidationPreviewRequest, ConsolidationApplyRequest, ConsolidationAnalyzeRequest,
     KnowledgeAttachmentProposalRequest, KnowledgeDraftProposalRequest,
 )
-from memory_services import (
+from services import (
     generate_embedding, search_memories_by_vector,
     search_intelligence_by_vector, search_knowledge_by_vector,
     get_memory_settings
@@ -444,15 +444,15 @@ async def propose_knowledge_from_attachments(
     allowed_categories = {"best_practices", "lessons_learned", "trade_knowledge", "skill", "playbook"}
     if body.category not in allowed_categories:
         raise HTTPException(status_code=400, detail="Unsupported knowledge category")
-    from memory_knowledge_attachments import load_ready_attachment_text
+    from memory_system.distill.knowledge_attachments import load_ready_attachment_text
     sources = load_ready_attachment_text(body.attachment_ids)
     if len(sources) != len(set(body.attachment_ids)):
         raise HTTPException(status_code=404, detail="One or more attachments were not found")
     if any(source.get("status") != "ready" for source in sources):
         raise HTTPException(status_code=409, detail="All attachments must finish extraction before proposal generation")
 
-    from memory_consolidation_prompts import CATEGORY_INSTRUCTIONS
-    from memory_services import call_llm
+    from memory_system.maintain.consolidation_prompts import CATEGORY_INSTRUCTIONS
+    from services import call_llm
     from services.llm import parse_llm_json
     source_text = []
     remaining_chars = 220_000
@@ -505,7 +505,7 @@ async def propose_knowledge_draft(
 
     source_text = []
     if body.attachment_ids:
-        from memory_knowledge_attachments import load_ready_attachment_text
+        from memory_system.distill.knowledge_attachments import load_ready_attachment_text
         sources = load_ready_attachment_text(body.attachment_ids)
         if len(sources) != len(set(body.attachment_ids)):
             raise HTTPException(status_code=404, detail="One or more attachments were not found")
@@ -525,8 +525,8 @@ async def propose_knowledge_draft(
     if not source_text:
         raise HTTPException(status_code=422, detail="Provide source content or upload a document before generating a draft")
 
-    from memory_consolidation_prompts import CATEGORY_INSTRUCTIONS
-    from memory_services import call_llm
+    from memory_system.maintain.consolidation_prompts import CATEGORY_INSTRUCTIONS
+    from services import call_llm
     from services.llm import parse_llm_json
     prompt = f"""Create one editable knowledge draft from the supplied source material.
 Category: {body.category}
@@ -595,7 +595,7 @@ async def create_knowledge(body: KnowledgeCreate, admin: dict = Depends(require_
         if ready_ids != {str(aid) for aid in body.attachment_ids}:
             raise HTTPException(status_code=409, detail="All attached documents must finish extraction before creation")
 
-    from memory_skill_md import SKILL_MD_CATEGORIES, is_skill_md, render_skill_md, validate_skill_md
+    from memory_system.maintain.skill_md import SKILL_MD_CATEGORIES, is_skill_md, render_skill_md, validate_skill_md
     category = body.category or "trade_knowledge"
     content = body.content or ""
     if category in SKILL_MD_CATEGORIES and not is_skill_md(content):
@@ -611,7 +611,7 @@ async def create_knowledge(body: KnowledgeCreate, admin: dict = Depends(require_
     body.content = content
 
     # WS-4: extract governed facets (best-effort); merge into any admin-provided metadata
-    from memory_facets import enrich_metadata_with_facets
+    from memory_system.distill.facets import enrich_metadata_with_facets
     final_metadata = await enrich_metadata_with_facets(body.metadata, body.name, content, body.summary)
 
     if category in SKILL_MD_CATEGORIES:
@@ -622,7 +622,7 @@ async def create_knowledge(body: KnowledgeCreate, admin: dict = Depends(require_
 
     embedding = None
     try:
-        from memory_embedding import embed_knowledge_fields
+        from memory_system.maintain.embedding import embed_knowledge_fields
         embedding, _ = await embed_knowledge_fields(
             name=body.name, category=category, content=content,
             summary=body.summary or "", signals=body.signals or [],
@@ -630,7 +630,7 @@ async def create_knowledge(body: KnowledgeCreate, admin: dict = Depends(require_
         )
     except Exception as exc:
         logger.warning("Manual Knowledge embedding failed: %s", exc)
-    from memory_db_writes import insert_knowledge
+    from memory_system.store.writes import insert_knowledge
     insert_knowledge(
         knowledge_id=knowledge_id, intelligence_ids=body.source_Intelligence_ids or [],
         signals=body.signals or [], name=body.name, content=content,
@@ -713,9 +713,9 @@ async def update_knowledge(
             cursor.execute("SELECT * FROM knowledge WHERE id=%s", (knowledge_id,))
             updated = dict(cursor.fetchone())
         try:
-            from memory_embedding import embed_knowledge_record
+            from memory_system.maintain.embedding import embed_knowledge_record
             vector, model, md = await embed_knowledge_record(updated)
-            from memory_embedding import EMBEDDING_VERSION
+            from memory_system.maintain.embedding import EMBEDDING_VERSION
             with get_memory_db_context() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
@@ -725,7 +725,7 @@ async def update_knowledge(
                 """, (vector, model, EMBEDDING_VERSION, len(vector), json.dumps(md), knowledge_id))
         except Exception as exc:
             logger.warning("Knowledge re-embedding failed for %s: %s", knowledge_id, exc)
-    from memory_quality import recalculate_knowledge_quality
+    from memory_system.maintain.quality import recalculate_knowledge_quality
     recalculate_knowledge_quality(knowledge_id)
 
     return {"id": knowledge_id, "updated_at": now}
@@ -797,7 +797,7 @@ async def consolidation_preview(
     body: ConsolidationPreviewRequest, admin: dict = Depends(require_admin_auth)
 ):
     """Synchronously create a non-mutating consolidation preview for 2+ same-category ids."""
-    from memory_consolidation_service import preview
+    from memory_system.maintain.consolidation_service import preview
     actor_type, actor_id = _consolidation_actor(admin)
     try:
         return await preview(
@@ -816,7 +816,7 @@ async def consolidation_metrics(
     body: ConsolidationPreviewRequest, admin: dict = Depends(require_admin_auth)
 ):
     """Return same-category selection metrics without invoking an LLM or writing state."""
-    from memory_consolidation_service import selection_metrics
+    from memory_system.maintain.consolidation_service import selection_metrics
     try:
         return selection_metrics(body.knowledge_ids)
     except Exception as exc:
@@ -828,7 +828,7 @@ async def consolidation_metrics(
 @admin_crud.get("/knowledge/consolidations/previews/{preview_id}")
 async def consolidation_get_preview(preview_id: str, admin: dict = Depends(require_admin_auth)):
     """Return a preview with source snapshots, metrics, and proposal."""
-    from memory_consolidation_service import get_preview
+    from memory_system.maintain.consolidation_service import get_preview
     try:
         return get_preview(preview_id)
     except Exception as exc:
@@ -840,7 +840,7 @@ async def consolidation_get_preview(preview_id: str, admin: dict = Depends(requi
 @admin_crud.post("/knowledge/consolidations/previews/{preview_id}/regenerate")
 async def consolidation_regenerate(preview_id: str, admin: dict = Depends(require_admin_auth)):
     """Expire the old preview and synchronously create a fresh one from current sources."""
-    from memory_consolidation_service import regenerate
+    from memory_system.maintain.consolidation_service import regenerate
     actor_type, actor_id = _consolidation_actor(admin)
     try:
         return await regenerate(preview_id=preview_id, actor_type=actor_type, actor_id=actor_id)
@@ -853,7 +853,7 @@ async def consolidation_regenerate(preview_id: str, admin: dict = Depends(requir
 @admin_crud.post("/knowledge/consolidations/apply")
 async def consolidation_apply(body: ConsolidationApplyRequest, admin: dict = Depends(require_admin_auth)):
     """Apply an approved preview transactionally."""
-    from memory_consolidation_service import apply
+    from memory_system.maintain.consolidation_service import apply
     actor_type, actor_id = _consolidation_actor(admin)
     try:
         return await apply(
@@ -872,7 +872,7 @@ async def consolidation_apply(body: ConsolidationApplyRequest, admin: dict = Dep
 @admin_crud.get("/knowledge/consolidations/events/{event_id}")
 async def consolidation_event_detail(event_id: str, admin: dict = Depends(require_admin_auth)):
     """Return full lineage/audit detail for a consolidation event."""
-    from memory_consolidation_service import get_event
+    from memory_system.maintain.consolidation_service import get_event
     try:
         return get_event(event_id)
     except Exception as exc:
@@ -884,7 +884,7 @@ async def consolidation_event_detail(event_id: str, admin: dict = Depends(requir
 @admin_crud.post("/knowledge/consolidations/events/{event_id}/reverse")
 async def consolidation_reverse(event_id: str, admin: dict = Depends(require_admin_auth)):
     """Reverse an applied event when dependency validation permits."""
-    from memory_consolidation_service import reverse
+    from memory_system.maintain.consolidation_service import reverse
     actor_type, actor_id = _consolidation_actor(admin)
     try:
         return reverse(event_id, actor_type=actor_type, actor_id=actor_id)
@@ -897,7 +897,7 @@ async def consolidation_reverse(event_id: str, admin: dict = Depends(require_adm
 @admin_crud.get("/knowledge/consolidations/lineage/{knowledge_id}")
 async def consolidation_lineage(knowledge_id: str, admin: dict = Depends(require_admin_auth)):
     """Lineage (successor / predecessors / event) for the lineage panel."""
-    from memory_consolidation_service import get_lineage
+    from memory_system.maintain.consolidation_service import get_lineage
     try:
         return get_lineage(knowledge_id)
     except Exception as exc:
@@ -910,7 +910,7 @@ async def consolidation_lineage(knowledge_id: str, admin: dict = Depends(require
 async def consolidation_analyze(body: ConsolidationAnalyzeRequest, admin: dict = Depends(require_admin_auth)):
     """Create the hygiene run row and queue the analysis/proposal job. Returns 202."""
     from memory.queue import knowledge_queue
-    from memory_consolidation_repository import create_hygiene_run
+    from memory_system.maintain.consolidation_repository import create_hygiene_run
     from services.config_helpers import get_memory_settings
     settings = get_memory_settings() or {}
     mode = "analysis_only" if body.dry_run is True else (body.mode or "analysis_only")
@@ -950,7 +950,7 @@ async def consolidation_analyze(body: ConsolidationAnalyzeRequest, admin: dict =
             {"priority": 2},
         )
     except Exception as exc:
-        from memory_consolidation_repository import update_hygiene_run
+        from memory_system.maintain.consolidation_repository import update_hygiene_run
         update_hygiene_run(
             run_id,
             status="failed",
@@ -965,7 +965,7 @@ async def consolidation_analyze(body: ConsolidationAnalyzeRequest, admin: dict =
 @admin_crud.get("/knowledge/hygiene-runs/{run_id}")
 async def hygiene_run_detail(run_id: str, admin: dict = Depends(require_admin_auth)):
     """Return a hygiene run with its clusters and members."""
-    from memory_consolidation_repository import load_hygiene_run, load_hygiene_clusters
+    from memory_system.maintain.consolidation_repository import load_hygiene_run, load_hygiene_clusters
     run = load_hygiene_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Hygiene run not found")
@@ -975,7 +975,7 @@ async def hygiene_run_detail(run_id: str, admin: dict = Depends(require_admin_au
 @admin_crud.get("/knowledge/consolidations/embedding-coverage")
 async def embedding_coverage(admin: dict = Depends(require_admin_auth)):
     """Embedding-version coverage gauge for the settings UI."""
-    from memory_embedding_backfill import preview_backfill
+    from memory_system.maintain.embedding_backfill import preview_backfill
     # Full-table aggregate scans (vector_dims per row) run in a thread: the web
     # process also hosts the queue workers, so sync SQL here blocks every request.
     return await asyncio.to_thread(preview_backfill)
@@ -1005,13 +1005,13 @@ async def backfill_embeddings(
         from services.job_safety import try_acquire_singleton_job, release_singleton_job
         if not try_acquire_singleton_job("knowledge_embedding_backfill"):
             raise HTTPException(status_code=409, detail="Embedding backfill is already running")
-        from memory_db_writes import log_pipeline_run, update_pipeline_run
+        from memory_system.store.writes import log_pipeline_run, update_pipeline_run
         run_id = log_pipeline_run(
             "knowledge_embedding_backfill", "started", trigger="admin_calibration",
             detail={**payload, "progress_total": max_records},
         )
         try:
-            from memory_embedding_backfill import run_embedding_backfill
+            from memory_system.maintain.embedding_backfill import run_embedding_backfill
             result = await run_embedding_backfill(
                 batch_size=batch_size, max_records=max_records, progress_run_id=run_id,
             )
@@ -1174,7 +1174,7 @@ async def trigger_memory_generation(
     admin: dict = Depends(require_admin_auth)
 ):
     """Manually trigger daily memory generation. Iterates and enqueues payload synchronously, no LLM cost."""
-    from memory_tasks import run_daily_memory_generation
+    from memory_system.distill.generation import run_daily_memory_generation
     await run_daily_memory_generation(include_today=include_today)
     return {"message": "Memory generation queueing completed", "include_today": include_today}
 
@@ -1182,7 +1182,7 @@ async def trigger_memory_generation(
 @router.post("/trigger/run-intelligence-check")
 async def trigger_intelligence_check(admin: dict = Depends(require_admin_auth)):
     """Manually trigger intelligence extraction check across all entities."""
-    from memory_compaction import run_compaction_check
+    from memory_system.distill.compaction import run_compaction_check
     await run_compaction_check()
     return {"message": "Intelligence extraction check completed"}
 
@@ -1360,7 +1360,7 @@ async def maintenance_controls(admin: dict = Depends(require_admin_auth)):
 @router.get("/maintenance/eligible-counts")
 async def maintenance_eligible_counts(admin: dict = Depends(require_admin_auth)):
     """Return the last persisted eligibility snapshot without scanning source tables."""
-    from memory_operation_metrics import get_snapshot
+    from memory_system.maintain.operation_metrics import get_snapshot
     return get_snapshot()
 
 
@@ -1368,7 +1368,7 @@ async def maintenance_eligible_counts(admin: dict = Depends(require_admin_auth))
 async def refresh_maintenance_eligible_counts(admin: dict = Depends(require_admin_auth)):
     """Queue one guarded exact refresh; callers poll the cheap GET for completion."""
     from memory.queue import knowledge_queue
-    from memory_operation_metrics import get_snapshot, mark_refresh_error, request_refresh
+    from memory_system.maintain.operation_metrics import get_snapshot, mark_refresh_error, request_refresh
 
     queued = request_refresh()
     if queued:
@@ -1479,7 +1479,7 @@ async def trigger_backfill_profiles(admin: dict = Depends(require_admin_auth)):
     and extracts entity profile data using the configured metadata_field_map.
     """
     def _run() -> dict:
-        from memory_ingestion import _sync_entity_profile
+        from memory_system.ingest.ingestion import _sync_entity_profile
         backfilled = 0
         skipped = 0
         errors = []
@@ -2530,7 +2530,7 @@ async def delete_vision_webhook(webhook_id: str, admin: dict = Depends(require_a
 @router.post("/instruct")
 async def admin_instruct(body: AdminInstruction, admin: dict = Depends(require_admin_auth)):
     """Parse a natural language instruction via Hermes and create a knowledge/skill/playbook record."""
-    from memory_hermes import process_admin_instruction
+    from memory_system.distill.hermes import process_admin_instruction
     result = await process_admin_instruction(
         instruction=body.instruction,
         target=body.target,
@@ -2555,7 +2555,7 @@ async def submit_knowledge_feedback(
         if not row:
             raise HTTPException(status_code=404, detail="Knowledge not found")
 
-    from memory_db_writes import append_knowledge_feedback
+    from memory_system.store.writes import append_knowledge_feedback
     append_knowledge_feedback(knowledge_id, body.outcome, body.notes)
     return {"status": "ok", "knowledge_id": knowledge_id, "outcome": body.outcome}
 
@@ -2576,7 +2576,7 @@ async def export_skill_md(knowledge_id: str, auth: dict = Depends(require_admin_
     directory relationship for a complete ``<slug>/SKILL.md`` package.
     """
     from fastapi.responses import PlainTextResponse
-    from memory_skill_md import render_any_knowledge_md, slugify, SKILL_MD_CATEGORIES
+    from memory_system.maintain.skill_md import render_any_knowledge_md, slugify, SKILL_MD_CATEGORIES
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -2611,7 +2611,7 @@ async def export_knowledge_pack(
     import io
     import zipfile
     from fastapi.responses import StreamingResponse
-    from memory_skill_md import render_any_knowledge_md, slugify, SKILL_MD_CATEGORIES
+    from memory_system.maintain.skill_md import render_any_knowledge_md, slugify, SKILL_MD_CATEGORIES
 
     conditions, params = ["visibility = 'shared'"], []
     if status and status != "all":
@@ -2669,8 +2669,8 @@ async def import_skill_md(body: SkillImportBody, admin: dict = Depends(require_a
     marketplace) as a knowledge record. The document is stored verbatim in the
     content column; frontmatter name/description populate name/summary.
     Consolidation is intentionally deferred to the shared hygiene preview/apply service."""
-    from memory_skill_md import SKILL_MD_CATEGORIES, validate_skill_md
-    from memory_db_writes import insert_knowledge
+    from memory_system.maintain.skill_md import SKILL_MD_CATEGORIES, validate_skill_md
+    from memory_system.store.writes import insert_knowledge
 
     if body.category not in SKILL_MD_CATEGORIES:
         raise HTTPException(status_code=400, detail="category must be 'skill' or 'playbook'")
@@ -2681,7 +2681,7 @@ async def import_skill_md(body: SkillImportBody, admin: dict = Depends(require_a
 
     embedding = None
     try:
-        from memory_embedding import embed_knowledge_fields
+        from memory_system.maintain.embedding import embed_knowledge_fields
         embedding, _model = await embed_knowledge_fields(
             name=parsed["name"], category=body.category,
             content=parsed["body"], summary=parsed["description"],
@@ -2691,7 +2691,7 @@ async def import_skill_md(body: SkillImportBody, admin: dict = Depends(require_a
 
     knowledge_id = str(uuid.uuid4())
     # WS-4: extract governed facets from the parsed body (best-effort)
-    from memory_facets import enrich_metadata_with_facets
+    from memory_system.distill.facets import enrich_metadata_with_facets
     metadata = await enrich_metadata_with_facets(None, parsed["name"], parsed["body"], parsed["description"])
     insert_knowledge(
         knowledge_id=knowledge_id,

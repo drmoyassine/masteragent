@@ -5,14 +5,14 @@ import hashlib
 from collections import Counter
 from typing import Any, Dict, List, Sequence
 
-from memory_evidence_repository import (
+from memory_system.distill.evidence_repository import (
     link_evidence_to_canonical,
     load_linked_historical_sources,
     resolve_active_canonical,
     update_bundle_analysis,
     upsert_bundle,
 )
-from memory_similarity import cosine_similarity, l2_normalize
+from memory_system.maintain.similarity import cosine_similarity, l2_normalize
 
 
 def _vector(value: Any) -> List[float]:
@@ -158,7 +158,7 @@ async def route_evidence_or_link(
         return {"engaged": True, "stop": True, "route": route, "linked_id": linked_id, "revision_action": None}
     if (route.get("route") == "revision_assessment" and
             settings.get("knowledge_evidence_routing_mode") == "enforced"):
-        from memory_evidence_revision_service import assess_and_apply
+        from memory_system.distill.evidence_revision_service import assess_and_apply
         revision = await assess_and_apply(route=route, sources=sources, settings=settings)
         action = revision.get("action")
         if action in {"no_change", "revised", "manual_review"}:

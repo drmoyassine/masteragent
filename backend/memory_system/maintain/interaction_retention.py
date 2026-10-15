@@ -3,8 +3,8 @@ from datetime import datetime, timezone, timedelta
 import logging
 
 from core.storage import get_memory_db_context
-from memory_services import get_memory_settings
-from memory_db_writes import log_pipeline_run
+from services import get_memory_settings
+from memory_system.store.writes import log_pipeline_run
 
 logger = logging.getLogger(__name__)
 TELEMETRY_TYPES = ("internal_ai_thought", "internal_ai_tool_call")

@@ -69,7 +69,7 @@ FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 # ─────────────────────────────────────────────
 # Background tasks (lifespan)
 # ─────────────────────────────────────────────
-from memory_tasks import start_background_tasks, stop_background_tasks
+from memory_system.scheduler import start_background_tasks, stop_background_tasks
 from memory.queue import start_bullmq_workers, stop_bullmq_workers
 
 @asynccontextmanager
@@ -178,7 +178,7 @@ async def health_check(response: Response):
 
     # ── Scheduler freshness (a dead loop stops ticking) ────────────────────
     try:
-        from memory_tasks import scheduler_last_tick
+        from memory_system.scheduler import scheduler_last_tick
         tick = scheduler_last_tick()
         if tick is None:
             checks["scheduler"] = "never_ran"

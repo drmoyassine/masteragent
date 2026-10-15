@@ -1,4 +1,4 @@
-"""memory_consolidation_prompts.py — Category-aware consolidation prompts + validation.
+"""memory_system.maintain.consolidation_prompts.py — Category-aware consolidation prompts + validation.
 
 Shared base prompt + per-category preservation rules, the strict Pydantic
 proposal model (§5.2), and validation hooks. The LLM proposes content only;
@@ -228,7 +228,7 @@ def validate_proposal(payload: Any, category: str) -> Tuple[Optional[Consolidati
         # cannot be parsed back is invalid and un-applicable).
         if category in ("skill", "playbook") and proposal.canonical and not errors:
             try:
-                from memory_skill_md import parse_skill_md, render_skill_md
+                from memory_system.maintain.skill_md import parse_skill_md, render_skill_md
                 candidate = render_skill_md(
                     name=proposal.canonical.name, category=category,
                     description=proposal.canonical.summary or proposal.canonical.content,

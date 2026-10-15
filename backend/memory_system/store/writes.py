@@ -1,7 +1,7 @@
 """DB write helpers for memory tier inserts.
 
 Collapses the embed/no-embed branches that used to live inline in
-memory_tasks.py. Pgvector accepts NULL for the embedding column, so we
+memory_system/scheduler.py. Pgvector accepts NULL for the embedding column, so we
 always pass it as a single parameter.
 """
 import json
@@ -15,7 +15,7 @@ from core.storage import get_memory_db_context
 def _embedding_provenance(embedding, *, knowledge: bool = False):
     if not embedding:
         return (None, None, None, None)
-    from memory_embedding import current_embedding_model, EMBEDDING_VERSION
+    from memory_system.maintain.embedding import current_embedding_model, EMBEDDING_VERSION
     return (
         current_embedding_model(), EMBEDDING_VERSION if knowledge else 1,
         len(embedding), datetime.now(timezone.utc).isoformat(),
@@ -178,7 +178,7 @@ def insert_knowledge(
     that already carries frontmatter (e.g. marketplace imports) is stored
     verbatim."""
     import json as _json
-    from memory_skill_md import SKILL_MD_CATEGORIES, is_skill_md, render_skill_md
+    from memory_system.maintain.skill_md import SKILL_MD_CATEGORIES, is_skill_md, render_skill_md
     now = datetime.now(timezone.utc).isoformat()
     if category in SKILL_MD_CATEGORIES and not is_skill_md(content):
         content = render_skill_md(
@@ -197,7 +197,7 @@ def insert_knowledge(
     # block. No-op when no embedding was produced.
     if embedding:
         try:
-            from memory_embedding import merge_embedding_metadata, current_embedding_model
+            from memory_system.maintain.embedding import merge_embedding_metadata, current_embedding_model
             metadata = merge_embedding_metadata(
                 metadata or {}, model=current_embedding_model(), vector=embedding
             )
@@ -286,7 +286,7 @@ def insert_knowledge(
                     VALUES (%s,'attachment',%s,'evidence') ON CONFLICT DO NOTHING
                 """, (knowledge_id, aid))
 
-    from memory_quality import recalculate_knowledge_quality
+    from memory_system.maintain.quality import recalculate_knowledge_quality
     recalculate_knowledge_quality(knowledge_id)
 
     # Creation-time consolidation hook (opt-in, default off). Fire-and-forget:
@@ -429,5 +429,5 @@ def append_knowledge_feedback(knowledge_id: str, outcome: str, notes: Optional[s
                 updated_at = %s
             WHERE id = %s
         """, (entry, now, knowledge_id))
-    from memory_quality import recalculate_knowledge_quality
+    from memory_system.maintain.quality import recalculate_knowledge_quality
     recalculate_knowledge_quality(knowledge_id)

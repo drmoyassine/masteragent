@@ -30,7 +30,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from core.storage import get_memory_db_context, cache_interaction
-from memory_services import (
+from services import (
     call_llm,
     generate_embedding,
     get_system_prompt,

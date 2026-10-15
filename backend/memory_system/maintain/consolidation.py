@@ -12,9 +12,9 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from core.storage import get_memory_db_context
-from memory_services import get_memory_settings
+from services import get_memory_settings
 from services.llm import parse_llm_json
-from memory_helpers import _get_entity_type_config
+from memory_system.store.helpers import _get_entity_type_config
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ async def run_consolidation(*, max_records: int = 1000, max_clusters: int = 100,
 
     The destructive pairwise retirement loop is GONE. Candidate discovery and
     consolidation proposals now go through the shared hygiene service
-    (``memory_consolidation_service.discover_and_propose``), which respects the
+    (``memory_system.maintain.consolidation_service.discover_and_propose``), which respects the
     configured mode and never applies unless policy gates pass. Decay and
     quality-score recompute remain as non-destructive maintenance.
     """
@@ -36,7 +36,7 @@ async def run_consolidation(*, max_records: int = 1000, max_clusters: int = 100,
     hygiene_error = None
     if settings.get("knowledge_hygiene_enabled", True):
         try:
-            from memory_consolidation_service import discover_and_propose
+            from memory_system.maintain.consolidation_service import discover_and_propose
             mode = settings.get("knowledge_hygiene_mode", "manual_only")
             await discover_and_propose(
                 origin="scheduled", mode=mode,
@@ -90,7 +90,7 @@ async def _refine_playbook(keep_id: str):
     )
 
     try:
-        from memory_services import call_llm
+        from services import call_llm
         result_text = await call_llm(
             f"Current playbook: {row['content']}\n"
             f"Existing steps: {json.dumps(existing_steps)}\n"
@@ -107,7 +107,7 @@ async def _refine_playbook(keep_id: str):
 
         # Re-render the SKILL.md document so the content column stays the
         # canonical standard-format representation after refinement.
-        from memory_skill_md import parse_skill_md, render_skill_md, is_skill_md
+        from memory_system.maintain.skill_md import parse_skill_md, render_skill_md, is_skill_md
         body = row["content"] or ""
         description = ""
         if is_skill_md(body):
@@ -179,7 +179,7 @@ def _recompute_quality_scores():
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) AS n FROM knowledge")
         total = int(cursor.fetchone()["n"] or 0)
-    from memory_quality import backfill_quality_v2
+    from memory_system.maintain.quality import backfill_quality_v2
     updated = 0
     while updated < total:
         result = backfill_quality_v2(limit=500)

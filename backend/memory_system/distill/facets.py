@@ -163,7 +163,7 @@ async def extract_facets(name: str, content: str, summary: str) -> dict:
 
     Returns {} when disabled, unconfigured, or on any failure — never blocks
     or alters knowledge creation (zero-regression)."""
-    from memory_services import call_llm
+    from services import call_llm
     from services.llm import parse_llm_json
 
     try:
@@ -310,7 +310,7 @@ async def backfill_facets(batch_size: int = 25, max_records: int = 1000,
             if processed % batch_size == 0:
                 logger.info(f"Facet backfill progress: {processed}/{len(rows)} ({updated} enriched)")
             if progress_run_id:
-                from memory_db_writes import update_pipeline_run
+                from memory_system.store.writes import update_pipeline_run
                 update_pipeline_run(progress_run_id, progress_completed=processed,
                                     progress_failed=max(0, processed - updated),
                                     detail={"enriched": updated, "source_rows": len(rows),
@@ -345,7 +345,7 @@ def seed_management_skill(cursor=None) -> None:
 
 
 def _seed_management_skill(cursor) -> None:
-    from memory_skill_md import render_skill_md
+    from memory_system.maintain.skill_md import render_skill_md
     metadata = {
         "always_inject": True,
         "skill_type": "soft",

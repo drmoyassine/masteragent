@@ -1,19 +1,11 @@
 """
-memory_tasks.py — Background task loop for the Memory System
+memory_system/scheduler.py â the 60-second background tier scheduler
 
-Thin shell that re-exports all public symbols from extracted modules.
-Downstream importers (server.py, memory.agent, memory.admin, memory.queue,
-test_memory.py) import from this module — no changes needed on their side.
-
-Modules:
-  memory_rate_limit    — per-agent rate limiting
-  memory_helpers       — entity type config, NER formatting, signal definitions
-  memory_ingestion     — process_interaction + entity profile sync
-  memory_generation    — daily memory generation pipeline + job log helpers
-  memory_compaction    — intelligence extraction (memories → intelligence)
-  memory_knowledge     — knowledge generation (intelligence → knowledge)
-  memory_db_writes     — INSERT helpers (memories, intelligence, knowledge)
-  memory_prior_context — prior-context fetchers (chrono + semantic)
+Wakes every 60s and fires the scheduled producers (memory generation,
+intelligence sweep, knowledge generation, telemetry reflection,
+consolidation, interaction retention) through the BullMQ queues, using
+per-day claims in memory_job_log so each tier runs at most once a day.
+Companion: memory/queue.py, the worker that executes the enqueued jobs.
 """
 import asyncio
 import json
@@ -21,58 +13,17 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from memory_services import get_memory_settings
-from core.storage import get_memory_db_context
-
-logger = logging.getLogger(__name__)
-
-# ── Rate limiting ─────────────────────────────────────────────────────────────
-from memory_rate_limit import check_rate_limit, _rate_limit_counters  # noqa: F401, E402
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-from memory_helpers import (  # noqa: E402, F401
-    _get_entity_type_config,
-    _format_signal_definitions,
-    _format_ner_output,
-    _build_ner_text_payload,
-)
-
-# ── Ingestion ─────────────────────────────────────────────────────────────────
-from memory_ingestion import process_interaction  # noqa: E402, F401
-
-# ── Generation ────────────────────────────────────────────────────────────────
-from memory_generation import (  # noqa: E402, F401
-    get_job_last_date,
+from services import get_memory_settings
+from memory_system.distill.generation import (
     claim_job_date,
     complete_job_date,
     fail_job_date,
-    run_orphan_sweeper,
+    get_job_last_date,
     run_daily_memory_generation,
-    _generate_memory_for_entity,
-    _execute_pipeline_node,
+    run_orphan_sweeper,
 )
 
-# ── Compaction ────────────────────────────────────────────────────────────────
-from memory_compaction import (  # noqa: E402, F401
-    run_compaction_check,
-    _check_compaction_trigger,
-    compact_entity,
-)
-
-# ── Knowledge ─────────────────────────────────────────────────────────────────
-from memory_knowledge import (  # noqa: E402, F401
-    run_knowledge_check,
-    generate_knowledge_from_intelligence,
-    promote_to_knowledge,
-)
-
-# ── Telemetry reflection ──────────────────────────────────────────────────────
-from memory_telemetry import run_telemetry_reflection  # noqa: E402, F401
-
-# ── Prior context (backward-compat alias) ─────────────────────────────────────
-from memory_prior_context import fetch_prior_memories  # noqa: E402, F401
-_fetch_prior_context = fetch_prior_memories
-
+logger = logging.getLogger(__name__)
 
 # ── Background task loop control ─────────────────────────────────────────────
 _task_handle: Optional[asyncio.Task] = None
@@ -107,7 +58,7 @@ def _loop_done_callback(task: asyncio.Task) -> None:
                 INSERT INTO memory_system_alerts
                     (code, severity, title, message, source, detail, active, first_seen_at, last_seen_at)
                 VALUES ('scheduler_loop_dead', 'critical', 'Memory scheduler loop died', %s,
-                        'memory_tasks', %s::jsonb, TRUE, NOW(), NOW())
+                        'memory_system.scheduler', %s::jsonb, TRUE, NOW(), NOW())
                 ON CONFLICT (code) DO UPDATE SET active=TRUE, message=EXCLUDED.message,
                     detail=EXCLUDED.detail, last_seen_at=NOW()
             """, (f"Background scheduler loop exited ({reason}); nightly tiers will not fire until restart.",

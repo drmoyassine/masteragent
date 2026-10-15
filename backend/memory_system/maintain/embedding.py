@@ -1,4 +1,4 @@
-"""memory_embedding.py — Deterministic embedding serialization for knowledge.
+"""memory_system.maintain.embedding.py — Deterministic embedding serialization for knowledge.
 
 One canonical path turns a knowledge record (any of the five consolidatable
 categories) into the text string that gets embedded, and stamps the resulting
@@ -25,7 +25,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from memory_skill_md import SKILL_MD_CATEGORIES, is_skill_md, parse_skill_md
+from memory_system.maintain.skill_md import SKILL_MD_CATEGORIES, is_skill_md, parse_skill_md
 
 logger = logging.getLogger(__name__)
 
@@ -326,7 +326,7 @@ async def embed_knowledge_text(row: Dict[str, Any]) -> Tuple[Optional[List[float
     chokepoint (``insert_knowledge`` / update paths) stamps ``metadata.embedding``
     so every record is covered regardless of which path made it.
     """
-    from memory_services import generate_embedding
+    from services import generate_embedding
 
     text = serialize_knowledge_for_embedding(row)
     model_name = current_embedding_model()

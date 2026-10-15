@@ -1795,8 +1795,8 @@ def _seed_defaults():
         # truth). Seeded for EXISTING installs too (idempotent), attached to the same
         # provider/model as knowledge_generation when available.
         try:
-            from memory_playbooks import _PLAYBOOK_GEN_PROMPT, _SKILL_GEN_PROMPT
-            from memory_telemetry import _REFLECTION_SYSTEM_PROMPT
+            from memory_system.distill.playbooks import _PLAYBOOK_GEN_PROMPT, _SKILL_GEN_PROMPT
+            from memory_system.distill.telemetry import _REFLECTION_SYSTEM_PROMPT
             pick_nodes = [
                 ("playbook_generation", 2, _PLAYBOOK_GEN_PROMPT),
                 ("skill_generation", 3, _SKILL_GEN_PROMPT),
@@ -1838,7 +1838,7 @@ def _seed_defaults():
         # knowledge_generation (credentials are NOT copied; resolved via the
         # shared provider row). Powers the category-aware consolidation proposal.
         try:
-            from memory_consolidation_prompts import CONSOLIDATION_BASE_PROMPT
+            from memory_system.maintain.consolidation_prompts import CONSOLIDATION_BASE_PROMPT
         except Exception:
             CONSOLIDATION_BASE_PROMPT = ""
         cursor.execute("""
@@ -2074,7 +2074,7 @@ def _seed_defaults():
         # their own connection would self-deadlock on our uncommitted
         # memory_settings row (found by the 2026-10-15 boot smoke).
         try:
-            from memory_facets import seed_default_facets_schema, seed_management_skill
+            from memory_system.distill.facets import seed_default_facets_schema, seed_management_skill
             seed_default_facets_schema(cursor)
             seed_management_skill(cursor)
         except Exception as e:

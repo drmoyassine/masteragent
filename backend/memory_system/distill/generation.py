@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from core.storage import get_memory_db_context, flush_interaction_cache
-from memory_services import (
+from services import (
     call_llm,
     call_llm_with_thinking,
     extract_entities,
@@ -18,9 +18,9 @@ from memory_services import (
 )
 from services.config_helpers import get_pipeline_configs, get_system_prompt_by_config_id, get_schema_by_config_id
 from services.prompt_renderer import inject_variables
-from memory_db_writes import insert_memory
-from memory_prior_context import fetch_prior_memories
-from memory_helpers import (
+from memory_system.store.writes import insert_memory
+from memory_system.distill.prior_context import fetch_prior_memories
+from memory_system.store.helpers import (
     _get_entity_type_config,
     _format_signal_definitions,
     _format_ner_output,
@@ -517,7 +517,7 @@ async def _generate_memory_for_entity_impl(entity_type: str, entity_id: str, int
     )
 
     # Import here to avoid circular dependency at module level
-    from memory_compaction import _check_compaction_trigger
+    from memory_system.distill.compaction import _check_compaction_trigger
     await _check_compaction_trigger(entity_type, entity_id, config)
 
 

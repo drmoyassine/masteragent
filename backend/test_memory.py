@@ -3,8 +3,8 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger()
 logger.info("Starting...")
-from memory_tasks import run_daily_memory_generation
-logger.info("Imported memory_tasks")
+from memory_system.distill.generation import run_daily_memory_generation
+logger.info("Imported memory_system.distill.generation")
 async def main():
     logger.info("Running memory generation")
     try:

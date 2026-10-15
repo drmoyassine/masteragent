@@ -1,9 +1,9 @@
 """Unit coverage for unified Knowledge policy, quality v2, and source routing."""
-import memory_evidence_service as evidence
-from memory_generation_policy import approval_status, resolve_generation_policy
-from memory_quality import calculate_quality_v2
-from memory_generation_contracts import validate_declarative, validate_skill
-from memory_skill_md import parse_skill_md, render_skill_md, validate_skill_md
+import memory_system.distill.evidence_service as evidence
+from memory_system.distill.policy import approval_status, resolve_generation_policy
+from memory_system.maintain.quality import calculate_quality_v2
+from memory_system.distill.contracts import validate_declarative, validate_skill
+from memory_system.maintain.skill_md import parse_skill_md, render_skill_md, validate_skill_md
 
 
 def test_generation_policy_precedence():
@@ -113,7 +113,7 @@ def test_skill_contract_renders_operational_sections():
 
 def test_governed_facet_settings_survive_settings_response_serialization():
     """A settings reload must return facet configuration after a successful save."""
-    from memory_models import MemorySettingsResponse
+    from memory_system.store.models import MemorySettingsResponse
 
     schema = [{"key": "destination_country", "label": "Destination Country"}]
     result = MemorySettingsResponse(

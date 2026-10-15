@@ -3,7 +3,7 @@ import json
 import logging
 
 from core.storage import get_memory_db_context, flush_interaction_cache, cache_interaction
-from memory_helpers import _get_entity_type_config
+from memory_system.store.helpers import _get_entity_type_config
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ async def process_interaction(interaction_id: str):
             pass
 
     # Document OCR parsing logic
-    from memory_services import parse_document
+    from services import parse_document
     for attachment in attachment_refs:
         if not isinstance(attachment, dict):
             continue
@@ -218,7 +218,7 @@ async def _maybe_trigger_threshold_memory(interaction: dict) -> None:
       4. no memory lock currently held for this entity
     The memory worker is responsible for acquiring the lock at job start.
     """
-    from memory_services import get_memory_settings
+    from services import get_memory_settings
     from services import memory_lock
     from datetime import datetime, timezone
 

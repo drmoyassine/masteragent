@@ -1,6 +1,6 @@
-"""memory_consolidation_repository.py — DB layer for knowledge hygiene & consolidation.
+"""memory_system.maintain.consolidation_repository.py — DB layer for knowledge hygiene & consolidation.
 
-All SQL lives here. The service layer (``memory_consolidation_service``)
+All SQL lives here. The service layer (``memory_system.maintain.consolidation_service``)
 orchestrates preview/apply via these functions. The apply path is a single
 transaction: advisory lock → ``SELECT ... FOR UPDATE`` sources in ID order →
 re-validate against the preview snapshot → write canonical/event/audit →
@@ -607,7 +607,7 @@ def apply_consolidation(
         # 6. Stamp embedding provenance onto canonical metadata.
         canonical_meta = payload["metadata"]
         if embedding:
-            from memory_embedding import merge_embedding_metadata
+            from memory_system.maintain.embedding import merge_embedding_metadata
             canonical_meta = merge_embedding_metadata(canonical_meta, model=embedding_model, vector=embedding)
             payload["metadata"] = canonical_meta
 
@@ -682,7 +682,7 @@ def apply_consolidation(
 
 
 def _render_operational_content(category: str, payload: Dict[str, Any]) -> str:
-    from memory_skill_md import SKILL_MD_CATEGORIES, is_skill_md, render_skill_md
+    from memory_system.maintain.skill_md import SKILL_MD_CATEGORIES, is_skill_md, render_skill_md
     content = payload["content"]
     if category in SKILL_MD_CATEGORIES and not is_skill_md(content):
         return render_skill_md(

@@ -1,4 +1,4 @@
-"""memory_consolidation_service.py — Single orchestration boundary for knowledge hygiene.
+"""memory_system.maintain.consolidation_service.py — Single orchestration boundary for knowledge hygiene.
 
 Every caller — manual UI, scheduled job, admin trigger, automatic policy, and
 creation-time hook — goes through :func:`preview` and :func:`apply` here. There
@@ -17,7 +17,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence
 
-from memory_consolidation_prompts import (
+from memory_system.maintain.consolidation_prompts import (
     CONSOLIDATION_PROMPT_VERSION,
     ConsolidationProposal,
     build_system_prompt,
@@ -26,7 +26,7 @@ from memory_consolidation_prompts import (
     repair_prompt,
     validate_proposal,
 )
-from memory_consolidation_repository import (
+from memory_system.maintain.consolidation_repository import (
     ConsolidationError,
     aggregate_canonical_payload,
     apply_consolidation as repo_apply,
@@ -47,12 +47,12 @@ from memory_consolidation_repository import (
     reverse_event as repo_reverse,
     update_hygiene_run,
 )
-from memory_clustering import (
+from memory_system.maintain.clustering import (
     accepted_proposal_groups,
     discover_candidate_groups,
     manual_group_metrics,
 )
-from memory_embedding import (
+from memory_system.maintain.embedding import (
     CONSOLIDATABLE_KNOWLEDGE_CATEGORIES,
     current_embedding_model,
     embed_knowledge_fields,
@@ -299,7 +299,7 @@ async def _generate_proposal(
     rows: Sequence[Dict[str, Any]], metrics: Dict[str, Any], category: str
 ) -> tuple:
     """Call the LLM, validate, one repair retry. Returns (proposal_dict|None, raw, errors, model)."""
-    from memory_services import call_llm
+    from services import call_llm
     from services.llm import parse_llm_json
 
     llm_cfg = _llm_config()
@@ -407,7 +407,7 @@ def _validate_approved_canonical(approved: Dict[str, Any], category: str) -> Non
     # Skills/playbooks: validate the canonical body parses/render round-trips.
     if category in ("skill", "playbook"):
         try:
-            from memory_skill_md import is_skill_md, parse_skill_md, render_skill_md
+            from memory_system.maintain.skill_md import is_skill_md, parse_skill_md, render_skill_md
             candidate = content if is_skill_md(content) else render_skill_md(
                 name=name, category=category,
                 description=(approved.get("summary") or content), body=content,
@@ -457,7 +457,7 @@ def get_lineage(knowledge_id: str) -> Dict[str, Any]:
     row = load_knowledge_record(knowledge_id)
     if not row:
         raise ConsolidationError("missing_source", "Knowledge record not found", 404)
-    from memory_consolidation_repository import load_latest_event_for_canonical
+    from memory_system.maintain.consolidation_repository import load_latest_event_for_canonical
     event_id = row.get("consolidation_event_id")
     event = load_event(event_id) if event_id else None
     successor_event = load_latest_event_for_canonical(knowledge_id) if row.get("status") != "retired" else None
@@ -559,7 +559,7 @@ async def discover_and_propose(
         )
         processed_groups += 1
         if progress_run_id:
-            from memory_db_writes import update_pipeline_run
+            from memory_system.store.writes import update_pipeline_run
             update_pipeline_run(progress_run_id, progress_total=min(len(groups), max_clusters),
                                 progress_completed=processed_groups,
                                 progress_failed=failed_count,

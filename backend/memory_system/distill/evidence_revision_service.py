@@ -5,7 +5,7 @@ import json
 from typing import Any, Dict, Sequence
 
 from core.storage import get_memory_db_context
-from memory_evidence_repository import apply_canonical_revision, link_evidence_to_canonical
+from memory_system.distill.evidence_repository import apply_canonical_revision, link_evidence_to_canonical
 
 PROMPT_VERSION = "evidence-revision-v1"
 
@@ -25,14 +25,14 @@ async def assess_and_apply(
         f"SOURCE {s['source_type']}:{s['source_id']}\n{s.get('name','')}\n{s.get('summary','')}\n{s.get('content','')}"
         for s in sources
     )
-    from memory_consolidation_prompts import build_system_prompt
+    from memory_system.maintain.consolidation_prompts import build_system_prompt
     system = build_system_prompt(canonical.get("category")) + "\n\n" + (
         "Assess whether new source evidence changes an established canonical Knowledge record. "
         "Preserve all supported information and never invent. Return JSON only with decision "
         "no_change|revise|create_new|manual_review, confidence, rationale, contradictions, and "
         "canonical{name,summary,content,signals,tags,metadata} when decision=revise."
     )
-    from memory_services import call_llm
+    from services import call_llm
     from services.llm import parse_llm_json
     raw = await call_llm(
         f"CANONICAL:\n{json.dumps({k:v for k,v in canonical.items() if k != 'embedding'},default=str)}\n\nNEW EVIDENCE:\n{source_text[:10000]}",
@@ -54,7 +54,7 @@ async def assess_and_apply(
     approved = proposal.get("canonical") or {}
     if not str(approved.get("name") or "").strip() or not str(approved.get("content") or "").strip():
         return {"action": "manual_review", "proposal": proposal, "error": "invalid_canonical"}
-    from memory_embedding import embed_knowledge_fields, current_embedding_model
+    from memory_system.maintain.embedding import embed_knowledge_fields, current_embedding_model
     embedding, model = await embed_knowledge_fields(
         name=approved["name"], category=canonical.get("category"),
         content=approved["content"], summary=approved.get("summary", ""),

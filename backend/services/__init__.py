@@ -3,7 +3,7 @@ services — Memory system service layer (top-level package)
 
 Kept outside memory/ to avoid circular imports with memory/__init__.py.
 All callers should import directly: `from services.llm import call_llm`
-or from the backward-compat shim: `from memory_services import call_llm`
+or from the backward-compat shim: `from services import call_llm`
 """
 from services.config_helpers import get_llm_config, get_memory_settings, get_system_prompt
 from services.embeddings import generate_embedding, generate_embeddings_batch

@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-import memory_operation_metrics as metrics
+import memory_system.maintain.operation_metrics as metrics
 
 
 class _Cursor:

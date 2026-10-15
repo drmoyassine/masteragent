@@ -3,7 +3,7 @@ import asyncio
 
 import pytest
 
-import memory_embedding_backfill
+import memory_system.maintain.embedding_backfill
 from services.embeddings import _bounded_inputs
 from services.job_safety import _maintenance_stale_minutes
 
@@ -20,9 +20,9 @@ def test_isolated_embedding_skips_blank_without_provider_request(monkeypatch):
         calls.append(texts)
         return [[float(index)] for index, _ in enumerate(texts)]
 
-    monkeypatch.setattr(memory_embedding_backfill, "_embed_batch", fake_embed)
+    monkeypatch.setattr(memory_system.maintain.embedding_backfill, "_embed_batch", fake_embed)
     vectors, failures = asyncio.run(
-        memory_embedding_backfill._embed_batch_isolated(["first", "", "third"])
+        memory_system.maintain.embedding_backfill._embed_batch_isolated(["first", "", "third"])
     )
 
     assert calls == [["first", "third"]]

@@ -1,6 +1,6 @@
 """Telemetry reflection: AI agent telemetry → skill / playbook / knowledge (option B).
 
-The playbook pathway (memory_playbooks.py) subordinates telemetry to cross-entity
+The playbook pathway (memory_system.distill.playbooks.py) subordinates telemetry to cross-entity
 intelligence clustering — telemetry only enriches a prompt and cannot initiate
 anything, so a single-entity discovery is lost. This module gives telemetry a
 FIRST-CLASS, per-entity nightly path to knowledge.
@@ -24,12 +24,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from core.storage import get_memory_db_context
-from memory_services import call_llm, generate_embedding, get_memory_settings
+from services import call_llm, generate_embedding, get_memory_settings
 from services.llm import parse_llm_json
-from memory_db_writes import insert_knowledge, log_pipeline_run
-from memory_helpers import _get_entity_type_config
-from memory_generation_policy import approval_status, resolve_generation_policy
-from memory_facets import facet_prompt_instructions, validate_generated_facets
+from memory_system.store.writes import insert_knowledge, log_pipeline_run
+from memory_system.store.helpers import _get_entity_type_config
+from memory_system.distill.policy import approval_status, resolve_generation_policy
+from memory_system.distill.facets import facet_prompt_instructions, validate_generated_facets
 
 logger = logging.getLogger(__name__)
 
@@ -160,7 +160,7 @@ async def _reflect_entity_day(entity_type: str, entity_id: str, day: str, confid
         "embedded_at": r.get("embedded_at"),
     } for r in telemetry]
     try:
-        from memory_evidence_service import route_evidence_or_link
+        from memory_system.distill.evidence_service import route_evidence_or_link
         routing = await route_evidence_or_link(
             pathway="telemetry_reflection", sources=sources, settings=settings,
             entity_type=entity_type, outcome_signature={"day": day},
@@ -210,7 +210,7 @@ async def _reflect_entity_day(entity_type: str, entity_id: str, day: str, confid
         if not isinstance(c, dict):
             continue
         try:
-            from memory_generation_contracts import validate_telemetry_candidate
+            from memory_system.distill.contracts import validate_telemetry_candidate
             c = validate_telemetry_candidate(c).model_dump()
             c["target"] = c.get("target") or c.get("category")
         except ValueError as exc:
@@ -232,7 +232,7 @@ async def _reflect_entity_day(entity_type: str, entity_id: str, day: str, confid
         # other creation pathway) so candidate discovery compares like-for-like.
         embedding = None
         try:
-            from memory_embedding import embed_knowledge_fields
+            from memory_system.maintain.embedding import embed_knowledge_fields
             embedding, _model = await embed_knowledge_fields(
                 name=name, category=target, content=content, summary=summary,
             )
@@ -322,7 +322,7 @@ async def backfill_telemetry(max_days: int = 7) -> dict:
 
     Hooked into the same 'Drain Backlog' trigger as the intelligence→knowledge
     drain so one click backfills both experiential backlogs."""
-    from memory_db_writes import log_pipeline_run
+    from memory_system.store.writes import log_pipeline_run
 
     try:
         with get_memory_db_context() as conn:

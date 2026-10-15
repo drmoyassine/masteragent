@@ -20,7 +20,7 @@ from core.secrets import decrypt_secret, encrypt_secret
 from core.utils import utcnow
 from memory.auth import require_admin_auth
 from services.config_helpers import get_memory_settings
-from memory_models import (
+from memory_system.store.models import (
     AgentCreate, AgentCreateResponse, AgentResponse,
     ChannelTypeCreate, ChannelTypeResponse,
     EntitySubtypeCreate, EntitySubtypeResponse,
@@ -298,7 +298,7 @@ async def delete_system_prompt(prompt_id: str, user: dict = Depends(require_admi
 # Admin Config Endpoints - LLM Providers
 # ============================================
 
-from memory_models import LLMProviderCreate, LLMProviderResponse, LLMProviderUpdate
+from memory_system.store.models import LLMProviderCreate, LLMProviderResponse, LLMProviderUpdate
 
 @router.get("/config/llm-providers", response_model=List[LLMProviderResponse])
 async def list_llm_providers(user: dict = Depends(require_admin_auth)):
@@ -502,7 +502,7 @@ async def update_llm_config(config_id: str, data: LLMConfigUpdate, user: dict = 
             created_at=updated["created_at"], updated_at=updated["updated_at"]
         )
 
-from memory_models import PipelineReorderRequest
+from memory_system.store.models import PipelineReorderRequest
 
 @router.patch("/config/llm-configs/reorder")
 async def reorder_pipeline_nodes(data: PipelineReorderRequest, user: dict = Depends(require_admin_auth)):

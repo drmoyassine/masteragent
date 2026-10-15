@@ -11,13 +11,13 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from core.storage import get_memory_db_context
-from memory_services import call_llm, generate_embedding, get_memory_settings
-from memory_similarity import connected_components
+from services import call_llm, generate_embedding, get_memory_settings
+from memory_system.maintain.similarity import connected_components
 from services.llm import parse_llm_json
-from memory_db_writes import insert_knowledge
-from memory_helpers import _get_entity_type_config
-from memory_generation_policy import approval_status, resolve_generation_policy
-from memory_facets import facet_prompt_instructions, validate_generated_facets
+from memory_system.store.writes import insert_knowledge
+from memory_system.store.helpers import _get_entity_type_config
+from memory_system.distill.policy import approval_status, resolve_generation_policy
+from memory_system.distill.facets import facet_prompt_instructions, validate_generated_facets
 
 logger = logging.getLogger(__name__)
 
@@ -141,7 +141,7 @@ async def _process_entity_type(
         logger.info(f"No similar intelligence pairs found for {entity_type}")
         return
 
-    # 2. Cluster similar pairs via the shared union-find (memory_similarity)
+    # 2. Cluster similar pairs via the shared union-find (memory_system.maintain.similarity)
     all_ids = {p["aid"] for p in pairs} | {p["bid"] for p in pairs}
     edges = [(p["aid"], p["bid"], 0.0) for p in pairs]
     components = connected_components(all_ids, edges)
@@ -260,7 +260,7 @@ async def _process_cluster(
         "embedding_dimensions": r.get("embedding_dimensions"), "embedded_at": r.get("embedded_at"),
     } for r in ai_interactions]
     try:
-        from memory_evidence_service import route_evidence_or_link
+        from memory_system.distill.evidence_service import route_evidence_or_link
         routing = await route_evidence_or_link(
             pathway="playbook_extraction", sources=sources, settings=settings,
             entity_type=entity_type,
@@ -282,7 +282,7 @@ async def _process_cluster(
         return
 
     try:
-        from memory_generation_contracts import validate_playbook
+        from memory_system.distill.contracts import validate_playbook
         playbook_data = validate_playbook(playbook_data).model_dump()
     except ValueError as exc:
         logger.warning("Rejected invalid playbook output: %s", exc)
@@ -399,7 +399,7 @@ async def _generate_skills_from_playbook(
 
     skill_settings = get_memory_settings() or {}
     try:
-        from memory_evidence_service import route_evidence_or_link
+        from memory_system.distill.evidence_service import route_evidence_or_link
         routing = await route_evidence_or_link(
             pathway="skill_extraction", sources=sources, settings=skill_settings,
             entity_type=entity_type,
@@ -436,7 +436,7 @@ async def _generate_skills_from_playbook(
     )["values"]
     for skill_data in skills[:5]:
         try:
-            from memory_generation_contracts import validate_skill
+            from memory_system.distill.contracts import validate_skill
             skill_data = validate_skill(skill_data).model_dump()
         except ValueError as exc:
             logger.warning("Rejected invalid skill output: %s", exc)
@@ -478,7 +478,7 @@ async def _generate_skills_from_playbook(
         # Canonical category-aware embedding (covers skill operational fields).
         embedding = None
         try:
-            from memory_embedding import embed_knowledge_fields
+            from memory_system.maintain.embedding import embed_knowledge_fields
             embedding, _model = await embed_knowledge_fields(
                 name=sk_name, category="skill", content=sk_proc,
                 summary=sk_trigger, signals=playbook_data.get("signals", []),

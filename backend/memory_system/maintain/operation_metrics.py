@@ -125,7 +125,7 @@ def _eligible_source_count(operation: str) -> int:
     eligibility rules are the sync operations' own — the deleted provider-batch
     transport merely re-exported them for previews.
     """
-    from memory_embedding import current_embedding_model
+    from memory_system.maintain.embedding import current_embedding_model
     model = current_embedding_model()
     with get_memory_db_context() as conn:
         cur = conn.cursor()
