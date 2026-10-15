@@ -37,27 +37,108 @@ def validate_runtime_configuration() -> None:
 
 
 def _validate_credential_envelopes() -> None:
-    """Fail closed when stored credentials aren't guaranteed decryptable.
+    """Split the envelope gate by recoverability (TASK-257, 2026-10-15 outage).
 
     Runs ALWAYS once envelopes exist — silent credential orphaning is a
     data-loss event, not a preference gated behind STRICT_STARTUP_VALIDATION.
-    Fresh installs (nothing stored yet, or schema still initializing) pass."""
-    from core.secrets import envelope_health, envelopes_exist, rotation_safe
+    Fresh installs (nothing stored yet, or schema still initializing) pass.
+
+      rewrap-able (decrypts under a fallback chain source, or under a fallback
+      PRIMARY because DATA_ENCRYPTION_KEY was never promoted) → REFUSE boot:
+      these are recoverable, and the recovery (rewrap) must happen BEFORE the
+      next key promotion — letting boot proceed is how routine rotations
+      silently destroy credentials.
+
+      true orphans (decrypt under no chain source) → WARN and continue:
+      unrecoverable ciphertext has nothing left to protect; stranding the
+      whole service over it caused the 2026-10-15 outage. An alert row names
+      the affected stores so re-entry via the admin UI is loud, not silent.
+    """
+    from core.secrets import envelope_classification, envelopes_exist, key_source
 
     if not envelopes_exist():
         return
-    if rotation_safe():
+    classification = envelope_classification()
+    if classification["total"] == 0:
         return
-    health = envelope_health()
-    raise RuntimeError(
-        "Stored credential envelopes are not rotation-safe: "
-        f"{health['orphaned']} of {health['total']} stored credential envelope(s) cannot be "
-        f"guaranteed decryptable (current DATA_ENCRYPTION_KEY source: {health['current_source']}). "
-        "Rotating JWT_SECRET_KEY — or setting DATA_ENCRYPTION_KEY later — would permanently orphan "
-        "them ('Stored credential cannot be decrypted' on every provider call). Set a dedicated "
-        "DATA_ENCRYPTION_KEY and migrate envelopes via POST /api/memory/admin/rewrap-credentials "
-        "(DATA_ENCRYPTION_KEY_NEXT transition), or re-enter credentials via the admin UI."
+
+    # Envelopes whose only decryptable source is a fallback PRIMARY count as
+    # rewrap-able too: promoting the dedicated key + rewrapping is exactly the
+    # endpoint's documented flow, and any later fallback rotation orphans them.
+    on_dedicated_key = key_source() == "data_key"
+    must_rewrap = classification["rewrap_able"] + (
+        0 if on_dedicated_key else classification["current"]
     )
+    orphans = classification["orphaned"]
+
+    if must_rewrap == 0 and orphans == 0:
+        return
+    if must_rewrap:
+        raise RuntimeError(
+            "Stored credential envelopes are not rotation-safe: "
+            f"{must_rewrap} of {classification['total']} envelope(s) decrypt only under a "
+            f"fallback key source (current DATA_ENCRYPTION_KEY source: "
+            f"{classification['current_source']}). Rotating JWT_SECRET_KEY — or promoting a new "
+            "DATA_ENCRYPTION_KEY — would permanently orphan them. Rewrap BEFORE promoting the "
+            "next key: run `python scripts/remediate_credentials.py rewrap --apply` inside the "
+            "container (offline), or POST /api/memory/admin/rewrap-credentials with "
+            "DATA_ENCRYPTION_KEY_NEXT set."
+        )
+    # Orphans only: quarantine is a post-boot remediation (the CLI), never a
+    # reason to keep the service down.
+    logger.error(
+        "Credential orphan alert: %d of %d stored envelope(s) decrypt under NO key source "
+        "(per-store: %s). Re-enter affected credentials via the admin UI; recoverable rows can be "
+        "quarantined + NULLed with `python scripts/remediate_credentials.py quarantine --apply`.",
+        orphans, classification["total"],
+        {label: store["orphaned"] for label, store in classification["stores"].items()},
+    )
+    _alert_credential_orphans(classification)
+
+
+def _alert_credential_orphans(classification: dict) -> None:
+    """Raise a memory_system_alerts row for orphaned envelopes (counts only).
+
+    Best-effort: an alert-insert failure must never block boot."""
+    stores_brief = "; ".join(
+        f"{label}: {store['orphaned']}/{store['total']} orphaned"
+        for label, store in classification["stores"].items()
+        if store["orphaned"]
+    ) or "none"
+    try:
+        from core.db import get_db_context
+        with get_db_context() as conn:
+            cursor = conn.cursor()
+            # code is memory_system_alerts' PRIMARY KEY — upsert, never insert.
+            cursor.execute(
+                """
+                INSERT INTO memory_system_alerts
+                    (code, severity, title, message, source, detail, active, first_seen_at, last_seen_at)
+                VALUES (%s, %s, %s, %s, %s, %s::jsonb, TRUE, NOW(), NOW())
+                ON CONFLICT (code) DO UPDATE SET
+                    severity = EXCLUDED.severity,
+                    title = EXCLUDED.title,
+                    message = EXCLUDED.message,
+                    source = EXCLUDED.source,
+                    detail = EXCLUDED.detail,
+                    active = TRUE,
+                    last_seen_at = NOW()
+                """,
+                (
+                    "CREDENTIAL_ORPHANS",
+                    "error",
+                    "Orphaned credential envelopes",
+                    f"{classification['orphaned']} of {classification['total']} stored credential "
+                    f"envelope(s) cannot be decrypted under any key source ({stores_brief}). "
+                    "Re-enter affected credentials via the admin UI.",
+                    "startup_gate",
+                    f'{{"orphaned": {classification["orphaned"]}, '
+                    f'"total": {classification["total"]}, '
+                    f'"current_source": "{classification["current_source"]}"}}',
+                ),
+            )
+    except Exception as exc:
+        logger.warning(f"Credential-orphan alert upsert failed (boot continues): {exc}")
 
 
 def initialize_application() -> None:

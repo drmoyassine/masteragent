@@ -126,9 +126,67 @@ def envelopes_exist() -> bool:
 def envelope_health() -> dict:
     """Count stored credential envelopes by decryptability under the current
     key-resolution chain. Counts only — secret values never enter the result."""
+    classification = envelope_classification()
+    health = {
+        "total": classification["total"],
+        "decryptable": classification["current"] + classification["rewrap_able"],
+        "orphaned": classification["orphaned"],
+        "current_source": classification["current_source"],
+    }
+    for label, store in classification["stores"].items():
+        health[f"{label}_total"] = store["total"]
+    return health
+
+
+def _primary_source() -> str:
+    """The source _fernet() resolves to (mirrors its resolution order)."""
+    return (
+        os.environ.get("DATA_ENCRYPTION_KEY")
+        or os.environ.get("JWT_SECRET_KEY")
+        or _DEV_DEFAULT
+    )
+
+
+def _classify_values(values, fernets, primary_fernet) -> dict:
+    """Split envelope values into current / rewrap_able / orphaned.
+
+      current     — decrypts under the primary source (safe forever, until the
+                    primary itself is rotated)
+      rewrap_able — decrypts under a fallback chain source only; recoverable
+                    via rewrap BEFORE the next key promotion, but one rotation
+                    away from orphaning
+      orphaned    — decrypts under NO chain source; unrecoverable ciphertext,
+                    remedy = quarantine + NULL (scripts/remediate_credentials.py)
+    """
+    counts = {"current": 0, "rewrap_able": 0, "orphaned": 0}
+    for value in values:
+        if _decrypts_under(value, primary_fernet):
+            counts["current"] += 1
+        elif any(_decrypts_under(value, f) for f in fernets):
+            counts["rewrap_able"] += 1
+        else:
+            counts["orphaned"] += 1
+    return counts
+
+
+def envelope_classification() -> dict:
+    """Per-store breakdown of stored credential envelopes by recoverability.
+
+    Extends envelope_health with the rewrap-able/orphaned split the startup
+    gate and scripts/remediate_credentials.py act on. Counts only — secret
+    values never enter the result."""
     from core.db import get_db_context
-    fernets = [_fernet_from_source(source) for source in _sources()]
-    health = {"total": 0, "decryptable": 0, "orphaned": 0, "current_source": key_source()}
+    sources = _sources()
+    fernets = [_fernet_from_source(source) for source in sources]
+    primary_fernet = _fernet_from_source(_primary_source())
+    result = {
+        "total": 0,
+        "current": 0,
+        "rewrap_able": 0,
+        "orphaned": 0,
+        "current_source": key_source(),
+        "stores": {},
+    }
     for label, query in _ENVELOPE_QUERIES:
         try:
             with get_db_context() as conn:
@@ -136,22 +194,15 @@ def envelope_health() -> dict:
                 cursor.execute(query)
                 rows = cursor.fetchall()
         except Exception as exc:
-            logger.warning(f"envelope_health: {label} scan skipped: {exc}")
+            logger.warning(f"envelope_classification: {label} scan skipped: {exc}")
             continue
-        ok = sum(1 for row in rows if any(_decrypts_under(row["v"], f) for f in fernets))
-        health["total"] += len(rows)
-        health["decryptable"] += ok
-        health["orphaned"] += len(rows) - ok
-        health[f"{label}_total"] = len(rows)
-    return health
+        counts = _classify_values([row["v"] for row in rows], fernets, primary_fernet)
+        store = {"total": len(rows), **counts}
+        result["stores"][label] = store
+        result["total"] += store["total"]
+        result["current"] += counts["current"]
+        result["rewrap_able"] += counts["rewrap_able"]
+        result["orphaned"] += counts["orphaned"]
+    return result
 
 
-def rotation_safe() -> bool:
-    """True when every stored envelope decrypts under the dedicated
-    DATA_ENCRYPTION_KEY primary source. False when any envelope only decrypts
-    via the JWT/dev fallbacks — a JWT rotation (or setting DATA_ENCRYPTION_KEY
-    later) would permanently orphan them. Trivially True with no envelopes."""
-    if key_source() != "data_key":
-        return False
-    health = envelope_health()
-    return health["total"] == 0 or health["orphaned"] == 0
