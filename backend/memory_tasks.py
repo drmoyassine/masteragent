@@ -43,7 +43,6 @@ from memory_ingestion import process_interaction  # noqa: E402, F401
 # ── Generation ────────────────────────────────────────────────────────────────
 from memory_generation import (  # noqa: E402, F401
     get_job_last_date,
-    set_job_last_date,
     claim_job_date,
     complete_job_date,
     fail_job_date,

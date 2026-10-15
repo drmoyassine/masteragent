@@ -53,20 +53,6 @@ def get_job_last_date(job_name: str) -> Optional[date]:
         return None
 
 
-def set_job_last_date(job_name: str, run_date: date):
-    """Record that a job ran on run_date."""
-    try:
-        with get_memory_db_context() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT INTO memory_job_log (job_name, last_run, last_date)
-                VALUES (%s, NOW(), %s)
-                ON CONFLICT (job_name) DO UPDATE SET last_run = NOW(), last_date = EXCLUDED.last_date
-            """, (job_name, run_date))
-    except Exception as e:
-        logger.warning(f"set_job_last_date failed: {e}")
-
-
 def claim_job_date(job_name: str, run_date: date) -> bool:
     """Atomically claim a scheduled job/date across all app replicas."""
     with get_memory_db_context() as conn:
