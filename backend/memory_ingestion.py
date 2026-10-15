@@ -266,11 +266,7 @@ async def _maybe_trigger_threshold_memory(interaction: dict) -> None:
     # Enqueue the memory job for today's bucket. The worker will acquire the
     # per-entity lock at start; outbound webhooks defer while it runs.
     try:
-        from memory.queue import (
-            MEMORY_JOB_ATTEMPTS,
-            MEMORY_JOB_BACKOFF_MS,
-            memory_queue,
-        )
+        from memory.queue import job_options, memory_queue
         await memory_queue.add(
             "generate_memory",
             {
@@ -279,7 +275,7 @@ async def _maybe_trigger_threshold_memory(interaction: dict) -> None:
                 "interaction_date": today_utc.isoformat(),
                 "trigger": "threshold",
             },
-            {"priority": 4, "attempts": MEMORY_JOB_ATTEMPTS, "backoff": {"type": "exponential", "delay": MEMORY_JOB_BACKOFF_MS}}
+            job_options("generate_memory", priority=4)
         )
         logger.info(
             f"Threshold memory enqueued for {entity_type}/{entity_id} "

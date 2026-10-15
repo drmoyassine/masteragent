@@ -2143,11 +2143,7 @@ async def bulk_reprocess_memories(
     admin: dict = Depends(require_admin_auth)
 ):
     """Delete memories and enqueue their interactions back into memory pipeline generation."""
-    from memory.queue import (
-        MEMORY_JOB_ATTEMPTS,
-        MEMORY_JOB_BACKOFF_MS,
-        memory_queue,
-    )
+    from memory.queue import job_options, memory_queue
     memory_ids = payload.get("memory_ids", [])
     if not memory_ids:
         return {"queued": 0}
@@ -2209,7 +2205,7 @@ async def bulk_reprocess_memories(
                 "entity_type": mem["primary_entity_type"],
                 "entity_id": mem["primary_entity_id"],
                 "interaction_date": str(mem["date"])
-            }, {"priority": 5, "attempts": MEMORY_JOB_ATTEMPTS, "backoff": {"type": "exponential", "delay": MEMORY_JOB_BACKOFF_MS}})
+            }, job_options("generate_memory", priority=5))
             queued_count += 1
             
         conn.commit()

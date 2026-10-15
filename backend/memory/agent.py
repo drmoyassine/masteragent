@@ -143,11 +143,11 @@ async def ingest_interaction(
 
     if not is_telemetry and inserted:
         # Enqueue standard DLQ compliant backend task (dedup replays are already processed)
-        from memory.queue import interactions_queue
+        from memory.queue import interactions_queue, job_options
         await interactions_queue.add(
             "ingest_interaction",
             {"interaction_id": interaction_id},
-            {"attempts": 3, "backoff": {"type": "exponential", "delay": 2000}}
+            job_options("ingest_interaction")
         )
 
     log_audit(agent["id"], "ingest_interaction", "interaction", interaction_id, {
@@ -259,13 +259,13 @@ async def ingest_interactions_bulk(
                     VALUES (%s, %s, %s, %s)
                 """, (agent["id"], idempotency_key, request_hash, ids))
 
-    from memory.queue import interactions_queue
+    from memory.queue import interactions_queue, job_options
     for interaction_id in enqueue_ids:
         await interactions_queue.add(
             "ingest_interaction",
             {"interaction_id": interaction_id},
             {"jobId": f"interaction-{interaction_id}",
-             "attempts": 3, "backoff": {"type": "exponential", "delay": 2000}}
+             **job_options("ingest_interaction")}
         )
 
     if not replayed:

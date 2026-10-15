@@ -165,7 +165,11 @@ async def _background_loop():
       interaction retention       (02:00 window) → raw-tier age cutoff (Tier 0 hygiene)
 
     Threshold valves still fire intra-day (independent of this loop). Consolidation
-    stays a periodic (weekly) maintenance job — pruning, not learning."""
+    stays a periodic (weekly) maintenance job — pruning, not learning.
+
+    Scheduled claims ride the job payload (job_claim) and the queue runner
+    completes them after the work — completing at enqueue let a job lost between
+    enqueue and pickup silently skip the day."""
     global _scheduler_last_tick
     while True:
         _scheduler_last_tick = datetime.now(timezone.utc)
@@ -173,7 +177,7 @@ async def _background_loop():
             settings = get_memory_settings() or {}
             now_utc = datetime.now(timezone.utc)
             today = now_utc.date()
-            from memory.queue import interactions_queue, knowledge_queue
+            from memory.queue import interactions_queue, job_options, knowledge_queue
 
             # ── Tier 0→1: Memory generation (true nightly flush) ──────────────
             if _time_reached(now_utc, settings.get("memory_generation_time", "02:00"), (2, 0)):
@@ -196,10 +200,11 @@ async def _background_loop():
                     floor = int(settings.get("intelligence_schedule_floor", 2))
                     logger.info(f"Firing nightly intelligence sweep (floor={floor})")
                     try:
-                        await knowledge_queue.add("run_intelligence_sweep", {"min_count": floor},
-                                                  {"priority": 3, "attempts": 3,
-                                                   "backoff": {"type": "exponential", "delay": 60000}})
-                        complete_job_date("intelligence_schedule", today)
+                        await knowledge_queue.add(
+                            "run_intelligence_sweep",
+                            {"min_count": floor,
+                             "job_claim": {"name": "intelligence_schedule", "date": today.isoformat()}},
+                            job_options("run_intelligence_sweep", priority=3))
                     except Exception as exc:
                         fail_job_date("intelligence_schedule", today, exc)
                         raise
@@ -211,10 +216,11 @@ async def _background_loop():
                     floor = int(settings.get("knowledge_schedule_floor", 2))
                     logger.info(f"Firing nightly knowledge sweep (floor={floor})")
                     try:
-                        await knowledge_queue.add("run_all_knowledge_generation", {"min_count": floor},
-                                                  {"priority": 3, "attempts": 3,
-                                                   "backoff": {"type": "exponential", "delay": 60000}})
-                        complete_job_date("knowledge_generation_all", today)
+                        await knowledge_queue.add(
+                            "run_all_knowledge_generation",
+                            {"min_count": floor,
+                             "job_claim": {"name": "knowledge_generation_all", "date": today.isoformat()}},
+                            job_options("run_all_knowledge_generation", priority=3))
                     except Exception as exc:
                         fail_job_date("knowledge_generation_all", today, exc)
                         raise
@@ -229,10 +235,11 @@ async def _background_loop():
                 if claim_job_date("telemetry_reflection_schedule", today):
                     logger.info("Firing nightly telemetry reflection")
                     try:
-                        await knowledge_queue.add("reflect_telemetry", {},
-                                                  {"priority": 3, "attempts": 3,
-                                                   "backoff": {"type": "exponential", "delay": 60000}})
-                        complete_job_date("telemetry_reflection_schedule", today)
+                        await knowledge_queue.add(
+                            "reflect_telemetry",
+                            {"job_claim": {"name": "telemetry_reflection_schedule",
+                                           "date": today.isoformat()}},
+                            job_options("reflect_telemetry", priority=3))
                     except Exception as exc:
                         fail_job_date("telemetry_reflection_schedule", today, exc)
                         raise
@@ -245,10 +252,10 @@ async def _background_loop():
                days_since_consol >= consolidation_interval and claim_job_date("consolidation", today):
                 logger.info(f"Triggering consolidation (days_since={days_since_consol})")
                 try:
-                    await knowledge_queue.add("run_consolidation", {},
-                                              {"priority": 4, "attempts": 3,
-                                               "backoff": {"type": "exponential", "delay": 60000}})
-                    complete_job_date("consolidation", today)
+                    await knowledge_queue.add(
+                        "run_consolidation",
+                        {"job_claim": {"name": "consolidation", "date": today.isoformat()}},
+                        job_options("run_consolidation", priority=4))
                 except Exception as exc:
                     fail_job_date("consolidation", today, exc)
                     raise
@@ -265,11 +272,10 @@ async def _background_loop():
                 try:
                     await interactions_queue.add(
                         "interaction_retention",
-                        {"batch_size": 500, "max_records": 50000},
-                        {"priority": 5, "attempts": 3,
-                         "backoff": {"type": "exponential", "delay": 60000}},
+                        {"batch_size": 500, "max_records": 50000,
+                         "job_claim": {"name": "interaction_retention", "date": today.isoformat()}},
+                        job_options("interaction_retention", priority=5),
                     )
-                    complete_job_date("interaction_retention", today)
                 except Exception as exc:
                     fail_job_date("interaction_retention", today, exc)
                     raise

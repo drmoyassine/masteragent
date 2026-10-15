@@ -3,6 +3,7 @@ import json
 import asyncio
 import logging
 from dataclasses import dataclass
+from datetime import date
 from typing import Optional, TypedDict, Any, Callable
 from bullmq import Queue, Worker, Job
 from redis.asyncio import Redis
@@ -49,13 +50,10 @@ BULL_DEFAULT_JOB_OPTIONS = {
 }
 
 # TASK-257 §6: these started as memory_settings knobs whose columns never
-# existed, so every settings.get() silently returned its default. Hardcoded
-# until the §5 job registry owns per-job attempts/backoff. Concurrency binds
-# at Worker start, so a live knob would need a worker restart to take effect
-# anyway.
+# existed, so every settings.get() silently returned its default. Concurrency
+# binds at Worker start, so a live knob would need a worker restart to take
+# effect anyway. Per-job attempts/backoff moved into the JobSpec registry (§5b).
 QUEUE_CONCURRENCY = {"interactions_ops": 5, "memory_ops": 1, "knowledge_ops": 1}
-MEMORY_JOB_ATTEMPTS = 3
-MEMORY_JOB_BACKOFF_MS = 2000
 
 interactions_queue = Queue("interactions_ops", opts={"connection": REDIS_URL, "defaultJobOptions": BULL_DEFAULT_JOB_OPTIONS})
 memory_queue = Queue("memory_ops", opts={"connection": REDIS_URL, "defaultJobOptions": BULL_DEFAULT_JOB_OPTIONS})
@@ -72,12 +70,14 @@ knowledge_worker = None
 # and completion side effects. BullMQ stays dumb transport and
 # _process_bulk_job is a generic runner that reads a JobSpec.
 #
-# Attempts/backoff still ride on enqueue options (MEMORY_JOB_ATTEMPTS /
-# MEMORY_JOB_BACKOFF_MS); per-job ownership of those moves with §5b alongside
-# completing claims from inside the job. Legacy job names (generate_knowledge,
-# run_consolidation) stay first-class specs flagged replaced_by so in-flight
-# producers keep working during the one-release mapping window — the runner
-# logs a deprecation warning each time one is picked up.
+# Per-job attempts/backoff live in the spec; enqueue sites read them through
+# job_options(). Scheduled-run claims ride the job payload (job_claim) and the
+# runner completes them after the work — completing at enqueue let a job lost
+# between enqueue and pickup silently skip the day. Legacy job names
+# (generate_knowledge, run_consolidation) stay first-class specs flagged
+# replaced_by so in-flight producers keep working during the one-release
+# mapping window — the runner logs a deprecation warning each time one is
+# picked up.
 
 Handler = Callable[[Any, Any], Any]
 
@@ -93,6 +93,8 @@ class JobSpec:
     estimate_price_per_million: Optional[float] = None
     rpm: int = 60                          # fixed dispatch rate limit
     rpm_llm_config: Optional[str] = None   # LLM config whose rate_limit_rpm overrides rpm
+    attempts: Optional[int] = None         # BullMQ retry count; None = single attempt (queue default)
+    backoff_ms: int = 2000                 # exponential backoff delay between attempts
     refresh_metrics_on_complete: bool = False  # enqueue refresh_operation_metrics on completion
     dlq_interactions: bool = False         # stamp the interactions row failed on final attempt
     replaced_by: Optional[str] = None      # legacy name → current name to enqueue instead
@@ -285,18 +287,21 @@ async def _run_extract_knowledge_attachment(job: Job, run_id):
 JOBS: dict = {
     # Interactions & webhooks
     "ingest_interaction": JobSpec("ingest_interaction", _run_ingest_interaction,
-                                  ai_gate=True, rpm=600, dlq_interactions=True),
+                                  ai_gate=True, rpm=600, dlq_interactions=True,
+                                  attempts=3, backoff_ms=2000),
+    # Manual single-shot below: no attempts policy (operators see the error directly).
     "reprocess": JobSpec("reprocess", _run_ingest_interaction,
                          ai_gate=True, rpm=600, dlq_interactions=True),
     "fire_outbound_webhook": JobSpec("fire_outbound_webhook", _run_fire_outbound_webhook,
                                      rpm=600),
     # Memory generation
     "generate_memory": JobSpec("generate_memory", _run_generate_memory,
-                               ai_gate=True, rpm_llm_config="summarization"),
+                               ai_gate=True, rpm_llm_config="summarization",
+                               attempts=3, backoff_ms=2000),
     "generate_insight": JobSpec("generate_insight", _run_generate_insight,
                                 ai_gate=True, rpm_llm_config="intelligence_generation"),
     "run_intelligence_sweep": JobSpec("run_intelligence_sweep", _run_intelligence_sweep,
-                                      ai_gate=True),
+                                      ai_gate=True, attempts=3, backoff_ms=60000),
     "creation_time_consolidation": JobSpec("creation_time_consolidation", _run_creation_time_consolidation,
                                            ai_gate=True),
     # Knowledge generation — generate_knowledge is the legacy name (tiers only).
@@ -306,7 +311,8 @@ JOBS: dict = {
                                   replaced_by="run_all_knowledge_generation"),
     "run_all_knowledge_generation": JobSpec("run_all_knowledge_generation", _run_all_knowledge_generation,
                                             ai_gate=True, controls_key="run_all_knowledge_generation",
-                                            singleton=True, refresh_metrics_on_complete=True),
+                                            singleton=True, refresh_metrics_on_complete=True,
+                                            attempts=3, backoff_ms=60000),
     "promote_to_knowledge": JobSpec("promote_to_knowledge", _run_promote_to_knowledge,
                                     ai_gate=True, rpm_llm_config="knowledge_generation"),
     "extract_playbooks": JobSpec("extract_playbooks", _run_extract_playbooks,
@@ -316,7 +322,8 @@ JOBS: dict = {
                                      singleton=True, refresh_metrics_on_complete=True),
     "run_consolidation": JobSpec("run_consolidation", _run_consolidation,
                                  controls_key="knowledge_hygiene_run", singleton=True,
-                                 replaced_by="knowledge_hygiene_run"),
+                                 replaced_by="knowledge_hygiene_run",
+                                 attempts=3, backoff_ms=60000),
     "knowledge_embedding_backfill": JobSpec("knowledge_embedding_backfill", _run_embedding_backfill,
                                             ai_gate=True, controls_key="knowledge_embedding_backfill",
                                             singleton=True, estimate_tokens=500,
@@ -330,13 +337,44 @@ JOBS: dict = {
     "backfill_telemetry": JobSpec("backfill_telemetry", _run_backfill_telemetry,
                                   ai_gate=True, singleton=True),
     "reflect_telemetry": JobSpec("reflect_telemetry", _run_reflect_telemetry,
-                                 ai_gate=True),
+                                 ai_gate=True, attempts=3, backoff_ms=60000),
     # Retention & metrics
     "interaction_retention": JobSpec("interaction_retention", _run_interaction_retention,
-                                     controls_key="interaction_retention", singleton=True),
+                                     controls_key="interaction_retention", singleton=True,
+                                     attempts=3, backoff_ms=60000),
     "refresh_operation_metrics": JobSpec("refresh_operation_metrics", _run_refresh_operation_metrics,
                                          singleton=True),
 }
+
+
+def job_options(name: str, priority: Optional[int] = None) -> dict:
+    """BullMQ enqueue options for a registered job: per-job attempts/backoff
+    from its spec plus a site-chosen priority. Names without an attempts
+    policy enqueue exactly as before."""
+    options: dict = {}
+    if priority is not None:
+        options["priority"] = priority
+    spec = JOBS.get(name)
+    if spec is not None and spec.attempts:
+        options["attempts"] = spec.attempts
+        options["backoff"] = {"type": "exponential", "delay": spec.backoff_ms}
+    return options
+
+
+def _payload_claim(job: Job):
+    """Scheduled-run claims ride the job payload (§5b): the scheduler stamps
+    {'job_claim': {'name': <memory_job_log name>, 'date': 'YYYY-MM-DD'}} so the
+    worker — not the enqueuer — completes the claim. Manual/admin triggers
+    carry no claim and are unaffected. A malformed payload degrades to an
+    unclaimed run."""
+    raw = (job.data or {}).get("job_claim")
+    if not (isinstance(raw, dict) and raw.get("name") and raw.get("date")):
+        return None, None
+    try:
+        return str(raw["name"]), date.fromisoformat(str(raw["date"]))
+    except ValueError:
+        logger.warning("Ignoring malformed job_claim on job %s: %r", job.id, raw)
+        return None, None
 
 
 def _resolve_rpm(spec: JobSpec) -> int:
@@ -354,8 +392,19 @@ async def _process_bulk_job(job: Job, token: str):
     spec = JOBS.get(job.name)
     singleton_lock_name = None
     run_id = None
+    claim_name, claim_date = _payload_claim(job)
     try:
         if spec is not None:
+            # A duplicate re-fired by the 15-min stale reclaim while the
+            # original still executes must not run the sweep twice: if the
+            # claimed date already completed, this pickup is a no-op.
+            if claim_name:
+                from memory_generation import get_job_claim_status
+                if get_job_claim_status(claim_name, claim_date) == "completed":
+                    logger.info("Skipping %s (%s): claim %s/%s already completed",
+                                job.name, job.id, claim_name, claim_date)
+                    return {"status": "skipped", "reason": "claim_completed"}
+
             if spec.replaced_by:
                 logger.warning(
                     "Job name '%s' is deprecated; enqueue '%s' instead "
@@ -434,6 +483,14 @@ async def _process_bulk_job(job: Job, token: str):
             operation_result = await spec.handler(job, run_id)
 
         logger.info(f"Successfully processed bulk job {job.id} ({job.name})")
+
+        # §5b: the claim completes here — after the work, not at enqueue — so
+        # a job lost between enqueue and pickup can no longer silently skip
+        # the day (the scheduler's 15-min stale reclaim re-fires it instead).
+        if claim_name:
+            from memory_generation import complete_job_date
+            complete_job_date(claim_name, claim_date)
+
         if singleton_lock_name:
             from memory_db_writes import log_pipeline_run
             from services.job_controls import get_command
@@ -527,6 +584,19 @@ async def _process_bulk_job(job: Job, token: str):
                                            (json.dumps({"fatal_error": str(e)}), i_id))
             except Exception as dlq_e:
                 logger.error(f"DLQ update failed for job {job.id}: {dlq_e}")
+
+            # §5b: the scheduled claim fails with the job on its FINAL attempt —
+            # earlier attempts leave it 'running' (BullMQ retries well inside the
+            # 15-min reclaim window). Provider-stop blocks and operator skips
+            # also leave it 'running': the reclaim re-fires later the same day
+            # once the stop lifts or the operator resumes.
+            if claim_name:
+                try:
+                    from memory_generation import fail_job_date
+                    fail_job_date(claim_name, claim_date, e)
+                except Exception as claim_exc:
+                    logger.error("Failed to stamp claim failure for %s/%s: %s",
+                                 claim_name, claim_date, claim_exc)
 
         raise e
     finally:

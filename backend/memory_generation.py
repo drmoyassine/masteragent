@@ -66,9 +66,10 @@ def claim_job_date(job_name: str, run_date: date) -> bool:
             WHERE memory_job_log.last_date IS DISTINCT FROM EXCLUDED.last_date
                OR memory_job_log.status = 'failed'
                -- Reclaim: a 'running' claim older than 15 min means the claimant
-               -- died between claim and complete (the claim only spans the
-               -- enqueue/scan, so 15 min is generous). Without this, the UTC day
-               -- silently skips until tomorrow.
+               -- died (scheduler crash mid-scan, or a payload-claimed queue job
+               -- that never ran or never finished). Long jobs CAN be reclaimed
+               -- while still executing; duplicate pickups are no-oped runner-side
+               -- when the date already completed, and the sweeps are idempotent.
                OR (
                     memory_job_log.status = 'running'
                     AND memory_job_log.last_run < NOW() - INTERVAL '15 minutes'
@@ -98,6 +99,23 @@ def fail_job_date(job_name: str, run_date: date, error: Exception) -> None:
         )
 
 
+def get_job_claim_status(job_name: str, run_date: date) -> Optional[str]:
+    """Status of the exact claim (name + date), or None when unclaimed. The
+    queue runner uses it to no-op duplicate pickups re-fired by the reclaim."""
+    try:
+        with get_memory_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT status FROM memory_job_log WHERE job_name = %s AND last_date = %s",
+                (job_name, run_date),
+            )
+            row = cursor.fetchone()
+            return row["status"] if row else None
+    except Exception as e:
+        logger.warning(f"get_job_claim_status failed: {e}")
+        return None
+
+
 # ── Orphan Sweeper ──────────────────────────────────────────────────────────
 
 async def run_orphan_sweeper():
@@ -121,13 +139,13 @@ async def run_orphan_sweeper():
             orphans = [row["id"] for row in cursor.fetchall()]
 
         if orphans:
-            from memory.queue import memory_bulk_queue
+            from memory.queue import job_options, memory_bulk_queue
             logger.warning(f"Orphan Sweeper: Found {len(orphans)} stuck interactions. Re-enqueueing.")
             for interaction_id in orphans:
                 await memory_bulk_queue.add(
                     "ingest_interaction",
                     {"interaction_id": interaction_id},
-                    {"attempts": 3, "backoff": {"type": "exponential", "delay": 2000}}
+                    job_options("ingest_interaction")
                 )
     except Exception as e:
         logger.error(f"Orphan Sweeper failed: {e}")
@@ -327,15 +345,11 @@ async def run_daily_memory_generation(include_today: bool = False):
             continue
 
         try:
-            from memory.queue import (
-                MEMORY_JOB_ATTEMPTS,
-                MEMORY_JOB_BACKOFF_MS,
-                memory_queue,
-            )
+            from memory.queue import job_options, memory_queue
             await memory_queue.add(
                 "generate_memory",
                 {"entity_type": entity_type, "entity_id": entity_id, "interaction_date": interaction_date},
-                {"priority": 5, "attempts": MEMORY_JOB_ATTEMPTS, "backoff": {"type": "exponential", "delay": MEMORY_JOB_BACKOFF_MS}}
+                job_options("generate_memory", priority=5)
             )
         except Exception as e:
             logger.error(f"Memory enqueue failed for {entity_type}/{entity_id} on {interaction_date}: {e}")
