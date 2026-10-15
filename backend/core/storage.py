@@ -21,14 +21,11 @@ import psycopg2.extras
 import redis as redis_lib
 from core.secrets import decrypt_secret, encrypt_secret
 from core.db_pool import acquire_connection, return_connection
+from core.database import get_database_url
 
 logger = logging.getLogger(__name__)
 
-# Default connection URLs (overridden by env or Supabase settings)
-_DEFAULT_POSTGRES_URL = os.environ.get(
-    "MEMORY_POSTGRES_URL",
-    "postgresql://postgres:postgres@localhost:5432/memory"
-)
+# Default Redis URL (overridden by env)
 _DEFAULT_REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 
 # Module-level cache for Redis client
@@ -40,21 +37,23 @@ _pg_url_cache = None
 
 def get_postgres_url() -> str:
     """
-    Resolve the active PostgreSQL connection URL.
+    Resolve the active PostgreSQL connection URL for the memory tables.
 
-    Priority:
-      1. Supabase URL from memory_settings (if connected)
-      2. MEMORY_POSTGRES_URL env var
-      3. Local default (postgres:postgres@localhost/memory)
+    TASK-257 §4: the base URL now comes from the single core resolver
+    (previously this module re-resolved env vars with a different fallback
+    default). The memory_settings Supabase override still takes precedence —
+    its fate is decided in the follow-up commit.
     """
     global _pg_url_cache
     if _pg_url_cache:
         return _pg_url_cache
 
+    base = get_database_url()
+
     # Try reading Supabase config from local PG settings table
     try:
         conn = psycopg2.connect(
-            _DEFAULT_POSTGRES_URL,
+            base,
             cursor_factory=psycopg2.extras.RealDictCursor,
             connect_timeout=3
         )
@@ -74,8 +73,8 @@ def get_postgres_url() -> str:
     except Exception:
         pass
 
-    _pg_url_cache = _DEFAULT_POSTGRES_URL
-    return _DEFAULT_POSTGRES_URL
+    _pg_url_cache = base
+    return base
 
 
 def invalidate_pg_url_cache():
@@ -190,7 +189,7 @@ def connect_supabase(supabase_url: str, supabase_db_url: str) -> dict:
     # 2. Store in local memory_settings
     try:
         local_conn = psycopg2.connect(
-            _DEFAULT_POSTGRES_URL,
+            get_database_url(),
             cursor_factory=psycopg2.extras.RealDictCursor
         )
         try:
@@ -222,7 +221,7 @@ def disconnect_supabase() -> dict:
     """Disconnect Supabase — revert to local PostgreSQL."""
     try:
         conn = psycopg2.connect(
-            _DEFAULT_POSTGRES_URL,
+            get_database_url(),
             cursor_factory=psycopg2.extras.RealDictCursor
         )
         try:
@@ -247,7 +246,7 @@ def get_supabase_status() -> dict:
     """Return current storage backend status."""
     try:
         conn = psycopg2.connect(
-            _DEFAULT_POSTGRES_URL,
+            get_database_url(),
             cursor_factory=psycopg2.extras.RealDictCursor,
             connect_timeout=3
         )

@@ -30,8 +30,8 @@ Deliberately imports NOTHING from the app boot path (core.db, db_init,
 memory_db). core.secrets is imported for the key chain only — its DB access
 is function-local, so the module imports clean. That is the whole point of
 "offline": the tool must work when the app cannot boot. The DSN resolves in
-the same order core.db uses (DATABASE_URL → MEMORY_POSTGRES_URL → compose
-default).
+the same order core/database.py uses (DATABASE_URL → MEMORY_POSTGRES_URL →
+compose default) — re-implemented here on purpose, not imported.
 """
 import argparse
 import os

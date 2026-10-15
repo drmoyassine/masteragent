@@ -18,24 +18,13 @@ import psycopg2
 import psycopg2.extras
 from core.secrets import decrypt_secret
 from core.db_pool import acquire_connection, return_connection
+from core.database import get_database_url
 
 logger = logging.getLogger(__name__)
 
-# Connection URL.  Resolution order:
-#   1. DATABASE_URL env var (if set and not a SQLite URI)
-#   2. MEMORY_POSTGRES_URL env var (reuse the memory DB)
-#   3. Compile-time default pointing at the Docker Compose service name
-_DEFAULT_PG = "postgresql://postgres:postgres@postgres:5432/memory"
-DATABASE_URL: str = os.environ.get("DATABASE_URL", "")
-
-if not DATABASE_URL or DATABASE_URL.startswith("sqlite:"):
-    if DATABASE_URL.startswith("sqlite:"):
-        logger.warning(
-            "DATABASE_URL is a SQLite URI — ignoring it. "
-            "Set DATABASE_URL=postgresql://... to silence this warning."
-        )
-    # Fall back to MEMORY_POSTGRES_URL or hard-coded Docker default
-    DATABASE_URL = os.environ.get("MEMORY_POSTGRES_URL", _DEFAULT_PG)
+# TASK-257 §4: the one resolver (core/database.py) — previously this module
+# resolved its own URL and never consulted the same chain storage.py used.
+DATABASE_URL: str = get_database_url()
 
 # Expose DB_PATH as a string alias for startup logging compatibility
 DB_PATH = DATABASE_URL

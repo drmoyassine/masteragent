@@ -209,6 +209,15 @@ async def health_check(response: Response):
     except Exception:
         credential_encryption = "unknown"
 
+    # ── Database resolver (TASK-257 §4: one URL for every namespace) ────────
+    try:
+        from core.database import get_database_url
+        from core.db import redact_database_url
+        db_label = redact_database_url(get_database_url())
+        checks["database"] = {"prompt_tables": db_label, "memory": db_label}
+    except Exception:
+        checks["database"] = "error"
+
     if not healthy:
         response.status_code = 503
     return {
@@ -403,10 +412,10 @@ async def log_requests(request: Request, call_next):
 # ─────────────────────────────────────────────
 # Startup logging
 # ─────────────────────────────────────────────
-from core.db import DB_PATH, redact_database_url
+from core.db import redact_database_url
+from core.database import get_database_url
 
 logger.info("Starting Prompt Manager & Memory System API")
 logger.info(f"CORS Origins: {os.environ.get('CORS_ORIGINS', '*')}")
 logger.info(f"Frontend URL: {FRONTEND_URL}")
-logger.info(f"Main DB: {redact_database_url(DB_PATH)}")
-logger.info(f"Memory DB: {redact_database_url(os.environ.get('MEMORY_POSTGRES_URL', 'postgresql://postgres:postgres@localhost:5432/memory'))}")
+logger.info(f"Database (all namespaces, TASK-257 §4 single resolver): {redact_database_url(get_database_url())}")
