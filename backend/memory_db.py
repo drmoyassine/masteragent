@@ -22,7 +22,8 @@ import uuid
 from datetime import datetime, timezone
 import psycopg2
 
-from core.storage import get_memory_db_context, get_postgres_url
+from core.storage import get_memory_db_context
+from core.database import get_database_url
 from core.secrets import encrypt_secret, is_encrypted
 
 logger = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ def _create_operational_indexes_concurrently():
         ("idx_interactions_entity_status_time", "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_interactions_entity_status_time ON interactions (primary_entity_type, primary_entity_id, status, timestamp DESC)"),
         ("idx_intelligence_entity_status_created", "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_intelligence_entity_status_created ON intelligence (primary_entity_type, primary_entity_id, status, created_at DESC)"),
     ]
-    conn = psycopg2.connect(get_postgres_url())
+    conn = psycopg2.connect(get_database_url())
     conn.autocommit = True
     try:
         cursor = conn.cursor()
@@ -1588,13 +1589,6 @@ def init_memory_db():
                     "UPDATE memory_llm_providers SET api_key_encrypted = %s WHERE id = %s",
                     (encrypt_secret(row["api_key_encrypted"]), row["id"]),
                 )
-        cursor.execute("SELECT supabase_db_url FROM memory_settings WHERE id = 1")
-        settings_row = cursor.fetchone()
-        if settings_row and settings_row.get("supabase_db_url") and not is_encrypted(settings_row["supabase_db_url"]):
-            cursor.execute(
-                "UPDATE memory_settings SET supabase_db_url = %s WHERE id = 1",
-                (encrypt_secret(settings_row["supabase_db_url"]),),
-            )
         logger.info("Memory system database schema initialized")
 
     _seed_defaults()

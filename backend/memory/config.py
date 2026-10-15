@@ -673,48 +673,8 @@ async def update_settings_endpoint(data: MemorySettingsUpdate, user: dict = Depe
     return await get_settings_endpoint(user)
 
 
-# ============================================
-# Supabase Connection Endpoints
-# ============================================
-
-class SupabaseConnectRequest(_BaseModel):
-    supabase_url: str           # https://xyz.supabase.co
-    supabase_db_url: str        # postgresql://postgres:<pw>@db.xyz.supabase.co:5432/postgres
-
-
-@router.post("/config/supabase/connect")
-async def connect_supabase_endpoint(
-    body: SupabaseConnectRequest,
-    user: dict = Depends(require_admin_auth)
-):
-    """
-    Connect a Supabase project as the memory storage backend.
-    Validates the connection, writes credentials to memory_settings,
-    and switches the storage layer to use Supabase PostgreSQL.
-    """
-    from core.storage import connect_supabase
-    result = connect_supabase(body.supabase_url, body.supabase_db_url)
-    if not result.get("connected"):
-        raise HTTPException(status_code=400, detail=result.get("error", "Connection failed"))
-    return result
-
-
-@router.get("/config/supabase/status")
-async def get_supabase_status_endpoint(user: dict = Depends(require_admin_auth)):
-    """Return the current storage backend status (local or Supabase)."""
-    from core.storage import get_supabase_status
-    return get_supabase_status()
-
-
-@router.delete("/config/supabase/connect")
-async def disconnect_supabase_endpoint(user: dict = Depends(require_admin_auth)):
-    """
-    Disconnect from Supabase — revert to local PostgreSQL.
-    Clears supabase_url and supabase_db_url from memory_settings.
-    """
-    from core.storage import disconnect_supabase
-    result = disconnect_supabase()
-    if not result.get("disconnected"):
-        raise HTTPException(status_code=500, detail=result.get("error", "Disconnect failed"))
-    return result
+# NOTE (TASK-257 §4): the /config/supabase/* endpoints were removed with the
+# pluggable Supabase storage backend — no deployment or UI ever wired them.
+# The memory_settings.supabase_url / supabase_db_url schema columns remain
+# until the §3 owner-gated schema cutover.
 

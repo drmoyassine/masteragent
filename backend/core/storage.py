@@ -1,25 +1,22 @@
 """
-core/storage.py — Pluggable storage factory for the memory system
+core/storage.py — Memory-system storage helpers
 
 Provides:
-  - get_memory_db_context() : PostgreSQL context manager (local or Supabase)
+  - get_memory_db_context() : PostgreSQL context manager (the one DB — TASK-257 §4)
   - get_redis_client()      : Redis client for 24h interaction cache
-  - get_postgres_url()      : Resolves the active PG connection URL
+  - interaction cache read/write/flush/scan helpers
 
-Storage backends:
-  - Default: local PostgreSQL + pgvector (MEMORY_POSTGRES_URL env var)
-  - Optional: user's Supabase project (when connected via settings UI)
+The former pluggable Supabase backend was removed: it had no UI wiring, no
+configured DSN in any deployment, and both env defaults pointed at the same
+compose Postgres. The schema columns stay (dropping them is a §3 owner-gated
+cutover); the resolver is core/database.py.
 """
-import hashlib
 import json
 import logging
 import os
 from contextlib import contextmanager
 
-import psycopg2
-import psycopg2.extras
 import redis as redis_lib
-from core.secrets import decrypt_secret, encrypt_secret
 from core.db_pool import acquire_connection, return_connection
 from core.database import get_database_url
 
@@ -31,57 +28,6 @@ _DEFAULT_REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 # Module-level cache for Redis client
 _redis_client = None
 
-# In-memory cache for resolved PG URL (cleared when Supabase config changes)
-_pg_url_cache = None
-
-
-def get_postgres_url() -> str:
-    """
-    Resolve the active PostgreSQL connection URL for the memory tables.
-
-    TASK-257 §4: the base URL now comes from the single core resolver
-    (previously this module re-resolved env vars with a different fallback
-    default). The memory_settings Supabase override still takes precedence —
-    its fate is decided in the follow-up commit.
-    """
-    global _pg_url_cache
-    if _pg_url_cache:
-        return _pg_url_cache
-
-    base = get_database_url()
-
-    # Try reading Supabase config from local PG settings table
-    try:
-        conn = psycopg2.connect(
-            base,
-            cursor_factory=psycopg2.extras.RealDictCursor,
-            connect_timeout=3
-        )
-        try:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT supabase_db_url FROM memory_settings WHERE id = 1"
-            )
-            row = cursor.fetchone()
-            if row and row.get("supabase_db_url"):
-                url = decrypt_secret(row["supabase_db_url"])
-                _pg_url_cache = url
-                logger.info("Memory system using Supabase PostgreSQL")
-                return url
-        finally:
-            conn.close()
-    except Exception:
-        pass
-
-    _pg_url_cache = base
-    return base
-
-
-def invalidate_pg_url_cache():
-    """Call this after changing Supabase connection settings."""
-    global _pg_url_cache
-    _pg_url_cache = None
-
 
 @contextmanager
 def get_memory_db_context():
@@ -89,7 +35,7 @@ def get_memory_db_context():
     Context manager yielding a PostgreSQL connection to the memory database.
     Commits on success, rolls back on exception.
     """
-    url = get_postgres_url()
+    url = get_database_url()
     conn = acquire_connection(url)
     try:
         yield conn
@@ -154,126 +100,3 @@ def get_pending_interaction_ids() -> list[str]:
     except Exception as e:
         logger.warning(f"Redis key scan failed: {e}")
         return []
-
-
-# ─────────────────────────────────────────────────────────────
-# Supabase Connection Management
-# ─────────────────────────────────────────────────────────────
-
-def connect_supabase(supabase_url: str, supabase_db_url: str) -> dict:
-    """
-    Validate + store Supabase PostgreSQL connection.
-
-    Args:
-        supabase_url:    Supabase project URL (https://xyz.supabase.co)
-        supabase_db_url: Direct PostgreSQL connection URL for the Supabase project
-                         (postgresql://postgres:<password>@db.xyz.supabase.co:5432/postgres)
-
-    Returns:
-        dict with status, pg_url (redacted), and any error
-    """
-    # 1. Validate the connection before storing it
-    try:
-        test_conn = psycopg2.connect(
-            supabase_db_url,
-            cursor_factory=psycopg2.extras.RealDictCursor,
-            connect_timeout=10
-        )
-        test_conn.close()
-    except Exception as e:
-        return {
-            "connected": False,
-            "error": f"Could not connect to Supabase PostgreSQL: {e}",
-        }
-
-    # 2. Store in local memory_settings
-    try:
-        local_conn = psycopg2.connect(
-            get_database_url(),
-            cursor_factory=psycopg2.extras.RealDictCursor
-        )
-        try:
-            cursor = local_conn.cursor()
-            cursor.execute("""
-                UPDATE memory_settings
-                SET supabase_url = %s, supabase_db_url = %s
-                WHERE id = 1
-            """, (supabase_url, encrypt_secret(supabase_db_url)))
-            local_conn.commit()
-        finally:
-            local_conn.close()
-    except Exception as e:
-        return {
-            "connected": False,
-            "error": f"Could not save Supabase settings to local DB: {e}",
-        }
-
-    # 3. Invalidate URL cache so next request uses Supabase
-    invalidate_pg_url_cache()
-
-    # Redact password from URL for response
-    redacted_url = _redact_pg_url(supabase_db_url)
-    logger.info(f"Supabase connected: {supabase_url}")
-    return {"connected": True, "supabase_url": supabase_url, "db_url_preview": redacted_url}
-
-
-def disconnect_supabase() -> dict:
-    """Disconnect Supabase — revert to local PostgreSQL."""
-    try:
-        conn = psycopg2.connect(
-            get_database_url(),
-            cursor_factory=psycopg2.extras.RealDictCursor
-        )
-        try:
-            cursor = conn.cursor()
-            cursor.execute("""
-                UPDATE memory_settings
-                SET supabase_url = NULL, supabase_db_url = NULL
-                WHERE id = 1
-            """)
-            conn.commit()
-        finally:
-            conn.close()
-    except Exception as e:
-        return {"disconnected": False, "error": str(e)}
-
-    invalidate_pg_url_cache()
-    logger.info("Supabase disconnected — reverted to local PostgreSQL")
-    return {"disconnected": True, "active_backend": "local"}
-
-
-def get_supabase_status() -> dict:
-    """Return current storage backend status."""
-    try:
-        conn = psycopg2.connect(
-            get_database_url(),
-            cursor_factory=psycopg2.extras.RealDictCursor,
-            connect_timeout=3
-        )
-        try:
-            cursor = conn.cursor()
-            cursor.execute("SELECT supabase_url, supabase_db_url FROM memory_settings WHERE id = 1")
-            row = cursor.fetchone()
-        finally:
-            conn.close()
-
-        if row and row.get("supabase_url"):
-            return {
-                "backend": "supabase",
-                "supabase_url": row["supabase_url"],
-                "db_url_preview": _redact_pg_url(decrypt_secret(row.get("supabase_db_url", "")) or ""),
-                "connected": True,
-            }
-    except Exception as e:
-        return {"backend": "local", "connected": True, "error": str(e)}
-
-    return {"backend": "local", "connected": True}
-
-
-def _redact_pg_url(url: str) -> str:
-    """Replace the password in a PostgreSQL URL with ***."""
-    try:
-        import re
-        return re.sub(r"(:)[^@]+(@)", r"\1***\2", url)
-    except Exception:
-        return "***"
