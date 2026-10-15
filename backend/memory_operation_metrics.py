@@ -96,8 +96,6 @@ def mark_refresh_error(message: str) -> None:
 
 def refresh_snapshots() -> Dict[str, Any]:
     """Calculate exact values in a worker and persist each completed result."""
-    from memory_operation_service import _eligible_source_count
-
     results: Dict[str, int] = {}
     try:
         for operation_key, job_name in OPERATIONS.items():
@@ -118,3 +116,42 @@ def refresh_snapshots() -> Dict[str, Any]:
     except Exception as exc:
         mark_refresh_error(str(exc))
         raise
+
+
+def _eligible_source_count(operation: str) -> int:
+    """Count source records without materializing their content.
+
+    Moved here from memory_operation_service (TASK-257 §2): these exact
+    eligibility rules are the sync operations' own — the deleted provider-batch
+    transport merely re-exported them for previews.
+    """
+    from memory_embedding import current_embedding_model
+    model = current_embedding_model()
+    with get_memory_db_context() as conn:
+        cur = conn.cursor()
+        if operation == "knowledge_embedding_backfill":
+            counts = []
+            specs = [
+                ("interactions", "content"), ("memories", "content_summary"),
+                ("intelligence", "COALESCE(name,'') || '. ' || COALESCE(summary,'') || ' ' || COALESCE(content,'')"),
+                ("knowledge", "COALESCE(name,'') || '. ' || COALESCE(summary,'') || ' ' || COALESCE(content,'')"),
+            ]
+            for table, expr in specs:
+                status = " AND status='active'" if table == "knowledge" else ""
+                cur.execute(f"""SELECT COUNT(*) count FROM {table} WHERE ({expr}) IS NOT NULL
+                    AND BTRIM(({expr})::text)<>'' {status} AND (embedding IS NULL OR
+                    embedding_model IS DISTINCT FROM %s OR embedding_dimensions IS DISTINCT FROM vector_dims(embedding))""", (model,))
+                counts.append(int(cur.fetchone()["count"] or 0))
+            return sum(counts)
+        if operation == "backfill_facets":
+            cur.execute("""SELECT COUNT(*) count FROM knowledge WHERE status='active'
+                AND COALESCE(metadata->'facets','{}'::jsonb)='{}'::jsonb""")
+            return int(cur.fetchone()["count"] or 0)
+        if operation == "run_all_knowledge_generation":
+            cur.execute("""SELECT COUNT(*) count FROM intelligence i WHERE status='confirmed'
+                AND NOT EXISTS (SELECT 1 FROM knowledge_source_links l
+                    WHERE l.source_type='intelligence' AND l.source_id=i.id)""")
+            return int(cur.fetchone()["count"] or 0)
+        cur.execute("""SELECT COUNT(*) count FROM knowledge WHERE status='active'
+            AND category IN ('best_practices','lessons_learned','trade_knowledge','skill','playbook')""")
+        return int(cur.fetchone()["count"] or 0)

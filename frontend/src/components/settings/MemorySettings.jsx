@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import api, { triggerMemoryGeneration, triggerIntelligenceCheck, triggerKnowledgeCheck, triggerPlaybookExtraction, exportKnowledgePack, triggerBackfillFacets, triggerReflectTelemetry, triggerInteractionRetention, fetchProviderModels, analyzeHygieneNow, backfillEmbeddings, getEmbeddingCoverage, getPipelineRuns, getMaintenanceControls, getMaintenanceEligibleCounts, refreshMaintenanceEligibleCounts, setMaintenanceControl, getPipelineHealth, getKnowledgeOperationCapabilities, previewKnowledgeOperation, submitKnowledgeOperation, getKnowledgeOperationRuns, syncKnowledgeOperation, controlKnowledgeOperation, getKnowledgeOperationRequests } from "@/lib/api";
+import api, { triggerMemoryGeneration, triggerIntelligenceCheck, triggerKnowledgeCheck, triggerPlaybookExtraction, exportKnowledgePack, triggerBackfillFacets, triggerReflectTelemetry, triggerInteractionRetention, fetchProviderModels, analyzeHygieneNow, backfillEmbeddings, getEmbeddingCoverage, getPipelineRuns, getMaintenanceControls, getMaintenanceEligibleCounts, refreshMaintenanceEligibleCounts, setMaintenanceControl, getPipelineHealth } from "@/lib/api";
 import { useEffect, useMemo, useRef } from "react";
 
 const apiErrorMessage = (error, fallback) => {
@@ -1992,11 +1992,6 @@ function KnowledgeOperations({ runs, controls, eligibleCounts, eligibleCountsLoa
     const [executionMode, setExecutionMode] = useState("synchronous_calibration");
     const [maxClusters, setMaxClusters] = useState(100);
     const [busy, setBusy] = useState(false);
-    const [batchPreview, setBatchPreview] = useState(null);
-    const [batchCapabilities, setBatchCapabilities] = useState({});
-    const [providerRuns, setProviderRuns] = useState([]);
-    const [providerConfigId, setProviderConfigId] = useState("");
-    const [batchModel, setBatchModel] = useState("");
     const definition = OPERATION_DEFINITIONS[operation];
     const rawEligible = eligibleCounts?.[definition.eligibleKey];
     const eligibleKnown = rawEligible !== undefined && rawEligible !== null && Number.isFinite(Number(rawEligible));
@@ -2013,55 +2008,15 @@ function KnowledgeOperations({ runs, controls, eligibleCounts, eligibleCountsLoa
     const totalRecords = eligibleKnown ? (runExtent === "all" ? eligible : Math.min(eligible, requestedRecords)) : 0;
     const calibrationCap = definition.calibrationCap || 250;
     const supportsInlineCalibration = operation === "embedding_backfill";
-    const batchCapability = useMemo(
-        () => batchCapabilities?.[definition.operationKey] || {},
-        [batchCapabilities, definition.operationKey],
-    );
-    const providerBatchAvailable = Boolean(batchCapability.provider_batch) && !(operation === "hygiene_analysis" && (settings?.knowledge_hygiene_mode || "analysis_only") === "analysis_only");
-    const selectedTarget = (batchCapability.targets || []).find(item => String(item.config_id) === String(providerConfigId)) || (batchCapability.targets || []).find(item => item.is_default);
-
-    useEffect(() => {
-        const target = (batchCapability.targets || []).find(item => item.is_default) || (batchCapability.targets || [])[0];
-        if (!target) return;
-        setProviderConfigId(String(target.config_id)); setBatchModel(target.model_name || "");
-    }, [definition.operationKey, batchCapability]);
-
-    const refreshProviderRuns = useCallback(async () => {
-        try { const res = await getKnowledgeOperationRuns({ limit: 30 }); setProviderRuns(res.data?.runs || []); } catch { /* schema may not be deployed yet */ }
-    }, []);
-    useEffect(() => {
-        getKnowledgeOperationCapabilities().then(res => setBatchCapabilities(res.data?.operations || {})).catch(() => setBatchCapabilities({}));
-        refreshProviderRuns();
-        const timer = setInterval(refreshProviderRuns, 5000);
-        return () => clearInterval(timer);
-    }, [refreshProviderRuns]);
 
     const changeOperation = (value) => {
         const next = OPERATION_DEFINITIONS[value];
-        setOperation(value); setRecordsPerBatch(next.defaultRecords); setBatchesPerRun(next.defaultBatches); setRunExtent("limited"); setExecutionMode("synchronous_calibration"); setBatchPreview(null);
+        setOperation(value); setRecordsPerBatch(next.defaultRecords); setBatchesPerRun(next.defaultBatches); setRunExtent("limited"); setExecutionMode("synchronous_calibration");
     };
-    const operationOptions = () => ({ records_per_batch: recordsPerBatch, batches_per_run: runExtent === "all" ? undefined : resolvedBatches, run_all: runExtent === "all", max_records: totalRecords, max_clusters: maxClusters, mode: operation === "hygiene_analysis" ? (settings?.knowledge_hygiene_mode || "analysis_only") : undefined, provider_config_id: providerConfigId || undefined, model_name: batchModel || undefined });
-    const reviewBatch = async () => {
-        setBusy(true); setBatchPreview(null);
-        try {
-            const res = await previewKnowledgeOperation({ operation_key: definition.operationKey, execution_mode: "provider_batch", options: operationOptions() });
-            setBatchPreview(res.data); toast.success("Batch workload reviewed. No provider work has been submitted yet.");
-        } catch (error) { toast.error(apiErrorMessage(error, "Could not review asynchronous batch")); }
-        finally { setBusy(false); }
-    };
-    const submitBatch = async () => {
-        if (!batchPreview) return;
-        setBusy(true);
-        try {
-            await submitKnowledgeOperation({ preview_id: batchPreview.id, manifest_checksum: batchPreview.manifest_checksum });
-            toast.success("Asynchronous discounted batch submitted"); setBatchPreview(null); await refreshProviderRuns();
-        } catch (error) { toast.error(apiErrorMessage(error, "Could not submit asynchronous batch")); }
-        finally { setBusy(false); }
-    };
+    const operationOptions = () => ({ records_per_batch: recordsPerBatch, batches_per_run: runExtent === "all" ? undefined : resolvedBatches, run_all: runExtent === "all", max_records: totalRecords, max_clusters: maxClusters, mode: operation === "hygiene_analysis" ? (settings?.knowledge_hygiene_mode || "analysis_only") : undefined });
     const start = async () => {
         if (recordsPerBatch < 1 || recordsPerBatch > definition.maxRecords) return toast.error(`Records per Batch must be between 1 and ${definition.maxRecords}`);
         if (totalRecords < 1) return toast.error("No eligible records are available for this operation");
-        if (executionMode === "provider_batch") return reviewBatch();
         if (executionMode === "synchronous_calibration" && totalRecords > calibrationCap) return toast.error(`Calibration runs are limited to ${calibrationCap} records`);
         if (totalRecords > definition.maxTotal) return toast.error(`This run exceeds the ${definition.maxTotal.toLocaleString()} record safety limit`);
         setBusy(true);
@@ -2091,25 +2046,22 @@ function KnowledgeOperations({ runs, controls, eligibleCounts, eligibleCountsLoa
             <CardContent className="space-y-4">
                 <div className="max-w-md space-y-1"><SettingLabel help="operation_type">Operation</SettingLabel><Select value={operation} onValueChange={changeOperation}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{Object.entries(OPERATION_DEFINITIONS).map(([key, item]) => <SelectItem key={key} value={key}>{item.label}</SelectItem>)}</SelectContent></Select><p className="text-[11px] text-muted-foreground">{definition.description}</p></div>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    <div className="space-y-1"><SettingLabel help="execution_mode">Execution mode</SettingLabel><Select value={executionMode} onValueChange={(value) => { setExecutionMode(value); setBatchPreview(null); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="synchronous_calibration">{supportsInlineCalibration ? "Synchronous calibration" : "Bounded calibration (queued)"}</SelectItem><SelectItem value="provider_batch" disabled={!providerBatchAvailable}>Asynchronous discounted batch</SelectItem>{operation === "hygiene_analysis" && <SelectItem value="local_async">Asynchronous local analysis</SelectItem>}</SelectContent></Select><p className="text-[10px] text-muted-foreground">{executionMode === "provider_batch" ? `Submits to ${batchCapability.provider || "the configured provider"}; expected completion window ${batchCapability.completion_window || "24h"}.` : executionMode === "local_async" ? "Runs deterministic clustering in the background without provider charges." : supportsInlineCalibration ? "Runs immediately and keeps this page waiting for the measured result." : "Queues a small bounded run and reports its result in operation history."}</p>{!batchCapability.provider_batch && batchCapability.reason && <p className="text-[10px] text-amber-600">Discounted batch unavailable: {batchCapability.reason}</p>}{operation === "hygiene_analysis" && !providerBatchAvailable && batchCapability.provider_batch && <p className="text-[10px] text-amber-600">Analysis only is local and has no billable LLM requests. Use local analysis or switch the hygiene policy to a proposal mode.</p>}</div>
+                    <div className="space-y-1"><SettingLabel help="execution_mode">Execution mode</SettingLabel><Select value={executionMode} onValueChange={setExecutionMode}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="synchronous_calibration">{supportsInlineCalibration ? "Synchronous calibration" : "Bounded calibration (queued)"}</SelectItem>{operation === "hygiene_analysis" && <SelectItem value="local_async">Asynchronous local analysis</SelectItem>}</SelectContent></Select><p className="text-[10px] text-muted-foreground">{executionMode === "local_async" ? "Runs deterministic clustering in the background without provider charges." : supportsInlineCalibration ? "Runs immediately and keeps this page waiting for the measured result." : "Queues a small bounded run and reports its result in operation history."}</p></div>
                     <div className="space-y-1"><SettingLabel help="records_per_batch">Records per Batch</SettingLabel><Input type="number" min="1" max={definition.maxRecords} value={recordsPerBatch} onChange={(e) => setRecordsPerBatch(Math.max(1, Math.min(definition.maxRecords, Number(e.target.value) || 1)))} /><p className="text-[10px] text-muted-foreground">Allowed for this operation: 1–{definition.maxRecords}.</p></div>
                     <div className="space-y-1"><SettingLabel help="batches_per_run">Batches per Run</SettingLabel><Select value={runExtent} onValueChange={setRunExtent}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="limited">Limit batches</SelectItem><SelectItem value="all">All eligible records</SelectItem></SelectContent></Select></div>
                     <div className="space-y-1"><SettingLabel help="batch_limit">Batch limit</SettingLabel><Input type="number" min="1" max="10000" disabled={runExtent === "all"} value={runExtent === "all" ? resolvedBatches || 0 : batchesPerRun} onChange={(e) => setBatchesPerRun(Math.max(1, Math.min(10000, Number(e.target.value) || 1)))} /><p className="text-[10px] text-muted-foreground">All uses a finite snapshot of currently eligible records.</p></div>
                 </div>
-                {executionMode === "provider_batch" && <div className="rounded-md border p-4 space-y-3"><div><div className="text-sm font-medium">Provider batch configuration</div><p className="text-[11px] text-muted-foreground">The selected configured account supplies the provider and pricing. Model overrides apply only to this run.</p></div><div className="grid grid-cols-1 md:grid-cols-2 gap-4"><div className="space-y-1"><SettingLabel help="batch_provider">Provider account</SettingLabel><Select value={providerConfigId} onValueChange={(value) => { const target=(batchCapability.targets || []).find(item => String(item.config_id)===String(value)); setProviderConfigId(value); if (target) setBatchModel(target.model_name || ""); setBatchPreview(null); }}><SelectTrigger><SelectValue placeholder="Select a configured provider" /></SelectTrigger><SelectContent>{(batchCapability.targets || []).map(target => <SelectItem key={target.config_id} value={String(target.config_id)}>{target.provider_name} · {target.config_name}{target.is_default ? " (default)" : ""}</SelectItem>)}</SelectContent></Select></div><div className="space-y-1"><SettingLabel help="batch_model">Model for this run</SettingLabel><Input value={batchModel} onChange={(e) => { setBatchModel(e.target.value); setBatchPreview(null); }} placeholder={selectedTarget?.model_name || "Provider model ID"} /></div></div></div>}
                 {operation === "hygiene_analysis" && <div className="max-w-xs space-y-1"><SettingLabel help="analysis_max_clusters">Maximum clusters inspected</SettingLabel><Input type="number" min="1" max="10000" value={maxClusters} onChange={(e) => setMaxClusters(Math.max(1, Math.min(10000, Number(e.target.value) || 1)))} /></div>}
                 <div className="rounded-md border bg-muted/20 p-3 text-xs space-y-3"><div className="grid grid-cols-2 md:grid-cols-4 gap-3"><div><span className="text-muted-foreground">Eligible now</span><div className="font-medium flex items-center gap-1.5">{eligibilityRefreshing && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-label="Calculating eligibility" />}{eligibleCountsError ? "Unavailable" : eligibleCountsLoading && !eligibleKnown ? "Loading…" : eligibleKnown ? eligible.toLocaleString() : eligibilityRefreshing ? "Calculating…" : "Unavailable"}</div></div><div><span className="text-muted-foreground">Records per Batch</span><div className="font-medium">{recordsPerBatch.toLocaleString()}</div></div><div><span className="text-muted-foreground">Batches per Run</span><div className="font-medium">{runExtent === "all" ? `All (${resolvedBatches})` : resolvedBatches}</div></div><div><span className="text-muted-foreground">Maximum records</span><div className="font-medium">{eligibleKnown && !eligibleCountsError ? totalRecords.toLocaleString() : "—"}{executionMode === "synchronous_calibration" && eligibleKnown && !eligibleCountsError ? ` / ${calibrationCap} calibration cap` : ""}</div></div></div><div className="flex items-center justify-between gap-2 border-t pt-2 text-[10px] text-muted-foreground"><span>{eligibilityAsOf ? `As of ${eligibilityAsOf.toLocaleString()}` : eligibilityRefreshing ? "Calculating the first snapshot…" : "Not calculated yet"}</span><Button type="button" size="sm" variant="ghost" className="h-7 text-xs" onClick={onRefreshEligible} disabled={eligibilityRefreshing}><RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${eligibilityRefreshing ? "animate-spin" : ""}`} />{eligibilityRefreshing ? "Calculating" : "Refresh"}</Button></div></div>
                 {eligibleCountsError && <div className="flex items-center gap-2 text-xs text-destructive"><span>{eligibleCountsError}</span><Button type="button" size="sm" variant="outline" onClick={onRefreshEligible} disabled={eligibilityRefreshing}>{eligibilityRefreshing ? "Retrying…" : "Retry"}</Button></div>}
-                <div className="flex gap-2 flex-wrap"><Button onClick={start} disabled={busy || eligibleCountsLoading || eligibilityRefreshing || Boolean(eligibleCountsError) || !eligibleKnown || (executionMode !== "provider_batch" && operationActive) || totalRecords < 1 || totalRecords > definition.maxTotal || (executionMode === "synchronous_calibration" && totalRecords > calibrationCap)}><Play className="w-4 h-4 mr-2" />{busy ? "Working…" : executionMode === "provider_batch" ? "Review asynchronous batch" : executionMode === "local_async" ? "Start local analysis" : operationActive ? `${definition.label} already active` : supportsInlineCalibration ? `Run synchronous calibration` : `Run bounded calibration`}</Button><Button variant="outline" onClick={exportApproved} disabled={busy}><FileText className="w-4 h-4 mr-2" />Export approved Knowledge</Button></div>
-                {batchPreview && <div className="rounded-md border border-emerald-500/40 bg-emerald-500/5 p-4 space-y-3"><div><div className="font-medium text-sm">Batch review</div><p className="text-xs text-muted-foreground">Mutation-free estimate. The accepted workload is prepared in memory-safe child batches and automatically partitioned to provider limits.</p></div><div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs"><div>Included records<br/><strong>{Number(batchPreview.estimates?.eligible_records || 0).toLocaleString()}</strong></div><div>Not selected<br/><strong>{Number(batchPreview.estimates?.deferred_records || 0).toLocaleString()}</strong></div><div>Provider requests<br/><strong>{Number(batchPreview.estimates?.request_count || 0).toLocaleString()}</strong></div><div>Provider batch jobs<br/><strong>{Number(batchPreview.estimates?.provider_job_count || 0).toLocaleString()}</strong></div><div>Provider / model<br/><strong>{batchPreview.estimates?.provider || "—"} · {batchPreview.estimates?.model || "—"}</strong></div><div>Estimated input tokens<br/><strong>{Number(batchPreview.estimates?.estimated_input_tokens || 0).toLocaleString()}</strong></div><div>Estimated cost<br/><strong>{batchPreview.estimates?.estimated_cost_usd == null ? "Unavailable (pricing not configured)" : `$${Number(batchPreview.estimates.estimated_cost_usd).toFixed(4)}`}</strong></div><div>Completion window<br/><strong>{batchPreview.estimates?.completion_window || "—"} per provider job</strong></div></div>{(batchPreview.warnings || []).map((warning, i) => <p key={i} className="text-xs text-amber-600">{warning}</p>)}<div className="flex gap-2"><Button onClick={submitBatch} disabled={busy || !batchPreview.estimates?.request_count}>Start exhaustive asynchronous operation</Button><Button variant="outline" onClick={() => setBatchPreview(null)} disabled={busy}>Discard preview</Button></div></div>}
+                <div className="flex gap-2 flex-wrap"><Button onClick={start} disabled={busy || eligibleCountsLoading || eligibilityRefreshing || Boolean(eligibleCountsError) || !eligibleKnown || operationActive || totalRecords < 1 || totalRecords > definition.maxTotal || (executionMode === "synchronous_calibration" && totalRecords > calibrationCap)}><Play className="w-4 h-4 mr-2" />{busy ? "Working…" : executionMode === "local_async" ? "Start local analysis" : operationActive ? `${definition.label} already active` : supportsInlineCalibration ? `Run synchronous calibration` : `Run bounded calibration`}</Button><Button variant="outline" onClick={exportApproved} disabled={busy}><FileText className="w-4 h-4 mr-2" />Export approved Knowledge</Button></div>
                 {executionMode === "synchronous_calibration" && totalRecords > calibrationCap && <p className="text-xs text-destructive">Reduce Records per Batch or Batches per Run: calibration is limited to {calibrationCap.toLocaleString()} records.</p>}
                 {operation === "knowledge_generation" && <p className="text-[10px] text-muted-foreground">One input record is one eligible source-evidence record. Several inputs may produce one Knowledge record, or none when policy rejects the candidate. Output is therefore not one-to-one.</p>}
                 {operation === "hygiene_analysis" && <p className="text-[10px] text-muted-foreground">Records are combined into the selected analysis window before candidate graph formation. Similarity discovers candidates only; it never applies a merge.</p>}
             </CardContent>
         </Card>
-        <ProviderBatchRunStatus runs={providerRuns} onRefresh={refreshProviderRuns} />
         <MaintenanceRunStatus runs={runs} controls={controls} onRefresh={onRefresh} />
-        <KnowledgeRunHistory runs={runs} providerRuns={providerRuns} onProviderRefresh={refreshProviderRuns} />
+        <KnowledgeRunHistory runs={runs} />
     </div>;
 }
 
@@ -2147,40 +2099,11 @@ function MaintenanceRunStatus({ runs, controls, onRefresh }) {
     </Card>;
 }
 
-function ProviderBatchRunStatus({ runs, onRefresh }) {
-    const [busy, setBusy] = useState(null);
-    const active = runs.filter(run => !["completed", "partially_completed", "failed", "expired", "cancelled"].includes(run.local_status));
-    const command = async (run, action) => {
-        setBusy(`${run.id}:${action}`);
-        try {
-            if (action === "sync-status") await syncKnowledgeOperation(run.id);
-            else await controlKnowledgeOperation(run.id, action);
-            toast.success(action === "sync-status" ? "Provider status synchronized" : `${action} requested`);
-            await onRefresh();
-        } catch (error) { toast.error(apiErrorMessage(error, `Could not ${action} batch`)); }
-        finally { setBusy(null); }
-    };
-    return <Card className="border-sky-500/40 bg-sky-500/5"><CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><BarChart3 className="w-4 h-4" />Asynchronous provider batches</CardTitle><CardDescription>Each operation is a durable parent run. It prepares provider-safe child batches progressively, survives deployments, and never loads the full workload into memory.</CardDescription></CardHeader><CardContent className="space-y-3">{active.map(run => <div key={run.id} className="rounded-md border p-3 space-y-2"><div className="flex justify-between gap-2"><span className="text-xs font-medium">{JOB_LABELS[run.operation_key] || run.operation_key}</span><div className="flex gap-2"><Badge variant="outline">{run.local_status}</Badge><Badge variant="outline">{Number(run.child_count || 0)} provider job(s)</Badge></div></div><div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-[11px] text-muted-foreground"><div>Sources prepared<br/><span className="text-foreground">{Number(run.prepared_source_count || 0).toLocaleString()} / {Number(run.target_source_count || 0).toLocaleString()}</span></div><div>Provider requests<br/><span className="text-foreground">{Number(run.request_count || 0).toLocaleString()}</span></div><div>Applied<br/><span className="text-foreground">{Number(run.applied_count || 0).toLocaleString()}</span></div><div>Failed<br/><span className="text-foreground">{Number(run.failed_count || 0).toLocaleString()}</span></div><div>Model<br/><span className="text-foreground">{run.provider} / {run.model}</span></div></div><div className="flex gap-2 flex-wrap"><Button size="sm" variant="outline" disabled={busy} onClick={() => command(run, "sync-status")}>Prepare / sync now</Button>{!run.pause_requested && <Button size="sm" variant="outline" disabled={busy} onClick={() => command(run, "pause")}>Pause new submissions</Button>}{run.pause_requested && !run.cancel_requested && <Button size="sm" variant="outline" disabled={busy} onClick={() => command(run, "resume")}>Resume</Button>}<Button size="sm" variant="outline" disabled={busy || run.cancel_requested} onClick={() => command(run, "cancel")}>Cancel operation</Button></div></div>)}{!active.length && <p className="text-xs text-muted-foreground">No asynchronous provider batches are currently active.</p>}</CardContent></Card>;
-}
-
-function KnowledgeRunHistory({ runs, providerRuns = [], onProviderRefresh }) {
-    const [retrying, setRetrying] = useState(null);
-    const [requestDetails, setRequestDetails] = useState({});
-    const retryProviderRun = async (runId) => {
-        setRetrying(runId);
-        try { await controlKnowledgeOperation(runId, "retry"); toast.success("Retry submitted with a fresh eligible-source snapshot"); await onProviderRefresh?.(); }
-        catch (error) { toast.error(apiErrorMessage(error, "Could not retry unresolved requests")); }
-        finally { setRetrying(null); }
-    };
-    const loadRequests = async (runId) => {
-        try { const response = await getKnowledgeOperationRequests(runId, { limit: 200 }); setRequestDetails(current => ({ ...current, [runId]: response.data?.requests || [] })); }
-        catch (error) { toast.error(apiErrorMessage(error, "Could not load request details")); }
-    };
+function KnowledgeRunHistory({ runs }) {
     const relevant = runs.filter(run => JOB_LABELS[run.job]).slice(0, 20);
     return <Card><CardHeader><CardTitle className="text-base">Knowledge operation history</CardTitle><CardDescription>Inputs, outputs, checkpoints, costs, and stop reasons for recent operations.</CardDescription></CardHeader><CardContent className="space-y-2">
         {relevant.map(run => { const result = run.detail?.result || {}; const started = run.started_at ? new Date(run.started_at) : null; const finished = run.finished_at ? new Date(run.finished_at) : null; const duration = started && finished ? `${Math.max(0, Math.round((finished - started) / 1000))}s` : run.status === "running" ? "Running" : "—"; const batchInput = run.detail?.records_per_batch ? `${run.detail.records_per_batch} × ${run.detail.run_all ? "all" : (run.detail.batches_per_run || "—")}` : "—"; const outputs = run.job === "backfill_facets" ? result.enriched : run.job === "knowledge_embedding_backfill" ? (result.succeeded ?? run.records_created) : run.job === "knowledge_hygiene_run" ? result.proposals_created : run.records_created; return <details key={run.id} className="rounded-md border p-3 text-xs"><summary className="cursor-pointer flex items-center justify-between gap-3"><span><strong>{JOB_LABELS[run.job]}</strong><span className="text-muted-foreground ml-2">{run.created_at ? new Date(run.created_at).toLocaleString() : ""}</span></span><Badge variant="outline">{run.status || run.outcome}</Badge></summary><div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-3 text-muted-foreground"><div>Requested input<br/><span className="text-foreground">{batchInput}</span></div><div>Processed<br/><span className="text-foreground">{Number(run.progress_completed || result.processed || 0).toLocaleString()}</span></div><div>Outputs<br/><span className="text-foreground">{Number(outputs || 0).toLocaleString()}</span></div><div>Failed<br/><span className="text-foreground">{Number(run.progress_failed || result.failed || 0).toLocaleString()}</span></div><div>Duration / estimated cost<br/><span className="text-foreground">{duration}{run.estimated_cost_usd != null ? ` / $${Number(run.estimated_cost_usd).toFixed(4)}` : ""}</span></div><div>Stop reason<br/><span className="text-foreground">{run.reason_code || "—"}</span></div></div>{run.detail && <pre className="mt-3 max-h-48 overflow-auto rounded bg-muted/30 p-2 text-[10px] whitespace-pre-wrap">{JSON.stringify(run.detail, null, 2)}</pre>}</details>; })}
-        {providerRuns.map(run => <details key={`provider-${run.id}`} className="rounded-md border p-3 text-xs"><summary className="cursor-pointer flex items-center justify-between gap-3"><span><strong>{JOB_LABELS[run.operation_key] || run.operation_key}</strong><span className="text-muted-foreground ml-2">discounted batch · {run.created_at ? new Date(run.created_at).toLocaleString() : ""}</span></span><Badge variant="outline">{run.local_status}</Badge></summary><div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-3 text-muted-foreground"><div>Provider<br/><span className="text-foreground">{run.provider} / {run.model}</span></div><div>Provider state<br/><span className="text-foreground">{run.provider_status || "—"}</span></div><div>Requests<br/><span className="text-foreground">{Number(run.request_count || 0).toLocaleString()}</span></div><div>Applied<br/><span className="text-foreground">{Number(run.applied_count || 0).toLocaleString()}</span></div><div>Failed<br/><span className="text-foreground">{Number(run.failed_count || 0).toLocaleString()}</span></div><div>Provider batch ID<br/><span className="text-foreground break-all">{run.provider_batch_id || "—"}</span></div></div>{run.provider_error && Object.keys(run.provider_error).length > 0 && <pre className="mt-3 rounded bg-destructive/10 p-2 text-[10px] whitespace-pre-wrap">{JSON.stringify(run.provider_error, null, 2)}</pre>}<div className="flex gap-2 mt-3"><Button size="sm" variant="outline" onClick={() => loadRequests(run.id)}>Load request details</Button>{["failed", "expired", "cancelled", "partially_completed"].includes(run.local_status) && <Button size="sm" variant="outline" disabled={retrying === run.id} onClick={() => retryProviderRun(run.id)}>{retrying === run.id ? "Preparing retry…" : "Retry unresolved work"}</Button>}</div>{requestDetails[run.id] && <div className="mt-3 space-y-1 max-h-56 overflow-auto">{requestDetails[run.id].map(request => <div key={request.id} className="rounded border p-2 flex justify-between gap-3"><span><strong>#{Number(request.ordinal) + 1}</strong> · {request.pathway}<br/><span className="text-muted-foreground break-all">{request.error?.message || request.output_references?.reason || request.custom_id}</span></span><Badge variant="outline">{request.status}</Badge></div>)}</div>}</details>)}
-        {!relevant.length && !providerRuns.length && <p className="text-xs text-muted-foreground">No Knowledge operation history is available yet.</p>}
+        {!relevant.length && <p className="text-xs text-muted-foreground">No Knowledge operation history is available yet.</p>}
     </CardContent></Card>;
 }
 

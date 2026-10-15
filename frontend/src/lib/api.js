@@ -205,13 +205,6 @@ export const getMaintenanceEligibleCounts = () => api.get('/memory/maintenance/e
 export const refreshMaintenanceEligibleCounts = () => api.post('/memory/maintenance/eligible-counts/refresh');
 export const getPipelineHealth = () => api.get('/memory/pipeline-health');
 export const setMaintenanceControl = (job, command) => api.post(`/memory/maintenance-controls/${encodeURIComponent(job)}/${command}`);
-export const getKnowledgeOperationCapabilities = () => api.get('/memory/admin/knowledge/operations/capabilities');
-export const previewKnowledgeOperation = (payload) => api.post('/memory/admin/knowledge/operations/preview', payload);
-export const submitKnowledgeOperation = (payload) => api.post('/memory/admin/knowledge/operations/runs', payload);
-export const getKnowledgeOperationRuns = (params = {}) => api.get('/memory/admin/knowledge/operations/runs', { params });
-export const syncKnowledgeOperation = (runId) => api.post(`/memory/admin/knowledge/operations/runs/${encodeURIComponent(runId)}/sync-status`);
-export const controlKnowledgeOperation = (runId, command) => api.post(`/memory/admin/knowledge/operations/runs/${encodeURIComponent(runId)}/${command}`);
-export const getKnowledgeOperationRequests = (runId, params = {}) => api.get(`/memory/admin/knowledge/operations/runs/${encodeURIComponent(runId)}/requests`, { params });
 export const getSystemAlerts = () => api.get('/memory/system-alerts');
 export const resolveSystemAlert = (code) => api.post(`/memory/system-alerts/${code}/resolve`);
 export const getKnowledgeById = (id) => api.get(`/memory/admin/knowledge/${id}`);
