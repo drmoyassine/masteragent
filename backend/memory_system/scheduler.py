@@ -1,10 +1,12 @@
 """
-memory_system/scheduler.py â the 60-second background tier scheduler
+memory_system/scheduler.py — the 60-second background tier scheduler
 
 Wakes every 60s and fires the scheduled producers (memory generation,
 intelligence sweep, knowledge generation, telemetry reflection,
 consolidation, interaction retention) through the BullMQ queues, using
 per-day claims in memory_job_log so each tier runs at most once a day.
+All synchronous Postgres stretches (settings read, claim ledger, sweep
+schedule) run via asyncio.to_thread so they never stall the event loop.
 Companion: memory/queue.py, the worker that executes the enqueued jobs.
 """
 import asyncio
@@ -125,21 +127,21 @@ async def _background_loop():
     while True:
         _scheduler_last_tick = datetime.now(timezone.utc)
         try:
-            settings = get_memory_settings() or {}
+            settings = await asyncio.to_thread(get_memory_settings) or {}
             now_utc = datetime.now(timezone.utc)
             today = now_utc.date()
             from memory.queue import interactions_queue, job_options, knowledge_queue
 
             # ── Tier 0→1: Memory generation (true nightly flush) ──────────────
             if _time_reached(now_utc, settings.get("memory_generation_time", "02:00"), (2, 0)):
-                if claim_job_date("daily_memory_generation", today):
+                if await asyncio.to_thread(claim_job_date, "daily_memory_generation", today):
                     logger.info("Firing daily memory generation")
                     try:
                         await run_orphan_sweeper()
                         await run_daily_memory_generation()
-                        complete_job_date("daily_memory_generation", today)
+                        await asyncio.to_thread(complete_job_date, "daily_memory_generation", today)
                     except Exception as exc:
-                        fail_job_date("daily_memory_generation", today, exc)
+                        await asyncio.to_thread(fail_job_date, "daily_memory_generation", today, exc)
                         raise
                     # run_daily_memory_generation → per-entity memory jobs →
                     # _check_compaction_trigger (intra-day intelligence threshold valve)
@@ -147,7 +149,7 @@ async def _background_loop():
             # ── Tier 1→2: Intelligence SCHEDULE sweep (floor) ─────────────────
             if settings.get("intelligence_schedule_enabled", True) and \
                _time_reached(now_utc, settings.get("intelligence_generation_time", "02:30"), (2, 30)):
-                if claim_job_date("intelligence_schedule", today):
+                if await asyncio.to_thread(claim_job_date, "intelligence_schedule", today):
                     floor = int(settings.get("intelligence_schedule_floor", 2))
                     logger.info(f"Firing nightly intelligence sweep (floor={floor})")
                     try:
@@ -157,13 +159,13 @@ async def _background_loop():
                              "job_claim": {"name": "intelligence_schedule", "date": today.isoformat()}},
                             job_options("run_intelligence_sweep", priority=3))
                     except Exception as exc:
-                        fail_job_date("intelligence_schedule", today, exc)
+                        await asyncio.to_thread(fail_job_date, "intelligence_schedule", today, exc)
                         raise
 
             # ── Tier 2→3: one schedule for every Knowledge producer ──────────
             if settings.get("knowledge_schedule_enabled", True) and \
                _time_reached(now_utc, settings.get("knowledge_generation_time", "03:00"), (3, 0)):
-                if claim_job_date("knowledge_generation_all", today):
+                if await asyncio.to_thread(claim_job_date, "knowledge_generation_all", today):
                     floor = int(settings.get("knowledge_schedule_floor", 2))
                     logger.info(f"Firing nightly knowledge sweep (floor={floor})")
                     try:
@@ -173,7 +175,7 @@ async def _background_loop():
                              "job_claim": {"name": "knowledge_generation_all", "date": today.isoformat()}},
                             job_options("run_all_knowledge_generation", priority=3))
                     except Exception as exc:
-                        fail_job_date("knowledge_generation_all", today, exc)
+                        await asyncio.to_thread(fail_job_date, "knowledge_generation_all", today, exc)
                         raise
 
             # ── Telemetry reflection: daily at telemetry_reflection_time ─────
@@ -183,7 +185,7 @@ async def _background_loop():
             # Wired here with the same claim-ledger idiom as the sweep above.
             if settings.get("telemetry_reflection_enabled", True) and \
                _time_reached(now_utc, settings.get("telemetry_reflection_time", "04:00"), (4, 0)):
-                if claim_job_date("telemetry_reflection_schedule", today):
+                if await asyncio.to_thread(claim_job_date, "telemetry_reflection_schedule", today):
                     logger.info("Firing nightly telemetry reflection")
                     try:
                         await knowledge_queue.add(
@@ -192,15 +194,15 @@ async def _background_loop():
                                            "date": today.isoformat()}},
                             job_options("reflect_telemetry", priority=3))
                     except Exception as exc:
-                        fail_job_date("telemetry_reflection_schedule", today, exc)
+                        await asyncio.to_thread(fail_job_date, "telemetry_reflection_schedule", today, exc)
                         raise
 
             # ── Consolidation: periodic maintenance (weekly, not nightly) ─────
             consolidation_interval = settings.get("consolidation_run_interval_days", 7)
-            last_consol = get_job_last_date("consolidation")
+            last_consol = await asyncio.to_thread(get_job_last_date, "consolidation")
             days_since_consol = (today - last_consol).days if last_consol else consolidation_interval
             if _time_reached(now_utc, settings.get("memory_generation_time", "02:00"), (2, 0)) and \
-               days_since_consol >= consolidation_interval and claim_job_date("consolidation", today):
+               days_since_consol >= consolidation_interval and await asyncio.to_thread(claim_job_date, "consolidation", today):
                 logger.info(f"Triggering consolidation (days_since={days_since_consol})")
                 try:
                     await knowledge_queue.add(
@@ -208,7 +210,7 @@ async def _background_loop():
                         {"job_claim": {"name": "consolidation", "date": today.isoformat()}},
                         job_options("run_consolidation", priority=4))
                 except Exception as exc:
-                    fail_job_date("consolidation", today, exc)
+                    await asyncio.to_thread(fail_job_date, "consolidation", today, exc)
                     raise
 
             # ── Tier 0 hygiene: raw interaction retention (daily) ─────────────
@@ -218,7 +220,7 @@ async def _background_loop():
             retention_days = int(settings.get("interaction_retention_days", 30) or 0)
             if retention_days > 0 and \
                _time_reached(now_utc, settings.get("memory_generation_time", "02:00"), (2, 0)) and \
-               claim_job_date("interaction_retention", today):
+               await asyncio.to_thread(claim_job_date, "interaction_retention", today):
                 logger.info(f"Firing daily interaction retention (days={retention_days})")
                 try:
                     await interactions_queue.add(
@@ -228,7 +230,7 @@ async def _background_loop():
                         job_options("interaction_retention", priority=5),
                     )
                 except Exception as exc:
-                    fail_job_date("interaction_retention", today, exc)
+                    await asyncio.to_thread(fail_job_date, "interaction_retention", today, exc)
                     raise
 
         except Exception as e:
