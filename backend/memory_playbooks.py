@@ -259,27 +259,19 @@ async def _process_cluster(
         "embedding_version": r.get("embedding_version"),
         "embedding_dimensions": r.get("embedding_dimensions"), "embedded_at": r.get("embedded_at"),
     } for r in ai_interactions]
-    if settings.get("knowledge_evidence_routing_enabled", True):
-        try:
-            from memory_evidence_service import analyze_evidence, apply_high_similarity_link
-            route = analyze_evidence(
-                pathway="playbook_extraction", sources=sources, settings=settings,
-                entity_type=entity_type,
-            )
-            if apply_high_similarity_link(route, sources, settings):
-                _mark_processed(processed_ids)
-                return
-            if (route.get("route") == "revision_assessment" and
-                    settings.get("knowledge_evidence_routing_mode") == "enforced"):
-                from memory_evidence_revision_service import assess_and_apply
-                revision = await assess_and_apply(route=route, sources=sources, settings=settings)
-                if revision.get("action") in {"no_change", "revised"}:
-                    _mark_processed(processed_ids)
-                    return
-                if revision.get("action") == "manual_review":
-                    return
-        except Exception as exc:
-            logger.exception("Playbook evidence routing failed: %s", exc)
+    try:
+        from memory_evidence_service import route_evidence_or_link
+        routing = await route_evidence_or_link(
+            pathway="playbook_extraction", sources=sources, settings=settings,
+            entity_type=entity_type,
+        )
+        if routing["linked_id"] or routing["revision_action"] in {"no_change", "revised"}:
+            _mark_processed(processed_ids)
+            return
+        if routing["revision_action"] == "manual_review":
+            return
+    except Exception as exc:
+        logger.exception("Playbook evidence routing failed: %s", exc)
 
     # Generate playbook via LLM
     playbook_data = await _generate_playbook(
@@ -406,23 +398,16 @@ async def _generate_skills_from_playbook(
         return
 
     skill_settings = get_memory_settings() or {}
-    if skill_settings.get("knowledge_evidence_routing_enabled", True):
-        try:
-            from memory_evidence_service import analyze_evidence, apply_high_similarity_link
-            route = analyze_evidence(
-                pathway="skill_extraction", sources=sources, settings=skill_settings,
-                entity_type=entity_type,
-            )
-            if apply_high_similarity_link(route, sources, skill_settings):
-                return
-            if (route.get("route") == "revision_assessment" and
-                    skill_settings.get("knowledge_evidence_routing_mode") == "enforced"):
-                from memory_evidence_revision_service import assess_and_apply
-                revision = await assess_and_apply(route=route, sources=sources, settings=skill_settings)
-                if revision.get("action") in {"no_change", "revised", "manual_review"}:
-                    return
-        except Exception as exc:
-            logger.exception("Skill evidence routing failed: %s", exc)
+    try:
+        from memory_evidence_service import route_evidence_or_link
+        routing = await route_evidence_or_link(
+            pathway="skill_extraction", sources=sources, settings=skill_settings,
+            entity_type=entity_type,
+        )
+        if routing["stop"]:
+            return
+    except Exception as exc:
+        logger.exception("Skill evidence routing failed: %s", exc)
 
     from services.config_helpers import get_task_system_prompt
     system_prompt = get_task_system_prompt("skill_generation", fallback=_SKILL_GEN_PROMPT) or _SKILL_GEN_PROMPT

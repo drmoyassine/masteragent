@@ -892,25 +892,22 @@ async def _apply_request(row: Dict[str, Any], result: Any) -> Dict[str, Any]:
             if cur.fetchone():
                 return {"created": 0, "reason": "already_applied"}
         settings = get_memory_settings() or {}
-        if settings.get("knowledge_evidence_routing_enabled", True):
-            from memory_evidence_service import analyze_evidence, apply_high_similarity_link
-            evidence_sources = [{"source_type": "intelligence", "source_id": str(item["id"]),
-                "entity_id": item.get("primary_entity_id"), "name": item.get("name") or "",
-                "summary": item.get("summary") or "", "content": item.get("content") or "",
-                "embedding": item.get("embedding"), "embedding_model": item.get("embedding_model"),
-                "embedding_version": item.get("embedding_version"), "embedding_dimensions": item.get("embedding_dimensions"),
-                "embedded_at": item.get("embedded_at")} for item in current.values()]
-            route = analyze_evidence(pathway="declarative_knowledge", sources=evidence_sources,
-                                     settings=settings, entity_type=context.get("entity_type"))
-            linked = apply_high_similarity_link(route, evidence_sources, settings)
-            if linked:
-                return {"created": 0, "reason": "evidence_linked", "canonical_id": linked}
-            if route.get("route") == "revision_assessment" and settings.get("knowledge_evidence_routing_mode") == "enforced":
-                from memory_evidence_revision_service import assess_and_apply
-                revision = await assess_and_apply(route=route, sources=evidence_sources, settings=settings)
-                if revision.get("action") in {"no_change", "revised", "manual_review"}:
-                    return {"created": 0, "reason": f"revision_{revision.get('action')}",
-                            "canonical_id": route.get("canonical_knowledge_id")}
+        from memory_evidence_service import route_evidence_or_link
+        evidence_sources = [{"source_type": "intelligence", "source_id": str(item["id"]),
+            "entity_id": item.get("primary_entity_id"), "name": item.get("name") or "",
+            "summary": item.get("summary") or "", "content": item.get("content") or "",
+            "embedding": item.get("embedding"), "embedding_model": item.get("embedding_model"),
+            "embedding_version": item.get("embedding_version"), "embedding_dimensions": item.get("embedding_dimensions"),
+            "embedded_at": item.get("embedded_at")} for item in current.values()]
+        routing = await route_evidence_or_link(
+            pathway="declarative_knowledge", sources=evidence_sources, settings=settings,
+            entity_type=context.get("entity_type"),
+        )
+        if routing["linked_id"]:
+            return {"created": 0, "reason": "evidence_linked", "canonical_id": routing["linked_id"]}
+        if routing["revision_action"] in {"no_change", "revised", "manual_review"}:
+            return {"created": 0, "reason": f"revision_{routing['revision_action']}",
+                    "canonical_id": routing["route"].get("canonical_knowledge_id")}
         from memory_facets import validate_generated_facets
         facets, facet_state = validate_generated_facets(data.get("facets") or {})
         metadata = data.get("metadata") or {}; metadata["facets"] = facets; metadata["facet_extraction"] = facet_state

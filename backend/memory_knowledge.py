@@ -188,33 +188,25 @@ async def generate_knowledge_from_intelligence(intelligence: list) -> int:
         "embedding_dimensions": ins.get("embedding_dimensions"),
         "embedded_at": ins.get("embedded_at"),
     } for ins in intelligence]
-    route = None
-    if settings.get("knowledge_evidence_routing_enabled", True):
-        try:
-            from memory_evidence_service import analyze_evidence, apply_high_similarity_link
-            route = analyze_evidence(
-                pathway="declarative_knowledge", sources=sources, settings=settings,
-                entity_type=entity_type,
-            )
-            linked = apply_high_similarity_link(route, sources, settings)
-            if linked:
-                log_pipeline_run("knowledge_generation", "skipped", reason_code="evidence_linked",
-                                 detail={"canonical_id": route.get("canonical_knowledge_id")})
-                return 0
-            if (route.get("route") == "revision_assessment" and
-                    settings.get("knowledge_evidence_routing_mode") == "enforced"):
-                from memory_evidence_revision_service import assess_and_apply
-                revision = await assess_and_apply(route=route, sources=sources, settings=settings)
-                if revision.get("action") in {"no_change", "revised"}:
-                    log_pipeline_run("knowledge_generation", "revised", records_created=0,
-                                     detail={"action": revision.get("action")})
-                    return 0
-                if revision.get("action") == "manual_review":
-                    log_pipeline_run("knowledge_generation", "skipped",
-                                     reason_code="revision_manual_review")
-                    return 0
-        except Exception as exc:
-            logger.exception("Evidence routing failed; generation remains available: %s", exc)
+    try:
+        from memory_evidence_service import route_evidence_or_link
+        routing = await route_evidence_or_link(
+            pathway="declarative_knowledge", sources=sources, settings=settings,
+            entity_type=entity_type,
+        )
+        if routing["linked_id"]:
+            log_pipeline_run("knowledge_generation", "skipped", reason_code="evidence_linked",
+                             detail={"canonical_id": routing["route"].get("canonical_knowledge_id")})
+            return 0
+        if routing["revision_action"] in {"no_change", "revised"}:
+            log_pipeline_run("knowledge_generation", "revised", records_created=0,
+                             detail={"action": routing["revision_action"]})
+            return 0
+        if routing["revision_action"] == "manual_review":
+            log_pipeline_run("knowledge_generation", "skipped", reason_code="revision_manual_review")
+            return 0
+    except Exception as exc:
+        logger.exception("Evidence routing failed; generation remains available: %s", exc)
 
     pipeline_nodes = get_pipeline_configs("knowledge")
     pk_gen_node = next((n for n in pipeline_nodes if n["task_type"] == "knowledge_generation"), None)

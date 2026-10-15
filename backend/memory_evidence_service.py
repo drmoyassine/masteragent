@@ -125,3 +125,44 @@ def apply_high_similarity_link(result: Dict[str, Any], sources: Sequence[Dict[st
             "coverage": settings.get("knowledge_evidence_high_coverage", 0.90),
         },
     )
+
+
+async def route_evidence_or_link(
+    *, pathway: str, sources: Sequence[Dict[str, Any]], settings: Dict[str, Any],
+    entity_type: str | None = None, outcome_signature: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """The one evidence-routing preamble every knowledge-producing executor runs (TASK-257 §2).
+
+    Cheap source-first routing, the high-similarity link in enforced mode, and the
+    enforced revision assessment — previously copy-pasted at five call sites in four
+    files. Returns:
+
+        {"engaged": bool, "stop": bool, "route": dict | None,
+         "linked_id": str | None, "revision_action": str | None}
+
+    engaged=False when the routing gate is off. stop=True when a link or revision
+    action already covered the sources and the caller must skip generation; what
+    stopping means (mark processed, log, which return value) stays with the caller —
+    that is deliberately per-pathway. Raises on error: sync executors wrap the call
+    in try/except so generation remains available; the provider-batch apply path
+    lets it propagate so the batch request records the failure.
+    """
+    if not settings.get("knowledge_evidence_routing_enabled", True):
+        return {"engaged": False, "stop": False, "route": None, "linked_id": None, "revision_action": None}
+    route = analyze_evidence(
+        pathway=pathway, sources=sources, settings=settings,
+        entity_type=entity_type, outcome_signature=outcome_signature,
+    )
+    linked_id = apply_high_similarity_link(route, sources, settings)
+    if linked_id:
+        return {"engaged": True, "stop": True, "route": route, "linked_id": linked_id, "revision_action": None}
+    if (route.get("route") == "revision_assessment" and
+            settings.get("knowledge_evidence_routing_mode") == "enforced"):
+        from memory_evidence_revision_service import assess_and_apply
+        revision = await assess_and_apply(route=route, sources=sources, settings=settings)
+        action = revision.get("action")
+        if action in {"no_change", "revised", "manual_review"}:
+            return {"engaged": True, "stop": True, "route": route, "linked_id": None, "revision_action": action}
+        # create_new (and anything unexpected) falls through to generation —
+        # assess_and_apply returns it when the canonical record is gone.
+    return {"engaged": True, "stop": False, "route": route, "linked_id": None, "revision_action": None}

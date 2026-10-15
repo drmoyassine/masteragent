@@ -159,29 +159,20 @@ async def _reflect_entity_day(entity_type: str, entity_id: str, day: str, confid
         "embedding_dimensions": r.get("embedding_dimensions"),
         "embedded_at": r.get("embedded_at"),
     } for r in telemetry]
-    if settings.get("knowledge_evidence_routing_enabled", True):
-        try:
-            from memory_evidence_service import analyze_evidence, apply_high_similarity_link
-            route = analyze_evidence(
-                pathway="telemetry_reflection", sources=sources, settings=settings,
-                entity_type=entity_type, outcome_signature={"day": day},
-            )
-            if apply_high_similarity_link(route, sources, settings):
-                _mark_reflected(entity_type, entity_id, day, 0, "already_covered")
-                return 0
-            if (route.get("route") == "revision_assessment" and
-                    settings.get("knowledge_evidence_routing_mode") == "enforced"):
-                from memory_evidence_revision_service import assess_and_apply
-                revision = await assess_and_apply(route=route, sources=sources, settings=settings)
-                if revision.get("action") in {"no_change", "revised"}:
-                    _mark_reflected(entity_type, entity_id, day, 0, "already_covered")
-                    return 0
-                if revision.get("action") == "manual_review":
-                    log_pipeline_run("telemetry_reflection", "skipped",
-                                     reason_code="revision_manual_review")
-                    return 0
-        except Exception as exc:
-            logger.exception("Telemetry evidence routing failed: %s", exc)
+    try:
+        from memory_evidence_service import route_evidence_or_link
+        routing = await route_evidence_or_link(
+            pathway="telemetry_reflection", sources=sources, settings=settings,
+            entity_type=entity_type, outcome_signature={"day": day},
+        )
+        if routing["linked_id"] or routing["revision_action"] in {"no_change", "revised"}:
+            _mark_reflected(entity_type, entity_id, day, 0, "already_covered")
+            return 0
+        if routing["revision_action"] == "manual_review":
+            log_pipeline_run("telemetry_reflection", "skipped", reason_code="revision_manual_review")
+            return 0
+    except Exception as exc:
+        logger.exception("Telemetry evidence routing failed: %s", exc)
 
     user_msg = (
         f"--- AGENT TELEMETRY ({len(telemetry)} events) ---\n{telemetry_text}\n\n"
