@@ -281,6 +281,10 @@ class MemorySettingsUpdate(BaseModel):
     knowledge_evidence_high_coverage: Optional[float] = Field(0.90, ge=0, le=1)
     knowledge_quality_version: Optional[int] = Field(2, ge=1)
     knowledge_facet_schema_version: Optional[int] = Field(1, ge=1)
+    # ── TASK-260: LLM spend caps (USD, 0 = uncapped) + alert delivery ──
+    llm_daily_budget_usd: Optional[float] = Field(0, ge=0)
+    llm_monthly_budget_usd: Optional[float] = Field(0, ge=0)
+    alerts_delivery_enabled: Optional[bool] = True
 
     @model_validator(mode="after")
     def validate_hygiene_settings(self):
@@ -391,6 +395,33 @@ class MemorySettingsResponse(BaseModel):
     knowledge_evidence_high_coverage: float = 0.90
     knowledge_quality_version: int = 2
     knowledge_facet_schema_version: int = 1
+    # TASK-260: LLM spend caps + alert delivery kill-switch
+    llm_daily_budget_usd: float = 0
+    llm_monthly_budget_usd: float = 0
+    alerts_delivery_enabled: bool = True
+
+
+class LLMBudgetLeg(BaseModel):
+    """TASK-260 — one budget period (daily or monthly)."""
+    cap_usd: float = 0
+    spent_usd: float = 0
+    ratio: Optional[float] = None
+    state: str = "uncapped"  # ok | warning | blocked | uncapped
+
+
+class LLMBudgetLedger(BaseModel):
+    calls_today: int = 0
+    unpriced_calls_today: int = 0
+
+
+class LLMBudgetResponse(BaseModel):
+    """TASK-260 — GET /config/llm-budget: spend vs caps (estimates)."""
+    available: bool = True
+    daily: LLMBudgetLeg = Field(default_factory=LLMBudgetLeg)
+    monthly: LLMBudgetLeg = Field(default_factory=LLMBudgetLeg)
+    ledger: LLMBudgetLedger = Field(default_factory=LLMBudgetLedger)
+    pricing_note: str = ""
+    error: Optional[str] = None
 
 # ============================================
 # Tier 0: Interaction Models

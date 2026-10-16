@@ -58,3 +58,16 @@ jobs:
             echo "$bad"
             exit 1
           fi
+
+  dependency-audit:
+    # TASK-260 — pip-audit over the pinned backend requirements.
+    # Non-blocking first (continue-on-error); flip to blocking after triage.
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pip-audit
+      - run: pip-audit -r backend/requirements.txt --progress-spinner off

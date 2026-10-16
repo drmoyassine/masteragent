@@ -236,4 +236,10 @@ async def _background_loop():
         except Exception as e:
             logger.error(f"Background loop error: {e}", exc_info=True)
 
+        # ── TASK-260: outbound alert delivery (n8n webhook) ───────────────
+        # Undelivered memory_system_alerts and new failed pipeline runs are
+        # posted to the owner channel here — DB rows alone notify nobody.
+        from services.alert_delivery import poll_alert_delivery
+        await poll_alert_delivery()
+
         await asyncio.sleep(60)

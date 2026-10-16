@@ -57,6 +57,9 @@ services:
       # GLiNER NER Service (optional)
       - ENABLE_GLINER=${ENABLE_GLINER:-false}
       - GLINER_URL=${GLINER_URL:-http://gliner:8002}
+      # TASK-260: outbound alert delivery (n8n webhook routes by severity).
+      - ALERT_WEBHOOK_URL=${ALERT_WEBHOOK_URL:-}
+      - ALERT_DELIVERY_WINDOW_SECONDS=${ALERT_DELIVERY_WINDOW_SECONDS:-900}
       # Timezone pin: the entity-day key is DATE(timestamp), which follows the
       # session timezone — everything must bucket on UTC (see db_init too).
       - TZ=UTC
@@ -92,6 +95,32 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
+
+  # TASK-260: backup sidecar — pg_dump -Fc daily at 02:00 UTC into a host
+  # bind mount, retention (14 daily / 4 weekly / 3 monthly), and a monthly
+  # restore-into-scratch sanity check with alert-on-failure. Uses the same
+  # pgvector/pg16 image so pg_dump's version exactly matches the server.
+  db_backup:
+    image: pgvector/pgvector:pg16
+    mem_limit: 256m
+    environment:
+      - PGHOST=postgres
+      - PGPORT=5432
+      - PGUSER=${POSTGRES_USER:-postgres}
+      - PGPASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - PGDATABASE=${POSTGRES_DB:-memory}
+      - BACKUP_DIR=/backups
+      - TZ=UTC
+    volumes:
+      - ./deploy/backup.sh:/backup.sh:ro
+      # Owner-named off-container target (host filesystem, outside the named
+      # volume that holds the live data — override with MASTERAGENT_BACKUP_DIR).
+      - ${MASTERAGENT_BACKUP_DIR:-/var/backups/masteragent}:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "/backup.sh"]
     restart: unless-stopped
 
   redis:

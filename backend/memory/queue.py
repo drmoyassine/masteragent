@@ -432,6 +432,27 @@ async def _process_bulk_job(job: Job, token: str):
                     logger.warning("Skipping %s (%s): %s", job.name, job.id, provider_block["code"])
                     return {"status": "blocked", "reason": provider_block["code"]}
 
+                # TASK-260: a breached budget halts queued AI work with the same
+                # clean blocked-row contract as a provider hard-stop; recovery is
+                # automatic when the period rolls over or the cap is raised.
+                from services.budget import active_budget_block
+                budget_block = active_budget_block()
+                if budget_block:
+                    if job.name == "extract_knowledge_attachment" and job.data.get("attachment_id"):
+                        from core.storage import get_memory_db_context
+                        with get_memory_db_context() as conn:
+                            conn.cursor().execute(
+                                "UPDATE knowledge_attachments SET status='blocked', extraction=%s::jsonb, updated_at=NOW() WHERE id=%s",
+                                (json.dumps({"error": budget_block["message"], "reason": budget_block["code"]}), job.data.get("attachment_id")),
+                            )
+                    from memory_system.store.writes import log_pipeline_run
+                    log_pipeline_run(job.name, "blocked", reason_code=budget_block["code"],
+                                     detail={"message": budget_block["message"], "scope": budget_block["scope"],
+                                             "queue_job_id": str(job.id)},
+                                     trigger="queue")
+                    logger.warning("Skipping %s (%s): %s", job.name, job.id, budget_block["code"])
+                    return {"status": "blocked", "reason": budget_block["code"]}
+
             if spec.controls_key:
                 from services.job_controls import get_command
                 command = get_command(spec.controls_key)

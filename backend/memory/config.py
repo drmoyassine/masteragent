@@ -27,7 +27,7 @@ from memory_system.store.models import (
     EntityTypeCreate, EntityTypeResponse,
     FetchModelsRequest, FetchModelsResponse,
     LLMConfigCreate, LLMConfigResponse, LLMConfigUpdate,
-    MemorySettingsResponse, MemorySettingsUpdate,
+    LLMBudgetResponse, MemorySettingsResponse, MemorySettingsUpdate,
     SystemPromptCreate, SystemPromptResponse,
 )
 
@@ -671,6 +671,13 @@ async def update_settings_endpoint(data: MemorySettingsUpdate, user: dict = Depe
             updates.append("updated_at = %s"); params.append(now)
             cursor.execute(f"UPDATE memory_settings SET {', '.join(updates)} WHERE id = 1", params)
     return await get_settings_endpoint(user)
+
+
+@router.get("/config/llm-budget", response_model=LLMBudgetResponse)
+async def get_llm_budget(user: dict = Depends(require_admin_auth)):
+    """TASK-260 — current LLM spend vs configured caps (estimates; see note)."""
+    from services.budget import budget_status
+    return budget_status()
 
 
 # NOTE (TASK-257 §4): the /config/supabase/* endpoints were removed with the

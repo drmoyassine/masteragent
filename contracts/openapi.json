@@ -2848,6 +2848,92 @@
         "title": "KnowledgeUpdate",
         "type": "object"
       },
+      "LLMBudgetLedger": {
+        "properties": {
+          "calls_today": {
+            "default": 0,
+            "title": "Calls Today",
+            "type": "integer"
+          },
+          "unpriced_calls_today": {
+            "default": 0,
+            "title": "Unpriced Calls Today",
+            "type": "integer"
+          }
+        },
+        "title": "LLMBudgetLedger",
+        "type": "object"
+      },
+      "LLMBudgetLeg": {
+        "description": "TASK-260 \u2014 one budget period (daily or monthly).",
+        "properties": {
+          "cap_usd": {
+            "default": 0,
+            "title": "Cap Usd",
+            "type": "number"
+          },
+          "ratio": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ratio"
+          },
+          "spent_usd": {
+            "default": 0,
+            "title": "Spent Usd",
+            "type": "number"
+          },
+          "state": {
+            "default": "uncapped",
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "title": "LLMBudgetLeg",
+        "type": "object"
+      },
+      "LLMBudgetResponse": {
+        "description": "TASK-260 \u2014 GET /config/llm-budget: spend vs caps (estimates).",
+        "properties": {
+          "available": {
+            "default": true,
+            "title": "Available",
+            "type": "boolean"
+          },
+          "daily": {
+            "$ref": "#/components/schemas/LLMBudgetLeg"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "ledger": {
+            "$ref": "#/components/schemas/LLMBudgetLedger"
+          },
+          "monthly": {
+            "$ref": "#/components/schemas/LLMBudgetLeg"
+          },
+          "pricing_note": {
+            "default": "",
+            "title": "Pricing Note",
+            "type": "string"
+          }
+        },
+        "title": "LLMBudgetResponse",
+        "type": "object"
+      },
       "LLMConfigCreate": {
         "properties": {
           "execution_order": {
@@ -3570,6 +3656,11 @@
       },
       "MemorySettingsResponse": {
         "properties": {
+          "alerts_delivery_enabled": {
+            "default": true,
+            "title": "Alerts Delivery Enabled",
+            "type": "boolean"
+          },
           "auto_knowledge_enabled": {
             "default": true,
             "title": "Auto Knowledge Enabled",
@@ -3834,6 +3925,16 @@
             "title": "Knowledge Threshold",
             "type": "integer"
           },
+          "llm_daily_budget_usd": {
+            "default": 0,
+            "title": "Llm Daily Budget Usd",
+            "type": "number"
+          },
+          "llm_monthly_budget_usd": {
+            "default": 0,
+            "title": "Llm Monthly Budget Usd",
+            "type": "number"
+          },
           "memory_generation_interaction_types": {
             "anyOf": [
               {
@@ -3908,6 +4009,18 @@
       },
       "MemorySettingsUpdate": {
         "properties": {
+          "alerts_delivery_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": true,
+            "title": "Alerts Delivery Enabled"
+          },
           "auto_knowledge_enabled": {
             "anyOf": [
               {
@@ -4643,6 +4756,32 @@
             ],
             "default": 5,
             "title": "Knowledge Threshold"
+          },
+          "llm_daily_budget_usd": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": 0,
+            "title": "Llm Daily Budget Usd"
+          },
+          "llm_monthly_budget_usd": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": 0,
+            "title": "Llm Monthly Budget Usd"
           },
           "memory_generation_interaction_types": {
             "anyOf": [
@@ -11126,6 +11265,50 @@
           }
         },
         "summary": "List Entity Subtypes",
+        "tags": [
+          "Memory Config"
+        ],
+        "x-surface": "console"
+      }
+    },
+    "/api/memory/config/llm-budget": {
+      "get": {
+        "description": "TASK-260 \u2014 current LLM spend vs configured caps (estimates; see note).",
+        "operationId": "get_llm_budget_api_memory_config_llm_budget_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LLMBudgetResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Llm Budget",
         "tags": [
           "Memory Config"
         ],

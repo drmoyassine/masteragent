@@ -6,6 +6,7 @@ from typing import Optional
 import httpx
 
 from services.config_helpers import get_llm_config
+from services.budget import BudgetExceededError, check_budget, record_llm_usage
 from services.job_safety import ProviderStopError, provider_stop_from_response, record_provider_stop
 
 logger = logging.getLogger(__name__)
@@ -128,6 +129,9 @@ async def call_llm(
     model = config.get("model_name", "gpt-4o-mini")
     provider = config.get("provider", "")
 
+    # TASK-260: enforce the daily/monthly LLM budget before spending.
+    check_budget(task_type)
+
     messages = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
@@ -154,7 +158,9 @@ async def call_llm(
                 json=request_body,
             )
             if response.status_code == 200:
-                return response.json()["choices"][0]["message"]["content"]
+                data = response.json()
+                record_llm_usage(task_type, model, config, data.get("usage"))
+                return data["choices"][0]["message"]["content"]
             provider_stop = provider_stop_from_response(
                 response.status_code, response.text, response.headers.get("retry-after")
             )
@@ -163,7 +169,7 @@ async def call_llm(
                 raise provider_stop
             logger.error(f"LLM call failed: {response.status_code} - {response.text}")
             raise RuntimeError(f"LLM call failed: {response.status_code} - {response.text}")
-    except ProviderStopError:
+    except (ProviderStopError, BudgetExceededError):
         raise
     except Exception as e:
         logger.error(f"LLM call error: {e}")
@@ -192,6 +198,9 @@ async def call_llm_with_thinking(
     api_key = config.get("api_key_encrypted", "")
     api_base = config.get("api_base_url", "https://api.openai.com/v1").rstrip("/")
     model = config.get("model_name", "gpt-4o-mini")
+
+    # TASK-260: enforce the daily/monthly LLM budget before spending.
+    check_budget(task_type)
 
     messages = []
     if system_prompt:
@@ -234,7 +243,9 @@ async def call_llm_with_thinking(
                     logger.error(f"LLM thinking call failed: {response.status_code} - {response.text}")
                     raise RuntimeError(f"LLM call failed: {response.status_code} - {response.text}")
 
-                choice = response.json()["choices"][0]
+                data = response.json()
+                record_llm_usage(task_type, model, config, data.get("usage"))
+                choice = data["choices"][0]
                 assistant_message = choice["message"]
                 tool_calls = assistant_message.get("tool_calls") or []
 
@@ -269,7 +280,9 @@ async def call_llm_with_thinking(
                         json=final_body,
                     )
                     if final_resp.status_code == 200:
-                        return final_resp.json()["choices"][0]["message"].get("content") or ""
+                        final_data = final_resp.json()
+                        record_llm_usage(task_type, model, config, final_data.get("usage"))
+                        return final_data["choices"][0]["message"].get("content") or ""
                     provider_stop = provider_stop_from_response(
                         final_resp.status_code, final_resp.text, final_resp.headers.get("retry-after")
                     )
@@ -278,7 +291,7 @@ async def call_llm_with_thinking(
                         raise provider_stop
                     raise RuntimeError(f"Final LLM call failed: {final_resp.status_code}")
 
-    except ProviderStopError:
+    except (ProviderStopError, BudgetExceededError):
         raise
     except Exception as e:
         logger.error(f"LLM thinking call error: {e}")
@@ -296,6 +309,9 @@ async def call_llm_vision(prompt: str, image_base64: str, mime_type: str = "imag
     api_base = config.get("api_base_url", "https://api.openai.com/v1").rstrip("/")
     model = config.get("model_name", "gpt-4o")
     provider = config.get("provider", "")
+
+    # TASK-260: vision calls share the global budget caps.
+    check_budget("vision")
 
     messages = [{"role": "user", "content": [
         {"type": "text", "text": prompt},
@@ -318,7 +334,9 @@ async def call_llm_vision(prompt: str, image_base64: str, mime_type: str = "imag
                 json=request_body,
             )
             if response.status_code == 200:
-                return response.json()["choices"][0]["message"]["content"]
+                data = response.json()
+                record_llm_usage("vision", model, config, data.get("usage"))
+                return data["choices"][0]["message"]["content"]
             provider_stop = provider_stop_from_response(
                 response.status_code, response.text, response.headers.get("retry-after")
             )
@@ -327,7 +345,7 @@ async def call_llm_vision(prompt: str, image_base64: str, mime_type: str = "imag
                 raise provider_stop
             logger.error(f"Vision LLM call failed: {response.status_code}")
             raise RuntimeError(f"Vision LLM call failed: {response.status_code} - {response.text}")
-    except ProviderStopError:
+    except (ProviderStopError, BudgetExceededError):
         raise
     except Exception as e:
         logger.error(f"Vision LLM call error: {e}")
