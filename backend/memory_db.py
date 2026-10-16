@@ -29,6 +29,33 @@ from core.secrets import encrypt_secret, is_encrypted
 logger = logging.getLogger(__name__)
 
 
+def _persist_index_build_alert(cursor, index_name: str, exc: Exception) -> None:
+    """Sticky-alert a failed load-bearing index build.
+
+    A failed CREATE UNIQUE INDEX CONCURRENTLY leaves an invalid placeholder
+    that cannot arbitrate ON CONFLICT — every insert it serves then errors
+    (2026-10-15 outage: the dedup index failed on two pre-existing duplicate
+    keys and the warning-only swallow left the app serving 500s invisibly
+    for ~30 min). docker logs are unreadable on the deployed panel, so the
+    alerts banner is the only surface operators actually see.
+    """
+    try:
+        cursor.execute("""
+            INSERT INTO memory_system_alerts
+                (code, severity, title, message, source, detail, active, first_seen_at, last_seen_at)
+            VALUES (%s, 'critical', 'Operational index build failed', %s,
+                    'memory_db', %s::jsonb, TRUE, NOW(), NOW())
+            ON CONFLICT (code) DO UPDATE SET active=TRUE, message=EXCLUDED.message,
+                detail=EXCLUDED.detail, last_seen_at=NOW()
+        """, (
+            f"index_build_failed:{index_name}",
+            f"Index {index_name} failed to build; requests relying on it will error until this is resolved.",
+            json.dumps({"index": index_name, "error": f"{type(exc).__name__}: {exc}"}),
+        ))
+    except Exception as alert_exc:
+        logger.error("Failed to persist index-build alert for %s: %s", index_name, alert_exc)
+
+
 def _create_operational_indexes_concurrently():
     """Build new potentially-large indexes without blocking production writes."""
     statements = [
@@ -50,6 +77,7 @@ def _create_operational_indexes_concurrently():
     try:
         cursor = conn.cursor()
         for index_name, statement in statements:
+            load_bearing = statement.lstrip().upper().startswith("CREATE UNIQUE")
             try:
                 cursor.execute("""
                     SELECT i.indisvalid FROM pg_index i
@@ -59,8 +87,17 @@ def _create_operational_indexes_concurrently():
                 if state and not state[0]:
                     cursor.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {index_name}")
                 cursor.execute(statement)
+                if load_bearing:
+                    cursor.execute(
+                        "UPDATE memory_system_alerts SET active=FALSE WHERE code=%s AND active=TRUE",
+                        (f"index_build_failed:{index_name}",),
+                    )
             except Exception as exc:
-                logger.warning("Concurrent index migration skipped: %s", exc)
+                if load_bearing:
+                    logger.error("Load-bearing index %s failed to build: %s", index_name, exc)
+                    _persist_index_build_alert(cursor, index_name, exc)
+                else:
+                    logger.warning("Concurrent index migration skipped: %s", exc)
     finally:
         conn.close()
 
