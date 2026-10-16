@@ -1,7 +1,7 @@
 """TASK-257 §6 — settings drift guard.
 
 Every key read off the memory_settings row in backend code must exist as a
-column in the schema memory_db.py actually provisions. The oracle is the DDL,
+column in the schema memory_system/store/db.py actually provisions. The oracle is the DDL,
 not MemorySettingsResponse — the response model is the GET /config/settings
 contract filter and has historically lagged the schema (18 real columns were
 absent from it), so testing against it would flag real knobs as phantoms.

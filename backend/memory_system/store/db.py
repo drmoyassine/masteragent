@@ -1,5 +1,5 @@
 """
-memory_db.py — PostgreSQL schema + initialization for the Memory System
+memory_system/store/db.py — PostgreSQL schema + initialization for the Memory System
 
 Uses:
   - psycopg2 for PostgreSQL connections (via core/storage.py)
@@ -44,7 +44,7 @@ def _persist_index_build_alert(cursor, index_name: str, exc: Exception) -> None:
             INSERT INTO memory_system_alerts
                 (code, severity, title, message, source, detail, active, first_seen_at, last_seen_at)
             VALUES (%s, 'critical', 'Operational index build failed', %s,
-                    'memory_db', %s::jsonb, TRUE, NOW(), NOW())
+                    'memory_system.store.db', %s::jsonb, TRUE, NOW(), NOW())
             ON CONFLICT (code) DO UPDATE SET active=TRUE, message=EXCLUDED.message,
                 detail=EXCLUDED.detail, last_seen_at=NOW()
         """, (

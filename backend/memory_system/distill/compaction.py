@@ -85,7 +85,7 @@ async def compact_entity(entity_type: str, entity_id: str):
     """Generate an Intelligence from the N most recent uncompacted memories."""
     config = _get_entity_type_config(entity_type)
     # intelligence_extraction_threshold is the canonical key (compaction_threshold
-    # was renamed to it in memory_db.init_db); reading the old key here made the
+    # was renamed to it in memory_system.store.db.init_db); reading the old key here made the
     # trigger fire at the configured count while compaction always consumed 10.
     threshold = config.get("intelligence_extraction_threshold") or 10
 

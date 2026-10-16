@@ -144,7 +144,7 @@ def _alert_credential_orphans(classification: dict) -> None:
 def initialize_application() -> None:
     """Run idempotent schema work under a cross-process PostgreSQL lock."""
     from db_init import init_db, seed_admin_user
-    from memory_db import init_memory_db
+    from memory_system.store.db import init_memory_db
 
     validate_runtime_configuration()
     with get_db_context() as lock_conn:
