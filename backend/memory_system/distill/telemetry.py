@@ -18,6 +18,7 @@ Design principles:
 Runs nightly (schedule) after intelligence/knowledge, over each entity that had
 telemetry that day and hasn't been reflected on yet.
 """
+import json
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -26,6 +27,13 @@ from typing import Optional
 from core.storage import get_memory_db_context
 from services import call_llm, generate_embedding, get_memory_settings
 from services.llm import parse_llm_json
+from services.prompt_safety import (
+    emit_safety_alert,
+    frame_untrusted,
+    record_injection_flag,
+    resolve_creation_status,
+    scan_untrusted_output,
+)
 from memory_system.store.writes import insert_knowledge, log_pipeline_run
 from memory_system.store.helpers import _get_entity_type_config
 from memory_system.distill.policy import approval_status, resolve_generation_policy
@@ -174,9 +182,13 @@ async def _reflect_entity_day(entity_type: str, entity_id: str, day: str, confid
     except Exception as exc:
         logger.exception("Telemetry evidence routing failed: %s", exc)
 
+    # TASK-262: telemetry text and the day's conversation are externally-derived
+    # content — frame as untrusted data so embedded directives stay data.
     user_msg = (
-        f"--- AGENT TELEMETRY ({len(telemetry)} events) ---\n{telemetry_text}\n\n"
-        f"--- CONVERSATION (outcome context) ---\n{convo_text or '(none)'}"
+        f"--- AGENT TELEMETRY ({len(telemetry)} events) ---\n"
+        + frame_untrusted("agent telemetry events", telemetry_text)
+        + "\n\n--- CONVERSATION (outcome context) ---\n"
+        + frame_untrusted("conversation outcome context", convo_text or "(none)")
     )
 
     try:
@@ -263,7 +275,36 @@ async def _reflect_entity_day(entity_type: str, entity_id: str, day: str, confid
         facets, facet_state = validate_generated_facets(c.get("facets") or {})
         metadata["facets"] = facets
         metadata["facet_extraction"] = facet_state
-        status = approval_status(policy["approval_policy"])
+        # TASK-262: skill/playbook candidates reflected from telemetry are
+        # externally-derived — forced draft + scan + alert (same doctrine as
+        # the playbook pathway); informational targets keep policy control.
+        status, ai_safety = resolve_creation_status(
+            "telemetry_reflected", target, approval_status(policy["approval_policy"]),
+        )
+        metadata["ai_safety"] = ai_safety
+        record_injection_flag(
+            metadata,
+            where=f"telemetry_reflection/{target}",
+            matches=scan_untrusted_output(json.dumps(c, default=str)),
+            sample=content,
+        )
+        if ai_safety.get("forced_draft_reason"):
+            try:
+                with get_memory_db_context() as conn:
+                    emit_safety_alert(
+                        conn.cursor(),
+                        code="telemetry_forced_draft",
+                        title="Telemetry-reflected artifact held as draft",
+                        message=(
+                            f"{target} '{name}' for {entity_type}/{entity_id} was reflected "
+                            "from agent telemetry (externally-derived content) and held as "
+                            "draft pending human activation."
+                        ),
+                        detail={"entity_type": entity_type, "entity_id": entity_id,
+                                "target": target, "name": name},
+                    )
+            except Exception:
+                logger.exception("Forced-draft safety alert emission failed (candidate still created)")
         insert_knowledge(
             knowledge_id=str(uuid.uuid4()),
             intelligence_ids=[],

@@ -5,6 +5,7 @@ intelligence by cosine similarity across distinct entities, enriches clusters
 with AI thoughts/tool calls from the same time window, then extracts playbooks
 and decomposes them into skills — all stored in the unified knowledge table.
 """
+import json
 import logging
 import uuid
 from datetime import datetime, timezone, timedelta
@@ -14,6 +15,13 @@ from core.storage import get_memory_db_context
 from services import call_llm, generate_embedding, get_memory_settings
 from memory_system.maintain.similarity import connected_components
 from services.llm import parse_llm_json
+from services.prompt_safety import (
+    emit_safety_alert,
+    frame_untrusted,
+    record_injection_flag,
+    resolve_creation_status,
+    scan_untrusted_output,
+)
 from memory_system.store.writes import insert_knowledge
 from memory_system.store.helpers import _get_entity_type_config
 from memory_system.distill.policy import approval_status, resolve_generation_policy
@@ -295,7 +303,12 @@ async def _process_cluster(
         _mark_processed(processed_ids)
         return
 
-    status = approval_status(policy["approval_policy"])
+    # TASK-262: playbooks are behavior-changing artifacts derived from
+    # externally-authored content — forced to draft when the policy would
+    # have auto-activated them (DEC-091 posture), with a human-visible alert.
+    status, ai_safety = resolve_creation_status(
+        "experiential", "playbook", approval_status(policy["approval_policy"]),
+    )
 
     # Derive the playbook's domain signals from the union of its source
     # intelligence signals, so skills decomposed from it can inherit them.
@@ -334,6 +347,31 @@ async def _process_cluster(
     facets, facet_state = validate_generated_facets(playbook_data.get("facets") or {})
     metadata["facets"] = facets
     metadata["facet_extraction"] = facet_state
+    metadata["ai_safety"] = ai_safety
+    # No-instructions invariant: flag directive-shaped text in the artifact we
+    # are about to persist (flag-only — content is kept for human review).
+    record_injection_flag(
+        metadata,
+        where="playbook_extraction/playbook_generation",
+        matches=scan_untrusted_output(json.dumps(playbook_data, default=str)),
+        sample=str(playbook_data.get("description", "")),
+    )
+    if ai_safety.get("forced_draft_reason"):
+        try:
+            with get_memory_db_context() as conn:
+                emit_safety_alert(
+                    conn.cursor(),
+                    code="playbook_forced_draft",
+                    title="Playbook held as draft (externally-derived content)",
+                    message=(
+                        f"Playbook '{playbook_data.get('name')}' was generated from "
+                        "externally-derived content and held as draft pending human "
+                        "activation (approval policy would have auto-activated it)."
+                    ),
+                    detail={"knowledge_id": playbook_id, "pathway": "experiential"},
+                )
+        except Exception:
+            logger.exception("Forced-draft safety alert emission failed (playbook still created)")
     insert_knowledge(
         knowledge_id=playbook_id,
         intelligence_ids=intel_ids,
@@ -370,11 +408,18 @@ async def _generate_playbook(entity_type: str, intel_context: str, ai_context: s
     system_prompt = (get_task_system_prompt("playbook_generation", fallback=_PLAYBOOK_GEN_PROMPT) or _PLAYBOOK_GEN_PROMPT)
     system_prompt = system_prompt.replace("{entity_count}", str(entity_count)).replace("{entity_type}", entity_type)
     system_prompt += "\n\n" + facet_prompt_instructions()
-    user_msg = f"--- Intelligence Cluster ---\n{intel_context}\n{ai_context}"
+    # TASK-262: both context blocks are derived from externally-authored
+    # content — frame as untrusted data so embedded directives stay data.
+    user_msg = (
+        "--- Intelligence Cluster ---\n"
+        + frame_untrusted("clustered intelligence", intel_context, limit=4500)
+    )
+    if ai_context:
+        user_msg += "\n" + frame_untrusted("AI agent telemetry", ai_context, limit=1200)
 
     try:
         result_text = await call_llm(
-            user_msg[:6000],
+            user_msg,
             system_prompt=system_prompt,
             max_tokens=int(policy["max_tokens"]),
             task_type="playbook_generation",
@@ -413,7 +458,10 @@ async def _generate_skills_from_playbook(
     system_prompt = get_task_system_prompt("skill_generation", fallback=_SKILL_GEN_PROMPT) or _SKILL_GEN_PROMPT
     system_prompt += "\n\n" + facet_prompt_instructions()
     steps_text = "\n".join(f"Step {s.get('order')}: {s.get('action')}" for s in steps)
-    user_msg = f"Playbook: {playbook_data.get('name')}\n\nSteps:\n{steps_text}"
+    user_msg = (
+        f"Playbook: {playbook_data.get('name')}\n\nSteps:\n"
+        + frame_untrusted("playbook steps (derived from external content)", steps_text, limit=4000)
+    )
 
     try:
         result_text = await call_llm(
@@ -487,7 +535,33 @@ async def _generate_skills_from_playbook(
         except Exception:
             pass
 
-        status = approval_status(skill_policy["approval_policy"])
+        # TASK-262: skills decomposed from playbooks inherit external content
+        # trust — forced draft + output scan + alert, same doctrine as playbooks.
+        status, ai_safety = resolve_creation_status(
+            "decomposed", "skill", approval_status(skill_policy["approval_policy"]),
+        )
+        metadata["ai_safety"] = ai_safety
+        record_injection_flag(
+            metadata,
+            where="skill_generation/decomposed",
+            matches=scan_untrusted_output(json.dumps(skill_data, default=str)),
+            sample=str(sk_proc),
+        )
+        if ai_safety.get("forced_draft_reason"):
+            try:
+                with get_memory_db_context() as conn:
+                    emit_safety_alert(
+                        conn.cursor(),
+                        code="skill_forced_draft",
+                        title="Skill held as draft (externally-derived content)",
+                        message=(
+                            f"Skill '{sk_name}' was decomposed from playbook content "
+                            "and held as draft pending human activation."
+                        ),
+                        detail={"knowledge_id": skill_id, "playbook_id": playbook_id},
+                    )
+            except Exception:
+                logger.exception("Forced-draft safety alert emission failed (skill still created)")
         insert_knowledge(
             knowledge_id=skill_id,
             intelligence_ids=[],

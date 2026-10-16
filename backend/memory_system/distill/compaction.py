@@ -14,6 +14,11 @@ from services import (
 from services.config_helpers import get_pipeline_configs, get_system_prompt_by_config_id
 from services.llm import parse_llm_json
 from services.prompt_renderer import inject_variables
+from services.prompt_safety import (
+    frame_untrusted,
+    record_injection_flag,
+    scan_untrusted_output,
+)
 from memory_system.store.writes import insert_intelligence, log_pipeline_run
 from memory_system.distill.prior_context import fetch_prior_intelligence, fetch_prior_knowledge_semantic
 from memory_system.store.helpers import _get_entity_type_config, _format_signal_definitions
@@ -194,12 +199,24 @@ async def compact_entity(entity_type: str, entity_id: str):
             return
 
     try:
+        # TASK-262: prior knowledge/intelligence are LLM-synthesized and memory
+        # summaries derive from interactions — all externally-derived content,
+        # framed as untrusted data so embedded directives stay data.
         user_msg_parts = [f"Entity: {entity_type} / {entity_id}"]
         if prior_knowledge_text:
-            user_msg_parts.append(f"--- Established Knowledge (organizational patterns already known) ---\n{prior_knowledge_text}")
+            user_msg_parts.append(
+                "--- Established Knowledge (organizational patterns already known) ---\n"
+                + frame_untrusted("established knowledge", prior_knowledge_text)
+            )
         if prior_intelligence_text:
-            user_msg_parts.append(f"--- Existing Intelligence for this entity (do NOT duplicate) ---\n{prior_intelligence_text}")
-        user_msg_parts.append(f"--- Memory Summaries to Analyze ---\n{context}")
+            user_msg_parts.append(
+                "--- Existing Intelligence for this entity (do NOT duplicate) ---\n"
+                + frame_untrusted("existing intelligence", prior_intelligence_text)
+            )
+        user_msg_parts.append(
+            "--- Memory Summaries to Analyze ---\n"
+            + frame_untrusted("memory summaries", context)
+        )
         user_msg = "\n\n".join(user_msg_parts)
         result_text = await call_llm(
             user_msg,
@@ -211,6 +228,15 @@ async def compact_entity(entity_type: str, entity_id: str):
         parsed = parse_llm_json(result_text, context="intelligence_generation")
         # Support both array (1-3 signals) and legacy single-object responses
         results = parsed if isinstance(parsed, list) else [parsed]
+        # TASK-262: no-instructions scan on the output. Intelligence rows carry
+        # no metadata/processing_errors column, so the flag is log-only here —
+        # durable flags land on the memory/knowledge artifacts downstream.
+        record_injection_flag(
+            None,
+            where="intelligence_compaction",
+            matches=scan_untrusted_output(result_text),
+            sample=result_text,
+        )
     except Exception as e:
         logger.error(f"Intelligence LLM call failed: {e}")
         log_pipeline_run("intelligence_compaction", "failed",

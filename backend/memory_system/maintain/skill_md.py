@@ -45,6 +45,7 @@ def render_skill_md(
     signals: Optional[list] = None,
     tags: Optional[list] = None,
     version: int = 1,
+    status: str = "",
 ) -> str:
     """Render a standard-compliant SKILL.md document from knowledge-record fields.
 
@@ -83,6 +84,15 @@ def render_skill_md(
         lines.append(f"  tags: {_yaml_escape(', '.join(str(t) for t in tags if t))}")
     if category == "skill" and metadata.get("skill_type"):
         lines.append(f"  skill_type: {metadata['skill_type']}")
+    # TASK-262 provenance: content-trust + approval state travel with the
+    # export so consumers can see an externally-derived draft for what it is.
+    ai_safety = metadata.get("ai_safety") if isinstance(metadata.get("ai_safety"), dict) else {}
+    if ai_safety.get("content_trust"):
+        lines.append(f"  content_trust: {_yaml_escape(str(ai_safety['content_trust']))}")
+    if ai_safety.get("forced_draft_reason"):
+        lines.append(f"  forced_draft_reason: {_yaml_escape(str(ai_safety['forced_draft_reason'])[:300])}")
+    if status:
+        lines.append(f"  approval_status: {_yaml_escape(str(status))}")
     lines.append("---")
     lines.append("")
     lines.append(f"# {(name or 'Unnamed').strip()}")
@@ -238,6 +248,7 @@ def render_any_knowledge_md(row: dict) -> str:
             signals=signals,
             tags=tags,
             version=version,
+            status=row.get("status") or "",
         )
     return render_knowledge_md(
         name=row.get("name", ""),

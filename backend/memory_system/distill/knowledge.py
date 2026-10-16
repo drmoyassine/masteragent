@@ -13,6 +13,12 @@ from services import (
 from services.config_helpers import get_pipeline_configs, get_system_prompt_by_config_id
 from services.llm import parse_llm_json
 from services.prompt_renderer import inject_variables
+from services.prompt_safety import (
+    content_trust_for,
+    frame_untrusted,
+    record_injection_flag,
+    scan_untrusted_output,
+)
 from memory_system.store.writes import insert_knowledge, log_pipeline_run
 from memory_system.store.helpers import _get_entity_type_config, _format_signal_definitions
 from memory_system.distill.policy import approval_status, resolve_generation_policy
@@ -250,8 +256,15 @@ async def generate_knowledge_from_intelligence(intelligence: list) -> int:
     )
 
     try:
+        # TASK-262: intelligence content is scrubbed external content — frame
+        # as untrusted data (bounded under the call's 8k cap so the frame
+        # survives intact, no outer slice needed).
+        knowledge_msg = (
+            "--- Intelligence Items to Synthesize ---\n"
+            + frame_untrusted("intelligence items (scrubbed external content)", context, limit=7600)
+        )
         result_text = await call_llm(
-            f"--- Intelligence Items to Synthesize ---\n{context}"[:8000],
+            knowledge_msg,
             system_prompt=system_prompt,
             max_tokens=int(policy["max_tokens"]),
             config_id=node_id,
@@ -264,6 +277,7 @@ async def generate_knowledge_from_intelligence(intelligence: list) -> int:
             raise
         logger.error(f"Knowledge generation LLM call failed: {e}")
         return 0
+    injection_matches = scan_untrusted_output(result_text)
 
     try:
         from memory_system.distill.contracts import validate_declarative
@@ -327,6 +341,15 @@ async def generate_knowledge_from_intelligence(intelligence: list) -> int:
     )
     metadata["facets"] = facets
     metadata["facet_extraction"] = facet_state
+    # TASK-262: provenance stamp + no-instructions scan (flag-only). Declarative
+    # categories are not behavior-changing, so status stays policy-governed.
+    metadata["ai_safety"] = {"content_trust": content_trust_for("declarative_knowledge", category)}
+    record_injection_flag(
+        metadata,
+        where="knowledge_generation/declarative",
+        matches=injection_matches,
+        sample=content,
+    )
 
     knowledge_id = str(uuid.uuid4())
     insert_knowledge(

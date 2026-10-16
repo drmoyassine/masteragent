@@ -16,6 +16,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field, ValidationError
 
+from services.prompt_safety import frame_untrusted
+
 logger = logging.getLogger(__name__)
 
 CONSOLIDATION_PROMPT_VERSION = "v1"
@@ -140,7 +142,12 @@ def _format_source(idx: int, src: Dict[str, Any]) -> str:
         if val:
             parts.append(f"{key}: {json.dumps(val, ensure_ascii=False)}")
     parts.append("content:")
-    parts.append(src.get("content", "") or "")
+    # TASK-262: record content is externally-derived — frame it so directives
+    # embedded in the canonical record stay data during merge proposals.
+    parts.append(frame_untrusted(
+        f"record {src.get('name', src.get('id', ''))} content",
+        src.get("content", "") or "",
+    ))
     return "\n".join(parts)
 
 

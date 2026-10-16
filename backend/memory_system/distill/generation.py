@@ -18,6 +18,7 @@ from services import (
 )
 from services.config_helpers import get_pipeline_configs, get_system_prompt_by_config_id, get_schema_by_config_id
 from services.prompt_renderer import inject_variables
+from services.prompt_safety import frame_untrusted, scan_untrusted_output, record_injection_flag
 from memory_system.store.writes import insert_memory
 from memory_system.distill.prior_context import fetch_prior_memories
 from memory_system.store.helpers import (
@@ -570,17 +571,17 @@ async def _execute_pipeline_node(node: dict, ctx: dict):
                 f"Entity: {ctx['entity_type']} / {ctx['entity_id']}\n"
                 f"Date: {ctx['interaction_date']}\n"
                 f"Interaction count: {len(ctx['interactions'])}\n\n"
-                f"--- Prior Context (established facts, do NOT repeat) ---\n{ctx['prior_context']}\n\n"
-                f"--- Raw Interactions ---\n{ctx['raw_text']}\n\n"
-                f"--- Extracted Signals ---\n{ner_summary}"
+                f"{frame_untrusted('prior memories for this entity (established facts, do NOT repeat)', ctx['prior_context'])}\n\n"
+                f"{frame_untrusted('raw interactions recorded for this entity-day', ctx['raw_text'])}\n\n"
+                f"--- Extracted Signals (machine-derived) ---\n{frame_untrusted('NER output', ner_summary)}"
             )
         else:
             llm_context = (
                 f"Entity: {ctx['entity_type']} / {ctx['entity_id']}\n"
                 f"Date: {ctx['interaction_date']}\n"
                 f"Interaction count: {len(ctx['interactions'])}\n\n"
-                f"--- Raw Interactions ---\n{ctx['raw_text']}\n\n"
-                f"--- Extracted Signals ---\n{ner_summary}"
+                f"{frame_untrusted('raw interactions recorded for this entity-day', ctx['raw_text'])}\n\n"
+                f"--- Extracted Signals (machine-derived) ---\n{frame_untrusted('NER output', ner_summary)}"
             )
         system_prompt = get_system_prompt_by_config_id(node_id)
         if not system_prompt:
@@ -607,18 +608,35 @@ async def _execute_pipeline_node(node: dict, ctx: dict):
             # empty husk with no recorded errors and blocks this entity-day
             # forever. Raise so the node error is recorded and the job retries.
             raise RuntimeError(f"Memory-generation LLM returned empty output (node {node_id})")
+        # TASK-262: the summary is about-to-be-persistent derived text — a
+        # no-instructions invariant flags system-like directives for human
+        # review (flag, never drop).
+        record_injection_flag(
+            ctx["processing_errors"],
+            where=f"memory_generation/{node_id}",
+            matches=scan_untrusted_output(str(result)),
+            sample=str(result),
+        )
         ctx["derived_text"] = result
         logger.info(f"Memory generation node {node_id}: produced summary")
 
     elif task_type == "summarization":
         system_prompt = get_system_prompt_by_config_id(node_id) or "Summarize this in 1-2 sentences:\n\n{{text}}"
-        prompt = system_prompt.replace("{{text}}", ctx["derived_text"][:4000])
+        prompt = system_prompt.replace(
+            "{{text}}", frame_untrusted("content to summarize", ctx["derived_text"][:4000])
+        )
         llm_fn, llm_kwargs = _llm_call(node)
         result = await llm_fn(
             prompt, max_tokens=200, config_id=node_id, **llm_kwargs,
         )
         if result is None or not str(result).strip():
             raise RuntimeError(f"Summarization LLM returned empty output (node {node_id})")
+        record_injection_flag(
+            ctx["processing_errors"],
+            where=f"summarization/{node_id}",
+            matches=scan_untrusted_output(str(result)),
+            sample=str(result),
+        )
         ctx["derived_text"] = result
         logger.info(f"Summarization node {node_id}: summarized text")
 
@@ -629,7 +647,7 @@ async def _execute_pipeline_node(node: dict, ctx: dict):
             system_prompt = get_system_prompt_by_config_id(node_id) or "Remove all PII from the following text. Return only the scrubbed text."
             llm_fn, llm_kwargs = _llm_call(node)
             ctx["derived_text"] = await llm_fn(
-                ctx["derived_text"][:8000],
+                frame_untrusted("content to scrub of PII", ctx["derived_text"][:8000]),
                 system_prompt=system_prompt,
                 max_tokens=2000,
                 config_id=node_id,
@@ -653,11 +671,17 @@ async def _execute_pipeline_node(node: dict, ctx: dict):
         system_prompt = inject_variables(system_prompt, signal_vars)
         llm_fn, llm_kwargs = _llm_call(node)
         ctx["derived_text"] = await llm_fn(
-            ctx["derived_text"][:8000],
+            frame_untrusted("derived text to analyze", ctx["derived_text"][:8000]),
             system_prompt=system_prompt,
             max_tokens=800,
             config_id=node_id,
             **llm_kwargs,
+        )
+        record_injection_flag(
+            ctx["processing_errors"],
+            where=f"{task_type}/{node_id}",
+            matches=scan_untrusted_output(str(ctx["derived_text"])),
+            sample=str(ctx["derived_text"]),
         )
         logger.info(f"{task_type} node {node_id}: generated knowledge")
 

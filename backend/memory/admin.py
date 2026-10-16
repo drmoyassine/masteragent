@@ -2658,7 +2658,22 @@ async def export_knowledge_pack(
                 fname = f"{cat}/{package_name}.md"
             zf.writestr(fname, render_any_knowledge_md(row))
             hook = (row.get("summary") or "").strip().replace("\n", " ")[:120]
-            index_lines.append(f"- [{row.get('name')}]({fname}) — {hook}")
+            # TASK-262: provenance travels with the index so pack consumers can
+            # see an externally-derived draft for what it is. The pack's status
+            # filter (default active) already withholds drafts; these flags make
+            # the trust posture visible when drafts ARE included explicitly.
+            md = row.get("metadata")
+            if isinstance(md, str):
+                try:
+                    md = json.loads(md)
+                except Exception:
+                    md = {}
+            trust = md.get("ai_safety") if isinstance(md, dict) else None
+            flags = f" [status={row.get('status') or 'unknown'}"
+            if isinstance(trust, dict) and trust.get("content_trust"):
+                flags += f", content_trust={trust['content_trust']}"
+            flags += "]"
+            index_lines.append(f"- [{row.get('name')}]({fname}) — {hook}{flags}")
         zf.writestr("INDEX.md", "\n".join(index_lines) + "\n")
 
     buf.seek(0)
@@ -2667,6 +2682,34 @@ async def export_knowledge_pack(
         media_type="application/zip",
         headers={"Content-Disposition": 'attachment; filename="knowledge-pack.zip"'},
     )
+
+
+class EntityEraseRequest(BaseModel):
+    dry_run: bool = True
+
+
+@admin_crud.post("/entities/{entity_type}/{entity_id}/erase")
+async def erase_entity_data(
+    entity_type: str,
+    entity_id: str,
+    body: EntityEraseRequest = Body(default=EntityEraseRequest()),
+    auth: dict = Depends(require_admin_auth),
+):
+    """TASK-262 Part 2 — erase one entity's memory-system footprint.
+
+    dry_run (the default) reports what WOULD be erased and never writes.
+    dry_run=false is DESTRUCTIVE and irreversible: owned interactions,
+    memories, intelligence, fully-erased knowledge, source links, the profile
+    row, and agent grants; other entities' citing rows are stripped of the
+    dead lineage ids instead. Every call is audit-logged. Agents and the
+    mcp-service identity cannot reach this route (admin JWT only).
+    """
+    from memory_system.maintain.erasure import erase_entity
+    actor = auth.get("username") or auth.get("id") or "admin"
+    try:
+        return erase_entity(entity_type, entity_id, actor=actor, dry_run=body.dry_run)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
 
 
 class SkillImportBody(BaseModel):

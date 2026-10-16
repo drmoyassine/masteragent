@@ -173,3 +173,49 @@ This ensures the backend connects correctly inside Docker even without explicit 
 - **UI Components**: Shadcn/UI component library
 
 *Update this document when significant infrastructure changes are made.*
+
+---
+
+## 11. AI Safety — Untrusted-Content Doctrine (TASK-262)
+
+Governance rule, not just code: **every interaction in MasterAgent enters from
+outside** (emails, chats, documents, agent telemetry), so anything distilled
+FROM that content is externally-derived by construction. The pipeline
+(memory → intelligence → knowledge) treats it accordingly at four layers
+(`services/prompt_safety.py` is the single module):
+
+1. **Treat-as-data framing.** Every prompt embedding externally-authored
+   content wraps it in `frame_untrusted()` — explicit `<<<UNTRUSTED_DATA>>>`
+   delimiters plus a preamble instructing the model to summarize, never obey.
+   Payloads containing the delimiters are defanged, so an injected close-tag
+   cannot escape the frame structurally. Wired into: memory generation
+   (prior context, raw interactions, NER output), summarization, PII scrub,
+   intelligence/knowledge synthesis, telemetry reflection, playbook/skill
+   generation, consolidation proposals.
+2. **No-instructions output invariant.** Distillation OUTPUTS are scanned for
+   directive-shaped text (`scan_untrusted_output`) — flag-only, never dropped.
+   The marker lands in the row's `processing_errors`/`metadata`
+   (`possible_injection`) for human review; intelligence rows carry no such
+   column, so that stage logs the flag (durable flags land downstream).
+3. **Content trust at artifact creation.** `resolve_creation_status()` forces
+   status=`draft` (with `metadata.ai_safety.forced_draft_reason`) for
+   skills/playbooks produced by external pathways
+   (`telemetry_reflected`/`experiential`/`decomposed`), regardless of the
+   `approve_immediately` default (DEC-091 posture: activation is a human
+   Settings action). Internal pathways (admin-authored) and informational
+   categories keep policy control. Exports carry provenance: SKILL.md
+   frontmatter gains `content_trust`/`approval_status`/`forced_draft_reason`,
+   and the knowledge-pack INDEX flags status + trust per record (the pack's
+   `status=active` default already withholds drafts).
+4. **Human-visible alerts.** Forced drafts and other safety events emit
+   `memory_system_alerts` rows (upsert-on-code, `delivered_at` reset so the
+   TASK-260 delivery poller re-notifies).
+
+**Entity erasure** (`memory_system/maintain/erasure.py`,
+`POST /api/admin/entities/{type}/{id}/erase`): admin-JWT-only, `dry_run=true`
+by default, audit-logged always. Collects the full footprint BEFORE deleting
+(interactions → memories → intelligence → knowledge, including cross-entity
+lineage), then in one transaction: deletes owned rows, deletes knowledge only
+when NO source survives anywhere, STRIPS the dead lineage ids from other
+entities' citing rows (never deletes those), removes source links, the
+profile row, and agent grants, and flushes cached interactions.
