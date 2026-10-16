@@ -50,9 +50,14 @@ dump_once() {
     ts=$(date -u +%Y%m%d_%H%M%S)
     mkdir -p "$BACKUP_DIR/daily" "$BACKUP_DIR/weekly" "$BACKUP_DIR/monthly"
     target="$BACKUP_DIR/daily/memory_${ts}.dump"
+    # Atomic dump: pg_dump writes to a .part file that is renamed only on
+    # success — a killed/crashed dump can never leave a partial *.dump behind
+    # for the retention prune or the restore check to treat as "latest".
+    part="$target.part"
     log "dumping ${PGDATABASE} to $target"
-    if ! pg_dump -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Fc -f "$target"; then
+    if ! pg_dump -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Fc -f "$part"; then
         log "pg_dump FAILED"
+        rm -f "$part"
         echo "FAILED $(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$BACKUP_DIR/FAILED.flag"
         echo "STATUS=failed AT=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$BACKUP_DIR/LAST_RUN.txt"
         record_alert backup_failed error "MasterAgent backup failed" \
@@ -60,6 +65,7 @@ dump_once() {
         return 1
     fi
     rm -f "$BACKUP_DIR/FAILED.flag"
+    mv -f "$part" "$target"
     size=$(du -h "$target" | cut -f1)
     echo "STATUS=ok FILE=$target SIZE=$size" > "$BACKUP_DIR/LAST_RUN.txt"
     log "dump complete ($size)"
