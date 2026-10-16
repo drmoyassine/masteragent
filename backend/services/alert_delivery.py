@@ -15,6 +15,7 @@ alerts_delivery_enabled memory setting (default on).
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -209,8 +210,18 @@ def deliver_pending_alerts() -> int:
     return delivered
 
 
-def poll_alert_delivery() -> None:
-    """One scheduler tick: scan for new failures, then deliver. Never raises."""
+async def poll_alert_delivery() -> None:
+    """One scheduler tick: scan for new failures, then deliver. Never raises.
+
+    Async wrapper — the scheduler awaits this directly, so it must be a
+    coroutine AND must not block the event loop: the sync DB reads and the
+    webhook POSTs (10s timeout, up to 20 alerts) run via asyncio.to_thread.
+    (Regression: a plain sync call here raised `await None` → TypeError and
+    killed the background loop on its first tick.)"""
+    await asyncio.to_thread(_poll_alert_delivery_sync)
+
+
+def _poll_alert_delivery_sync() -> None:
     try:
         scan_pipeline_failures()
     except Exception as exc:
