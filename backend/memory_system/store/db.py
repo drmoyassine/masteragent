@@ -25,6 +25,7 @@ import psycopg2
 from core.storage import get_memory_db_context
 from core.database import get_database_url
 from core.secrets import encrypt_secret, is_encrypted
+from memory_system.store.migrations import apply_pending
 
 logger = logging.getLogger(__name__)
 
@@ -1570,45 +1571,20 @@ def _create_provider_batch_schema(cursor):
 
 
 def init_memory_db():
-    """Initialize all memory system tables in PostgreSQL. Idempotent."""
+    """TASK-257 s3: schema DDL is owned by the frozen migration ledger.
+
+    backend/migrations/*.sql applies once each, tracked in
+    schema_migrations (store.migrations) - fresh installs build from
+    001_baseline; deployments that predate the freeze are stamped
+    001-applied without executing it. The pre-freeze boot DDL functions
+    (_create_* / _run_migrations) stay in this file UNCALLED until the
+    phase-2 deletion; the settings-drift oracle still reads them as its
+    schema source until then.
+    """
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         _enable_extensions(cursor)
-
-        # Seamless Migration: private_knowledge -> intelligence, public_knowledge -> knowledge
-        try:
-            cursor.execute("SELECT 1 FROM information_schema.tables WHERE table_name='private_knowledge'")
-            if cursor.fetchone():
-                cursor.execute("ALTER TABLE private_knowledge RENAME TO intelligence")
-                cursor.execute("ALTER INDEX IF EXISTS idx_insights_entity RENAME TO idx_intelligence_entity")
-                cursor.execute("ALTER INDEX IF EXISTS idx_private_knowledge_entity RENAME TO idx_intelligence_entity")
-                cursor.execute("ALTER INDEX IF EXISTS idx_insights_status RENAME TO idx_intelligence_status")
-                cursor.execute("ALTER INDEX IF EXISTS idx_private_knowledge_status RENAME TO idx_intelligence_status")
-        except Exception as e:
-            logger.warning(f"Failed to rename private_knowledge to intelligence: {e}")
-
-        try:
-            cursor.execute("SELECT 1 FROM information_schema.tables WHERE table_name='public_knowledge'")
-            if cursor.fetchone():
-                cursor.execute("ALTER TABLE public_knowledge RENAME TO knowledge")
-                cursor.execute("ALTER INDEX IF EXISTS idx_lessons_type RENAME TO idx_knowledge_type")
-                cursor.execute("ALTER INDEX IF EXISTS idx_public_knowledge_type RENAME TO idx_knowledge_type")
-
-                # Check column and rename
-                cursor.execute("SELECT 1 FROM information_schema.columns WHERE table_name='knowledge' AND column_name='source_private_knowledge_ids'")
-                if cursor.fetchone():
-                    cursor.execute("ALTER TABLE knowledge RENAME COLUMN source_private_knowledge_ids TO source_intelligence_ids")
-        except Exception as e:
-            logger.warning(f"Failed to rename public_knowledge to knowledge: {e}")
-
-        _create_config_tables(cursor)
-        _create_interaction_tables(cursor)
-        _create_memory_tier_tables(cursor)
-        _run_migrations(cursor)
-        _create_consolidation_schema(cursor)
-        _create_evidence_schema(cursor)
-        _create_knowledge_attachment_schema(cursor)
-        _create_provider_batch_schema(cursor)
+        apply_pending(conn)
 
         # Operational hardening migrations are additive and safe on existing
         # production tables.
