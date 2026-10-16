@@ -95,9 +95,6 @@ _ENVELOPE_QUERIES = (
     ("provider_credentials",
      "SELECT api_key_encrypted AS v FROM memory_llm_providers "
      "WHERE api_key_encrypted LIKE 'enc:v1:%'"),
-    ("supabase_db_url",
-     "SELECT supabase_db_url AS v FROM memory_settings "
-     "WHERE supabase_db_url LIKE 'enc:v1:%'"),
     ("webhook_secrets",
      "SELECT secret_encrypted AS v FROM memory_webhook_sources "
      "WHERE secret_encrypted LIKE 'enc:v1:%'"),

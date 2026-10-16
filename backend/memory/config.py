@@ -675,6 +675,7 @@ async def update_settings_endpoint(data: MemorySettingsUpdate, user: dict = Depe
 
 # NOTE (TASK-257 §4): the /config/supabase/* endpoints were removed with the
 # pluggable Supabase storage backend — no deployment or UI ever wired them.
-# The memory_settings.supabase_url / supabase_db_url schema columns remain
-# until the §3 owner-gated schema cutover.
+# Migration 002 (§3 cutover) dropped the memory_settings.supabase_url /
+# supabase_db_url schema columns together with the paired envelope code
+# paths (secrets sweep, rewrap endpoint, remediation script).
 

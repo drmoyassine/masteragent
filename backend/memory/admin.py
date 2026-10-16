@@ -2240,7 +2240,6 @@ class RewrapStoreReport(BaseModel):
 
 class RewrapCredentialsResponse(BaseModel):
     provider_credentials: RewrapStoreReport
-    supabase_db_url: RewrapStoreReport
     webhook_secrets: RewrapStoreReport
     current_source: str
 
@@ -2273,9 +2272,6 @@ async def rewrap_credentials(admin: dict = Depends(require_admin_auth)):
         ("provider_credentials",
          "SELECT id, api_key_encrypted AS v FROM memory_llm_providers WHERE api_key_encrypted LIKE 'enc:v1:%'",
          "UPDATE memory_llm_providers SET api_key_encrypted = %s WHERE id = %s"),
-        ("supabase_db_url",
-         "SELECT id, supabase_db_url AS v FROM memory_settings WHERE supabase_db_url LIKE 'enc:v1:%'",
-         "UPDATE memory_settings SET supabase_db_url = %s WHERE id = %s"),
         ("webhook_secrets",
          "SELECT id, secret_encrypted AS v FROM memory_webhook_sources WHERE secret_encrypted LIKE 'enc:v1:%'",
          "UPDATE memory_webhook_sources SET secret_encrypted = %s WHERE id = %s"),

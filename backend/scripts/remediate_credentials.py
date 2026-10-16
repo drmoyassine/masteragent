@@ -61,8 +61,6 @@ _DEFAULT_PG = "postgresql://postgres:postgres@postgres:5432/memory"
 _STORES = (
     ("provider_credentials", "memory_llm_providers", "api_key_encrypted",
      "SELECT id, api_key_encrypted AS v FROM memory_llm_providers WHERE api_key_encrypted LIKE 'enc:v1:%'"),
-    ("supabase_db_url", "memory_settings", "supabase_db_url",
-     "SELECT id, supabase_db_url AS v FROM memory_settings WHERE supabase_db_url LIKE 'enc:v1:%'"),
     ("webhook_secrets", "memory_webhook_sources", "secret_encrypted",
      "SELECT id, secret_encrypted AS v FROM memory_webhook_sources WHERE secret_encrypted LIKE 'enc:v1:%'"),
 )

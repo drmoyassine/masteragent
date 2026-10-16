@@ -5618,16 +5618,12 @@
           "provider_credentials": {
             "$ref": "#/components/schemas/RewrapStoreReport"
           },
-          "supabase_db_url": {
-            "$ref": "#/components/schemas/RewrapStoreReport"
-          },
           "webhook_secrets": {
             "$ref": "#/components/schemas/RewrapStoreReport"
           }
         },
         "required": [
           "provider_credentials",
-          "supabase_db_url",
           "webhook_secrets",
           "current_source"
         ],
