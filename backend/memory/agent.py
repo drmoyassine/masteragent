@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from core.storage import get_memory_db_context, cache_interaction, flush_interaction_cache
 from memory_system.store.models import (
     InteractionCreate, InteractionResponse, InteractionUpdate,
+    InteractionUpdateAgent,
     BulkInteractionCreate, BulkInteractionResponse,
     MemoryCreate, MemoryUpdate, MemoryResponse,
     IntelligenceCreate, IntelligenceUpdate, IntelligenceResponse,
@@ -39,7 +40,10 @@ from services import (
     search_knowledge_by_fulltext,
 )
 from memory.auth import verify_agent_key, log_audit, require_admin_or_agent
-from memory.access import ensure_entity_access, ensure_record_access, grant_entity, scope_enforced
+from memory.access import (
+    ensure_entity_access, ensure_record_access, grant_entity,
+    claim_entity_on_write, scope_enforced,
+)
 from memory_system.ingest.rate_limit import check_rate_limit
 
 router = APIRouter()
@@ -421,9 +425,13 @@ async def list_interactions(
 @router.patch("/interactions/{id}", response_model=InteractionResponse, tags=["🔄 Interactions"])
 async def update_interaction(
     id: str,
-    update: InteractionUpdate,
+    update: InteractionUpdateAgent,
     agent: dict = Depends(verify_agent_key)
 ):
+    """Agent-key PATCH. TASK-259 item 5: InteractionUpdateAgent drops entity
+    identity + status (extra='forbid' → 422 on attempt) — agents may refine
+    content of rows they can already reach, never re-parent them across
+    entities or force lifecycle transitions. The admin API keeps those."""
     ensure_record_access(agent, "interactions", id)
     updates, params = [], []
     for k, v in update.model_dump(exclude_unset=True).items():
@@ -438,11 +446,11 @@ async def update_interaction(
         row = cursor.fetchone()
         if not row:
             raise HTTPException(404, "Interaction not found")
-        
-        if update.status == "done":
-            # Clear ephemeral embedding if force-closed
-            cursor.execute("UPDATE interactions SET embedding = NULL WHERE id = %s", (id,))
-        
+
+        log_audit(agent["id"], "update_interaction", "interaction", id, {
+            "fields": sorted(k for k, _ in update.model_dump(exclude_unset=True).items()),
+        })
+
         d = dict(row)
         d["timestamp"] = str(d["timestamp"])
         d["created_at"] = str(d["created_at"])
@@ -876,7 +884,9 @@ async def get_context(
 
 @router.post("/memories", response_model=MemoryResponse, tags=["🧠 Memories"])
 async def create_memory(body: MemoryCreate, agent: dict = Depends(verify_agent_key)):
-    grant_entity(agent["id"], body.primary_entity_type, body.primary_entity_id)
+    # TASK-259 item 6: validated claim (403 on foreign data-holding entities),
+    # not an unconditional self-grant.
+    claim_entity_on_write(agent, body.primary_entity_type, body.primary_entity_id)
     mem_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
     embedding = None
@@ -991,7 +1001,8 @@ async def delete_memory(id: str, agent: dict = Depends(verify_agent_key)):
 
 @router.post("/intelligence", response_model=IntelligenceResponse, tags=["💡 Intelligence"])
 async def create_intelligence(body: IntelligenceCreate, agent: dict = Depends(verify_agent_key)):
-    grant_entity(agent["id"], body.primary_entity_type, body.primary_entity_id)
+    # TASK-259 item 6: validated claim (see create_memory).
+    claim_entity_on_write(agent, body.primary_entity_type, body.primary_entity_id)
     in_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
     embedding = await generate_embedding(f"{body.name}. {body.summary or body.content}")

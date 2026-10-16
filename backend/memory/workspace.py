@@ -38,8 +38,8 @@ from services import (
     search_intelligence_by_vector,
     search_knowledge_by_vector,
 )
-from memory.auth import require_agent_auth, require_admin_auth
-from memory.access import ensure_entity_access
+from memory.auth import require_agent_auth, require_admin_auth, log_audit
+from memory.access import ensure_entity_access, ensure_record_access
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -231,7 +231,13 @@ async def _run_chat(
         raise HTTPException(status_code=503, detail="LLM returned empty response")
 
     # ── 6. Parse + execute structured actions ─────────────────────────────
-    actions_taken = await _execute_actions(response_text, entity_type, entity_id, caller)
+    # TASK-259 item 4: the model may only touch intelligence rows whose content
+    # was actually retrieved into this context — never an id it invents.
+    allowed_intelligence_ids = {i["id"] for i in intelligence if i.get("id")}
+    actions_taken = await _execute_actions(
+        response_text, entity_type, entity_id, caller,
+        allowed_intelligence_ids=allowed_intelligence_ids,
+    )
 
     # ── 7. Log the conversation as an interaction ─────────────────────────
     agent_id = caller.get("id") if caller else None
@@ -313,6 +319,7 @@ async def _execute_actions(
     entity_type: str,
     entity_id: str,
     caller: Optional[dict],
+    allowed_intelligence_ids: Optional[set] = None,
 ) -> List[ActionResult]:
     """
     Parse ```action {...}``` blocks from LLM response and execute them.
@@ -320,8 +327,14 @@ async def _execute_actions(
     Supported actions:
       - create_intelligence  → {type, name, signals, content, summary?}
       - update_intelligence  → {type, id, content?, summary?, status?}
+
+    TASK-259 item 4: update_intelligence is triple-locked — the id must come
+    from the retrieval allowlist (the model cannot address a row it never saw),
+    the caller must have record scope, and the UPDATE is constrained to the
+    requesting entity. Every action and every rejection is audit-logged.
     """
     actions_taken = []
+    caller_id = caller.get("id", "workspace") if caller else "workspace"
     blocks = re.findall(r"```action\s*(\{.*?\})\s*```", response_text, re.DOTALL)
 
     for block in blocks:
@@ -350,9 +363,11 @@ async def _execute_actions(
                         action.get("content", ""),
                         action.get("summary"),
                         "draft",
-                        caller.get("id", "workspace") if caller else "workspace",
+                        caller_id,
                         now, now,
                     ))
+                log_audit(caller_id, "workspace_create_intelligence", "intelligence",
+                          insight_id, {"entity": f"{entity_type}/{entity_id}"})
                 actions_taken.append(ActionResult(
                     action="create_intelligence", result="created", id=insight_id
                 ))
@@ -361,19 +376,35 @@ async def _execute_actions(
                 insight_id = action.get("id")
                 if not insight_id:
                     continue
+                if allowed_intelligence_ids is not None and insight_id not in allowed_intelligence_ids:
+                    log_audit(caller_id, "workspace_action_rejected", "intelligence",
+                              str(insight_id), {"reason": "id_not_in_retrieved_context"})
+                    continue
+                try:
+                    ensure_record_access(caller or {}, "intelligence", insight_id)
+                except HTTPException:
+                    log_audit(caller_id, "workspace_action_rejected", "intelligence",
+                              str(insight_id), {"reason": "scope_denied"})
+                    continue
                 fields, values = [], []
                 for k in ("content", "summary", "status"):
                     if k in action:
                         fields.append(f"{k} = %s")
                         values.append(action[k])
                 if fields:
-                    values.append(insight_id)
+                    # Entity-constrained: a same-shaped id on another entity can
+                    # never be written even if the allowlist check somehow passes.
+                    values.extend([entity_type, entity_id, insight_id])
                     with get_memory_db_context() as conn:
                         cursor = conn.cursor()
                         cursor.execute(
-                            f"UPDATE intelligence SET {', '.join(fields)} WHERE id = %s",
+                            f"UPDATE intelligence SET {', '.join(fields)} "
+                            "WHERE id = %s "
+                            "AND primary_entity_type = %s AND primary_entity_id = %s",
                             values
                         )
+                    log_audit(caller_id, "workspace_update_intelligence", "intelligence",
+                              str(insight_id), {"fields": fields})
                     actions_taken.append(ActionResult(
                         action="update_intelligence", result="updated", id=insight_id
                     ))

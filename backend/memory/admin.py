@@ -2366,6 +2366,22 @@ async def admin_search_memories(
 # OUTBOUND WEBHOOKS
 # ============================================================
 
+def _validate_webhook_conditions(conditions) -> None:
+    """TASK-259 item 8: reject (400) any condition key outside the frozen
+    CONDITION_COLUMNS allowlist at the admin API boundary — the runtime
+    sanitizer drops unknown keys, but writes should fail loudly instead of
+    storing a rule that silently never matches."""
+    from services.outbound_webhooks import CONDITION_COLUMNS
+    if not isinstance(conditions, dict):
+        raise HTTPException(status_code=400, detail="conditions must be an object")
+    bad = [k for k in conditions if k not in CONDITION_COLUMNS]
+    if bad:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown condition key(s) {bad}; allowed: {sorted(CONDITION_COLUMNS)}",
+        )
+
+
 @router.get("/outbound-webhooks")
 async def list_outbound_webhooks(admin: dict = Depends(require_admin_auth)):
     with get_memory_db_context() as conn:
@@ -2377,6 +2393,7 @@ async def list_outbound_webhooks(admin: dict = Depends(require_admin_auth)):
 
 @router.post("/outbound-webhooks")
 async def create_outbound_webhook(body: OutboundWebhookCreate, admin: dict = Depends(require_admin_auth)):
+    _validate_webhook_conditions(body.conditions or {})
     webhook_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
     
@@ -2410,6 +2427,7 @@ async def update_outbound_webhook(webhook_id: str, body: OutboundWebhookUpdate, 
     if body.debounce_ms is not None:
         fields.append("debounce_ms = %s"); values.append(body.debounce_ms)
     if body.conditions is not None:
+        _validate_webhook_conditions(body.conditions)
         fields.append("conditions = %s"); values.append(json.dumps(body.conditions))
     if body.payload_mode is not None:
         fields.append("payload_mode = %s"); values.append(body.payload_mode)

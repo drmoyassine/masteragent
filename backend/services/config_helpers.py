@@ -19,7 +19,11 @@ def get_memory_settings() -> Dict[str, Any]:
 
 
 def _parse_extra_config(config: dict) -> dict:
-    """Parse extra_config_json field into config dict (DRY helper)."""
+    """Parse extra_config_json field into config dict (DRY helper).
+
+    TASK-259 item 9: api_key_encrypted is left as stored (ciphertext or legacy
+    plaintext) — call sites decrypt at the point of use via resolve_api_key()
+    so config dicts can be logged/dumped without leaking credentials."""
     extra = config.get("extra_config_json") or "{}"
     if isinstance(extra, str):
         try:
@@ -28,9 +32,23 @@ def _parse_extra_config(config: dict) -> dict:
             config["extra_config"] = {}
     else:
         config["extra_config"] = extra
-    if config.get("api_key_encrypted"):
-        config["api_key_encrypted"] = decrypt_secret(config["api_key_encrypted"])
     return config
+
+
+def resolve_api_key(config: Optional[Dict[str, Any]]) -> str:
+    """Decrypt the provider API key at the point of use (TASK-259 item 9).
+
+    decrypt_secret passes legacy plaintext through unchanged, so this covers
+    both sealed envelopes and rows stored before encryption existed. Returns
+    "" when the config carries no key. An undecryptable envelope (e.g. after a
+    key rotation) raises — a corrupt credential must fail the call loudly, not
+    degrade into an unauthenticated request."""
+    if not config:
+        return ""
+    key = config.get("api_key_encrypted")
+    if not key:
+        return ""
+    return decrypt_secret(key)
 
 
 def get_llm_config(task_type: str) -> Optional[Dict[str, Any]]:

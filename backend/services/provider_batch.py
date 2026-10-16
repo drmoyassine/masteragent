@@ -137,8 +137,9 @@ def provider_adapter(config: Dict[str, Any]):
     provider = str(config.get("provider") or "").lower()
     api_base = str(config.get("api_base_url") or "")
     if provider == "openai" or "api.openai.com" in api_base:
+        from services.config_helpers import resolve_api_key
         return OpenAIBatchAdapter(
-            api_key=config.get("api_key_encrypted", ""),
+            api_key=resolve_api_key(config),
             api_base=api_base or "https://api.openai.com/v1",
         )
     raise ValueError(f"Provider '{provider or 'unknown'}' does not support asynchronous batch processing")

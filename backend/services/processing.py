@@ -8,7 +8,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 import httpx
 
-from services.config_helpers import get_llm_config, get_system_prompt
+from services.config_helpers import get_llm_config, get_system_prompt, resolve_api_key
 from services.llm import call_llm, call_llm_vision
 
 logger = logging.getLogger(__name__)
@@ -98,7 +98,8 @@ async def scrub_pii(text: str) -> str:
             logger.warning("Zendata PII scrubbing missing base URL or key, returning original text")
             return text
         headers = {
-            "Authorization": f"Bearer {config['api_key_encrypted']}",
+            # TASK-259 item 9: decrypt at the point of use, not in the config dict.
+            "Authorization": f"Bearer {resolve_api_key(config)}",
             "Content-Type": "application/json",
         }
         try:

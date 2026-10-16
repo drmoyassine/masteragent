@@ -99,6 +99,29 @@ Tier 3: Knowledge (organization-wide skills, playbooks, and trade knowledge)
 
 Agent API Keys are SHA-256 hashed before storage. The plaintext key is returned only once at creation time.
 
+### Tenancy posture (TASK-259)
+
+MasterAgent is **single-tenant in code**: there is one `users` table, one admin
+identity, and no org/tenant column anywhere in the schema. Isolation comes from
+**deployment** — one compose stack per deployment, all state in its own Postgres
+volume — not from any row-level tenancy mechanism. Within a deployment,
+per-agent entity scoping (`ENFORCE_AGENT_SCOPE` + `memory_agent_entities`
+grants) is **authorization for agent keys**, not tenant isolation: it bounds
+what one agent key can read, and nothing more. Do not present it (internally or
+to consumers) as multi-tenancy; a second tenant means a second deployment.
+
+Related hardening (TASK-259): agent-key PATCHes cannot change entity identity
+or lifecycle status (`InteractionUpdateAgent`, `extra="forbid"`); write APIs
+claim entities only after a validated access check (`claim_entity_on_write`);
+workspace action blocks can only touch intelligence rows the retrieval actually
+returned (`allowed_intelligence_ids`); webhook trigger conditions are a frozen
+column allowlist (admin API rejects unknown keys with 400, runtime drops and
+warns); provider API keys decrypt at the point of use (`resolve_api_key`) so
+config dicts never carry plaintext; JWTs carry a `tver` claim matched against
+`users.token_version` (missing claim = invalid — clean-slate revocation at
+deploy); public signup defaults off; `MCP_SERVICE_KEY` authenticates only as
+the non-admin `mcp-service` identity.
+
 ---
 
 ## 7. Storage Subsystem (Prompt Manager)

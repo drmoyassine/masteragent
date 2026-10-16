@@ -75,21 +75,38 @@ def create_access_token(data: dict, expires_delta: timedelta = None) -> str:
     return token
 
 
-def verify_jwt_token(token: str) -> Optional[str]:
+def verify_jwt_token(token: str) -> Optional[dict]:
     """
     Decode and validate a JWT token.
-    Returns the user_id (sub claim) on success, None on any failure.
+    Returns the full payload dict on success, None on any failure.
+    (TASK-259 item 7: callers need the tver claim, not just sub.)
     """
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id = payload.get("sub")
-        if user_id is None:
+        if payload.get("sub") is None:
             logger.warning("JWT payload missing 'sub' claim")
             return None
-        return user_id
+        return payload
     except JWTError as e:
         logger.warning(f"JWT verification failed: {e}")
         return None
+
+
+def _token_version_valid(payload: dict, user: dict) -> bool:
+    """TASK-259 item 7: the token's tver claim must equal the row's
+    token_version. A token WITHOUT tver is invalid — issuing stopped at this
+    deploy, so any still-circulating legacy token is treated as revoked
+    (clean-slate session revocation). Bumping users.token_version invalidates
+    every outstanding token for that user at once."""
+    claimed = payload.get("tver")
+    if claimed is None:
+        return False
+    try:
+        claimed_v = int(claimed)
+    except (TypeError, ValueError):
+        return False
+    current_v = int(user.get("token_version") or 0)
+    return claimed_v == current_v
 
 
 # ─────────────────────────────────────────────
@@ -108,15 +125,22 @@ def get_current_user(authorization: str = Header(None)) -> Optional[dict]:
         parts = authorization.split()
         if len(parts) != 2 or parts[0].lower() != "bearer":
             return None
-        user_id = verify_jwt_token(parts[1])
-        if not user_id:
+        payload = verify_jwt_token(parts[1])
+        if not payload:
             return None
         with get_db_context() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+            cursor.execute("SELECT * FROM users WHERE id = %s", (payload["sub"],))
             user = cursor.fetchone()
-            if user:
-                return dict(user)
+            if not user:
+                return None
+            user = dict(user)
+            # TASK-259 item 7: version check AFTER the row read (revocation
+            # takes effect on the next request after a bump, same as demotion).
+            if not _token_version_valid(payload, user):
+                logger.warning("JWT tver mismatch/missing for user %s", user.get("id"))
+                return None
+            return user
     except (PoolError, psycopg2.Error) as e:
         logger.error(f"Authentication database temporarily unavailable: {e}")
         raise HTTPException(status_code=503, detail="Authentication database temporarily unavailable")
@@ -131,9 +155,14 @@ def require_auth(authorization: str = Header(None)) -> dict:
     """
     Strict authentication dependency — raises HTTP 401 if user is not authenticated.
     Use as: user: dict = Depends(require_auth)
+
+    TASK-259: MCP_SERVICE_KEY authenticates here ONLY as the mcp-service
+    identity (the prompts-MCP executor sends it as Bearer) — deliberately
+    WITHOUT is_admin. Admin routes require a real human JWT; the service key
+    must never reach them (one leaked env var must not be full admin).
     """
     if _MCP_SERVICE_KEY and authorization == f"Bearer {_MCP_SERVICE_KEY}":
-        return {"id": "mcp-service", "username": "mcp-service", "is_admin": True}
+        return {"id": "mcp-service", "username": "mcp-service", "is_admin": False}
     user = get_current_user(authorization)
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -141,11 +170,12 @@ def require_auth(authorization: str = Header(None)) -> dict:
 
 
 def require_admin_auth(authorization: str = Header(None)) -> dict:
-    """Require an authenticated administrator.
+    """Require an authenticated HUMAN administrator.
 
-    MCP_SERVICE_KEY remains an explicit service administrator for compatibility
-    with the internal MCP tool executor. Human users are authorized from the
-    database on every request so demotion takes effect immediately.
+    No service-key path: MCP_SERVICE_KEY authenticates as the mcp-service
+    identity without is_admin (TASK-259 demotion), so it is refused here.
+    Admin users are re-read from the database on every request, so demotion
+    takes effect immediately.
     """
     user = require_auth(authorization)
     if not user.get("is_admin"):

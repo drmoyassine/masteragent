@@ -489,6 +489,20 @@ class InteractionUpdate(BaseModel):
     source: Optional[str] = None
     status: Optional[str] = None
 
+class InteractionUpdateAgent(BaseModel):
+    """TASK-259 item 5 — agent-key PATCH surface.
+
+    Entity identity (primary_entity_*) and status are deliberately ABSENT:
+    an agent key must not re-parent rows across entities or force lifecycle
+    transitions (the admin API keeps the full InteractionUpdate). extra='forbid'
+    turns an attempt to smuggle those fields into a loud 422, not a silent
+    no-op."""
+    model_config = {"extra": "forbid"}
+
+    interaction_type: Optional[str] = None
+    content: Optional[str] = None
+    source: Optional[str] = None
+
 # ============================================
 # Tier 1: Memory Models
 # ============================================

@@ -5,7 +5,7 @@ from typing import Optional
 
 import httpx
 
-from services.config_helpers import get_llm_config
+from services.config_helpers import get_llm_config, resolve_api_key
 from services.budget import BudgetExceededError, check_budget, record_llm_usage
 from services.job_safety import ProviderStopError, provider_stop_from_response, record_provider_stop
 
@@ -124,7 +124,7 @@ async def call_llm(
         logger.warning(f"LLM config not configured for {task_type}/{config_id}")
         return ""
 
-    api_key = config.get("api_key_encrypted", "")
+    api_key = resolve_api_key(config)
     api_base = config.get("api_base_url", "https://api.openai.com/v1").rstrip("/")
     model = config.get("model_name", "gpt-4o-mini")
     provider = config.get("provider", "")
@@ -195,7 +195,7 @@ async def call_llm_with_thinking(
         logger.warning(f"LLM config not configured for {task_type}/{config_id}")
         return ""
 
-    api_key = config.get("api_key_encrypted", "")
+    api_key = resolve_api_key(config)
     api_base = config.get("api_base_url", "https://api.openai.com/v1").rstrip("/")
     model = config.get("model_name", "gpt-4o-mini")
 
@@ -305,7 +305,7 @@ async def call_llm_vision(prompt: str, image_base64: str, mime_type: str = "imag
         logger.warning("Vision LLM config not configured")
         return ""
 
-    api_key = config.get("api_key_encrypted", "")
+    api_key = resolve_api_key(config)
     api_base = config.get("api_base_url", "https://api.openai.com/v1").rstrip("/")
     model = config.get("model_name", "gpt-4o")
     provider = config.get("provider", "")

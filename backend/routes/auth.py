@@ -100,7 +100,8 @@ def user_to_response(user: dict) -> UserResponse:
 @router.post("/auth/signup", response_model=AuthResponse)
 async def signup(user_data: UserCreate):
     """Register a new user with email/password."""
-    if os.environ.get("ALLOW_PUBLIC_SIGNUP", "true").lower() not in {"1", "true", "yes"}:
+    # TASK-259 item 7: public signup defaults OFF (allowlist, not blocklist).
+    if os.environ.get("ALLOW_PUBLIC_SIGNUP", "false").lower() not in {"1", "true", "yes"}:
         raise HTTPException(status_code=403, detail="Public signup is disabled")
     now = datetime.now(timezone.utc).isoformat()
     with get_db_context() as conn:
@@ -120,7 +121,7 @@ async def signup(user_data: UserCreate):
         )
         cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
         user = dict(cursor.fetchone())
-    token = create_access_token(data={"sub": user_id})
+    token = create_access_token(data={"sub": user_id, "tver": 0})
     return AuthResponse(token=token, user=user_to_response(user))
 
 
@@ -162,7 +163,8 @@ async def login(credentials: UserLogin, request: Request):
             redis.delete(rate_key)
         except Exception:
             pass
-    token = create_access_token(data={"sub": user["id"]})
+    # TASK-259 item 7: stamp the row's current token_version into the token.
+    token = create_access_token(data={"sub": user["id"], "tver": int(user.get("token_version") or 0)})
     return AuthResponse(token=token, user=user_to_response(user))
 
 
@@ -249,7 +251,11 @@ async def github_callback(code: str, state: str = None):
                     (user_id, github_user["id"], github_user["login"], primary_email,
                      github_user.get("avatar_url"), github_user.get("html_url"), encrypt_secret(github_token), now, now),
                 )
-        jwt_token = create_access_token(data={"sub": user_id})
+        # TASK-259 item 7: stamp token_version (existing row or fresh 0).
+        jwt_token = create_access_token(data={
+            "sub": user_id,
+            "tver": int((existing.get("token_version") if existing else 0) or 0),
+        })
         return RedirectResponse(url=f"{FRONTEND_URL}/auth/callback?{urlencode({'token': jwt_token})}")
     except Exception as e:
         logger.error(f"GitHub OAuth error: {e}")

@@ -9,6 +9,28 @@ from core.storage import get_memory_db_context, get_redis_client
 
 logger = logging.getLogger(__name__)
 
+# TASK-259 item 8: condition keys are interpolated into SQL fragments
+# (f"{key} = ANY(%s)") and used as native dict lookups, so the key set must be a
+# frozen allowlist of interactions columns — never arbitrary API-supplied text.
+CONDITION_COLUMNS = frozenset({
+    "interaction_type", "primary_entity_type", "primary_entity_id",
+    "primary_entity_subtype", "source", "status", "agent_name",
+    "has_attachments", "is_enriched",
+})
+
+
+def _sanitize_conditions(conditions, webhook_name: str) -> dict:
+    """Drop condition keys outside CONDITION_COLUMNS; warn loudly on drops."""
+    if not isinstance(conditions, dict):
+        return {}
+    dropped = [k for k in conditions if k not in CONDITION_COLUMNS]
+    if dropped:
+        logger.warning(
+            f"[OUTBOUND_WEBHOOK] '{webhook_name}': dropping non-allowlisted "
+            f"condition keys {dropped} (allowed: {sorted(CONDITION_COLUMNS)})"
+        )
+    return {k: v for k, v in conditions.items() if k in CONDITION_COLUMNS}
+
 async def evaluate_outbound_webhooks(interaction_id: str):
     """
     Evaluates an interaction against all active outbound webhooks.
@@ -16,9 +38,11 @@ async def evaluate_outbound_webhooks(interaction_id: str):
     """
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
-        # Fetch the completed interaction
+        # Fetch the completed interaction — every allowlisted condition column,
+        # so native evaluation sees the same fields the SQL path filters on.
         cursor.execute("""
-            SELECT id, primary_entity_id, primary_entity_type, interaction_type, source
+            SELECT id, primary_entity_id, primary_entity_type, interaction_type, source,
+                   primary_entity_subtype, status, agent_name, has_attachments, is_enriched
             FROM interactions WHERE id = %s
         """, (interaction_id,))
         interaction = cursor.fetchone()
@@ -48,6 +72,7 @@ async def evaluate_outbound_webhooks(interaction_id: str):
                 conditions = json.loads(conditions)
             except:
                 conditions = {}
+        conditions = _sanitize_conditions(conditions, wh.get("name") or webhook_id)
 
         # Simple json filter evaluated natively
         # e.g., conditions: {"interaction_type": ["whatsapp_incoming"]}
@@ -219,6 +244,9 @@ async def execute_outbound_webhook(webhook_id: str, entity_id: str):
             conditions = json.loads(conditions)
         except:
             conditions = {}
+    # TASK-259 item 8: sanitize BEFORE the keys are interpolated into SQL
+    # fragments below (trigger_query and step2 loops).
+    conditions = _sanitize_conditions(conditions, wh.get("name") or webhook_id)
 
     # Payload-level interaction-type allowlist applied to BOTH the interactions
     # array and the intelligence/memories blocks below. NULL/empty = no filter

@@ -15,15 +15,37 @@ def scope_enforced() -> bool:
     return os.environ.get("ENFORCE_AGENT_SCOPE", "false").lower() in {"1", "true", "yes"}
 
 
-def grant_entity(agent_id: str, entity_type: str, entity_id: str) -> None:
+def grant_entity(agent_id: str, entity_type: str, entity_id: str) -> bool:
+    """Insert a read grant. Returns True when a NEW grant row was created."""
     if not agent_id or agent_id == "mcp-service" or not entity_type or not entity_id:
-        return
+        return False
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO memory_agent_entities (agent_id, entity_type, entity_id)
             VALUES (%s, %s, %s) ON CONFLICT DO NOTHING
         """, (agent_id, entity_type, entity_id))
+        return cursor.rowcount > 0
+
+
+def claim_entity_on_write(agent: dict, entity_type: str, entity_id: str) -> None:
+    """TASK-259 item 6 — the write APIs (POST /memories, POST /intelligence).
+
+    The request body NAMES the entity, so an unconditional grant here let one
+    write self-grant read access to any entity's data under ENFORCE_AGENT_SCOPE.
+    Model: only the INGEST endpoints auto-claim (a row the agent actually
+    produced is its own claim). Write APIs must pass ensure_entity_access —
+    which still allows the has-context-before-first-ingest carve-out, so an
+    agent can seed a brand-new (empty) entity — and a NEW grant is issued only
+    for that empty-entity claim, audited. Naming a data-holding entity without
+    a grant is a 403 before anything is written."""
+    if not agent or agent.get("id") == "mcp-service" or not entity_type or not entity_id:
+        return
+    ensure_entity_access(agent, entity_type, entity_id)
+    from memory.auth import log_audit
+    if grant_entity(agent["id"], entity_type, entity_id):
+        log_audit(agent["id"], "claim_entity", "entity", f"{entity_type}/{entity_id}",
+                  {"via": "write_api"})
 
 
 def ensure_entity_access(agent: dict, entity_type: str, entity_id: str) -> None:

@@ -5,7 +5,7 @@ from typing import List
 
 import httpx
 
-from services.config_helpers import get_llm_config
+from services.config_helpers import get_llm_config, resolve_api_key
 from services.job_safety import ProviderStopError, provider_stop_from_response, record_provider_stop
 
 logger = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ async def generate_embedding(text: str) -> List[float]:
     try:
         config = get_llm_config("embedding")
     except Exception as e:
-        # get_llm_config decrypts the stored provider key; an undecryptable
+        # resolve_api_key decrypts the stored provider key; an undecryptable
         # envelope (e.g. after a JWT/DEK rotation) must fail loudly: write
         # paths record it as a pipeline error (retried nightly) and search
         # maps it to a 503. Returning [] here would let /search/semantic
@@ -56,7 +56,7 @@ async def generate_embedding(text: str) -> List[float]:
         logger.warning("Embedding config not configured")
         return []
 
-    api_key = config.get("api_key_encrypted", "")
+    api_key = resolve_api_key(config)
     api_base = config.get("api_base_url", "https://api.openai.com/v1").rstrip("/")
     model = config.get("model_name", "text-embedding-3-small")
     headers = {"Content-Type": "application/json"}
@@ -97,7 +97,7 @@ async def generate_embeddings_batch(texts: List[str]) -> List[List[float]]:
     if not config or not texts:
         return []
 
-    api_key = config.get("api_key_encrypted", "")
+    api_key = resolve_api_key(config)
     api_base = config.get("api_base_url", "https://api.openai.com/v1").rstrip("/")
     model = config.get("model_name", "text-embedding-3-small")
     headers = {"Content-Type": "application/json"}

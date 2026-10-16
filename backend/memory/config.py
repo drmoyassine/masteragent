@@ -525,6 +525,8 @@ async def fetch_provider_models(data: FetchModelsRequest, user: dict = Depends(r
     provider = data.provider.lower()
     api_key = data.api_key or ""
     api_base_url = (data.api_base_url or "").rstrip("/")
+    used_stored_key = False
+    stored_base = None
 
     # If missing api_key OR missing api_base_url, try to fetch from DB
     if (not api_key or not api_base_url) and data.provider_id:
@@ -535,15 +537,32 @@ async def fetch_provider_models(data: FetchModelsRequest, user: dict = Depends(r
             if row:
                 if not api_key and row["api_key_encrypted"]:
                     api_key = decrypt_secret(row["api_key_encrypted"])
-                if not api_base_url and row["api_base_url"]:
-                    api_base_url = row["api_base_url"].rstrip("/")
+                    used_stored_key = True
+                stored_base = row["api_base_url"].rstrip("/") if row["api_base_url"] else None
+                if not api_base_url:
+                    api_base_url = stored_base
+
+    # TASK-259: a key loaded from storage may only be sent to the provider's
+    # OWN stored base (or the provider's default) — never to a caller-supplied
+    # URL, which would let a compromised admin session exfiltrate the key.
+    if used_stored_key:
+        api_base_url = stored_base
 
     # Final check: do we have a key? (except for Ollama which might be local)
     if not api_key and provider != "ollama":
         raise HTTPException(
-            status_code=401, 
+            status_code=401,
             detail=f"No API key found for {provider}. Please enter a key or ensure it is configured in another task category."
         )
+
+    # Destination audit: log WHERE the key is headed (host only — never the key).
+    from urllib.parse import urlparse
+    try:
+        _dest_host = urlparse(api_base_url or "").netloc or "(provider-default)"
+    except ValueError:
+        _dest_host = "(unparseable)"
+    logger.info("fetch-models: provider=%s dest_host=%s stored_key=%s",
+                provider, _dest_host, used_stored_key)
 
     models: List[str] = []
 

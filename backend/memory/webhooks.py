@@ -37,6 +37,17 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+def _secret_hash_prefix(secret: str) -> str:
+    """TASK-259 — verification-only identifier for a webhook secret.
+
+    Stores the first 12 hex chars of sha256(secret): enough for an operator
+    to tell which stored secret is which, far too little to forge signatures
+    (the full hash WAS the HMAC key before — a DB dump could authenticate
+    requests without knowing the secret). Signature verification uses the
+    Fernet-encrypted plaintext copy only."""
+    return hashlib.sha256(secret.encode()).hexdigest()[:12]
+
+
 # ─────────────────────────────────────────────────────────────
 # Pydantic models
 # ─────────────────────────────────────────────────────────────
@@ -82,7 +93,7 @@ async def register_webhook_source(
     """Register a new webhook source. Returns the signing secret (shown once)."""
     source_id = str(uuid.uuid4())
     secret = secrets.token_urlsafe(32)          # plain text — shown once
-    secret_hash = hashlib.sha256(secret.encode()).hexdigest()
+    secret_hash = _secret_hash_prefix(secret)   # verification-only prefix, NOT a key
     now = datetime.now(timezone.utc).isoformat()
 
     with get_memory_db_context() as conn:
@@ -193,7 +204,7 @@ async def delete_webhook_source(source_id: str, admin: dict = Depends(require_ad
 async def rotate_webhook_secret(source_id: str, admin: dict = Depends(require_admin_auth)):
     """Generate a new signing secret for an existing webhook source."""
     secret = secrets.token_urlsafe(32)
-    secret_hash = hashlib.sha256(secret.encode()).hexdigest()
+    secret_hash = _secret_hash_prefix(secret)   # verification-only prefix, NOT a key
 
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
@@ -250,8 +261,8 @@ async def receive_webhook(
     # 2. Read raw body (must do before JSON parse)
     raw_body = await request.body()
 
-    # 3. Verify HMAC signature
-    require_timestamp = os.environ.get("REQUIRE_WEBHOOK_TIMESTAMP", "false").lower() in {"1", "true", "yes"}
+    # 3. Verify HMAC signature (timestamp replay window ON by default — TASK-259)
+    require_timestamp = os.environ.get("REQUIRE_WEBHOOK_TIMESTAMP", "true").lower() in {"1", "true", "yes"}
     if require_timestamp:
         try:
             if not x_webhook_timestamp or abs(time.time() - float(x_webhook_timestamp)) > 300:
@@ -369,20 +380,17 @@ def _verify_signature(
     timestamp: Optional[str] = None,
 ) -> bool:
     """
-    Verify X-Webhook-Signature: sha256=<hex>
+    Verify X-Webhook-Signature: sha256=<hex> against the PLAINTEXT secret only.
 
-    Since we only store the HASH of the secret (not the secret itself), we compute
-    HMAC-SHA256(key=secret_hash_bytes, msg=raw_body) and compare to the provided
-    signature.
+    TASK-259: the historical fallback that keyed the HMAC with the STORED
+    secret_hash is gone — anyone who can read memory_webhook_sources (a dump,
+    a support query) could forge valid signatures without ever knowing the
+    secret. Callers sign ``raw_body`` (or ``<timestamp>.<raw_body>`` when
+    timestamp enforcement is on) with the secret returned at creation; the
+    server verifies from its Fernet-encrypted copy.
 
-    New callers sign raw_body with the returned secret. When timestamp
-    enforcement is enabled, sign ``<timestamp>.<raw_body>`` instead. The
-    historical hash-as-key form remains accepted while compatibility is enabled.
-
-    This is a deliberate trade-off: avoids storing plaintext secrets while keeping
-    HMAC-based verification. For higher compatibility with third-party platforms
-    (GitHub, Stripe), a future enhancement can store the plaintext secret in an
-    encrypted column.
+    Sources predating secret_encrypted (no decryptable plaintext) cannot be
+    verified and must rotate their secret via the admin UI.
     """
     if not signature_header:
         return False
@@ -390,16 +398,15 @@ def _verify_signature(
     if not signature_header.startswith("sha256="):
         return False
 
+    if not plaintext_secret:
+        # Legacy row without an encrypted copy — never trust the stored hash.
+        return False
+
     provided_sig = signature_header[len("sha256="):]
 
     signed_payload = f"{timestamp}.".encode() + raw_body if timestamp else raw_body
-    # New sources use the industry-standard returned secret directly. Keep the
-    # historical hash-as-key verifier as a fallback for existing integrations.
-    candidates = []
-    if plaintext_secret:
-        candidates.append(hmac.new(plaintext_secret.encode(), signed_payload, hashlib.sha256).hexdigest())
-    candidates.append(hmac.new(stored_secret_hash.encode(), signed_payload, hashlib.sha256).hexdigest())
-    return any(hmac.compare_digest(provided_sig, expected) for expected in candidates)
+    expected = hmac.new(plaintext_secret.encode(), signed_payload, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(provided_sig, expected)
 
 
 
