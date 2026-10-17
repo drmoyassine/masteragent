@@ -64,9 +64,9 @@ jobs:
 
   dependency-audit:
     # TASK-260 — pip-audit over the pinned backend requirements.
-    # Non-blocking first (continue-on-error); flip to blocking after triage.
+    # Blocking since 2026-10-17 (owner-approved flip after triage; the
+    # continue-on-error comment from the initial landing is retired).
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
