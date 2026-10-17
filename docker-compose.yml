@@ -60,6 +60,10 @@ services:
       # TASK-260: outbound alert delivery (n8n webhook routes by severity).
       - ALERT_WEBHOOK_URL=${ALERT_WEBHOOK_URL:-}
       - ALERT_DELIVERY_WINDOW_SECONDS=${ALERT_DELIVERY_WINDOW_SECONDS:-900}
+      # DEC-110: liteparse parse runner delegation. Values live in the panel
+      # env; unset = in-process parser (byte-identical legacy behavior).
+      - PARSE_RUNNER_URL=${PARSE_RUNNER_URL:-}
+      - PARSE_RUNNER_API_KEY=${PARSE_RUNNER_API_KEY:-}
       # Timezone pin: the entity-day key is DATE(timestamp), which follows the
       # session timezone — everything must bucket on UTC (see db_init too).
       - TZ=UTC
