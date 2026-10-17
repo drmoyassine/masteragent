@@ -81,7 +81,28 @@ ALTER TABLE memory_settings DROP COLUMN IF EXISTS supabase_connected;
 
 CREATE INDEX IF NOT EXISTS idx_intelligence_entity ON intelligence (primary_entity_type, primary_entity_id);
 CREATE INDEX IF NOT EXISTS idx_intelligence_status ON intelligence (status);
-CREATE INDEX IF NOT EXISTS idx_memories_embedding ON memories USING hnsw (embedding vector_cosine_ops);
+
+-- HNSW requires the vector column to carry dimensions (typmod). The frozen
+-- baseline (verbatim prod dump) stores embeddings as dimensionless `vector`
+-- with NO such index anywhere — so prod's reconciled state is "no HNSW index"
+-- and the plain CREATE INDEX could never execute there (pgvector raises
+-- "column does not have dimensions"; found by the TASK-261 hermetic suite on
+-- a fresh database). Guard it: dimensioned installs get the index,
+-- dimensionless installs reproduce prod exactly.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_class c
+        JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid
+        WHERE c.relname = 'memories'
+          AND a.attname = 'embedding'
+          AND a.atttypmod > 0
+    ) THEN
+        CREATE INDEX IF NOT EXISTS idx_memories_embedding ON memories USING hnsw (embedding vector_cosine_ops);
+    END IF;
+END
+$$;
 
 ALTER SEQUENCE IF EXISTS private_knowledge_seq_id_seq RENAME TO intelligence_seq_id_seq;
 ALTER SEQUENCE IF EXISTS public_knowledge_seq_id_seq RENAME TO knowledge_seq_id_seq;

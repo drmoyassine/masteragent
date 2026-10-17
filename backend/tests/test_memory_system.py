@@ -4,42 +4,8 @@ Tests for the Agent-Facing Memory System extension of Prompt Manager
 Covers: LLM Configs, Entity Types, Lesson Types, Channel Types, Agents, Settings
 """
 import pytest
-import requests
-import os
-import json
 
-BASE_URL = os.environ.get('MEMORY_TEST_BASE_URL', 'http://localhost:8080').rstrip('/')
-
-# Test credentials
-TEST_EMAIL = "admin@promptsrc.com"
-TEST_PASSWORD = "admin123"
-
-
-@pytest.fixture(scope="module")
-def api_client():
-    """Shared requests session"""
-    session = requests.Session()
-    session.headers.update({"Content-Type": "application/json"})
-    return session
-
-
-@pytest.fixture(scope="module")
-def auth_token(api_client):
-    """Get authentication token"""
-    response = api_client.post(f"{BASE_URL}/api/auth/login", json={
-        "email": TEST_EMAIL,
-        "password": TEST_PASSWORD
-    })
-    if response.status_code == 200:
-        return response.json().get("token")
-    pytest.skip("Authentication failed - skipping authenticated tests")
-
-
-@pytest.fixture(scope="module")
-def authenticated_client(api_client, auth_token):
-    """Session with auth header"""
-    api_client.headers.update({"Authorization": f"Bearer {auth_token}"})
-    return api_client
+from conftest import BASE_URL
 
 
 class TestMemoryHealth:
@@ -51,7 +17,7 @@ class TestMemoryHealth:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "healthy"
-        assert "timestamp" in data
+        assert data.get("system") == "memory"
         print(f"✓ Memory health check passed: {data}")
 
 
@@ -327,7 +293,7 @@ class TestMemorySettings:
         for field in expected_fields:
             assert field in data, f"Missing settings field: {field}"
         
-        print(f"✓ Memory settings retrieved: chunk_size={data['chunk_size']}, pii_enabled={data['pii_scrubbing_enabled']}")
+        print(f"✓ Memory settings retrieved: chunk_size={data['chunk_size']}")
     
     def test_update_settings(self, authenticated_client):
         """Test PUT /api/memory/config/settings"""

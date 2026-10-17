@@ -1,0 +1,4 @@
+# Test-suite extras (TASK-261) — install alongside requirements.txt
+pytest>=8.0
+pytest-asyncio>=0.25
+testcontainers[postgres,redis]>=4.8

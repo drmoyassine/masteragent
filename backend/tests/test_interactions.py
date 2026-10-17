@@ -6,9 +6,9 @@ Tests:
   - GET  /api/memory/interactions   (admin JWT)
   - GET  /api/memory/memories       (admin JWT)
   - POST /api/memory/search         (agent key)
-  - GET  /api/memory/timeline/{type}/{id}
+  - GET  /api/memory/admin/timeline/{type}/{id}   (admin JWT)
 """
-import pytest
+import pytest  # noqa: F401  (marker parity with the other suite files)
 
 
 class TestInteractionIngestion:
@@ -221,20 +221,22 @@ class TestSearch:
 
 
 class TestTimeline:
-    """Entity timeline endpoint."""
+    """Admin entity-timeline endpoint (GET /api/memory/admin/timeline/{type}/{id})."""
 
-    def test_timeline_requires_api_key(self, api_client, base_url):
+    def test_timeline_requires_auth(self, api_client, base_url):
         api_client.headers.pop("X-API-Key", None)
         api_client.headers.pop("Authorization", None)
-        resp = api_client.get(f"{base_url}/api/memory/timeline",
-                              params={"entity_type": "contact", "entity_id": "test-contact-001"})
+        resp = api_client.get(f"{base_url}/api/memory/admin/timeline/contact/test-contact-001")
         assert resp.status_code == 401, f"Expected 401, got {resp.status_code}"
-        print("✓ Timeline requires API key")
+        print("✓ Admin timeline requires auth")
 
-    def test_timeline_returns_valid_shape(self, agent, base_url):
-        resp = agent.get(f"{base_url}/api/memory/timeline/contact/test-contact-001")
-        assert resp.status_code in (200, 404), resp.text
-        if resp.status_code == 200:
-            data = resp.json()
-            assert "entries" in data or isinstance(data, list)
-        print(f"✓ Timeline endpoint: {resp.status_code}")
+    def test_timeline_returns_valid_shape(self, admin, base_url):
+        resp = admin.get(f"{base_url}/api/memory/admin/timeline/contact/test-contact-001",
+                         params={"limit": 50})
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert "entries" in data and "total" in data
+        for entry in data["entries"]:
+            assert all(k in entry for k in ("id", "timestamp", "interaction_type"))
+            break
+        print(f"✓ Admin timeline returned {data['total']} entries")

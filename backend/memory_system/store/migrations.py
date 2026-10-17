@@ -101,6 +101,15 @@ def apply_pending(conn) -> list:
             if execute:
                 logger.info("Applying migration %s", version)
                 cursor.execute((MIGRATIONS_DIR / f"{version}.sql").read_text(encoding="utf-8"))
+                # A pg_dump baseline pins search_path='' for the SESSION while
+                # later files use unqualified names (002_reconcile). Restore
+                # after every executed file so each migration sees the
+                # default path — fresh-DB provisioning was dead on arrival
+                # without this (found by the TASK-261 hermetic suite).
+                cursor.execute(
+                    "SELECT pg_catalog.set_config('search_path', %s, false)",
+                    ('"$user", public',),
+                )
             else:
                 logger.info("Stamping legacy schema as %s", version)
             cursor.execute(

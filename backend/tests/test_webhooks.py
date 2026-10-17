@@ -9,6 +9,7 @@ Tests:
 import hashlib
 import hmac
 import json
+import time
 import pytest
 
 
@@ -32,16 +33,20 @@ def test_webhook_source(admin, base_url):
     data = resp.json()
     source_id = data["id"]
     signing_secret = data["signing_secret"]
-    # Compute the stored hash (the key used in HMAC verification)
-    signing_secret_hash = hashlib.sha256(signing_secret.encode()).hexdigest()
-    yield {"id": source_id, "signing_secret": signing_secret, "signing_secret_hash": signing_secret_hash}
+    yield {"id": source_id, "signing_secret": signing_secret}
     admin.delete(f"{base_url}/api/memory/webhooks/{source_id}")
 
 
-def _sign_payload(payload_bytes: bytes, secret_hash: str) -> str:
-    """Compute X-Webhook-Signature header value using stored hash as HMAC key."""
-    sig = hmac.new(secret_hash.encode(), payload_bytes, hashlib.sha256).hexdigest()
+def _sign_payload(payload_bytes: bytes, secret: str, timestamp: str) -> str:
+    """X-Webhook-Signature over `<timestamp>.<body>` with the plaintext secret
+    (TASK-259 contract: timestamp replay window on, hash-as-key removed)."""
+    signed = f"{timestamp}.".encode() + payload_bytes
+    sig = hmac.new(secret.encode(), signed, hashlib.sha256).hexdigest()
     return f"sha256={sig}"
+
+
+def _fresh_timestamp() -> str:
+    return str(time.time())
 
 
 class TestWebhookSourceManagement:
@@ -115,7 +120,8 @@ class TestInboundWebhook:
 
     def test_valid_payload_creates_interaction(self, api_client, base_url, test_webhook_source):
         source_id = test_webhook_source["id"]
-        secret_hash = test_webhook_source["signing_secret_hash"]
+        signing_secret = test_webhook_source["signing_secret"]
+        timestamp = _fresh_timestamp()
 
         payload = {
             "contact_id": "ext-cid-42",
@@ -123,7 +129,7 @@ class TestInboundWebhook:
             "event_summary": "Contact profile was updated by sales rep",
         }
         body = json.dumps(payload).encode()
-        signature = _sign_payload(body, secret_hash)
+        signature = _sign_payload(body, signing_secret, timestamp)
 
         resp = api_client.post(
             f"{base_url}/api/memory/webhooks/inbound/{source_id}",
@@ -131,6 +137,7 @@ class TestInboundWebhook:
             headers={
                 "Content-Type": "application/json",
                 "X-Webhook-Signature": signature,
+                "X-Webhook-Timestamp": timestamp,
             },
         )
         assert resp.status_code == 200, resp.text
@@ -165,6 +172,28 @@ class TestInboundWebhook:
         assert resp.status_code == 401
         print("✓ Bad signature rejected")
 
+    def test_stale_timestamp_rejected(self, api_client, base_url, test_webhook_source):
+        """TASK-259 replay window: a signature over a timestamp older than the
+        ±300s window is refused even though the signature itself is valid."""
+        source_id = test_webhook_source["id"]
+        timestamp = str(time.time() - 400)
+        payload = {"contact_id": "test", "event_name": "test"}
+        body = json.dumps(payload).encode()
+        signature = _sign_payload(body, test_webhook_source["signing_secret"], timestamp)
+
+        resp = api_client.post(
+            f"{base_url}/api/memory/webhooks/inbound/{source_id}",
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Webhook-Signature": signature,
+                "X-Webhook-Timestamp": timestamp,
+            },
+        )
+        assert resp.status_code == 401
+        assert "timestamp" in resp.json()["detail"].lower()
+        print("✓ Stale timestamp rejected despite valid signature")
+
     def test_unknown_source_id_returns_404(self, api_client, base_url):
         payload = {"contact_id": "test", "event_name": "test"}
         body = json.dumps(payload).encode()
@@ -192,16 +221,20 @@ class TestInboundWebhook:
         assert resp.status_code in (200, 201), resp.text
         data = resp.json()
         source_id = data["id"]
-        secret_hash = hashlib.sha256(data["signing_secret"].encode()).hexdigest()
 
         payload = {"contact_id": "cid-1", "event_name": "form_submitted"}
         body = json.dumps(payload).encode()
-        signature = _sign_payload(body, secret_hash)
+        timestamp = _fresh_timestamp()
+        signature = _sign_payload(body, data["signing_secret"], timestamp)
 
         resp = api_client.post(
             f"{base_url}/api/memory/webhooks/inbound/{source_id}",
             data=body,
-            headers={"Content-Type": "application/json", "X-Webhook-Signature": signature},
+            headers={
+                "Content-Type": "application/json",
+                "X-Webhook-Signature": signature,
+                "X-Webhook-Timestamp": timestamp,
+            },
         )
         assert resp.status_code == 200
         data = resp.json()

@@ -67,13 +67,14 @@ class TestRunLessonCheck:
         """POST /trigger/run-lesson-check should return 200."""
         resp = admin.post(f"{base_url}/api/memory/trigger/run-lesson-check")
         assert resp.status_code == 200, resp.text
-        assert "triggered" in resp.json().get("message", "").lower()
+        assert "queued" in resp.json().get("message", "").lower()
         print("✓ /trigger/run-lesson-check endpoint is accessible")
 
+    @pytest.mark.live_pipeline
     def test_lesson_accumulates_from_confirmed_insights(self, admin, base_url):
         """
         Create 2 confirmed insights → set threshold=2 → trigger → poll for lesson.
-        Skipped if LLM backend returns 500/503 (no API key configured).
+        Needs a configured LLM provider AND running workers (live gate: -m live_pipeline).
         """
         # Save original settings
         orig = admin.get(f"{base_url}/api/memory/config/settings").json()
@@ -98,7 +99,7 @@ class TestRunLessonCheck:
                 time.sleep(1)
                 lessons_resp = admin.get(f"{base_url}/api/memory/lessons")
                 if lessons_resp.status_code == 200:
-                    lessons = lessons_resp.json().get("lessons", [])
+                    lessons = lessons_resp.json().get("knowledge", [])
                     # Look for a lesson whose source_intelligence_ids overlap with our created ones
                     for les in lessons:
                         src = les.get("source_intelligence_ids", [])
@@ -165,8 +166,8 @@ class TestExtractEntitiesWithNerSchema:
 
     def test_memory_generation_with_ner_schema_configured(self, admin, agent, base_url):
         """
-        Submit an interaction, set ner_schema, trigger memory generation.
-        Asserts the trigger returns 200 (LLM/NER errors are logged but don't crash).
+        Submit an interaction (202), set ner_schema, trigger memory generation.
+        The trigger is accepted (200/202); LLM/NER errors are logged but don't crash.
         """
         entity_id = f"test-ner-schema-{uuid.uuid4().hex[:8]}"
 
@@ -179,7 +180,7 @@ class TestExtractEntitiesWithNerSchema:
             "primary_entity_id": entity_id,
             "source": "api",
         })
-        assert resp.status_code == 200, resp.text
+        assert resp.status_code == 202, resp.text
 
         # Set ner_schema with custom labels
         admin.patch(
@@ -190,7 +191,7 @@ class TestExtractEntitiesWithNerSchema:
         try:
             # Trigger memory generation
             gen_resp = admin.post(f"{base_url}/api/memory/trigger/generate-memories")
-            assert gen_resp.status_code == 200, gen_resp.text
+            assert gen_resp.status_code in (200, 202), gen_resp.text
             print(f"✓ Memory generation triggered for entity {entity_id} with NER schema set")
 
         finally:

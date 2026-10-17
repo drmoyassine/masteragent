@@ -2,44 +2,11 @@
 Memory System Authentication Tests
 Tests for JWT authentication on admin config endpoints and API key authentication for agent endpoints
 """
-import pytest
-import requests
 import os
-import json
 
-BASE_URL = os.environ.get('MEMORY_TEST_BASE_URL', 'http://localhost:8080').rstrip('/')
+import pytest
 
-# Test credentials
-TEST_EMAIL = "admin@promptsrc.com"
-TEST_PASSWORD = "admin123"
-AGENT_API_KEY = "mem_YhZtU7wjp8-gFQKAjyT7ZwKzTC3L7R7I6cqHM3oJbYA"
-
-
-@pytest.fixture(scope="module")
-def api_client():
-    """Shared requests session without auth"""
-    session = requests.Session()
-    session.headers.update({"Content-Type": "application/json"})
-    return session
-
-
-@pytest.fixture(scope="module")
-def auth_token(api_client):
-    """Get JWT authentication token"""
-    response = api_client.post(f"{BASE_URL}/api/auth/login", json={
-        "email": TEST_EMAIL,
-        "password": TEST_PASSWORD
-    })
-    if response.status_code == 200:
-        return response.json().get("token")
-    pytest.skip("Authentication failed - skipping authenticated tests")
-
-
-@pytest.fixture(scope="module")
-def authenticated_client(api_client, auth_token):
-    """Session with JWT auth header"""
-    api_client.headers.update({"Authorization": f"Bearer {auth_token}"})
-    return api_client
+from conftest import BASE_URL
 
 
 class TestHealthEndpoint:
@@ -235,8 +202,7 @@ class TestAgentAPIKeyAuthentication:
         resp = authenticated_client.post(f"{BASE_URL}/api/memory/config/agents", json={
             "name": "TestAuthAgent", "description": "temp", "access_level": "private"
         })
-        if resp.status_code != 200:
-            pytest.skip(f"Could not create test agent: {resp.text}")
+        assert resp.status_code == 200, f"Could not create test agent: {resp.text}"
         agent_data = resp.json()
         real_key = agent_data["api_key"]
         agent_id = agent_data["id"]
@@ -292,8 +258,7 @@ class TestMemoryPersistence:
         resp = authenticated_client.post(f"{BASE_URL}/api/memory/config/agents", json={
             "name": "TestPersistenceAgent", "description": "temp", "access_level": "private"
         })
-        if resp.status_code != 200:
-            pytest.skip(f"Could not create test agent: {resp.text}")
+        assert resp.status_code == 200, f"Could not create test agent: {resp.text}"
         agent_data = resp.json()
         real_key = agent_data["api_key"]
         agent_id = agent_data["id"]

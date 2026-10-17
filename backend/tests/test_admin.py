@@ -55,7 +55,7 @@ class TestInsightsCRUD:
         resp = admin.get(f"{base_url}/api/memory/insights")
         assert resp.status_code == 200, resp.text
         data = resp.json()
-        assert "insights" in data or isinstance(data, list)
+        assert "intelligence" in data and "total" in data
         print("✓ List insights OK")
 
     def test_list_intelligence_requires_auth(self, api_client, base_url):
@@ -143,7 +143,7 @@ class TestLessonsCRUD:
         resp = admin.get(f"{base_url}/api/memory/lessons")
         assert resp.status_code == 200, resp.text
         data = resp.json()
-        assert "lessons" in data or isinstance(data, list)
+        assert "knowledge" in data and "total" in data
         print("✓ List lessons OK")
 
     def test_create_knowledge(self, admin, base_url):
@@ -204,7 +204,9 @@ class TestStatsAndKnowledgeFilters:
             assert isinstance(data[tier]["last_24h"], int)
         print("✓ Stats last_24h breakdown for all tiers OK")
 
-    def test_list_knowledge_since_filter(self, admin, base_url):
+    def test_list_knowledge_since_filter(self, admin, base_url, test_lesson):
+        # test_lesson seeds a fresh row (the suite runs on a throwaway DB, so
+        # "total > 0" needs something created in-session) and cleans it up.
         resp = admin.get(f"{base_url}/api/memory/admin/knowledge", params={"since": "2000-01-01T00:00:00Z"})
         assert resp.status_code == 200, resp.text
         assert resp.json()["total"] > 0

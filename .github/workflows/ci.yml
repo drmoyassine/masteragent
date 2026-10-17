@@ -16,9 +16,12 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - run: pip install -r requirements.txt
+      # TASK-261 — full suite, hermetic by default: testcontainers Postgres
+      # (pgvector) + Redis boot inside the job; the live_pipeline marker
+      # (LLM-provider e2e) stays excluded via pytest.ini addopts.
+      - run: pip install -r requirements.txt -r requirements-dev.txt
       - run: python -m compileall -q .
-      - run: python -m pytest tests/test_security_hardening.py tests/test_settings_drift.py tests/test_credential_remediation.py tests/test_migrations_runner.py -q
+      - run: python -m pytest tests/ -q
 
   frontend:
     runs-on: ubuntu-latest

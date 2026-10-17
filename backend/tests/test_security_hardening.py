@@ -318,3 +318,67 @@ def test_signup_defaults_to_closed(monkeypatch):
         ra.get_db_context = real_ctx
     assert exc.value.status_code == 403
     assert not called["db"]
+
+
+# ── 8. claim_entity_on_write (TASK-259 item 6) ───────────────────────────────
+
+def test_claim_entity_grants_and_audits(monkeypatch):
+    """A write that passes ensure_entity_access AND creates a NEW grant is
+    audited; the grant names exactly the body-named entity."""
+    from memory import access
+
+    grants, audits = [], []
+    monkeypatch.setattr(access, "ensure_entity_access", lambda *a: None)
+    monkeypatch.setattr(access, "grant_entity",
+                        lambda agent_id, etype, eid: grants.append((agent_id, etype, eid)) or True)
+    monkeypatch.setattr("memory.auth.log_audit", lambda *a: audits.append(a))
+
+    access.claim_entity_on_write({"id": "agent-7"}, "contact", "c-1")
+    assert grants == [("agent-7", "contact", "c-1")]
+    assert audits and audits[0][1] == "claim_entity"
+
+
+def test_claim_entity_no_grant_no_audit(monkeypatch):
+    """grant_entity returning False (grant already existed) must NOT emit an
+    audit row — only NEW grants are claims."""
+    from memory import access
+
+    monkeypatch.setattr(access, "ensure_entity_access", lambda *a: None)
+    monkeypatch.setattr(access, "grant_entity", lambda *a: False)
+    audits = []
+    monkeypatch.setattr("memory.auth.log_audit", lambda *a: audits.append(a))
+
+    access.claim_entity_on_write({"id": "agent-7"}, "contact", "c-1")
+    assert audits == []
+
+
+def test_claim_entity_skips_service_identity_and_blank_targets(monkeypatch):
+    """mcp-service, blank targets, and a missing agent identity return before
+    any access check — no DB round-trip, no grant path."""
+    from memory import access
+
+    calls = []
+    monkeypatch.setattr(access, "ensure_entity_access", lambda *a: calls.append(a))
+
+    access.claim_entity_on_write({"id": "mcp-service"}, "contact", "c-1")
+    access.claim_entity_on_write({"id": "agent-7"}, "contact", "")
+    access.claim_entity_on_write(None, "contact", "c-1")
+    assert calls == []
+
+
+def test_claim_entity_propagates_access_denial(monkeypatch):
+    """Naming a data-holding entity without a grant is a 403 BEFORE any grant
+    is written — the self-grant hole this function closes."""
+    from memory import access
+
+    def _deny(*_a):
+        raise HTTPException(status_code=403, detail="Agent is not authorized for this entity")
+
+    grants = []
+    monkeypatch.setattr(access, "ensure_entity_access", _deny)
+    monkeypatch.setattr(access, "grant_entity", lambda *a: grants.append(a) or True)
+
+    with pytest.raises(HTTPException) as exc:
+        access.claim_entity_on_write({"id": "agent-7"}, "contact", "c-1")
+    assert exc.value.status_code == 403
+    assert grants == []
