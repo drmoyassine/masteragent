@@ -52,6 +52,5 @@ urllib3==2.6.1
 uvicorn==0.25.0
 filetype==1.2.0
 PyMuPDF==1.25.3
-openpyxl==3.1.2
 bullmq==2.20.0
 fastapi-mcp==0.4.0

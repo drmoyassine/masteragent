@@ -153,13 +153,23 @@ async def parse_document(
     max_pages: Optional[int] = None,
     progress_callback: Optional[Callable[[int, int], Awaitable[None]]] = None,
 ) -> Dict[str, Any]:
-    """Parse a document (text, PDF, image, DOCX) into text + metadata.
+    """Parse a document into text + metadata — runner-first (DEC-110).
+
+    When PARSE_RUNNER_URL/KEY are configured, the liteparse runner (local
+    PP-OCRv4, text layers, DOCX/XLSX/CSV) produces the text and this function
+    returns its result directly. Everything below is the FALLBACK path, used
+    only when the runner is unconfigured/unavailable or honestly empty:
+      - text decode for plain formats (zero cost),
+      - PDF: PyMuPDF text layer per page, vision OCR only for pages with no
+        text (budget-gated via call_llm_vision, capped for the disaster path),
+      - images: vision OCR.
+    Structured documents (DOCX/XLSX) are runner-owned since stage 2 — the
+    fallback honestly yields no text for them rather than maintaining a
+    second parser (recorded in DEC-110; runner-down + .docx = parse_failed).
 
     `prompt` (optional) overrides the prompt-manager 'vision' prompt used for
-    PDF/image OCR. When omitted, the configured 'vision' system prompt (or a
-    hardcoded fallback) is used. ``max_pages`` is intentionally optional for
-    backward compatibility: legacy synchronous parsing remains capped at three
-    PDF pages, while bounded knowledge-import jobs pass an explicit limit.
+    PDF/image OCR (and forces the in-process path). ``max_pages`` bounds the
+    fallback PDF leg; the runner enforces its own bounds when primary.
     """
     result: Dict[str, Any] = {"text": "", "pages": 0, "has_images": False, "metadata": {}}
     prompt_override = (prompt or "").strip() or None
@@ -237,58 +247,9 @@ async def parse_document(
             result["has_images"] = True
         return result
 
-    if mime_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-        try:
-            import zipfile
-            import xml.etree.ElementTree as ET
-            from io import BytesIO
-            with zipfile.ZipFile(BytesIO(file_content)) as zf:
-                with zf.open("word/document.xml") as doc:
-                    root = ET.parse(doc).getroot()
-                    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
-                    parts = [
-                        "".join(t.text or "" for t in p.findall(".//w:t", ns))
-                        for p in root.findall(".//w:p", ns)
-                    ]
-                    table_parts = []
-                    for table in root.findall(".//w:tbl", ns):
-                        rows = []
-                        for row in table.findall(".//w:tr", ns):
-                            cells = ["".join(t.text or "" for t in cell.findall(".//w:t", ns)).strip() for cell in row.findall(".//w:tc", ns)]
-                            if any(cells):
-                                rows.append("| " + " | ".join(cells) + " |")
-                        if rows:
-                            table_parts.append("\n".join(rows))
-                    result["text"] = "\n\n".join([p for p in parts if p] + table_parts)
-        except Exception as e:
-            logger.error(f"DOCX parsing error: {e}")
-
-    if mime_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
-        try:
-            import openpyxl
-            from io import BytesIO
-            wb = openpyxl.load_workbook(BytesIO(file_content), data_only=True)
-            text_blocks = []
-            
-            for sheet_name in wb.sheetnames:
-                ws = wb[sheet_name]
-                text_blocks.append(f"### Sheet: {sheet_name}")
-                
-                for row in ws.iter_rows(values_only=True):
-                    # Filter out purely empty rows
-                    if any(cell is not None and str(cell).strip() != "" for cell in row):
-                        row_md = " | ".join(str(cell).strip().replace("\n", " ") if cell is not None else "" for cell in row)
-                        text_blocks.append(f"| {row_md} |")
-                        
-            result["text"] = "\n".join(text_blocks)
-            result["pages"] = len(wb.sheetnames)
-        except Exception as e:
-            logger.error(f"XLSX parsing error: {e}")
-            
-    if mime_type in ("application/msword", "application/vnd.ms-excel"):
-        logger.warning(f"Unsupported legacy format encountered: {mime_type}")
-        result["text"] = "[Format Unsupported: Legacy binary formats (.doc, .xls) require manual conversion to .docx or .xlsx]"
-        
+    # Structured documents are runner-owned (DEC-110 stage 2): DOCX/XLSX
+    # beyond the plain-text decode above honestly return no text here
+    # instead of keeping a second parser alive for the runner-down case.
     return result
 
 

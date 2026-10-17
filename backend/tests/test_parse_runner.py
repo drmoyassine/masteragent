@@ -145,3 +145,31 @@ class TestParseDocumentDelegation:
         from services.processing import parse_document
         result = await parse_document(b"plain text body", "note.txt", "text/plain")
         assert result["text"] == "plain text body"
+
+
+class TestStage2RunnerOwnedFormats:
+    """DEC-110 stage 2: DOCX/XLSX are runner-owned — the in-process fallback
+    honestly returns no text for them instead of keeping a second parser."""
+
+    @pytest.mark.asyncio
+    async def test_structured_formats_yield_no_text_in_fallback(self, monkeypatch):
+        _unconfigured(monkeypatch)
+        from services.processing import parse_document
+        for mime in ("application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"):
+            result = await parse_document(b"PK\x03\x04-not-really", "doc." + mime.split(".")[-1], mime)
+            assert result["text"] == "", mime
+
+    @pytest.mark.asyncio
+    async def test_runner_still_serves_structured_formats(self, monkeypatch):
+        _configured(monkeypatch)
+        sentinel = {"text": "sheet contents", "pages": 1, "parsed_pages": 1,
+                    "has_images": False, "metadata": {"engine": "liteparse-runner"}}
+        with patch("services.parse_runner.parse_via_runner",
+                   new_callable=AsyncMock, return_value=sentinel) as mock_runner:
+            from services.processing import parse_document
+            result = await parse_document(
+                b"PK\x03\x04", "book.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        assert result is sentinel
+        mock_runner.assert_awaited_once()
