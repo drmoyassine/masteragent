@@ -164,6 +164,20 @@ async def parse_document(
     result: Dict[str, Any] = {"text": "", "pages": 0, "has_images": False, "metadata": {}}
     prompt_override = (prompt or "").strip() or None
 
+    # liteparse runner delegation (DEC-110): when PARSE_RUNNER_URL/KEY are set,
+    # the runner's local OCR handles the document (no vision call, no spend);
+    # empty/unavailable falls through to the in-process parser below, whose
+    # vision OCR leg stays budget-gated. Prompt overrides and progress
+    # callbacks are in-process-only features — the runner speaks the
+    # extraction contract, not this one.
+    if prompt_override is None and progress_callback is None:
+        from services.parse_runner import parse_via_runner
+        runner_result = await parse_via_runner(
+            file_content, filename, mime_type, max_pages=max_pages
+        )
+        if runner_result is not None:
+            return runner_result
+
     if mime_type in ("text/plain", "text/markdown", "text/csv"):
         try:
             result["text"] = file_content.decode("utf-8")
