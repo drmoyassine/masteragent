@@ -167,12 +167,27 @@ async def parse_document(
     fallback honestly yields no text for them rather than maintaining a
     second parser (recorded in DEC-110; runner-down + .docx = parse_failed).
 
+    Audio attachments (audio/*) never reach /parse — they take the runner's
+    /transcribe lane at the very top (TASK-274). No in-process STT exists,
+    so a runner miss is an honest empty (parse_failed), never a silent
+    success.
+
     `prompt` (optional) overrides the prompt-manager 'vision' prompt used for
     PDF/image OCR (and forces the in-process path). ``max_pages`` bounds the
     fallback PDF leg; the runner enforces its own bounds when primary.
     """
     result: Dict[str, Any] = {"text": "", "pages": 0, "has_images": False, "metadata": {}}
     prompt_override = (prompt or "").strip() or None
+
+    # Audio is transcribed, not parsed (TASK-274): the runner owns STT, /parse
+    # has no audio lane, and the in-process fallback cannot hear — the vision
+    # LLM is text/image-only. Prompt overrides and progress callbacks are
+    # meaningless for audio, so this lane runs unconditionally and a miss
+    # honestly returns no text (parse_failed at the interaction layer).
+    if mime_type.startswith("audio/"):
+        from services.parse_runner import transcribe_via_runner
+        transcript = await transcribe_via_runner(file_content, filename, mime_type)
+        return transcript if transcript is not None else result
 
     # liteparse runner delegation (DEC-110): when PARSE_RUNNER_URL/KEY are set,
     # the runner's local OCR handles the document (no vision call, no spend);

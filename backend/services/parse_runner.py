@@ -8,6 +8,11 @@ spend disappears while TASK-260's budget gate and usage ledger stay intact —
 the runner is never given a VLM config, so every LLM call masteragent pays
 for still flows through its own seam.
 
+The same credentials drive the runner's /transcribe endpoint (TASK-274):
+audio attachments never touch /parse — they take the STT lane, so WhatsApp
+voice notes are transcribed by the runner's local cascade + cloud-STT
+escalation instead of a separate n8n-side Gemini call.
+
 Failure posture is deliberately soft: unconfigured / unreachable / non-200 /
 honest-empty results all return None and the caller falls through to the
 in-process parser. Nothing in the ingestion path can break BECAUSE the runner
@@ -101,6 +106,83 @@ async def parse_via_runner(
             "engine": "liteparse-runner",
             "runner_source": source,
             "runner_kind": body.get("kind"),
+            "runner_warnings": body.get("warnings") or [],
+            "duration_ms": body.get("duration_ms"),
+        },
+    }
+
+
+async def _post_transcribe(payload: dict) -> Tuple[int, dict]:
+    """HTTP seam — tests patch this. Returns (status_code, json_body)."""
+    async with httpx.AsyncClient(timeout=_RUNNER_TIMEOUT) as client:
+        resp = await client.post(
+            os.environ["PARSE_RUNNER_URL"].rstrip("/") + "/transcribe",
+            headers={"X-API-Key": os.environ["PARSE_RUNNER_API_KEY"]},
+            json=payload,
+        )
+        try:
+            body = resp.json()
+        except Exception:
+            body = {}
+        return resp.status_code, body
+
+
+async def transcribe_via_runner(
+    file_content: bytes,
+    filename: str,
+    mime_type: str,
+) -> Optional[Dict[str, Any]]:
+    """Delegate one audio clip to the runner's /transcribe endpoint.
+
+    Returns parse_document's result shape on a usable transcript, or None
+    when the runner is unconfigured / unavailable / errored / honestly
+    empty. Unlike documents there is NO in-process fallback — the browser
+    STT is client-side and the vision LLM cannot hear — so None becomes
+    parse_failed at the interaction layer, which is the DEC-106-never-drop
+    way to record "we could not transcribe this clip" instead of
+    hallucinating silence.
+
+    No language hint is sent: WhatsApp voice notes are mixed en/ar and the
+    runner applies its own env-configured STT defaults (DEC-087 amendment).
+    """
+    if not runner_configured():
+        return None
+
+    payload = {
+        "data": base64.b64encode(file_content).decode("ascii"),
+        "filename": filename,
+    }
+
+    try:
+        status, body = await _post_transcribe(payload)
+    except Exception as exc:
+        logger.warning("transcribe runner unavailable (%s) for %s [%s]", exc, filename, mime_type)
+        return None
+    if status != 200:
+        logger.warning(
+            "transcribe runner returned HTTP %s for %s [%s] (%s)",
+            status, filename, mime_type, str(body.get("error") or "")[:200],
+        )
+        return None
+
+    text = (body.get("text") or "").strip()
+    if not text:
+        logger.info(
+            "transcribe runner returned no text (engine=%s, warnings=%s)",
+            body.get("engine"), body.get("warnings"),
+        )
+        return None
+
+    return {
+        "text": text,
+        "pages": 0,
+        "parsed_pages": 0,
+        "has_images": False,
+        "metadata": {
+            "engine": "liteparse-runner-stt",
+            "runner_stt_engine": body.get("engine"),
+            "language": body.get("language"),
+            "confidence": body.get("confidence"),
             "runner_warnings": body.get("warnings") or [],
             "duration_ms": body.get("duration_ms"),
         },

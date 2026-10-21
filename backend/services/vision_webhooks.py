@@ -4,6 +4,10 @@ Fired once per successfully-parsed attachment with the entity reference, the
 source document URL/filename, and the extracted text. Best-effort fire-once
 delivery — failures are logged and discarded (vision results are time-sensitive
 and there's no value in infinite retry storms for a single parse).
+
+A webhook configured with a `secret` (006, TASK-274) is delivered with
+`X-Webhook-Secret: <secret>`; receivers should reject POSTs whose header
+mismatches. Webhooks without a secret keep working headerless.
 """
 
 import json
@@ -23,7 +27,7 @@ def _load_active_webhooks() -> List[Dict[str, Any]]:
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, name, url, doc_type_filter, source_filter
+            SELECT id, name, url, doc_type_filter, source_filter, secret
             FROM vision_completion_webhooks
             WHERE is_active = TRUE
         """)
@@ -101,7 +105,8 @@ async def fire_vision_completion_webhooks(
             if not url:
                 continue
             try:
-                resp = await client.post(url, json=payload)
+                headers = {"X-Webhook-Secret": h["secret"]} if h.get("secret") else None
+                resp = await client.post(url, json=payload, headers=headers)
                 if resp.status_code >= 400:
                     logger.warning(
                         f"vision_webhook '{name}' returned {resp.status_code}: {resp.text[:300]}"

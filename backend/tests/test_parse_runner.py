@@ -173,3 +173,122 @@ class TestStage2RunnerOwnedFormats:
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         assert result is sentinel
         mock_runner.assert_awaited_once()
+
+
+def _transcribe_body(text="hello from the voice note", engine="moonshine-tiny-en",
+                     language="en", confidence=0.87):
+    return {"text": text, "language": language, "engine": engine,
+            "confidence": confidence, "warnings": [], "duration_ms": 1200.0}
+
+
+class TestTranscribeClient:
+    """TASK-274: audio takes the runner's /transcribe lane — same soft-fail
+    posture as /parse, but with NO fallback (audio cannot fall through to an
+    in-process parser, so None is the honest terminal result)."""
+
+    @pytest.mark.asyncio
+    async def test_unconfigured_returns_none_without_http(self, monkeypatch):
+        from services.parse_runner import transcribe_via_runner
+        _unconfigured(monkeypatch)
+        with patch("services.parse_runner._post_transcribe", new_callable=AsyncMock) as mock_post:
+            assert await transcribe_via_runner(b"ogg-bytes", "note.ogg", "audio/ogg") is None
+        mock_post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_success_maps_to_parse_document_shape(self, monkeypatch):
+        from services.parse_runner import transcribe_via_runner
+        _configured(monkeypatch)
+        with patch("services.parse_runner._post_transcribe",
+                   new_callable=AsyncMock, return_value=(200, _transcribe_body())):
+            result = await transcribe_via_runner(b"ogg-bytes", "note.ogg", "audio/ogg")
+        assert result is not None
+        assert result["text"] == "hello from the voice note"
+        assert result["pages"] == 0 and result["parsed_pages"] == 0
+        assert result["has_images"] is False
+        assert result["metadata"]["engine"] == "liteparse-runner-stt"
+        assert result["metadata"]["runner_stt_engine"] == "moonshine-tiny-en"
+        assert result["metadata"]["confidence"] == 0.87
+
+    @pytest.mark.asyncio
+    async def test_payload_carries_audio_not_options(self, monkeypatch):
+        """No language hint is sent — the runner's env-configured STT defaults
+        own language selection (mixed en/ar WhatsApp traffic)."""
+        from services.parse_runner import transcribe_via_runner
+        _configured(monkeypatch)
+        with patch("services.parse_runner._post_transcribe",
+                   new_callable=AsyncMock, return_value=(200, _transcribe_body())) as mock_post:
+            await transcribe_via_runner(b"ogg-bytes", "note.ogg", "audio/ogg")
+        payload = mock_post.call_args.args[0]
+        assert set(payload.keys()) == {"data", "filename"}
+        assert payload["filename"] == "note.ogg"
+
+    @pytest.mark.asyncio
+    async def test_empty_text_is_none_not_empty_shape(self, monkeypatch):
+        from services.parse_runner import transcribe_via_runner
+        _configured(monkeypatch)
+        with patch("services.parse_runner._post_transcribe",
+                   new_callable=AsyncMock,
+                   return_value=(200, _transcribe_body(text="", engine="none"))):
+            assert await transcribe_via_runner(b"silence", "note.ogg", "audio/ogg") is None
+
+    @pytest.mark.asyncio
+    async def test_non_200_is_none_including_undecodable_422(self, monkeypatch):
+        from services.parse_runner import transcribe_via_runner
+        _configured(monkeypatch)
+        for status in (401, 413, 422, 500, 503):
+            with patch("services.parse_runner._post_transcribe",
+                       new_callable=AsyncMock, return_value=(status, {"error": "x"})):
+                assert await transcribe_via_runner(b"d", "n.ogg", "audio/ogg") is None, status
+
+    @pytest.mark.asyncio
+    async def test_runner_unreachable_is_none(self, monkeypatch):
+        from services.parse_runner import transcribe_via_runner
+        _configured(monkeypatch)
+        with patch("services.parse_runner._post_transcribe",
+                   new_callable=AsyncMock, side_effect=RuntimeError("connect timeout")):
+            assert await transcribe_via_runner(b"d", "n.ogg", "audio/ogg") is None
+
+
+class TestAudioBranch:
+    """parse_document routes audio/* to /transcribe BEFORE the /parse
+    delegation — audio never reaches the document parser."""
+
+    @pytest.mark.asyncio
+    async def test_audio_takes_transcribe_lane_not_parse(self, monkeypatch):
+        _configured(monkeypatch)
+        sentinel = {"text": "transcript", "pages": 0, "parsed_pages": 0,
+                    "has_images": False, "metadata": {"engine": "liteparse-runner-stt"}}
+        with patch("services.parse_runner.parse_via_runner",
+                   new_callable=AsyncMock) as mock_parse, \
+             patch("services.parse_runner.transcribe_via_runner",
+                   new_callable=AsyncMock, return_value=sentinel) as mock_transcribe:
+            from services.processing import parse_document
+            result = await parse_document(b"OggS-bytes", "note.ogg", "audio/ogg")
+        assert result is sentinel
+        mock_transcribe.assert_awaited_once()
+        mock_parse.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_audio_lane_ignores_prompt_override(self, monkeypatch):
+        """Prompt overrides are in-process /parse features; audio runs its lane
+        unconditionally — a stale prompt must not route a voice note into the
+        document parser."""
+        _configured(monkeypatch)
+        with patch("services.parse_runner.parse_via_runner",
+                   new_callable=AsyncMock) as mock_parse, \
+             patch("services.parse_runner.transcribe_via_runner",
+                   new_callable=AsyncMock, return_value=None) as mock_transcribe:
+            from services.processing import parse_document
+            result = await parse_document(
+                b"OggS-bytes", "note.ogg", "audio/ogg", prompt="extract all text")
+        mock_transcribe.assert_awaited_once()
+        mock_parse.assert_not_called()
+        assert result["text"] == ""  # miss is an honest empty → parse_failed
+
+    @pytest.mark.asyncio
+    async def test_audio_miss_returns_honest_empty(self, monkeypatch):
+        _unconfigured(monkeypatch)
+        from services.processing import parse_document
+        result = await parse_document(b"OggS-bytes", "note.ogg", "audio/ogg")
+        assert result["text"] == ""
+        assert result["metadata"] == {}

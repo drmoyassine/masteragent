@@ -793,6 +793,9 @@ class VisionWebhookCreate(BaseModel):
     # Optional allowlist filters. None or [] = include all.
     doc_type_filter: Optional[List[str]] = None    # e.g. ["application/pdf", "image/png"]
     source_filter: Optional[List[str]] = None      # e.g. ["chatwoot", "crm"]
+    # Optional shared secret — delivered as X-Webhook-Secret on every POST
+    # (006/TASK-274). Receivers should reject header mismatches.
+    secret: Optional[str] = None
 
 
 class VisionWebhookUpdate(BaseModel):
@@ -801,6 +804,7 @@ class VisionWebhookUpdate(BaseModel):
     is_active: Optional[bool] = None
     doc_type_filter: Optional[List[str]] = None
     source_filter: Optional[List[str]] = None
+    secret: Optional[str] = None
 
 
 class OutboundWebhookCreate(BaseModel):

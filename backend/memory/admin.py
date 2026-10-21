@@ -2475,7 +2475,12 @@ async def list_vision_webhooks(admin: dict = Depends(require_admin_auth)):
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM vision_completion_webhooks ORDER BY created_at DESC")
         rows = cursor.fetchall()
-    return {"vision_webhooks": [dict(r) for r in rows]}
+    webhooks = []
+    for r in rows:
+        d = dict(r)
+        d.pop("secret", None)  # write-only by design — never echoed back
+        webhooks.append(d)
+    return {"vision_webhooks": webhooks}
 
 
 @router.post("/vision-webhooks")
@@ -2486,12 +2491,13 @@ async def create_vision_webhook(body: VisionWebhookCreate, admin: dict = Depends
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO vision_completion_webhooks (
-                id, name, url, is_active, doc_type_filter, source_filter, created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                id, name, url, is_active, doc_type_filter, source_filter, secret, created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             webhook_id, body.name, body.url, body.is_active,
             json.dumps(body.doc_type_filter) if body.doc_type_filter else None,
             json.dumps(body.source_filter) if body.source_filter else None,
+            body.secret or None,
             now, now,
         ))
     return {"id": webhook_id, "created_at": now}
@@ -2514,6 +2520,8 @@ async def update_vision_webhook(webhook_id: str, body: VisionWebhookUpdate, admi
     if body.source_filter is not None:
         fields.append("source_filter = %s")
         values.append(json.dumps(body.source_filter) if body.source_filter else None)
+    if body.secret is not None:
+        fields.append("secret = %s"); values.append(body.secret or None)
 
     if not fields:
         raise HTTPException(status_code=400, detail="No fields to update")
