@@ -58,6 +58,21 @@ def _json_default(value: Any):
         return str(value)
 
 
+def _vector_literal(embedding) -> Optional[str]:
+    """pgvector literal ('[0.1,0.2,…]') for a write parameter, or None.
+
+    psycopg2 adapts a plain list to numeric[], which the vector column refuses
+    (COALESCE types numeric[] and vector cannot be matched) — every apply died
+    here. The string literal + ::vector cast at the call site is unambiguous
+    and needs no pgvector adapter package.
+    """
+    if embedding is None:
+        return None
+    if isinstance(embedding, str):
+        return embedding
+    return "[" + ",".join(repr(float(x)) for x in embedding) + "]"
+
+
 # ─── knowledge reads ─────────────────────────────────────────────────────────
 
 KNOWLEDGE_COLUMNS = (
@@ -718,7 +733,7 @@ def _update_canonical(cur, canonical_id: str, payload: Dict[str, Any], embedding
         """
         UPDATE knowledge
         SET name = %s, summary = %s, content = %s, signals = %s, tags = %s,
-            metadata = %s, embedding = COALESCE(%s, embedding),
+            metadata = %s, embedding = COALESCE(%s::vector, embedding),
             source_intelligence_ids = %s, source_ai_interaction_ids = %s,
             merged_from = %s, merge_count = %s, evidence_breadth = %s,
             version = %s, consolidation_event_id = %s,
@@ -726,7 +741,7 @@ def _update_canonical(cur, canonical_id: str, payload: Dict[str, Any], embedding
         WHERE id = %s
         """,
         (payload["name"], payload["summary"], content, payload["signals"],
-         payload["tags"], _json(payload["metadata"]), list(embedding) if embedding else None,
+         payload["tags"], _json(payload["metadata"]), _vector_literal(embedding),
          payload["source_intelligence_ids"], payload["source_ai_interaction_ids"],
          payload["merged_from"], payload["merge_count"], payload["evidence_breadth"],
          payload["version"], event_id, now, now, canonical_id),
@@ -742,10 +757,10 @@ def _insert_canonical(cur, canonical_id: str, category: str, payload: Dict[str, 
             visibility, tags, category, metadata, status, merge_count, evidence_breadth,
             source_ai_interaction_ids, source_pathway, merged_from, version, consolidation_event_id,
             created_at, updated_at
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s::vector, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (canonical_id, payload["source_intelligence_ids"], payload["signals"], payload["name"],
-         content, payload["summary"], list(embedding) if embedding else None,
+         content, payload["summary"], _vector_literal(embedding),
          payload["visibility"], payload["tags"], category, _json(payload["metadata"]),
          payload["status"], payload["merge_count"], payload["evidence_breadth"],
          payload["source_ai_interaction_ids"], "consolidated", payload["merged_from"], payload["version"],
