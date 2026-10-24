@@ -89,16 +89,19 @@ def _parse_vector(value: Any) -> Optional[List[float]]:
     return None
 
 
-def pairwise_similarities(vectors: Dict[str, Vector]) -> List[Edge]:
-    """All unique pairwise cosine similarities, deterministically ordered.
+def pairwise_similarities(vectors: Dict[str, Vector], *, min_similarity: Optional[float] = None) -> List[Edge]:
+    """Unique pairwise cosine similarities, deterministically ordered.
 
     Edges are returned sorted by ``(id_a, id_b)`` where ``id_a < id_b`` by
     Python string ordering — so shuffling the input dict never changes the
     output sequence. Duplicate IDs are collapsed.
 
-    Uses a batched matrix multiply when numpy is importable (same output,
-    including the zero-vector → 0.0 semantics of :func:`cosine_similarity`);
-    falls back to the pure-python loop otherwise.
+    ``min_similarity`` drops edges below the cutoff WITHOUT materializing the
+    full O(n²) tuple list first (a 3.5k-record corpus is 6.3M pairs ≈ 450 MB
+    of tuples when unfiltered) — use it when only threshold-crossing edges
+    matter. Uses a batched matrix multiply when numpy is importable (same
+    output, including the zero-vector → 0.0 semantics of
+    :func:`cosine_similarity`); falls back to the pure-python loop otherwise.
     """
     parsed = {kid: v for kid, v in ((k, _parse_vector(x)) for k, x in vectors.items()) if v}
     ids = sorted(parsed.keys())
@@ -117,13 +120,18 @@ def pairwise_similarities(vectors: Dict[str, Vector]) -> List[Edge]:
                 unit = matrix[nz] / norms[nz][:, None]
                 sim[_np.ix_(nz, nz)] = unit @ unit.T
             iu, ju = _np.triu_indices(len(ids), k=1)
-            return [(ids[i], ids[j], float(s)) for i, j, s in zip(iu, ju, sim[iu, ju])]
+            vals = sim[iu, ju]
+            if min_similarity is not None:
+                keep = vals >= float(min_similarity)
+                iu, ju, vals = iu[keep], ju[keep], vals[keep]
+            return [(ids[i], ids[j], float(s)) for i, j, s in zip(iu, ju, vals)]
     edges: List[Edge] = []
     for i, a in enumerate(ids):
         va = parsed[a]
         for b in ids[i + 1:]:
             sim = cosine_similarity(va, parsed[b])
-            edges.append((a, b, sim))
+            if min_similarity is None or sim >= min_similarity:
+                edges.append((a, b, sim))
     return edges
 
 

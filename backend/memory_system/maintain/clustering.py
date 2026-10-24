@@ -37,12 +37,29 @@ from memory_system.maintain.similarity import (
     centroid,
     cohesion,
     connected_components,
+    cosine_similarity,
     edges_at_threshold,
     member_to_centroid,
     pairwise_similarities,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _component_pairs(members: Sequence[str], vectors: Dict[str, Any]) -> List[tuple]:
+    """All within-component pairs (incl. sub-threshold), for metric scans.
+
+    Downstream consumers (_metrics_for/_passes_quality/_size_split) filter the
+    pair list by membership anyway — a per-component bucket is semantically
+    identical and keeps their scans proportional to the component, not to the
+    whole corpus (the corpus-wide list made every singleton scan 6.3M edges).
+    """
+    pairs: List[tuple] = []
+    for i, a in enumerate(members):
+        for b in members[i + 1:]:
+            if a in vectors and b in vectors:
+                pairs.append((a, b, cosine_similarity(vectors[a], vectors[b])))
+    return pairs
 
 
 def _group_record(rec: Dict[str, Any]) -> Dict[str, Any]:
@@ -264,30 +281,27 @@ def discover_candidate_groups(
         effective_max_size = max_size if max_size is not None else max(2, len(recs))
         ids = sorted(r["id"] for r in recs)
         vectors = {r["id"]: r["embedding"] for r in recs}
-        pair_all = pairwise_similarities(vectors)
+        # Only threshold-crossing edges decide components; the full pair list
+        # (O(n²) tuples) is never materialized. Within-component pairs for the
+        # metric scans are computed per component by _component_pairs.
+        pair_all = pairwise_similarities(vectors, min_similarity=threshold)
         edges = edges_at_threshold(pair_all, threshold)
         components = connected_components(ids, edges)
         # Attach category to every group for downstream partitioning.
         for comp in components:
             members = sorted(comp)
             if len(members) < 2:
-                grp = _make_group(members, pair_all, vectors, "singleton", None)
-            else:
-                resolved = _resolve_component(
-                    members, pair_all, vectors,
-                    max_size=effective_max_size, min_cohesion=min_cohesion,
-                    weak_link_threshold=weak_link_threshold,
-                )
-                # _resolve_component may itself emit singletons when an edge
-                # removal disconnects a member.
-                if len(resolved) == 1 and resolved[0]["member_ids"] == members:
-                    grp = resolved[0]
-                    groups.append(_with_category(grp, category))
-                    continue
-                for grp in resolved:
-                    groups.append(_with_category(grp, category))
+                grp = _make_group(members, [], vectors, "singleton", None)
+                groups.append(_with_category(grp, category))
                 continue
-            groups.append(_with_category(grp, category))
+            bucket = _component_pairs(members, vectors)
+            resolved = _resolve_component(
+                members, bucket, vectors,
+                max_size=effective_max_size, min_cohesion=min_cohesion,
+                weak_link_threshold=weak_link_threshold,
+            )
+            for grp in resolved:
+                groups.append(_with_category(grp, category))
     return groups
 
 
