@@ -19,7 +19,7 @@ from memory_system.store.helpers import _get_entity_type_config
 logger = logging.getLogger(__name__)
 
 
-async def run_consolidation(*, max_records: int = 1000, max_clusters: int = 100,
+async def run_consolidation(*, max_records: int = 20000, max_clusters: int = 100,
                             progress_run_id: Optional[str] = None):
     """Run hygiene + decay + quality maintenance.
 

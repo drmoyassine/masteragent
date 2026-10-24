@@ -11,10 +11,16 @@ deterministic safety checks in the consolidation service.
 """
 from __future__ import annotations
 
+import json
 import math
-from typing import Dict, Iterable, List, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 Vector = Sequence[float]
+
+try:  # Optional fast path — the runtime image ships numpy; the pure-python
+    import numpy as _np  # loop below remains the portable source of truth.
+except Exception:  # pragma: no cover
+    _np = None
 
 # A directed-agnostic edge: (id_a, id_b, similarity) with id_a < id_b by sort key.
 Edge = Tuple[str, str, float]
@@ -65,19 +71,58 @@ def cosine_similarity(a: Vector, b: Vector) -> float:
 
 # ─── pairwise + centroid aggregates ──────────────────────────────────────────
 
+def _parse_vector(value: Any) -> Optional[List[float]]:
+    """Pass sequences through; parse pgvector text ('[0.1,0.2,…]') to floats.
+
+    Unparseable values return None and are dropped from pairwise scoring (they
+    have no comparable geometry) instead of crashing the nightly job.
+    """
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value.strip())
+            if isinstance(parsed, list):
+                return [float(x) for x in parsed]
+        except Exception:
+            return None
+    return None
+
+
 def pairwise_similarities(vectors: Dict[str, Vector]) -> List[Edge]:
     """All unique pairwise cosine similarities, deterministically ordered.
 
     Edges are returned sorted by ``(id_a, id_b)`` where ``id_a < id_b`` by
     Python string ordering — so shuffling the input dict never changes the
-    output sequence. Duplicates IDs are collapsed.
+    output sequence. Duplicate IDs are collapsed.
+
+    Uses a batched matrix multiply when numpy is importable (same output,
+    including the zero-vector → 0.0 semantics of :func:`cosine_similarity`);
+    falls back to the pure-python loop otherwise.
     """
-    ids = sorted(vectors.keys())
+    parsed = {kid: v for kid, v in ((k, _parse_vector(x)) for k, x in vectors.items()) if v}
+    ids = sorted(parsed.keys())
+    if not ids:
+        return []
+    if _np is not None:
+        try:
+            matrix = _np.asarray([parsed[kid] for kid in ids], dtype=_np.float64)
+        except (TypeError, ValueError):
+            matrix = None
+        if matrix is not None and matrix.ndim == 2 and matrix.shape[1] > 0:
+            norms = _np.linalg.norm(matrix, axis=1)
+            sim = _np.zeros((len(ids), len(ids)), dtype=_np.float64)
+            nz = norms > 0.0
+            if bool(nz.any()):
+                unit = matrix[nz] / norms[nz][:, None]
+                sim[_np.ix_(nz, nz)] = unit @ unit.T
+            iu, ju = _np.triu_indices(len(ids), k=1)
+            return [(ids[i], ids[j], float(s)) for i, j, s in zip(iu, ju, sim[iu, ju])]
     edges: List[Edge] = []
     for i, a in enumerate(ids):
-        va = vectors[a]
+        va = parsed[a]
         for b in ids[i + 1:]:
-            sim = cosine_similarity(va, vectors[b])
+            sim = cosine_similarity(va, parsed[b])
             edges.append((a, b, sim))
     return edges
 

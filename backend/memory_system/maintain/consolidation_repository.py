@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from core.storage import get_memory_db_context
+from memory_system.maintain.embedding import coerce_vector
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +107,13 @@ def load_active_records_for_categories(categories: Sequence[str], limit: Optiona
             query += " LIMIT %s"
             params.append(max(1, int(limit)))
         cur.execute(query, tuple(params))
-        return [dict(r) for r in cur.fetchall()]
+        rows = [dict(r) for r in cur.fetchall()]
+        # pgvector text → float list: without this, downstream len()/cosine
+        # sees a ~19k-char string and every row is treated as incompatible.
+        for row in rows:
+            if isinstance(row.get("embedding"), str):
+                row["embedding"] = coerce_vector(row["embedding"])
+        return rows
 
 
 # ─── hygiene runs ────────────────────────────────────────────────────────────

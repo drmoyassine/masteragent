@@ -18,6 +18,7 @@ Design principles:
 Runs nightly (schedule) after intelligence/knowledge, over each entity that had
 telemetry that day and hasn't been reflected on yet.
 """
+import asyncio
 import json
 import logging
 import uuid
@@ -43,6 +44,59 @@ logger = logging.getLogger(__name__)
 
 TELEMETRY_TYPES = ("internal_ai_thought", "internal_ai_tool_call")
 _VALID_TARGETS = ("skill", "playbook", "best_practices", "lessons_learned", "trade_knowledge")
+
+
+async def _dedup_check_and_confirm(*, embedding: list, category: str) -> Optional[str]:
+    """Return the id of the existing active knowledge this candidate duplicates.
+
+    On a hit the existing record is CONFIRMED (success_count + 1) instead of a
+    near-identical sibling being inserted: the reflection pathway re-surfaces
+    recurring patterns on every entity-day, which is how the 2026-10 backfill
+    produced 60+ copies of single lessons before insert-time dedup existed.
+    Gated by knowledge_creation_dedup_enabled / knowledge_creation_dedup_threshold.
+    """
+    from services.config_helpers import get_memory_settings
+
+    try:
+        settings = get_memory_settings() or {}
+        if not settings.get("knowledge_creation_dedup_enabled", True):
+            return None
+        threshold = float(settings.get("knowledge_creation_dedup_threshold", 0.90) or 0.90)
+        vec_literal = "[" + ",".join(f"{float(x):.9g}" for x in embedding) + "]"
+
+        def _query() -> Optional[str]:
+            with get_memory_db_context() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    SELECT id, 1 - (embedding <=> %s::vector) AS sim
+                    FROM knowledge
+                    WHERE status = 'active'
+                      AND category = %s
+                      AND embedding IS NOT NULL
+                      AND COALESCE(merged_into, '') = ''
+                    ORDER BY embedding <=> %s::vector
+                    LIMIT 1
+                    """,
+                    (vec_literal, category, vec_literal),
+                )
+                row = cur.fetchone()
+                if row and float(row["sim"]) >= threshold:
+                    cur.execute(
+                        """
+                        UPDATE knowledge
+                        SET success_count = COALESCE(success_count, 0) + 1, updated_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (row["id"],),
+                    )
+                    return str(row["id"])
+                return None
+
+        return await asyncio.to_thread(_query)
+    except Exception:
+        logger.exception("Insert-time knowledge dedup check failed; creating candidate as-is")
+        return None
 
 _REFLECTION_SYSTEM_PROMPT = (
     "You are a reflective learning engine for an AI agent. You are given the agent's own "
@@ -217,6 +271,7 @@ async def _reflect_entity_day(entity_type: str, entity_id: str, day: str, confid
         candidates = [candidates] if isinstance(candidates, dict) else []
 
     created = 0
+    deduped = 0
 
     for c in candidates[:5]:
         if not isinstance(c, dict):
@@ -250,6 +305,19 @@ async def _reflect_entity_day(entity_type: str, entity_id: str, day: str, confid
             )
         except Exception:
             pass
+
+        # Insert-time dedup: a recurring pattern re-surfaces as a candidate on
+        # a later entity-day — confirm the existing record instead of inserting
+        # a near-duplicate sibling (see _dedup_check_and_confirm).
+        if embedding:
+            duplicate_of = await _dedup_check_and_confirm(embedding=embedding, category=target)
+            if duplicate_of:
+                deduped += 1
+                logger.info(
+                    "Telemetry reflection deduped %s '%s' for %s/%s -> existing %s",
+                    target, name, entity_type, entity_id, duplicate_of,
+                )
+                continue
 
         metadata = {}
         if target == "skill":
@@ -327,7 +395,8 @@ async def _reflect_entity_day(entity_type: str, entity_id: str, day: str, confid
         logger.info(f"Telemetry reflection created {target} '{name}' [{status}] for {entity_type}/{entity_id}")
 
     _mark_reflected(entity_type, entity_id, day, created,
-                    "knowledge_created" if created else "no_meaningful_knowledge")
+                    "knowledge_created" if created
+                    else ("knowledge_deduped" if deduped else "no_meaningful_knowledge"))
     log_pipeline_run("telemetry_reflection", "created" if created else "skipped",
                      reason_code=None if created else "no_reusable_learning",
                      records_created=created,

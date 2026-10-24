@@ -179,9 +179,11 @@ async def _run_consolidation(job: Job, run_id):
     # Legacy job name kept as a backward-compatible alias: it now starts
     # a hygiene run using the configured mode (no pairwise retirement),
     # plus the non-destructive decay/quality maintenance.
+    # 20000: the old 1000 default scanned only the OLDEST 1000 records
+    # (created_at ASC), leaving everything newer invisible to hygiene.
     from memory_system.maintain.consolidation import run_consolidation
     return await run_consolidation(
-        max_records=int(job.data.get("max_records", 1000)),
+        max_records=int(job.data.get("max_records", 20000)),
         max_clusters=int(job.data.get("max_clusters", 100)),
         progress_run_id=run_id,
     )

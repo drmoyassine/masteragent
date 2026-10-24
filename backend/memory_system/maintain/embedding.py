@@ -66,6 +66,38 @@ def _coerce_metadata(metadata: Any) -> Dict[str, Any]:
     return {}
 
 
+def coerce_vector(value: Any) -> Optional[List[float]]:
+    """Coerce an embedding value to a plain list of floats.
+
+    psycopg2 returns the pgvector ``embedding`` column as its text form
+    (``'[0.1,0.2,...]'``) unless a vector adapter is registered — the maintain
+    layer's similarity primitives need plain float sequences. Returns ``None``
+    for anything unparseable so callers keep treating it as "no embedding".
+    """
+    if value is None:
+        return None
+    if isinstance(value, (list, tuple)):
+        try:
+            return [float(x) for x in value]
+        except (TypeError, ValueError):
+            return None
+    if isinstance(value, str):
+        text = value.strip()
+        if not (text.startswith("[") and text.endswith("]")):
+            return None
+        try:
+            parsed = json.loads(text)
+        except Exception:
+            return None
+        if not isinstance(parsed, list):
+            return None
+        try:
+            return [float(x) for x in parsed]
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 def get_embedding_version(row: Dict[str, Any]) -> int:
     """Read the recorded embedding version from ``metadata.embedding.version``.
 
@@ -100,7 +132,9 @@ def is_embedding_compatible(
     compare). Used by automated candidate discovery; manual preview reports the
     mismatch as a warning instead of rejecting.
     """
-    vector = row.get("embedding")
+    # pgvector arrives as text via psycopg2 — a 1536-dim vector as a string has
+    # len ~19k, so every row failed the dimensions check until parsed here.
+    vector = coerce_vector(row.get("embedding"))
     if not vector:
         return False
     meta = get_embedding_metadata(row)
