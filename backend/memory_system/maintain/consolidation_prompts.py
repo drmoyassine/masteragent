@@ -20,7 +20,7 @@ from services.prompt_safety import frame_untrusted
 
 logger = logging.getLogger(__name__)
 
-CONSOLIDATION_PROMPT_VERSION = "v1"
+CONSOLIDATION_PROMPT_VERSION = "v2"
 
 RECOMMENDATIONS = (
     "merge",
@@ -28,6 +28,35 @@ RECOMMENDATIONS = (
     "keep_separate",
     "split_cluster",
     "manual_review",
+)
+
+# The strict schema the validator enforces (ConsolidationProposal below). v1
+# prompts said "matching the schema" without ever showing it, so the model
+# guessed field names (canonical_record instead of canonical) and roughly half
+# the proposals died in validation. The schema is now part of the prompt.
+PROPOSAL_SCHEMA_INSTRUCTIONS = (
+    "PROPOSAL JSON SCHEMA (exact field names — do not rename):\n"
+    "{\n"
+    '  "recommendation": one of "merge", "merge_with_warnings", "keep_separate", "split_cluster", "manual_review",\n'
+    '  "confidence": 0.0-1.0,\n'
+    '  "rationale": "why this recommendation",\n'
+    '  "canonical": {  // REQUIRED when recommendation is merge or merge_with_warnings\n'
+    '    "name": "canonical record name",\n'
+    '    "summary": "one-paragraph summary",\n'
+    '    "content": "full canonical content preserving every unique fact",\n'
+    '    "signals": ["..."],\n'
+    '    "tags": ["..."],\n'
+    '    "metadata": {}\n'
+    "  },\n"
+    '  "preserved_information": ["unique facts carried into the canonical"],\n'
+    '  "removed_repetition": ["facts dropped as true repetition"],\n'
+    '  "unreconciled_information": ["information that could not be placed"],\n'
+    '  "contradictions": ["conflicts between sources"],\n'
+    '  "warnings": ["qualifications future readers must respect"],\n'
+    '  "source_traceability": [{"source_id": "<source id>", "retained_items": ["..."], "omitted_as_repetition": ["..."]}],\n'
+    '  "split_recommendations": []\n'
+    "}\n"
+    'The canonical block key is "canonical" (singular) — not "canonical_record".'
 )
 
 
@@ -93,9 +122,9 @@ CATEGORY_INSTRUCTIONS: Dict[str, str] = {
 
 
 def build_system_prompt(category: str) -> str:
-    """Base prompt + the category-specific preservation rules."""
+    """Base prompt + category-specific preservation rules + the exact schema."""
     cat = category if category in CATEGORY_INSTRUCTIONS else "trade_knowledge"
-    return f"{CONSOLIDATION_BASE_PROMPT}\n\n{CATEGORY_INSTRUCTIONS[cat]}"
+    return f"{CONSOLIDATION_BASE_PROMPT}\n\n{CATEGORY_INSTRUCTIONS[cat]}\n\n{PROPOSAL_SCHEMA_INSTRUCTIONS}"
 
 
 # ─── user prompt ─────────────────────────────────────────────────────────────
@@ -217,6 +246,11 @@ def validate_proposal(payload: Any, category: str) -> Tuple[Optional[Consolidati
     """
     if not isinstance(payload, dict):
         return None, ["LLM output is not a JSON object"]
+    # v1-era tolerance: models trained on "canonical record" wording emit
+    # canonical_record despite the schema block. Normalize the single known
+    # alias; everything else stays strict.
+    if "canonical" not in payload and isinstance(payload.get("canonical_record"), dict):
+        payload = {**payload, "canonical": payload["canonical_record"]}
     errors: List[str] = []
     try:
         proposal = ConsolidationProposal(**payload)
@@ -262,5 +296,5 @@ def repair_prompt(errors: List[str], category: str) -> str:
         f"Your previous response was invalid: {'; '.join(errors)}. "
         f"Return ONLY a valid JSON object for category={category} matching the schema, "
         "with recommendation one of: merge, merge_with_warnings, keep_separate, "
-        "split_cluster, manual_review."
+        "split_cluster, manual_review.\n\n" + PROPOSAL_SCHEMA_INSTRUCTIONS
     )

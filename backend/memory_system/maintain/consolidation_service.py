@@ -310,6 +310,17 @@ async def _generate_proposal(
     sources_for_llm = [_snapshot_for_llm(r) for r in rows]
     user_prompt = build_user_prompt(sources_for_llm, metrics, category)
 
+    # Pre-flight context guard: oversized clusters (e.g. 30 full-content
+    # sources ≈ 350k tokens) would 400 at the provider after building a
+    # ~1.4MB prompt. Fail fast with a structured error instead — the group is
+    # re-clustable at a smaller max size on the next run.
+    est_tokens = (len(system_prompt) + len(user_prompt)) // 4
+    if est_tokens > 180_000:
+        return None, None, [
+            f"prompt_too_large: estimated {est_tokens} tokens exceeds the ~180k guard "
+            "(reduce knowledge_hygiene_max_cluster_size)"
+        ], model_name
+
     last_errors: List[str] = []
     for attempt in range(2):
         try:
