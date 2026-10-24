@@ -45,8 +45,11 @@ def cosine_similarity(a: Vector, b: Vector) -> float:
 
     Vectors of mismatched length are compared over their common prefix so a
     dimension-pinned policy is never violated by a stray legacy record; callers
-    that need strict equality check ``len(a) == len(b)`` first.
+    that need strict equality check ``len(a) == len(b)`` first. Inputs arriving
+    as pgvector text are parsed first (unparseable → 0.0, never a crash).
     """
+    a = _parse_vector(a) or []
+    b = _parse_vector(b) or []
     if not a or not b:
         return 0.0
     n = min(len(a), len(b))
@@ -155,7 +158,9 @@ def centroid(vectors: Dict[str, Vector]) -> List[float]:
     """
     if not vectors:
         return []
-    vecs = list(vectors.values())
+    vecs = [v for v in (_parse_vector(x) for x in vectors.values()) if v]
+    if not vecs:
+        return []
     dim = max(len(v) for v in vecs)
     acc = [0.0] * dim
     for v in vecs:
@@ -168,7 +173,13 @@ def centroid(vectors: Dict[str, Vector]) -> List[float]:
 
 def member_to_centroid(vectors: Dict[str, Vector], centroid_vec: Vector) -> Dict[str, float]:
     """Cosine similarity of each member to the centroid, keyed by ID."""
-    return {kid: cosine_similarity(vec, centroid_vec) for kid, vec in vectors.items()}
+    cent = _parse_vector(centroid_vec) or []
+    out: Dict[str, float] = {}
+    for kid, vec in vectors.items():
+        parsed = _parse_vector(vec)
+        if parsed is not None:
+            out[kid] = cosine_similarity(parsed, cent)
+    return out
 
 
 # ─── graph edges, weak links, components ─────────────────────────────────────

@@ -79,7 +79,13 @@ def load_knowledge_records(knowledge_ids: Sequence[str]) -> List[Dict[str, Any]]
             f"SELECT {KNOWLEDGE_COLUMNS} FROM knowledge WHERE id = ANY(%s)",
             (list(knowledge_ids),),
         )
-        return [dict(r) for r in cur.fetchall()]
+        rows = [dict(r) for r in cur.fetchall()]
+        # pgvector text → float list (same as the categories loader): preview
+        # metrics and apply-snapshot math run on these embeddings.
+        for row in rows:
+            if isinstance(row.get("embedding"), str):
+                row["embedding"] = coerce_vector(row["embedding"])
+        return rows
 
 
 def load_knowledge_record(knowledge_id: str) -> Optional[Dict[str, Any]]:
