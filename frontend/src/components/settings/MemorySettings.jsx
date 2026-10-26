@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import api, { triggerMemoryGeneration, triggerIntelligenceCheck, triggerKnowledgeCheck, triggerSkillExtraction, exportKnowledgePack, triggerBackfillFacets, triggerReflectTelemetry, triggerInteractionRetention, fetchProviderModels, analyzeHygieneNow, backfillEmbeddings, getEmbeddingCoverage, getPipelineRuns, getMaintenanceControls, getMaintenanceEligibleCounts, refreshMaintenanceEligibleCounts, setMaintenanceControl, getPipelineHealth } from "@/lib/api";
+import api, { triggerMemoryGeneration, triggerIntelligenceCheck, triggerKnowledgeCheck, triggerSkillExtraction, triggerKnowledgeOutcomeAttribution, exportKnowledgePack, triggerBackfillFacets, triggerReflectTelemetry, triggerInteractionRetention, fetchProviderModels, analyzeHygieneNow, backfillEmbeddings, getEmbeddingCoverage, getPipelineRuns, getMaintenanceControls, getMaintenanceEligibleCounts, refreshMaintenanceEligibleCounts, setMaintenanceControl, getPipelineHealth } from "@/lib/api";
 import { useEffect, useMemo, useRef } from "react";
 
 const apiErrorMessage = (error, fallback) => {
@@ -1096,6 +1096,13 @@ function LegacyKnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProvide
                         Extract Skills
                     </Button>
                     <Button size="sm" variant="outline" className="gap-1.5"
+                        title="Resolve knowledge usage events into success/failure outcomes now (normally nightly)"
+                        onClick={() => runTrigger('attribution', triggerKnowledgeOutcomeAttribution, "Knowledge outcome attribution queued")}
+                        disabled={!!triggering}>
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        Attribute Outcomes
+                    </Button>
+                    <Button size="sm" variant="outline" className="gap-1.5"
                         title="Download the whole knowledge base as a memory-file pack (INDEX.md + one markdown file per record)"
                         onClick={() => runTrigger('export', async () => {
                             const res = await exportKnowledgePack({ status: 'active' });
@@ -1424,6 +1431,59 @@ function LegacyKnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProvide
                     </div>
 
                     {/* Creation-time Dedup */}
+                    {/* Knowledge Learning Loop */}
+                    <div className="border-t pt-4">
+                        <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Knowledge Learning Loop</Label>
+                        <div className="grid grid-cols-2 gap-4 mt-2">
+                            <div className="space-y-1">
+                                <Label className="text-xs font-mono">Retrieval Quality Weight</Label>
+                                <Input
+                                    type="number" step="0.01" min="0" max="1"
+                                    value={settings.knowledge_retrieval_quality_weight ?? 0}
+                                    onChange={(e) => onUpdateSettings("knowledge_retrieval_quality_weight", parseFloat(e.target.value) || 0)}
+                                />
+                                <p className="text-[10px] text-muted-foreground">0 = off. A small value (0.05-0.10) reorders near-equivalent records by attributed outcome quality.</p>
+                            </div>
+                            <div className="space-y-1">
+                                <Label className="text-xs font-mono">Retire After (days)</Label>
+                                <Input
+                                    type="number" min="7"
+                                    value={settings.knowledge_learning_retire_after_days ?? 90}
+                                    onChange={(e) => onUpdateSettings("knowledge_learning_retire_after_days", parseInt(e.target.value) || 90)}
+                                />
+                                <p className="text-[10px] text-muted-foreground">Age at which never-served, low-quality records surface as retirement candidates (proposals only).</p>
+                            </div>
+                            <div className="space-y-1">
+                                <Label className="text-xs font-mono">Max Events per Call</Label>
+                                <Input
+                                    type="number" min="1"
+                                    value={settings.knowledge_learning_max_events_per_call ?? 50}
+                                    onChange={(e) => onUpdateSettings("knowledge_learning_max_events_per_call", parseInt(e.target.value) || 50)}
+                                />
+                                <p className="text-[10px] text-muted-foreground">Usage events recorded per retrieval call (hot-path bound).</p>
+                            </div>
+                            <div className="space-y-1">
+                                <Label className="text-xs font-mono">Skill Refine Min Failures</Label>
+                                <Input
+                                    type="number" min="1"
+                                    value={settings.knowledge_learning_refine_min_failures ?? 2}
+                                    onChange={(e) => onUpdateSettings("knowledge_learning_refine_min_failures", parseInt(e.target.value) || 2)}
+                                />
+                                <p className="text-[10px] text-muted-foreground">Attributed failures before a skill refinement proposal alert fires.</p>
+                            </div>
+                        </div>
+                        <div className="space-y-2 mt-3">
+                            <div className="flex items-center justify-between">
+                                <Label className="text-xs font-mono">Usage Capture</Label>
+                                <Switch checked={!!settings.knowledge_learning_usage_capture} onCheckedChange={(checked) => onUpdateSettings("knowledge_learning_usage_capture", checked)} />
+                            </div>
+                            <div className="flex items-center justify-between">
+                                <Label className="text-xs font-mono">Outcome Attribution (nightly)</Label>
+                                <Switch checked={!!settings.knowledge_learning_attribution_enabled} onCheckedChange={(checked) => onUpdateSettings("knowledge_learning_attribution_enabled", checked)} />
+                            </div>
+                        </div>
+                    </div>
+
                     {/* Processing */}
                     <div className="border-t pt-4">
                         <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Processing</Label>

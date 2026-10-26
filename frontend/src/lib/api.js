@@ -269,3 +269,4 @@ export const getAvailableVariables = (promptId, version = 'v1') =>
 export default api;
 
 
+export const triggerKnowledgeOutcomeAttribution = () => api.post('/memory/trigger/knowledge-outcome-attribution');

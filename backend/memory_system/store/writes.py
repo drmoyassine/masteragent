@@ -431,3 +431,44 @@ def append_knowledge_feedback(knowledge_id: str, outcome: str, notes: Optional[s
         """, (entry, now, knowledge_id))
     from memory_system.maintain.quality import recalculate_knowledge_quality
     recalculate_knowledge_quality(knowledge_id)
+
+
+
+def record_knowledge_usage(events) -> int:
+    """Learning loop section 2 (docs/plans/knowledge-learning-loop.md) —
+    best-effort batch insert of knowledge usage events + usage_count bump on
+    the parent records. Capture must never fail the retrieval that produced
+    it (log_pipeline_run doctrine): failures are logged, reported as 0."""
+    rows = []
+    for e in events or []:
+        kid = e.get("knowledge_id")
+        if not kid or not e.get("pathway"):
+            continue
+        rows.append((
+            str(kid), e.get("interaction_id"), e.get("agent_id"),
+            e.get("pathway"), e.get("entity_type"), e.get("entity_id"), e.get("rank"),
+        ))
+    if not rows:
+        return 0
+    try:
+        with get_memory_db_context() as conn:
+            cursor = conn.cursor()
+            cursor.executemany(
+                """
+                INSERT INTO knowledge_usage_events
+                    (knowledge_id, interaction_id, agent_id, pathway, entity_type, entity_id, rank)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """,
+                rows,
+            )
+            from collections import Counter
+            for kid, n in Counter(r[0] for r in rows).items():
+                cursor.execute(
+                    "UPDATE knowledge SET usage_count = COALESCE(usage_count, 0) + %s WHERE id = %s",
+                    (n, kid),
+                )
+            return len(rows)
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "record_knowledge_usage failed (best-effort capture): %s", exc)
+        return 0

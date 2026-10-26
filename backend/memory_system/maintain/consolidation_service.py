@@ -749,3 +749,33 @@ def _nearest_neighbors(
     except Exception as exc:
         logger.warning("nearest-neighbor lookup failed for %s: %s", knowledge_id, exc)
         return []
+
+
+
+def find_retirement_candidates(*, settings=None, limit: int = 50) -> list:
+    """Learning loop section 4.2 — the forgetting half. Active records that
+    are old, never served (usage_count = 0) and low-quality. Proposals only:
+    callers surface these for human review; nothing is retired automatically
+    (hygiene stays manual until a deployment opts otherwise)."""
+    if settings is None:
+        from services.config_helpers import get_memory_settings
+        settings = get_memory_settings() or {}
+    retire_days = int(settings.get("knowledge_learning_retire_after_days", 90) or 90)
+    from core.storage import get_memory_db_context
+    with get_memory_db_context() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, name, category, status, quality_score, usage_count,
+                   extraction_confidence, created_at
+            FROM knowledge
+            WHERE status = 'active'
+              AND created_at <= NOW() - make_interval(days => %s)
+              AND COALESCE(usage_count, 0) = 0
+              AND COALESCE(quality_score, 0) < 0.40
+            ORDER BY quality_score ASC NULLS LAST, created_at ASC
+            LIMIT %s
+            """,
+            (retire_days, limit),
+        )
+        return [dict(r) for r in cursor.fetchall()]

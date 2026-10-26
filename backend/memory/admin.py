@@ -1250,6 +1250,24 @@ async def trigger_skill_extraction(admin: dict = Depends(require_admin_auth)):
     return {"message": "Skill extraction queued"}
 
 
+@router.post("/trigger/knowledge-outcome-attribution")
+async def trigger_knowledge_outcome_attribution(admin: dict = Depends(require_admin_auth)):
+    """Learning loop — resolve knowledge_usage_events into outcomes now
+    (normally nightly via the scheduler; docs/plans/knowledge-learning-loop.md §3)."""
+    from memory.queue import knowledge_queue
+    await knowledge_queue.add("knowledge_outcome_attribution", {}, {"priority": 1})
+    return {"message": "Knowledge outcome attribution queued"}
+
+
+@admin_crud.get("/retirement-candidates")
+async def knowledge_retirement_candidates(limit: int = Query(50, ge=1, le=200), admin: dict = Depends(require_admin_auth)):
+    """Learning loop §4.2 — active records that are old, never served and
+    low-quality. Proposals for human review only; nothing is retired
+    automatically."""
+    from memory_system.maintain.consolidation_service import find_retirement_candidates
+    return {"candidates": await asyncio.to_thread(find_retirement_candidates, limit=limit)}
+
+
 @router.post("/trigger/run-consolidation")
 async def trigger_consolidation(
     max_records: int = Query(1000, ge=1, le=100000),

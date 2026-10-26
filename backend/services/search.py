@@ -9,6 +9,18 @@ logger = logging.getLogger(__name__)
 # The daily penalty for chronological time decay on vector search scores (0.005 = 0.5% drop per day)
 DECAY_RATE = 0.005
 
+
+def _retrieval_quality_weight() -> float:
+    """Learning loop §4.1 — quality blend weight for knowledge retrieval
+    ordering. 0.0 (the default) preserves existing ordering exactly; tuned
+    live via the knowledge_retrieval_quality_weight setting. Similarity picks
+    the candidate set; quality only reorders near-equivalent records."""
+    try:
+        from services.config_helpers import get_memory_settings
+        return float((get_memory_settings() or {}).get("knowledge_retrieval_quality_weight", 0.0) or 0.0)
+    except Exception:
+        return 0.0
+
 # ============================================
 # TIER 0: Interactions (Pending) — fulltext only.
 # Raw interactions are never embedded: the raw tier is recalled via
@@ -271,10 +283,11 @@ async def search_knowledge_by_vector(
 
             where = " AND ".join(conditions)
             decay_sql = f"(EXTRACT(EPOCH FROM (NOW() - created_at))/86400) * {DECAY_RATE}"
+            qw = _retrieval_quality_weight()
 
             cursor.execute(f"""
                 SELECT id, signals, category, name, summary, visibility, tags, created_at,
-                       GREATEST(0, (1 - (embedding <=> %s::vector)) - {decay_sql}) AS score
+                       GREATEST(0, (1 - (embedding <=> %s::vector)) - {decay_sql}) + {qw} * COALESCE(quality_score, 0.5) AS score
                 FROM knowledge WHERE {where}
                 ORDER BY score DESC LIMIT %s
             """, [query_vector] + params + [limit])
@@ -320,9 +333,10 @@ async def search_knowledge_by_fulltext(
             params.append(query)
 
             where = " AND ".join(conditions)
+            qw = _retrieval_quality_weight()
             cursor.execute(f"""
                 SELECT id, signals, category, name, summary, visibility, tags, created_at,
-                       ts_rank(to_tsvector('simple', coalesce(name, '') || ' ' || coalesce(summary, '') || ' ' || coalesce(content, '')), websearch_to_tsquery('simple', %s)) AS score
+                       ts_rank(to_tsvector('simple', coalesce(name, '') || ' ' || coalesce(summary, '') || ' ' || coalesce(content, '')), websearch_to_tsquery('simple', %s)) + {qw} * COALESCE(quality_score, 0.5) AS score
                 FROM knowledge WHERE {where}
                 ORDER BY score DESC LIMIT %s
             """, [query] + params + [limit])
