@@ -118,7 +118,6 @@ promptsrc/
 ├── test_reports/               # Test results and reports
 ├── .memory/                    # AI assistant memory bank
 ├── AGENTS.md                   # Agent guidance file
-├── HANDOFF.md                  # Project handoff document
 └── docker-compose.yml          # Docker orchestration
 ```
 
@@ -154,5 +153,4 @@ cd backend && pytest tests/ -v
 ## Related Files
 
 - [`AGENTS.md`](../AGENTS.md) - Agent guidance for working with the codebase
-- [`HANDOFF.md`](../HANDOFF.md) - Project handoff and current state
 - [`README.md`](../README.md) - Full project documentation
