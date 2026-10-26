@@ -327,3 +327,32 @@ def test_admin_trigger_and_retirement_endpoint(admin, loop_env):
     body = r.json()
     assert isinstance(body["candidates"], list)
     assert any(c["name"] == "LLTEST-old-bad" for c in body["candidates"])
+
+
+def test_admin_stats_usage_covered(loop_env, admin):
+    kid = _seed_knowledge(name="LLTEST-covered")
+    _seed_event(kid, age_hours=1)              # served recently → covered
+    _seed_knowledge(name="LLTEST-uncovered")   # never served
+
+    stats = admin.get(f"{loop_env}/api/memory/admin/stats").json()
+
+    # Independent recomputation: the DB also carries bootstrap rows (some with
+    # usage events from earlier tests), so compute the expected share in SQL.
+    with get_memory_db_context() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT COUNT(*) AS total,
+                   SUM(CASE WHEN EXISTS (
+                       SELECT 1 FROM knowledge_usage_events e
+                       WHERE e.knowledge_id = k.id
+                         AND e.created_at >= NOW() - INTERVAL '30 days'
+                   ) THEN 1 ELSE 0 END) AS covered
+            FROM knowledge k
+            WHERE k.status = 'active'
+        """)
+        row = dict(cur.fetchone())
+    total, covered = row["total"] or 0, row["covered"] or 0
+
+    assert stats["knowledge"]["usage_covered"] == (round(covered / total, 4) if total else 0.0)
+    assert stats["knowledge"]["usage_covered_count"] == covered
+    assert stats["knowledge"]["usage_covered"] > 0, "the freshly served record must count as covered"

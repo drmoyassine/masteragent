@@ -1950,6 +1950,23 @@ async def get_stats(admin: dict = Depends(require_admin_auth)):
         """)
         knowledge_24h = cursor.fetchone()["total"]
 
+        # Learning loop §6: share of active knowledge actually served to agents
+        # in the last 30 days — the "is retrieval even reaching my knowledge?" dial.
+        cursor.execute("""
+            SELECT COUNT(*) AS total,
+                   SUM(CASE WHEN EXISTS (
+                       SELECT 1 FROM knowledge_usage_events e
+                       WHERE e.knowledge_id = k.id
+                         AND e.created_at >= NOW() - INTERVAL '30 days'
+                   ) THEN 1 ELSE 0 END) AS covered
+            FROM knowledge k
+            WHERE k.status = 'active'
+        """)
+        coverage = cursor.fetchone()
+        usage_total = coverage["total"] or 0
+        usage_covered_count = coverage["covered"] or 0
+        usage_covered = round(usage_covered_count / usage_total, 4) if usage_total else 0.0
+
     return {
         "interactions": {
             "total": total_interactions,
@@ -1966,6 +1983,8 @@ async def get_stats(admin: dict = Depends(require_admin_auth)):
             "total": total_knowledge,
             "active": active_knowledge,
             "last_24h": knowledge_24h,
+            "usage_covered": usage_covered,
+            "usage_covered_count": usage_covered_count,
         },
         "agents": {"total": total_agents, "active": active_agents},
     }
