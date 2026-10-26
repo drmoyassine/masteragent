@@ -15,7 +15,7 @@ import {
   useSortable
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVertical, Plus, GraduationCap, Sparkles, Brain, Scissors, EyeOff, ArrowRight, CircleHelp } from "lucide-react";
+import { GripVertical, Plus, GraduationCap, Sparkles, Brain, EyeOff, ArrowRight, CircleHelp } from "lucide-react";
 import { InlineTaskConfigAccordion } from "./InlineTaskConfigAccordion";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -52,20 +52,14 @@ const KNOWLEDGE_PATHWAYS = [
   {
     task_type: "telemetry_reflection",
     title: "Telemetry Reflection", icon: Sparkles, accent: "border-cyan-500/40",
-    feeds: "AI thoughts & tool calls (internal_ai_*)", produces: "skill · playbook · best_practices · lessons · trade",
+    feeds: "AI thoughts & tool calls (internal_ai_*)", produces: "skill · best_practices · lessons · trade",
     trigger: "Nightly + backfill",
   },
   {
-    task_type: "playbook_generation",
-    title: "Playbook Extraction", icon: Brain, accent: "border-orange-500/40",
-    feeds: "Intelligence clusters across ≥3 entities", produces: "playbook",
-    trigger: "Nightly",
-  },
-  {
     task_type: "skill_generation",
-    title: "Skill Decomposition", icon: Scissors, accent: "border-pink-500/40",
-    feeds: "Playbook steps", produces: "skill",
-    trigger: "Automatic (after each playbook)",
+    title: "Skill Extraction", icon: Brain, accent: "border-orange-500/40",
+    feeds: "Intelligence clusters across ≥3 entities", produces: "skill",
+    trigger: "Weekly + evidence threshold",
   },
   {
     task_type: "pii_scrubbing",
@@ -378,7 +372,6 @@ export function KnowledgePathways({
         const pathwayKey = ({
           knowledge_generation: "declarative_knowledge",
           telemetry_reflection: "telemetry_reflection",
-          playbook_generation: "playbook_extraction",
           skill_generation: "skill_extraction",
         })[pw.task_type];
         const overrides = pathwayKey

@@ -44,7 +44,7 @@ backend/
 ├── memory_system/      # Memory pipeline package (TASK-257):
 │   ├── store/          # db.py (schema), models, writes, helpers, migrations
 │   ├── ingest/         # interaction ingestion + rate limiting
-│   ├── distill/        # generation, knowledge, playbooks, telemetry, prior_context
+│   ├── distill/        # generation, knowledge, skills, telemetry, prior_context
 │   ├── maintain/       # clustering, consolidation, erasure, embedding backfill,
 │   │                   #   interaction retention, quality
 │   └── scheduler.py    # 60s background loop; per-day job claims (memory_job_log)
@@ -138,7 +138,7 @@ Legacy-compat escape hatches — deliberate defaults, decide each explicitly bef
 Rollout guide archived at `docs/plans/archived/production-hardening-rollout.md`.
 
 ### AI Safety (Untrusted-Content Doctrine)
-Every interaction enters from outside, so distilled output is externally-derived by construction. `services/prompt_safety.py` frames untrusted content (`frame_untrusted`), scans outputs for injection-shaped directives (flag-only), and forces draft status on externally-derived skills/playbooks (`resolve_creation_status`). Entity erasure lives in `memory_system/maintain/erasure.py`. See ARCHITECTURE.md §11.
+Every interaction enters from outside, so distilled output is externally-derived by construction. `services/prompt_safety.py` frames untrusted content (`frame_untrusted`), scans outputs for injection-shaped directives (flag-only), and forces draft status on externally-derived skills (`resolve_creation_status`). Entity erasure lives in `memory_system/maintain/erasure.py`. See ARCHITECTURE.md §11.
 
 ### Frontend Conventions
 - Framework: React 19 SPA (CRA + CRACO), Shadcn/UI

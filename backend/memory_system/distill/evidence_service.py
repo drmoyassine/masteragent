@@ -56,7 +56,7 @@ def analyze_evidence(
     )
     pathway_categories = {
         "declarative_knowledge": ["best_practices", "lessons_learned", "trade_knowledge"],
-        "playbook_extraction": ["playbook"],
+        "skill_extraction": ["skill"],
         "skill_extraction": ["skill"],
     }
     categories = pathway_categories.get(pathway)

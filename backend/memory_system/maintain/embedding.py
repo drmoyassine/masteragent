@@ -5,7 +5,7 @@ categories) into the text string that gets embedded, and stamps the resulting
 embedding metadata (model / dimensions / version / timestamp) onto the record.
 
 All knowledge creation and update paths — generation, telemetry reflection,
-playbook/skill extraction, Hermes, admin CRUD/import, promotion, and
+skill extraction, Hermes, admin CRUD/import, promotion, and
 consolidation — ultimately embed through ``serialize_knowledge_for_embedding``
 so that candidate discovery compares apples to apples.
 
@@ -45,7 +45,6 @@ CONSOLIDATABLE_KNOWLEDGE_CATEGORIES = {
     "lessons_learned",
     "trade_knowledge",
     "skill",
-    "playbook",
 }
 
 
@@ -215,12 +214,12 @@ def _facet_text(metadata: Dict[str, Any]) -> str:
     return "; ".join(parts)
 
 
-def _serialize_skill_playbook(row: Dict[str, Any]) -> str:
-    """Serialize a skill/playbook record deterministically.
+def _serialize_skill(row: Dict[str, Any]) -> str:
+    """Serialize a skill record deterministically.
 
     SKILL.md body + structured operational fields (steps, triggers, procedure,
     prerequisites, tools, …) all carry operational signal that two records must
-    share to be considered the same skill/playbook.
+    share to be considered the same skill.
     """
     name = (row.get("name") or "").strip()
     summary = (row.get("summary") or "").strip()
@@ -242,7 +241,7 @@ def _serialize_skill_playbook(row: Dict[str, Any]) -> str:
     if description:
         parts.append(description)
 
-    # Operational fields that distinguish one skill/playbook from another.
+    # Operational fields that distinguish one skill from another.
     triggers = metadata.get("trigger_conditions") or metadata.get("triggers") or metadata.get("trigger_desc") or []
     steps = metadata.get("steps") or []
     procedure = metadata.get("procedure") or ""
@@ -330,14 +329,14 @@ def _serialize_declarative(row: Dict[str, Any]) -> str:
 def serialize_knowledge_for_embedding(row: Dict[str, Any]) -> str:
     """Deterministic text serialization of a knowledge record for embedding.
 
-    Category-aware: skills/playbooks include their parsed operational fields;
+    Category-aware: skills include their parsed operational fields;
     declarative categories serialize name + summary + content + signals/tags/
     facets. The output is stable for a given record state so two identical
     records produce identical embeddings.
     """
     category = row.get("category") or "trade_knowledge"
     if category in SKILL_MD_CATEGORIES:
-        return _serialize_skill_playbook(row)
+        return _serialize_skill(row)
     return _serialize_declarative(row)
 
 
@@ -389,7 +388,7 @@ async def embed_knowledge_fields(
 ) -> Tuple[Optional[List[float]], str]:
     """Convenience wrapper: build a row dict from loose fields and embed it.
 
-    Lets the existing creation paths (generation, telemetry, playbooks, skills,
+    Lets the existing creation paths (generation, telemetry, skills,
     Hermes, admin import) route through the canonical serializer without
     constructing a full row dict at every site.
     """

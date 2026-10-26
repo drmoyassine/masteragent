@@ -15,7 +15,6 @@ const CATEGORIES = [
   { value: "lessons_learned", label: "Lessons Learned" },
   { value: "trade_knowledge", label: "Trade Knowledge" },
   { value: "skill", label: "Skill" },
-  { value: "playbook", label: "Playbook" },
 ];
 
 function TagInput({ tags, onChange }) {
@@ -87,12 +86,6 @@ const CATEGORY_FIELDS = {
     ["tools", "Tools and integrations", "array"], ["permissions", "Permissions", "array"], ["side_effects", "Side effects", "array"],
     ["failure_conditions", "Failure conditions", "array"], ["safety_requirements", "Safety requirements", "array"], ["environments", "Applicable environments", "array"],
   ],
-  playbook: [
-    ["purpose", "Purpose", "scalar"], ["trigger_conditions", "Trigger conditions", "array"], ["prerequisites", "Prerequisites", "array"],
-    ["steps", "Ordered steps", "steps"], ["branches", "Branches and decisions", "array"], ["escalation_rules", "Escalation rules", "array"],
-    ["rollback", "Rollback and recovery", "array"], ["responsible_roles", "Responsible roles", "array"], ["tools", "Tools and integrations", "array"],
-    ["completion_criteria", "Completion criteria", "array"], ["exit_conditions", "Exit conditions", "array"],
-  ],
 };
 
 function displayMetadataValue(metadata, key, kind) {
@@ -114,7 +107,7 @@ function StructuredFields({ category, knowledge, setKnowledge }) {
   };
   if (!fields.length) return null;
   return <div className="rounded-md border p-3 space-y-3">
-    <div><div className="text-sm font-medium">Structured contract</div><p className="text-[11px] text-muted-foreground">These fields are stored in metadata and are rendered into the SKILL.md contract for skills and playbooks.</p></div>
+    <div><div className="text-sm font-medium">Structured contract</div><p className="text-[11px] text-muted-foreground">These fields are stored in metadata and are rendered into the SKILL.md contract for skills.</p></div>
     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
       {fields.map(([key, label, kind]) => <div key={key} className={kind === "scalar" && key === "purpose" ? "md:col-span-2" : ""}>
         <Label>{label}</Label>
@@ -253,8 +246,8 @@ export function NewKnowledgeDialog({ open, onOpenChange, newKnowledge, setNewKno
             </div>
           </div>
           <div>
-            <Label>Content {(["skill", "playbook"].includes(newKnowledge.category)) && <span className="text-xs text-muted-foreground">(body; SKILL.md wrapper is generated automatically)</span>}</Label>
-            <Textarea value={newKnowledge.content || ""} onChange={(e) => setNewKnowledge({ ...newKnowledge, content: e.target.value })} placeholder={newKnowledge.category === "skill" ? "Procedure or operational behavior" : newKnowledge.category === "playbook" ? "Procedure body; ordered steps go below" : "Knowledge content"} rows={7} />
+            <Label>Content {newKnowledge.category === "skill" && <span className="text-xs text-muted-foreground">(body; SKILL.md wrapper is generated automatically)</span>}</Label>
+            <Textarea value={newKnowledge.content || ""} onChange={(e) => setNewKnowledge({ ...newKnowledge, content: e.target.value })} placeholder={newKnowledge.category === "skill" ? "Procedure or operational behavior" : "Knowledge content"} rows={7} />
           </div>
           <div>
             <Label>Summary</Label>
@@ -286,7 +279,7 @@ export function ImportSkillDialog({ open, onOpenChange, importText, setImportTex
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Install Skill / Playbook (SKILL.md)</DialogTitle>
+          <DialogTitle>Install Skill (SKILL.md)</DialogTitle>
           <DialogDescription>
             Paste an agent-skills-standard SKILL.md document. Stored verbatim, deduplicated against
             existing records, imported as a draft. Frontmatter name/description become name/summary.
@@ -299,7 +292,6 @@ export function ImportSkillDialog({ open, onOpenChange, importText, setImportTex
               <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="skill">Skill</SelectItem>
-                <SelectItem value="playbook">Playbook</SelectItem>
               </SelectContent>
             </Select>
           </div>

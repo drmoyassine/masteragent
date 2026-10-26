@@ -111,13 +111,6 @@ CATEGORY_INSTRUCTIONS: Dict[str, str] = {
         "but conflicting skills should stay separate. The canonical 'content' must "
         "be a single SKILL.md body (the system will wrap it in frontmatter)."
     ),
-    "playbook": (
-        "CATEGORY: playbook. Preserve triggers, prerequisites, the ORDERED steps, "
-        "branches, decisions, escalations, rollback, roles, tools/integrations, "
-        "completion criteria, and exit conditions. The result must remain executable: "
-        "do not drop or reorder steps without cause. The canonical 'content' must be "
-        "a single playbook body (the system will wrap it in frontmatter)."
-    ),
 }
 
 
@@ -163,7 +156,7 @@ def _format_source(idx: int, src: Dict[str, Any]) -> str:
             parts.append(f"{key}: {json.dumps(val, ensure_ascii=False, default=str)}")
     if isinstance(metadata, dict) and metadata:
         parts.append("metadata: " + json.dumps(metadata, ensure_ascii=False, default=str))
-    # Operational fields for skills/playbooks
+    # Operational fields for skills
     for key in ("trigger_conditions", "triggers", "steps", "procedure", "prerequisites",
                 "permissions", "tools", "side_effects", "failure_conditions", "safety",
                 "completion_criteria", "exit_conditions", "rollback", "applies_to"):
@@ -264,10 +257,10 @@ def validate_proposal(payload: Any, category: str) -> Tuple[Optional[Consolidati
             errors.append("recommendation requires a canonical block")
         elif not (proposal.canonical.name or "").strip() or not (proposal.canonical.content or "").strip():
             errors.append("canonical.name and canonical.content are required for a merge")
-        # Skills/playbooks: the canonical content must round-trip as a valid
+        # Skills: the canonical content must round-trip as a valid
         # SKILL.md body (the apply step wraps it in frontmatter; a body that
         # cannot be parsed back is invalid and un-applicable).
-        if category in ("skill", "playbook") and proposal.canonical and not errors:
+        if category == "skill" and proposal.canonical and not errors:
             try:
                 from memory_system.maintain.skill_md import parse_skill_md, render_skill_md
                 candidate = render_skill_md(
@@ -278,7 +271,7 @@ def validate_proposal(payload: Any, category: str) -> Tuple[Optional[Consolidati
                 )
                 parse_skill_md(candidate)
             except Exception as exc:  # pragma: no cover - defensive
-                errors.append(f"skill/playbook validation failed: {exc}")
+                errors.append(f"skill validation failed: {exc}")
     if proposal.confidence is not None and not (0.0 <= float(proposal.confidence) <= 1.0):
         # clamp instead of reject — confidence is advisory
         proposal.confidence = max(0.0, min(1.0, float(proposal.confidence)))

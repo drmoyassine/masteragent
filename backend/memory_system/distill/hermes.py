@@ -1,7 +1,7 @@
 """Hermes: Admin instruction parser and router.
 
-Parses natural language admin instructions and creates knowledge,
-skill, or playbook records in the unified knowledge table.
+Parses natural language admin instructions and creates knowledge
+or skill records in the unified knowledge table.
 """
 import logging
 import uuid
@@ -34,13 +34,10 @@ async def process_admin_instruction(
         "- best_practices: A behavioral rule or Dos and Don'ts\n"
         "- lessons_learned: A negative outcome with root-cause analysis\n"
         "- trade_knowledge: A domain-specific procedural or regulatory fact\n"
-        "- skill: A discrete, composable capability (specify skill_type: soft or hard)\n"
-        "- playbook: An ordered procedure with trigger conditions\n\n"
+        "- skill: A discrete, composable capability (specify skill_type: soft or hard)\n\n"
         'Return JSON: {"category": "...", "name": "...", "content": "...", '
         '"summary": "...", "tags": [...], "signals": [...], "confidence": 0.0-1.0, '
-        '"skill_type": "soft|hard" (only for skill), '
-        '"trigger_conditions": [...] (only for playbook), '
-        '"steps": [{"order": 1, "action": "..."}] (only for playbook)}. '
+        '"skill_type": "soft|hard" (only for skill)}. '
         '"signals" are the domain topics this record relates to.'
     )
     system_prompt += "\n\n" + facet_prompt_instructions()
@@ -72,7 +69,7 @@ async def process_admin_instruction(
     if isinstance(signals, str):
         signals = [s.strip() for s in signals.split(",") if s.strip()]
 
-    # Build metadata for skill/playbook categories
+    # Build metadata for the skill category
     metadata = {}
     if determined_category == "skill":
         metadata = {
@@ -80,15 +77,6 @@ async def process_admin_instruction(
             "trigger_desc": result.get("trigger_desc", ""),
             "procedure": content,
             "entity_types": [entity_type] if entity_type else [],
-            "playbook_ids": [],
-        }
-    elif determined_category == "playbook":
-        metadata = {
-            "entity_type": entity_type or "contact",
-            "signal_type": None,
-            "trigger_conditions": result.get("trigger_conditions", []),
-            "steps": result.get("steps", []),
-            "skill_ids": [],
         }
 
     # Generate embedding via the canonical category-aware serializer.

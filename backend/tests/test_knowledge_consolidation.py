@@ -59,7 +59,7 @@ GOLDEN = {
     "lessons_learned": lambda: _row("ll1", "lessons_learned", content="Missing a visa deadline lost the enrollment.", signals=["risk"]),
     "trade_knowledge": lambda: _row("tk1", "trade_knowledge", content="Kuwait visa requires a sponsor.", signals=["visa"], metadata={"facets": {"jurisdiction": "Kuwait"}}),
     "skill": lambda: _row("sk1", "skill", content="---\nname: x\ndescription: y\n---\n# X\nprocedure", metadata={"procedure": "do thing", "trigger_desc": "when x"}),
-    "playbook": lambda: _row("pb1", "playbook", content="---\nname: p\ndescription: d\n---\n# P", metadata={"trigger_conditions": ["t1"], "steps": [{"order": 1, "action": "a"}]}),
+    "skill_with_steps": lambda: _row("sw1", "skill", content="---\nname: p\ndescription: d\n---\n# P", metadata={"trigger_conditions": ["t1"], "steps": [{"order": 1, "action": "a"}]}),
 }
 
 
@@ -221,8 +221,8 @@ class TestEmbeddingSerialization:
         text = serialize_knowledge_for_embedding(r)
         assert "Procedure" in text and "When to use" in text
 
-    def test_playbook_includes_steps_and_triggers(self):
-        r = GOLDEN["playbook"]()
+    def test_skill_metadata_steps_and_triggers_render(self):
+        r = GOLDEN["skill_with_steps"]()
         text = serialize_knowledge_for_embedding(r)
         assert "When to use" in text and "Steps" in text
 
@@ -416,7 +416,7 @@ class TestSettingsModels:
             knowledge_hygiene_similarity_threshold=0.9,
             knowledge_hygiene_max_cluster_size=8,
             knowledge_hygiene_mode="proposal_only",
-            knowledge_hygiene_enabled_categories=["skill", "playbook"],
+            knowledge_hygiene_enabled_categories=["skill"],
             knowledge_hygiene_category_policies={"skill": "auto_conservative"},
             knowledge_hygiene_creation_time_enabled=True,
         )
@@ -431,7 +431,7 @@ class TestSettingsModels:
         assert r.knowledge_hygiene_max_cluster_size == 5
         assert r.knowledge_hygiene_mode == "manual_only"
         assert r.knowledge_hygiene_creation_time_enabled is False
-        assert len(r.knowledge_hygiene_enabled_categories) == 5
+        assert len(r.knowledge_hygiene_enabled_categories) == 4
 
     def test_max_cluster_size_accepts_unbounded(self):
         from memory_system.store.models import MemorySettingsResponse, MemorySettingsUpdate
@@ -592,7 +592,7 @@ class TestRepositoryHelpers:
     def test_validate_source_set_rejects_mixed_categories(self):
         from memory_system.maintain.consolidation_service import _validate_source_set
         from memory_system.maintain.consolidation_repository import ConsolidationError
-        rows = [_row("a", "skill"), _row("b", "playbook")]
+        rows = [_row("a", "skill"), _row("b", "best_practices")]
         with pytest.raises(ConsolidationError) as exc:
             _validate_source_set(rows, origin="manual")
         assert exc.value.code == "mixed_categories" and exc.value.status == 400

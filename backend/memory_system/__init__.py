@@ -3,7 +3,7 @@
 Subpackages:
   ingest/    interaction ingestion + per-agent rate limiting
   distill/   the knowledge distillation tiers (memories → intelligence →
-             knowledge → playbooks/skills/telemetry, evidence routing, facets)
+             knowledge → skills/telemetry, evidence routing, facets)
   maintain/  consolidation, clustering/similarity, quality, skill-md rendering,
              embedding machinery + backfill, operation metrics, retention
   store/     DB writes, pydantic models, shared entity-type helpers

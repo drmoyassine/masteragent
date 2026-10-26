@@ -64,28 +64,6 @@ class SkillCandidate(EvidenceFields):
     edge_cases: List[str] = Field(default_factory=list)
 
 
-class PlaybookCandidate(EvidenceFields):
-    target: Literal["playbook"] = "playbook"
-    name: str
-    description: str
-    purpose: str = ""
-    expected_outcome: str = ""
-    signal_type: Optional[str] = None
-    trigger_conditions: List[str] = Field(default_factory=list)
-    prerequisites: List[str] = Field(default_factory=list)
-    required_inputs: List[str] = Field(default_factory=list)
-    responsible_roles: List[str] = Field(default_factory=list)
-    tools: List[str] = Field(default_factory=list)
-    steps: List[Dict[str, Any]] = Field(default_factory=list)
-    branches: List[str] = Field(default_factory=list)
-    escalation_rules: List[str] = Field(default_factory=list)
-    failure_conditions: List[str] = Field(default_factory=list)
-    rollback: List[str] = Field(default_factory=list)
-    safety_requirements: List[str] = Field(default_factory=list)
-    completion_criteria: List[str] = Field(default_factory=list)
-    exit_conditions: List[str] = Field(default_factory=list)
-
-
 def _raise_contract(context: str, exc: Exception) -> None:
     raise ValueError(f"Invalid {context} generation contract: {exc}") from exc
 
@@ -111,23 +89,10 @@ def validate_telemetry_candidate(payload: Dict[str, Any]) -> EvidenceFields:
         if target == "skill":
             normalized = {**payload, "trigger_desc": payload.get("trigger_desc") or payload.get("summary") or "", "procedure": payload.get("procedure") or payload.get("content") or "", "summary": payload.get("summary") or ""}
             return SkillCandidate.model_validate(normalized)
-        if target == "playbook":
-            normalized = {**payload, "description": payload.get("description") or payload.get("summary") or payload.get("content") or ""}
-            return PlaybookCandidate.model_validate(normalized)
         normalized = {**payload, "decision": "create", "category": target}
         return validate_declarative(normalized)
     except ValidationError as exc:
         _raise_contract("telemetry", exc)
-
-
-def validate_playbook(payload: Dict[str, Any]) -> PlaybookCandidate:
-    try:
-        return PlaybookCandidate.model_validate({
-            **payload, "target": "playbook", "confidence": payload.get("confidence", 0.5),
-            "description": payload.get("description") or payload.get("summary") or "",
-        })
-    except ValidationError as exc:
-        _raise_contract("playbook", exc)
 
 
 def validate_skill(payload: Dict[str, Any]) -> SkillCandidate:

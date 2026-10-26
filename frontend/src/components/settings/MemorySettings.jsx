@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import api, { triggerMemoryGeneration, triggerIntelligenceCheck, triggerKnowledgeCheck, triggerPlaybookExtraction, exportKnowledgePack, triggerBackfillFacets, triggerReflectTelemetry, triggerInteractionRetention, fetchProviderModels, analyzeHygieneNow, backfillEmbeddings, getEmbeddingCoverage, getPipelineRuns, getMaintenanceControls, getMaintenanceEligibleCounts, refreshMaintenanceEligibleCounts, setMaintenanceControl, getPipelineHealth } from "@/lib/api";
+import api, { triggerMemoryGeneration, triggerIntelligenceCheck, triggerKnowledgeCheck, triggerSkillExtraction, exportKnowledgePack, triggerBackfillFacets, triggerReflectTelemetry, triggerInteractionRetention, fetchProviderModels, analyzeHygieneNow, backfillEmbeddings, getEmbeddingCoverage, getPipelineRuns, getMaintenanceControls, getMaintenanceEligibleCounts, refreshMaintenanceEligibleCounts, setMaintenanceControl, getPipelineHealth } from "@/lib/api";
 import { useEffect, useMemo, useRef } from "react";
 
 const apiErrorMessage = (error, fallback) => {
@@ -1017,7 +1017,7 @@ function IntelligenceTab({ settings, onUpdateSettings, llmConfigs, llmProviders,
 // â”€â”€â”€ Knowledge Tab â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function LegacyKnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, onSaveConfig, onDeleteConfig, onAddConfig, modelLists, fetchingModels, fetchErrors, onFetchModels, onReorderPipeline, entityTypes }) {
     const publicPipelineNodes = llmConfigs.filter((c) => c.pipeline_stage === "knowledge").sort((a,b) => a.execution_order - b.execution_order);
-    const [triggering, setTriggering] = useState(null); // 'check' | 'drain' | 'playbooks' | 'consolidation' | 'facets' | 'export'
+    const [triggering, setTriggering] = useState(null); // 'check' | 'drain' | 'skills' | 'consolidation' | 'facets' | 'export'
     const [facetsSchemaText, setFacetsSchemaText] = useState("[]");
     const [profileMapText, setProfileMapText] = useState("{}");
 
@@ -1089,11 +1089,11 @@ function LegacyKnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProvide
                 </CardHeader>
                 <CardContent className="flex items-center gap-2 flex-wrap">
                     <Button size="sm" variant="outline" className="gap-1.5"
-                        title="Cluster confirmed intelligence across entities and extract playbooks + skills (normally weekly)"
-                        onClick={() => runTrigger('playbooks', triggerPlaybookExtraction, "Playbook extraction queued")}
+                        title="Cluster confirmed intelligence across entities and extract skills (normally weekly)"
+                        onClick={() => runTrigger('skills', triggerSkillExtraction, "Skill extraction queued")}
                         disabled={!!triggering}>
                         <Brain className="w-3.5 h-3.5" />
-                        Extract Skills & Playbooks
+                        Extract Skills
                     </Button>
                     <Button size="sm" variant="outline" className="gap-1.5"
                         title="Download the whole knowledge base as a memory-file pack (INDEX.md + one markdown file per record)"
@@ -1117,7 +1117,7 @@ function LegacyKnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProvide
                         Backfill Facets
                     </Button>
                     <Button size="sm" variant="outline" className="gap-1.5"
-                        title="Reflect on yesterday's AI telemetry to extract skills/playbooks/knowledge"
+                        title="Reflect on yesterday's AI telemetry to extract skills/knowledge"
                         onClick={() => runTrigger('telemetry', () => triggerReflectTelemetry(), "Telemetry reflection queued")}
                         disabled={!!triggering}>
                         <Cpu className="w-3.5 h-3.5" />
@@ -1266,7 +1266,7 @@ function LegacyKnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProvide
                         <div className="space-y-0.5 pr-4">
                             <Label className="text-xs font-mono">Refine on Merge</Label>
                             <p className="text-[10px] text-muted-foreground">
-                                When a new precursor matches an existing knowledge/skill/playbook, LLM-merge the new
+                                When a new precursor matches an existing knowledge/skill record, LLM-merge the new
                                 evidence into it (update-in-place, version bump) instead of only counting the match.
                                 Falls back to a plain count increment on any failure.
                             </p>
@@ -1282,7 +1282,7 @@ function LegacyKnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProvide
                         <div className="space-y-0.5 pr-4">
                             <Label className="text-xs font-mono">Auto-activate New Knowledge</Label>
                             <p className="text-[10px] text-muted-foreground">
-                                When on, new knowledge — including telemetry-reflected skill/playbook candidates — is
+                                When on, new knowledge — including telemetry-reflected skill candidates — is
                                 created <code>active</code> so the agent sees it immediately. Turn off to keep new
                                 knowledge as drafts for review. Existing drafts were activated once on deploy.
                             </p>
@@ -1378,7 +1378,7 @@ function LegacyKnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProvide
                         <CardTitle className="text-lg">Quality Gauges</CardTitle>
                     </div>
                     <CardDescription className="text-xs mt-1.5">
-                        Controls for deduplication, quality scoring, consolidation, and playbook extraction.
+                        Controls for deduplication, quality scoring, consolidation, and skill extraction.
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
@@ -1424,42 +1424,6 @@ function LegacyKnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProvide
                     </div>
 
                     {/* Creation-time Dedup */}
-                    <div className="border-t pt-4">
-                        <div className="flex items-center justify-between">
-                            <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Creation-time Dedup</Label>
-                            <Switch
-                                checked={settings.knowledge_creation_dedup_enabled !== undefined ? settings.knowledge_creation_dedup_enabled : true}
-                                onCheckedChange={(v) => onUpdateSettings("knowledge_creation_dedup_enabled", v)}
-                            />
-                        </div>
-                        <p className="text-[10px] text-muted-foreground mt-2">When on, every knowledge creation pathway (intelligence, telemetry, playbook, skill) merges into an existing near-identical record instead of creating a duplicate. Uses the "Duplicate Similarity Threshold" above (shared with weekly consolidation).</p>
-                    </div>
-
-                    {/* Playbook Extraction */}
-                    <div className="border-t pt-4">
-                        <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Playbook Extraction</Label>
-                        <div className="grid grid-cols-2 gap-4 mt-2">
-                            <div className="space-y-1">
-                                <Label className="text-xs font-mono">Playbook Interval (days)</Label>
-                                <Input
-                                    type="number" min="1" max="30"
-                                    value={settings.playbook_extraction_interval_days ?? 7}
-                                    onChange={(e) => onUpdateSettings("playbook_extraction_interval_days", parseInt(e.target.value) || 7)}
-                                />
-                                <p className="text-[10px] text-muted-foreground">How often to attempt playbook extraction</p>
-                            </div>
-                            <div className="space-y-1">
-                                <Label className="text-xs font-mono">Evidence Threshold</Label>
-                                <Input
-                                    type="number" min="5" max="100"
-                                    value={settings.playbook_extraction_evidence_threshold ?? 20}
-                                    onChange={(e) => onUpdateSettings("playbook_extraction_evidence_threshold", parseInt(e.target.value) || 20)}
-                                />
-                                <p className="text-[10px] text-muted-foreground">Unlinked intelligence needed to trigger early extraction</p>
-                            </div>
-                        </div>
-                    </div>
-
                     {/* Processing */}
                     <div className="border-t pt-4">
                         <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Processing</Label>
@@ -1510,7 +1474,7 @@ function LegacyKnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProvide
                     </div>
                     <CardDescription className="text-xs mt-1.5">
                         Nightly reflection on the agent's own telemetry (internal_ai_thought / internal_ai_tool_call).
-                        Learns by doing: extracts reusable skills, playbooks, and trade-knowledge from what the agent
+                        Learns by doing: extracts reusable skills and trade-knowledge from what the agent
                         actually did or discovered — per entity, per day. Recurring learnings strengthen via dedup/merge.
                     </CardDescription>
                 </CardHeader>
@@ -1519,7 +1483,7 @@ function LegacyKnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProvide
                         <div className="space-y-0.5 pr-4">
                             <Label className="text-xs font-mono">Enable Nightly Reflection</Label>
                             <p className="text-[10px] text-muted-foreground">
-                                Emits typed candidates (skill / playbook / best_practices / lessons_learned / trade_knowledge)
+                                Emits typed candidates (skill / best_practices / lessons_learned / trade_knowledge)
                                 as drafts. A single-session discovery starts at evidence_breadth=1 and promotes as it recurs.
                             </p>
                         </div>
@@ -1948,7 +1912,7 @@ function KnowledgeTab({ settings, onUpdateSettings, llmConfigs, llmProviders, on
                     </Card>
 
                     <Card><CardHeader><CardTitle className="text-base">Pre-generation evidence routing</CardTitle><CardDescription>Uses persisted source embeddings before an expensive generation call. Similarity discovers the route; the LLM decides whether moderate matches revise an existing record.</CardDescription></CardHeader><CardContent className="space-y-4">
-                        <div className="flex items-center justify-between"><div><SettingLabel help="evidence_routing">Evidence routing enabled</SettingLabel><p className="text-[10px] text-muted-foreground">Applies to declarative, telemetry, playbook, and skill pathways.</p></div><Switch checked={settings.knowledge_evidence_routing_enabled ?? true} onCheckedChange={(v) => onUpdateSettings("knowledge_evidence_routing_enabled", v)} /></div>
+                        <div className="flex items-center justify-between"><div><SettingLabel help="evidence_routing">Evidence routing enabled</SettingLabel><p className="text-[10px] text-muted-foreground">Applies to declarative, telemetry, and skill pathways.</p></div><Switch checked={settings.knowledge_evidence_routing_enabled ?? true} onCheckedChange={(v) => onUpdateSettings("knowledge_evidence_routing_enabled", v)} /></div>
                         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4"><div className="space-y-1"><SettingLabel help="evidence_mode">Mode</SettingLabel><Select value={settings.knowledge_evidence_routing_mode || "analysis_only"} onValueChange={(v) => onUpdateSettings("knowledge_evidence_routing_mode", v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="analysis_only">Analysis only</SelectItem><SelectItem value="enforced">Enforced</SelectItem></SelectContent></Select></div><div className="space-y-1"><SettingLabel help="evidence_low">Moderate from</SettingLabel><Input type="number" min="0" max="1" step="0.01" value={settings.knowledge_evidence_low_threshold ?? 0.78} onChange={(e) => onUpdateSettings("knowledge_evidence_low_threshold", Number(e.target.value))} /></div><div className="space-y-1"><SettingLabel help="evidence_high">Very high from</SettingLabel><Input type="number" min="0" max="1" step="0.01" value={settings.knowledge_evidence_high_threshold ?? 0.95} onChange={(e) => onUpdateSettings("knowledge_evidence_high_threshold", Number(e.target.value))} /></div><div className="space-y-1"><SettingLabel help="evidence_coverage">High-match coverage</SettingLabel><Input type="number" min="0" max="1" step="0.05" value={settings.knowledge_evidence_high_coverage ?? 0.9} onChange={(e) => onUpdateSettings("knowledge_evidence_high_coverage", Number(e.target.value))} /></div></div>
                     </CardContent></Card>
 
@@ -2112,7 +2076,7 @@ function KnowledgeRunHistory({ runs }) {
 // always comes from the category-aware LLM proposal + review. First rollout
 // is manual_only; auto modes are exposed but disabled by default.
 function KnowledgeHygieneCard({ settings, onUpdateSettings }) {
-    const CATEGORIES = ["best_practices", "lessons_learned", "trade_knowledge", "skill", "playbook"];
+    const CATEGORIES = ["best_practices", "lessons_learned", "trade_knowledge", "skill"];
     const enabledCats = settings.knowledge_hygiene_enabled_categories || CATEGORIES;
     const catPolicies = settings.knowledge_hygiene_category_policies || {};
     const hygieneModes = [

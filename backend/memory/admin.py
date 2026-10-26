@@ -32,7 +32,7 @@ from memory_system.store.models import (
     SearchRequest, SearchResponse, SearchResult, MemoryUpdate,
     OutboundWebhookCreate, OutboundWebhookUpdate, OutboundWebhookResponse,
     VisionWebhookCreate, VisionWebhookUpdate,
-    AdminInstruction, PlaybookFeedback,
+    AdminInstruction, KnowledgeFeedback,
     ConsolidationPreviewRequest, ConsolidationApplyRequest, ConsolidationAnalyzeRequest,
     KnowledgeAttachmentProposalRequest, KnowledgeDraftProposalRequest,
 )
@@ -441,7 +441,7 @@ async def propose_knowledge_from_attachments(
     admin: dict = Depends(require_admin_auth),
 ):
     """Generate an editable category-aware canonical proposal from extracted sources."""
-    allowed_categories = {"best_practices", "lessons_learned", "trade_knowledge", "skill", "playbook"}
+    allowed_categories = {"best_practices", "lessons_learned", "trade_knowledge", "skill"}
     if body.category not in allowed_categories:
         raise HTTPException(status_code=400, detail="Unsupported knowledge category")
     from memory_system.distill.knowledge_attachments import load_ready_attachment_text
@@ -475,7 +475,7 @@ Rules:
 - Do not invent claims or fill gaps with assumptions.
 - Preserve qualifications, exceptions, context, tables, and operational requirements.
 - Keep page/sheet references in source_traceability where practical.
-- For skills and playbooks, return metadata fields compatible with the SKILL.md contract.
+- For skills, return metadata fields compatible with the SKILL.md contract.
 - Return ONLY JSON with keys: name, summary, content, metadata, signals, tags, warnings, contradictions, source_traceability.
 
 {chr(10).join(source_text)}"""
@@ -499,7 +499,7 @@ async def propose_knowledge_draft(
     admin: dict = Depends(require_admin_auth),
 ):
     """Generate an editable structured draft without creating or changing a record."""
-    allowed_categories = {"best_practices", "lessons_learned", "trade_knowledge", "skill", "playbook"}
+    allowed_categories = {"best_practices", "lessons_learned", "trade_knowledge", "skill"}
     if body.category not in allowed_categories:
         raise HTTPException(status_code=400, detail="Unsupported knowledge category")
 
@@ -541,7 +541,7 @@ metadata: {json.dumps(body.metadata or {}, ensure_ascii=False)}
 
 Rules:
 - Do not invent claims; preserve qualifications, exceptions, evidence and provenance.
-- Return category-appropriate structured metadata. For skills/playbooks preserve the complete SKILL.md-inspired contract.
+- Return category-appropriate structured metadata. For skills preserve the complete SKILL.md-inspired contract.
 - Return ONLY JSON with keys: name, summary, content, metadata, signals, tags, warnings, contradictions, source_traceability.
 
 {chr(10).join(source_text)}"""
@@ -581,7 +581,7 @@ async def download_knowledge_attachment(knowledge_id: str, attachment_id: str, a
 
 @admin_crud.post("/knowledge")
 async def create_knowledge(body: KnowledgeCreate, admin: dict = Depends(require_admin_auth)):
-    """Manually create a Knowledge. Skill/playbook content is stored in
+    """Manually create a Knowledge. Skill content is stored in
     agent-skills-standard SKILL.md format (rendered here if plain text)."""
     knowledge_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
@@ -920,7 +920,7 @@ async def consolidation_analyze(body: ConsolidationAnalyzeRequest, admin: dict =
             detail="Analyze endpoint is non-destructive; use analysis_only, proposal_only, or manual_only",
         )
     categories = settings.get("knowledge_hygiene_enabled_categories") or [
-        "best_practices", "lessons_learned", "trade_knowledge", "skill", "playbook"
+        "best_practices", "lessons_learned", "trade_knowledge", "skill"
     ]
     if body.category:
         categories = [body.category]
@@ -1131,8 +1131,6 @@ async def update_entity_type_config(
         fields.append("decay_max_inactive_days = %s"); values.append(body.decay_max_inactive_days)
     if body.decay_min_interactions_since_trigger is not None:
         fields.append("decay_min_interactions_since_trigger = %s"); values.append(body.decay_min_interactions_since_trigger)
-    if body.playbook_auto_activate is not None:
-        fields.append("playbook_auto_activate = %s"); values.append(body.playbook_auto_activate)
     if body.skill_auto_activate is not None:
         fields.append("skill_auto_activate = %s"); values.append(body.skill_auto_activate)
 
@@ -1244,12 +1242,12 @@ async def trigger_knowledge_check(
             "max_rounds": max_rounds if drain else 1, "max_records": max_records, "jobs": queued}
 
 
-@router.post("/trigger/extract-playbooks")
-async def trigger_playbook_extraction(admin: dict = Depends(require_admin_auth)):
-    """Manually trigger playbook + skill extraction (normally weekly) via queue drop."""
+@router.post("/trigger/extract-skills")
+async def trigger_skill_extraction(admin: dict = Depends(require_admin_auth)):
+    """Manually trigger skill extraction (normally weekly) via queue drop."""
     from memory.queue import knowledge_queue
-    await knowledge_queue.add("extract_playbooks", {}, {"priority": 1})
-    return {"message": "Playbook extraction queued"}
+    await knowledge_queue.add("extract_skills", {}, {"priority": 1})
+    return {"message": "Skill extraction queued"}
 
 
 @router.post("/trigger/run-consolidation")
@@ -1316,7 +1314,7 @@ async def trigger_reflect_telemetry(
     reflection_date: Optional[str] = Query(None, description="YYYY-MM-DD; default yesterday"),
     admin: dict = Depends(require_admin_auth),
 ):
-    """Manually run telemetry reflection (AI telemetry → skill/playbook/knowledge) for a day."""
+    """Manually run telemetry reflection (AI telemetry → skill/knowledge) for a day."""
     from memory.queue import knowledge_queue
     await knowledge_queue.add("reflect_telemetry", {"reflection_date": reflection_date}, {"priority": 3})
     return {"message": "Telemetry reflection queued", "reflection_date": reflection_date}
@@ -2551,7 +2549,7 @@ async def delete_vision_webhook(webhook_id: str, admin: dict = Depends(require_a
 
 @router.post("/instruct")
 async def admin_instruct(body: AdminInstruction, admin: dict = Depends(require_admin_auth)):
-    """Parse a natural language instruction via Hermes and create a knowledge/skill/playbook record."""
+    """Parse a natural language instruction via Hermes and create a knowledge/skill record."""
     from memory_system.distill.hermes import process_admin_instruction
     result = await process_admin_instruction(
         instruction=body.instruction,
@@ -2566,7 +2564,7 @@ async def admin_instruct(body: AdminInstruction, admin: dict = Depends(require_a
 @admin_crud.post("/knowledge/{knowledge_id}/feedback")
 async def submit_knowledge_feedback(
     knowledge_id: str,
-    body: PlaybookFeedback,
+    body: KnowledgeFeedback,
     admin: dict = Depends(require_admin_auth),
 ):
     """Append feedback to a knowledge record (success/failure outcome)."""
@@ -2624,9 +2622,9 @@ async def export_knowledge_pack(
     status: str = Query("active", description="active | draft | retired | all"),
     auth: dict = Depends(require_admin_or_agent),
 ):
-    """Export Knowledge Markdown plus portable skill/playbook packages.
+    """Export Knowledge Markdown plus portable skill packages.
 
-    Skill and playbook entries are exported as ``<slug>/SKILL.md`` so the
+    Skill entries are exported as ``<slug>/SKILL.md`` so the
     frontmatter name matches the package directory required by Agent Skills.
     Declarative records remain ordinary Knowledge Markdown files.
     """
@@ -2722,7 +2720,7 @@ async def erase_entity_data(
 
 class SkillImportBody(BaseModel):
     skill_md: str
-    category: str = "skill"          # skill | playbook
+    category: str = "skill"
     status: str = "draft"            # draft | active
     signals: Optional[list] = None
     tags: Optional[list] = None
@@ -2738,7 +2736,7 @@ async def import_skill_md(body: SkillImportBody, admin: dict = Depends(require_a
     from memory_system.store.writes import insert_knowledge
 
     if body.category not in SKILL_MD_CATEGORIES:
-        raise HTTPException(status_code=400, detail="category must be 'skill' or 'playbook'")
+        raise HTTPException(status_code=400, detail="category must be 'skill'")
     try:
         parsed = validate_skill_md(body.skill_md)
     except ValueError as e:

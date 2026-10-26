@@ -176,7 +176,7 @@ def get_schema_by_config_id(config_id: str) -> Optional[str]:
 def get_task_system_prompt(task_type: str, fallback: Optional[str] = None) -> Optional[str]:
     """Resolve the active system prompt for a task type (sync, single-node pick).
 
-    Knowledge-generation pathways (telemetry reflection, playbook extraction,
+    Knowledge-generation pathways (telemetry reflection, skill extraction,
     skill decomposition) pick ONE config node by task_type rather than running a
     sequential pipeline — this returns that node's inline prompt, falling back to
     the caller's hardcoded default when no active config / no prompt is set.

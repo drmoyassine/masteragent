@@ -153,5 +153,5 @@ def _eligible_source_count(operation: str) -> int:
                     WHERE l.source_type='intelligence' AND l.source_id=i.id)""")
             return int(cur.fetchone()["count"] or 0)
         cur.execute("""SELECT COUNT(*) count FROM knowledge WHERE status='active'
-            AND category IN ('best_practices','lessons_learned','trade_knowledge','skill','playbook')""")
+            AND category IN ('best_practices','lessons_learned','trade_knowledge','skill')""")
         return int(cur.fetchone()["count"] or 0)

@@ -3,7 +3,7 @@
 Follows the Anthropic agent-skills standard: YAML frontmatter with `name`
 (lowercase-hyphen slug, <=64 chars) and `description` (<=1024 chars stating
 what the skill does AND when to use it), followed by a markdown instruction
-body. For category='skill' and category='playbook' records the `content`
+body. For category='skill' records the `content`
 column stores this full document verbatim — there is no separate column.
 `summary` keeps the description for compact context injection; `metadata`
 keeps the structured steps/trigger_conditions for programmatic access.
@@ -14,7 +14,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-SKILL_MD_CATEGORIES = ("skill", "playbook")
+SKILL_MD_CATEGORIES = ("skill",)
 
 
 def slugify(name: str, max_len: int = 64) -> str:
@@ -49,9 +49,7 @@ def render_skill_md(
 ) -> str:
     """Render a standard-compliant SKILL.md document from knowledge-record fields.
 
-    Playbooks render their trigger conditions and ordered steps into the body;
-    skills render their procedure. Both share the same SKILL.md format (the
-    agent-skills standard has no separate playbook format).
+    Skills render their trigger description and procedure into the body.
     """
     metadata = metadata or {}
     description = (description or "").strip()[:1024] or f"Organizational {category} extracted from experience."
@@ -106,67 +104,32 @@ def render_skill_md(
         lines.extend(f"- {value}" for value in values)
         lines.append("")
 
-    if category == "playbook":
-        if metadata.get("purpose"):
-            lines.extend(["## Purpose", "", str(metadata["purpose"]).strip(), ""])
-        if metadata.get("expected_outcome"):
-            lines.extend(["## Expected outcome", "", str(metadata["expected_outcome"]).strip(), ""])
-        if body:
-            lines.append(body.strip())
-            lines.append("")
-        triggers = metadata.get("trigger_conditions") or []
-        if triggers:
-            lines.append("## When to use")
-            lines.append("")
-            for t in triggers:
-                lines.append(f"- {t}")
-            lines.append("")
-        _list_section("Prerequisites", metadata.get("prerequisites"))
-        _list_section("Required inputs", metadata.get("required_inputs"))
-        _list_section("Responsible roles", metadata.get("responsible_roles"))
-        _list_section("Tools and integrations", metadata.get("tools"))
-        steps = metadata.get("steps") or []
-        if steps:
-            lines.append("## Steps")
-            lines.append("")
-            for s in sorted(steps, key=lambda x: x.get("order", 0) if isinstance(x, dict) else 0):
-                action = s.get("action", "") if isinstance(s, dict) else str(s)
-                lines.append(f"{s.get('order', '')}. {action}" if isinstance(s, dict) and s.get("order") else f"- {action}")
-            lines.append("")
-        _list_section("Branches and decisions", metadata.get("branches"))
-        _list_section("Escalation", metadata.get("escalation_rules"))
-        _list_section("Failure conditions", metadata.get("failure_conditions"))
-        _list_section("Rollback and recovery", metadata.get("rollback"))
-        _list_section("Safety requirements", metadata.get("safety_requirements"))
-        _list_section("Completion criteria", metadata.get("completion_criteria"))
-        _list_section("Exit conditions", metadata.get("exit_conditions"))
-    else:  # skill
-        if metadata.get("purpose"):
-            lines.extend(["## Purpose", "", str(metadata["purpose"]).strip(), ""])
-        trigger_desc = metadata.get("trigger_desc") or ""
-        if trigger_desc and trigger_desc.strip() != description:
-            lines.append("## When to use")
-            lines.append("")
-            lines.append(trigger_desc.strip())
-            lines.append("")
-        procedure = metadata.get("procedure") or body
-        if procedure:
-            lines.append("## Procedure")
-            lines.append("")
-            lines.append(procedure.strip())
-            lines.append("")
-        _list_section("Inputs", metadata.get("inputs"))
-        _list_section("Outputs", metadata.get("outputs"))
-        _list_section("Prerequisites", metadata.get("prerequisites"))
-        _list_section("Tools and integrations", metadata.get("tools"))
-        _list_section("Permissions", metadata.get("permissions"))
-        _list_section("Applicable environments", metadata.get("environments"))
-        _list_section("Side effects", metadata.get("side_effects"))
-        _list_section("Failure conditions", metadata.get("failure_conditions"))
-        _list_section("Recovery", metadata.get("recovery"))
-        _list_section("Safety requirements", metadata.get("safety_requirements"))
-        _list_section("Examples", metadata.get("examples"))
-        _list_section("Edge cases", metadata.get("edge_cases"))
+    if metadata.get("purpose"):
+        lines.extend(["## Purpose", "", str(metadata["purpose"]).strip(), ""])
+    trigger_desc = metadata.get("trigger_desc") or ""
+    if trigger_desc and trigger_desc.strip() != description:
+        lines.append("## When to use")
+        lines.append("")
+        lines.append(trigger_desc.strip())
+        lines.append("")
+    procedure = metadata.get("procedure") or body
+    if procedure:
+        lines.append("## Procedure")
+        lines.append("")
+        lines.append(procedure.strip())
+        lines.append("")
+    _list_section("Inputs", metadata.get("inputs"))
+    _list_section("Outputs", metadata.get("outputs"))
+    _list_section("Prerequisites", metadata.get("prerequisites"))
+    _list_section("Tools and integrations", metadata.get("tools"))
+    _list_section("Permissions", metadata.get("permissions"))
+    _list_section("Applicable environments", metadata.get("environments"))
+    _list_section("Side effects", metadata.get("side_effects"))
+    _list_section("Failure conditions", metadata.get("failure_conditions"))
+    _list_section("Recovery", metadata.get("recovery"))
+    _list_section("Safety requirements", metadata.get("safety_requirements"))
+    _list_section("Examples", metadata.get("examples"))
+    _list_section("Edge cases", metadata.get("edge_cases"))
 
     return "\n".join(lines).rstrip() + "\n"
 
@@ -185,7 +148,7 @@ def render_knowledge_md(
     """Render a declarative knowledge record (best_practices / lessons_learned /
     trade_knowledge) as a memory-file-style markdown document.
 
-    Export-only: unlike skills/playbooks the source `content` is NOT stored in
+    Export-only: unlike skills the source `content` is NOT stored in
     this format (it feeds LLM prompts where frontmatter is noise). All fields are
     relational, so this rendering is lossless. Follows the same frontmatter
     discovery-header principle as the agent-skills standard: name + description
@@ -219,7 +182,7 @@ def render_knowledge_md(
 def render_any_knowledge_md(row: dict) -> str:
     """Render any knowledge row to markdown, dispatching by category.
 
-    skill/playbook → SKILL.md (verbatim if already frontmatter'd, else rendered);
+    skill → SKILL.md (verbatim if already frontmatter'd, else rendered);
     declarative categories → memory-file markdown. `row` is a dict of the
     knowledge columns.
     """

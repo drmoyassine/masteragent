@@ -210,14 +210,12 @@ class MemorySettingsUpdate(BaseModel):
     rate_limit_per_minute: Optional[int] = 60
     # Agent access
     default_agent_access: Optional[str] = "private"
-    # ── Knowledge / Playbook / Skill quality gauges (global) ───────────
+    # ── Knowledge / Skill quality gauges (global) ───────────
     dedup_similarity_threshold: Optional[float] = 0.85
     extraction_confidence_threshold: Optional[float] = 0.6
     consolidation_run_interval_days: Optional[int] = 7
     memory_generation_interaction_types: Optional[List[str]] = None
     memory_generation_interaction_types_mode: Optional[str] = "exclude"
-    playbook_extraction_interval_days: Optional[int] = 7
-    playbook_extraction_evidence_threshold: Optional[int] = 20
     # Max output tokens for generation LLM calls
     memory_generation_max_tokens: Optional[int] = 1200
     intelligence_max_tokens: Optional[int] = 1200
@@ -238,9 +236,7 @@ class MemorySettingsUpdate(BaseModel):
     knowledge_schedule_enabled: Optional[bool] = True
     knowledge_generation_time: Optional[str] = "03:00"
     knowledge_schedule_floor: Optional[int] = 2
-    playbook_schedule_enabled: Optional[bool] = True
-    playbook_generation_time: Optional[str] = "03:30"
-    # Telemetry reflection (AI telemetry → skill/playbook/knowledge)
+    # Telemetry reflection (AI telemetry → skill/knowledge)
     telemetry_reflection_enabled: Optional[bool] = True
     telemetry_reflection_time: Optional[str] = "04:00"
     telemetry_reflection_confidence_min: Optional[float] = 0.6
@@ -294,7 +290,7 @@ class MemorySettingsUpdate(BaseModel):
             and self.knowledge_hygiene_min_cluster_size > self.knowledge_hygiene_max_cluster_size
         ):
             raise ValueError("knowledge_hygiene_min_cluster_size cannot exceed max_cluster_size")
-        allowed_categories = {"best_practices", "lessons_learned", "trade_knowledge", "skill", "playbook"}
+        allowed_categories = {"best_practices", "lessons_learned", "trade_knowledge", "skill"}
         if self.knowledge_hygiene_enabled_categories is not None:
             invalid = set(self.knowledge_hygiene_enabled_categories) - allowed_categories
             if invalid:
@@ -312,7 +308,7 @@ class MemorySettingsUpdate(BaseModel):
         ):
             raise ValueError("knowledge_evidence_low_threshold must be below high_threshold")
         allowed_pathways = {
-            "declarative_knowledge", "telemetry_reflection", "playbook_extraction",
+            "declarative_knowledge", "telemetry_reflection",
             "skill_extraction", "manual_creation", "import",
         }
         if self.knowledge_generation_pathway_overrides is not None:
@@ -349,8 +345,6 @@ class MemorySettingsResponse(BaseModel):
     consolidation_run_interval_days: int = 7
     memory_generation_interaction_types: Optional[List[str]] = None
     memory_generation_interaction_types_mode: Optional[str] = "exclude"
-    playbook_extraction_interval_days: int = 7
-    playbook_extraction_evidence_threshold: int = 20
     knowledge_auto_activate: bool = True
     knowledge_creation_dedup_enabled: bool = True
     # Governed facet settings must be returned as well as accepted by the
@@ -362,7 +356,7 @@ class MemorySettingsResponse(BaseModel):
     profile_facet_map: Optional[Dict[str, Any]] = None
     # Knowledge hygiene & consolidation
     knowledge_hygiene_enabled: bool = True
-    knowledge_hygiene_enabled_categories: List[str] = ["best_practices", "lessons_learned", "trade_knowledge", "skill", "playbook"]
+    knowledge_hygiene_enabled_categories: List[str] = ["best_practices", "lessons_learned", "trade_knowledge", "skill"]
     knowledge_hygiene_similarity_threshold: float = 0.82
     knowledge_hygiene_min_cluster_size: int = 2
     knowledge_hygiene_max_cluster_size: Optional[int] = 5
@@ -380,7 +374,6 @@ class MemorySettingsResponse(BaseModel):
         "lessons_learned": "manual_only",
         "trade_knowledge": "manual_only",
         "skill": "manual_only",
-        "playbook": "manual_only",
     }
     knowledge_generation_enabled: bool = True
     knowledge_generation_max_tokens: int = 1200
@@ -664,7 +657,6 @@ class EntityTypeConfig(BaseModel):
     auto_activate_score_threshold: Optional[float] = None  # null = disabled
     decay_max_inactive_days: int = 90
     decay_min_interactions_since_trigger: int = 100
-    playbook_auto_activate: bool = False
     skill_auto_activate: bool = False
 
 class EntityTypeConfigUpdate(BaseModel):
@@ -688,7 +680,6 @@ class EntityTypeConfigUpdate(BaseModel):
     auto_activate_score_threshold: Optional[float] = None
     decay_max_inactive_days: Optional[int] = None
     decay_min_interactions_since_trigger: Optional[int] = None
-    playbook_auto_activate: Optional[bool] = None
     skill_auto_activate: Optional[bool] = None
 
 # ============================================
@@ -706,7 +697,7 @@ class SearchRequest(BaseModel):
     limit: int = 20
     offset: int = 0
     # Knowledge-layer filters (ignored by other layers)
-    knowledge_category: Optional[str] = None   # skill | playbook | best_practices | lessons_learned | trade_knowledge
+    knowledge_category: Optional[str] = None   # skill | best_practices | lessons_learned | trade_knowledge
     knowledge_signal: Optional[str] = None      # single signal name to require
     knowledge_facets: Optional[Dict[str, Any]] = None  # governed metadata.facets hard/soft filter
     strict: Optional[bool] = False                     # True = hard facet filter; False (default) = ignore facets
@@ -847,7 +838,7 @@ class OutboundWebhookResponse(BaseModel):
 
 
 # ============================================
-# Knowledge Categories, Playbooks & Skills
+# Knowledge Categories & Skills
 # ============================================
 
 class KnowledgeCategory(str, Enum):
@@ -855,16 +846,15 @@ class KnowledgeCategory(str, Enum):
     lessons_learned = "lessons_learned"
     trade_knowledge = "trade_knowledge"
     skill = "skill"
-    playbook = "playbook"
 
 
-class PlaybookStep(BaseModel):
+class SkillStep(BaseModel):
     order: int
     action: str
     skill_id: Optional[str] = None
 
 
-class PlaybookFeedback(BaseModel):
+class KnowledgeFeedback(BaseModel):
     entity_id: str
     outcome: str  # "success" | "failure" | "partial"
     notes: Optional[str] = None
@@ -872,7 +862,7 @@ class PlaybookFeedback(BaseModel):
 
 class AdminInstruction(BaseModel):
     instruction: str
-    target: str = "auto"  # "knowledge" | "skill" | "playbook" | "auto"
+    target: str = "auto"  # "knowledge" | "skill" | "auto"
     category: Optional[str] = None  # for knowledge targets
     entity_type: Optional[str] = None
     auto_activate: bool = False
@@ -913,7 +903,7 @@ class ConsolidationApplyRequest(BaseModel):
 class ConsolidationAnalyzeRequest(BaseModel):
     """Trigger an automated hygiene run (analysis_only / proposal_only)."""
     mode: Optional[Literal["analysis_only", "proposal_only", "manual_only"]] = None
-    category: Optional[Literal["best_practices", "lessons_learned", "trade_knowledge", "skill", "playbook"]] = None
+    category: Optional[Literal["best_practices", "lessons_learned", "trade_knowledge", "skill"]] = None
     max_records: int = Field(5000, ge=1, le=1000000)
     max_clusters: int = Field(100, ge=1, le=10000)
     dry_run: Optional[bool] = None

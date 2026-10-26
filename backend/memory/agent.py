@@ -603,7 +603,7 @@ async def get_context(
         ),
     ),
     knowledge_category: Optional[str] = Query(
-        None, description="Restrict knowledge to one category (skill|playbook|best_practices|lessons_learned|trade_knowledge)."
+        None, description="Restrict knowledge to one category (skill|best_practices|lessons_learned|trade_knowledge)."
     ),
     agent: dict = Depends(verify_agent_key)
 ):
@@ -701,7 +701,7 @@ async def get_context(
             "compacted": r["compacted"],
         } for r in memory_rows]
 
-        # Knowledge (all categories: declarative + playbooks + skills).
+        # Knowledge (all categories: declarative + skills).
         # Sprint 2.5: governed facet hard-filter (WS-5), pinned always-on
         # management skill exempt from the filter (WS-3), and a lean index mode
         # that drops full content so the orchestrator pulls records on demand (WS-1).
@@ -1100,7 +1100,7 @@ async def delete_intelligence(id: str, agent: dict = Depends(verify_agent_key)):
 @router.post("/knowledge", response_model=KnowledgeResponse, tags=["🎓 Knowledge"])
 async def create_knowledge(body: KnowledgeCreate, agent: dict = Depends(verify_agent_key)):
     """Create a knowledge record. Routes through insert_knowledge so category,
-    metadata, status, SKILL.md rendering (skill/playbook) and governed facet
+    metadata, status, SKILL.md rendering and governed facet
     extraction are applied consistently with every other creation pathway."""
     from memory_system.store.writes import insert_knowledge
     from memory_system.distill.facets import enrich_metadata_with_facets
@@ -1140,7 +1140,7 @@ async def list_knowledge(
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
     signal: Optional[str] = Query(None),
-    category: Optional[str] = Query(None, description="skill | playbook | best_practices | lessons_learned | trade_knowledge"),
+    category: Optional[str] = Query(None, description="skill | best_practices | lessons_learned | trade_knowledge"),
     facets: Optional[str] = Query(None, description='JSON object of governed facets, e.g. {"country":"Malaysia"}'),
     strict: bool = Query(False, description="True = hard-filter on facets; False (default) = ignore facets"),
     status: str = Query("active", description="Agent-facing knowledge is always active-only"),
@@ -1232,7 +1232,7 @@ async def list_knowledge_facets(
 async def get_knowledge(id: str, agent: dict = Depends(verify_agent_key)):
     """Retrieve a single full knowledge record (on-demand pull after the agent
     scans the lean index from get-context). Returns content (SKILL.md for
-    skill/playbook), metadata, signals, quality, version."""
+    skill), metadata, signals, quality, version."""
     with get_memory_db_context() as conn:
         cursor = conn.cursor()
         cursor.execute("""

@@ -174,9 +174,6 @@ def _seed_defaults():
                 telemetry_override["schedule_time"] = policy_row["telemetry_reflection_time"]
             if telemetry_override:
                 overrides["telemetry_reflection"] = telemetry_override
-            playbook_time = policy_row.get("playbook_generation_time") or global_time
-            if playbook_time != global_time:
-                overrides["playbook_extraction"] = {"schedule_time": playbook_time}
             cursor.execute("""
                 UPDATE memory_settings SET
                     knowledge_generation_max_tokens = %s,
@@ -341,17 +338,16 @@ def _seed_defaults():
         # truth). Seeded for EXISTING installs too (idempotent), attached to the same
         # provider/model as knowledge_generation when available.
         try:
-            from memory_system.distill.playbooks import _PLAYBOOK_GEN_PROMPT, _SKILL_GEN_PROMPT
+            from memory_system.distill.skills import _SKILL_GEN_PROMPT
             from memory_system.distill.telemetry import _REFLECTION_SYSTEM_PROMPT
             pick_nodes = [
-                ("playbook_generation", 2, _PLAYBOOK_GEN_PROMPT),
                 ("skill_generation", 3, _SKILL_GEN_PROMPT),
                 ("telemetry_reflection", 4, _REFLECTION_SYSTEM_PROMPT),
             ]
         except Exception as e:
             logger.warning(f"Could not import generation prompt constants for seeding: {e}")
             pick_nodes = [
-                ("playbook_generation", 2, ""), ("skill_generation", 3, ""), ("telemetry_reflection", 4, ""),
+                ("skill_generation", 3, ""), ("telemetry_reflection", 4, ""),
             ]
 
         for pb_task, pb_order, pb_prompt in pick_nodes:

@@ -420,7 +420,7 @@ export default function MemoryExplorerPage() {
     const hasName = Boolean(newKnowledge.name?.trim());
     const hasContent = Boolean(newKnowledge.content?.trim());
     const hasAttachment = Boolean((newKnowledge.attachment_ids || []).length);
-    const hasStructuredContent = ["skill", "playbook"].includes(newKnowledge.category)
+    const hasStructuredContent = newKnowledge.category === "skill"
       && Object.values(newKnowledge.metadata || {}).some(value => (
         Array.isArray(value) ? value.length > 0 : Boolean(String(value || "").trim())
       ));
@@ -428,8 +428,8 @@ export default function MemoryExplorerPage() {
       toast.error("Please provide a name and either content or an extracted source document");
       return;
     }
-    if (["skill", "playbook"].includes(newKnowledge.category) && !newKnowledge.summary?.trim()) {
-      toast.error("Skills and playbooks require a concise description / summary");
+    if (newKnowledge.category === "skill" && !newKnowledge.summary?.trim()) {
+      toast.error("Skills require a concise description / summary");
       return;
     }
     try {

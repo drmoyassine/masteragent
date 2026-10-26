@@ -415,8 +415,8 @@ def _validate_approved_canonical(approved: Dict[str, Any], category: str) -> Non
     content = (approved.get("content") or "").strip()
     if not name or not content:
         raise ConsolidationError("invalid_canonical", "canonical.name and canonical.content are required", 422)
-    # Skills/playbooks: validate the canonical body parses/render round-trips.
-    if category in ("skill", "playbook"):
+    # Skills: validate the canonical body parses/render round-trips.
+    if category == "skill":
         try:
             from memory_system.maintain.skill_md import is_skill_md, parse_skill_md, render_skill_md
             candidate = content if is_skill_md(content) else render_skill_md(
@@ -429,7 +429,7 @@ def _validate_approved_canonical(approved: Dict[str, Any], category: str) -> Non
         except ConsolidationError:
             raise
         except Exception as exc:
-            raise ConsolidationError("invalid_canonical", f"skill/playbook validation failed: {exc}", 422)
+            raise ConsolidationError("invalid_canonical", f"skill validation failed: {exc}", 422)
 
 
 # ─── read views ──────────────────────────────────────────────────────────────

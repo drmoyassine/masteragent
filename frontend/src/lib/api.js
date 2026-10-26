@@ -176,7 +176,7 @@ export const getTimeline = (entityType, entityId) => api.get(`/memory/admin/time
 export const triggerMemoryGeneration = (includeToday = false) => api.post('/memory/trigger/generate-memories', null, { params: { include_today: includeToday } });
 export const triggerIntelligenceCheck = () => api.post('/memory/trigger/run-intelligence-check');
 export const triggerKnowledgeCheck = (drain = false, options = {}) => api.post('/memory/trigger/run-knowledge-check', null, { params: { drain, ...options } });
-export const triggerPlaybookExtraction = () => api.post('/memory/trigger/extract-playbooks');
+export const triggerSkillExtraction = () => api.post('/memory/trigger/extract-skills');
 export const reprocessIntelligence = (intelligenceIds) => api.post('/memory/trigger/reprocess-intelligence', { intelligence_ids: intelligenceIds });
 export const triggerBackfillProfiles = () => api.post('/memory/trigger/backfill-profiles');
 

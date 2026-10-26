@@ -149,13 +149,13 @@ async def _run_knowledge_check(job: Job, run_id):
 
 async def _run_all_knowledge_generation(job: Job, run_id):
     # One orchestrated run for every enabled producer: knowledge tiers plus
-    # the playbook check and a telemetry pass (backfill on drain runs,
+    # the skill check and a telemetry pass (backfill on drain runs,
     # reflection otherwise). The legacy generate_knowledge name runs the
     # tiers only.
     operation_result = await _run_knowledge_check(job, run_id)
-    from memory_system.distill.playbooks import run_playbook_check
+    from memory_system.distill.skills import run_skill_check
     from memory_system.distill.telemetry import run_telemetry_reflection, backfill_telemetry
-    await run_playbook_check()
+    await run_skill_check()
     if job.data.get("drain"):
         await backfill_telemetry(max_days=int(job.data.get("max_days", 7)))
     else:
@@ -170,9 +170,9 @@ async def _run_promote_to_knowledge(job: Job, run_id) -> None:
         await promote_to_knowledge(i_id)
 
 
-async def _run_extract_playbooks(job: Job, run_id) -> None:
-    from memory_system.distill.playbooks import run_playbook_check
-    await run_playbook_check()
+async def _run_extract_skills(job: Job, run_id) -> None:
+    from memory_system.distill.skills import run_skill_check
+    await run_skill_check()
 
 
 async def _run_consolidation(job: Job, run_id):
@@ -317,8 +317,8 @@ JOBS: dict = {
                                             attempts=3, backoff_ms=60000),
     "promote_to_knowledge": JobSpec("promote_to_knowledge", _run_promote_to_knowledge,
                                     ai_gate=True, rpm_llm_config="knowledge_generation"),
-    "extract_playbooks": JobSpec("extract_playbooks", _run_extract_playbooks,
-                                 ai_gate=True, singleton=True),
+    "extract_skills": JobSpec("extract_skills", _run_extract_skills,
+                             ai_gate=True, singleton=True),
     "knowledge_hygiene_run": JobSpec("knowledge_hygiene_run", _run_knowledge_hygiene,
                                      ai_gate=True, controls_key="knowledge_hygiene_run",
                                      singleton=True, refresh_metrics_on_complete=True),
