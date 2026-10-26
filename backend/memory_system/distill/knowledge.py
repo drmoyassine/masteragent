@@ -276,6 +276,11 @@ async def generate_knowledge_from_intelligence(intelligence: list) -> int:
         if isinstance(e, ProviderStopError):
             raise
         logger.error(f"Knowledge generation LLM call failed: {e}")
+        # DEC-108 finding-4 residuals: the exception text must reach the ledger,
+        # not just container logs — knowledge_check only sees n==0 and logs the
+        # job input, so without this row the failure is undiscoverable via API.
+        log_pipeline_run("knowledge_generation", "failed", reason_code="llm_error",
+                         detail={"error": f"{type(e).__name__}: {e}"[:400]})
         return 0
     injection_matches = scan_untrusted_output(result_text)
 
@@ -284,6 +289,8 @@ async def generate_knowledge_from_intelligence(intelligence: list) -> int:
         candidate = validate_declarative(result)
     except ValueError as exc:
         logger.warning("Rejected invalid declarative Knowledge output: %s", exc)
+        log_pipeline_run("knowledge_generation", "failed", reason_code="invalid_output",
+                         detail={"error": str(exc)[:400]})
         return 0
     if candidate.decision == "no_candidate":
         log_pipeline_run("knowledge_generation", "skipped", reason_code="no_candidate")
@@ -320,6 +327,7 @@ async def generate_knowledge_from_intelligence(intelligence: list) -> int:
     signals = list(dict.fromkeys(s.lower() for s in signals))
 
     if not content:
+        log_pipeline_run("knowledge_generation", "skipped", reason_code="empty_content")
         return 0
 
     embedding = None
