@@ -1,6 +1,6 @@
 # MasterAgent — Architecture Reference
 
-> **Last Updated**: 2026-03-05
+> **Last Updated**: 2026-10-26
 > **Purpose**: Living reference for technical design, system boundaries, and structural patterns.
 
 ---
@@ -50,9 +50,22 @@ The `backend/services/` package contains all infrastructure-facing business logi
 | `services/llm.py` | OpenAI-compatible LLM call abstraction |
 | `services/embeddings.py` | Embedding generation via configured APIs |
 | `services/search.py` | pgvector semantic search across memory tiers |
-| `services/processing.py` | Text chunking, PII scrubbing, summarization, NER, document parsing |
+| `services/processing.py` | Text chunking, PII scrubbing, summarization, NER, document parsing (delegates to the liteparse runner when `PARSE_RUNNER_URL`/`PARSE_RUNNER_API_KEY` are set, incl. audio STT) |
+| `services/parse_runner.py` | liteparse runner client (parse + transcribe) |
+| `services/prompt_safety.py` | Untrusted-content doctrine: `frame_untrusted`, output injection scan, forced-draft resolution (§11) |
+| `services/budget.py` | LLM budget caps (TASK-260) |
+| `services/alert_delivery.py` | `memory_system_alerts` delivery poller |
+| `services/job_safety.py` | Job-level safety gates for queued work |
+| `services/memory_lock.py` | Distributed processing locks |
+| `services/outbound_webhooks.py` | Outbound webhook dispatch |
+| `services/vision_webhooks.py` | Vision webhook handling (secret from migration 006) |
+| `services/provider_batch.py` | Provider-side batch operations |
 
-`memory_services.py` is a backward-compatibility shim that re-exports from `services/`.
+Processing topology: `memory_system/scheduler.py` — a 60-second background loop
+that claims each tier job at most once per day via `memory_job_log` — enqueues
+into BullMQ; `memory/queue.py` hosts the BullMQ worker (Python `bullmq` package)
+driven by a declarative JobSpec registry. The `memory_services.py` shim was
+removed in the TASK-257 packageization.
 
 ---
 
@@ -63,11 +76,11 @@ A single PostgreSQL instance hosts all tables. Schema is split by domain:
 ### Prompt Manager Tables (`db_init.py`)
 - `users`, `api_keys`, `settings`, `prompts`, `prompt_sections`, `prompt_versions`, `templates`, `variables`, `account_variables`, `prompt_variables`
 
-### Memory System Tables (`memory_db.py`)
+### Memory System Tables (`memory_system/store/db.py`)
 - **Config**: `memory_entity_types`, `memory_entity_subtypes`, `memory_lesson_types`, `memory_channel_types`, `memory_agents`, `memory_llm_configs`, `memory_system_prompts`, `memory_settings`, `memory_entity_type_config`
-- **Data**: `interactions`, `memories`, `intelligence`, `knowledge`, `entity_profiles`, `memory_audit_log`, `memory_webhook_sources`
+- **Data**: `interactions`, `memories`, `intelligence`, `knowledge`, `entity_profiles`, `memory_agent_entities`, `memory_job_log`, `memory_system_alerts`, `memory_audit_log`, `memory_webhook_sources`
 
-All memory tables have an `embedding vector(1536)` column (or equivalent) enabled by the `pgvector` extension for semantic search.
+Tier tables carry a dimensionless `embedding public.vector` column plus `embedding_model`/`embedding_dimensions` row metadata (per the frozen `001` baseline; dimensions live on the row, not the column). Migration `005` dimensions `memories.embedding` to `vector(1536)` with an HNSW index on fresh installs to match prod; the other tiers remain dimensionless. SQL migrations are forward-only and live in `backend/migrations/` (applied by the runner in `memory_system/store/migrations.py`).
 
 ### Context Managers
 - `core.db.get_db_context()` → Prompt Manager DB
@@ -166,7 +179,7 @@ This ensures the backend connects correctly inside Docker even without explicit 
 
 ## 10. Frontend Conventions
 
-- **Framework**: React 18 SPA, bootstrapped with Create React App + CRACO
+- **Framework**: React 19 SPA, bootstrapped with Create React App + CRACO
 - **State**: `ConfigContext.jsx` manages storage mode (`github` vs `local`)
 - **Path Alias**: `@/` maps to `frontend/src/`
 - **API Layer**: All calls centralized in `frontend/src/lib/api.js`
