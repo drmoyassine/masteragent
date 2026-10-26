@@ -5,6 +5,7 @@ Unified REST SDK architecture for AI Agents.
 Exposes standard CRUD operations across all four memory tiers with strict entity scoping.
 All endpoints use the Agent API Key validation.
 """
+import asyncio
 import json
 import hashlib
 import logging
@@ -868,6 +869,11 @@ async def get_context(
         knowledge = [_full_item(r) for r in pinned_rows]
         knowledge += [_index_item(r) for r in knowledge_rows]
 
+    await _capture_knowledge_usage(
+        knowledge, pathway="get_context",
+        agent_id=str((agent or {}).get("id") or ""),
+        entity_type=entity_type, entity_id=entity_id,
+    )
     return {
         "entity_type": entity_type,
         "entity_id": entity_id,
@@ -876,6 +882,35 @@ async def get_context(
         "memories": memories,
         "knowledge": knowledge,
     }
+
+
+async def _capture_knowledge_usage(
+    items, *, pathway, agent_id="", entity_type=None, entity_id=None, interaction_id=None
+) -> None:
+    """Learning loop §2 (docs/plans/knowledge-learning-loop.md) — record which
+    knowledge records were actually served into agent context. Best-effort by
+    doctrine: a capture failure must never fail the retrieval. Mirrors exactly
+    what the endpoint served (draft/active filtering stays with each query)."""
+    try:
+        settings = get_memory_settings() or {}
+        if not settings.get("knowledge_learning_usage_capture", True):
+            return
+        cap = int(settings.get("knowledge_learning_max_events_per_call", 50) or 50)
+        events = [
+            {
+                "knowledge_id": item["id"], "pathway": pathway,
+                "interaction_id": interaction_id, "agent_id": agent_id,
+                "entity_type": entity_type, "entity_id": entity_id,
+                "rank": index + 1,
+            }
+            for index, item in enumerate(items or []) if item.get("id")
+        ][:cap]
+        if not events:
+            return
+        from memory_system.store.writes import record_knowledge_usage
+        await asyncio.to_thread(record_knowledge_usage, events)
+    except Exception as exc:
+        logger.warning(f"knowledge usage capture failed ({pathway}): {exc}")
 
 
 # ============================================
@@ -1370,6 +1405,10 @@ async def search_memory_semantic(
             results.append(SearchResult(
                 id=hit["id"], layer="Knowledge", score=float(hit.get("score", 0)), name=hit.get("name"), snippet=(hit.get("summary") or "")[:200], entity_id=None, entity_type=None, created_at=str(hit.get("created_at", ""))
             ))
+        await _capture_knowledge_usage(
+            hits, pathway="semantic_search", agent_id=str((agent or {}).get("id") or ""),
+            entity_type=request.entity_type, entity_id=request.entity_id,
+        )
 
     results.sort(key=lambda r: r.score, reverse=True)
     paginated = results[request.offset: request.offset + request.limit]
@@ -1428,6 +1467,10 @@ async def search_memory_fulltext(
             results.append(SearchResult(
                 id=hit["id"], layer="Knowledge", score=float(hit.get("score", 0)), name=hit.get("name"), snippet=(hit.get("summary") or "")[:200], entity_id=None, entity_type=None, created_at=str(hit.get("created_at", ""))
             ))
+        await _capture_knowledge_usage(
+            hits, pathway="fulltext_search", agent_id=str((agent or {}).get("id") or ""),
+            entity_type=request.entity_type, entity_id=request.entity_id,
+        )
 
     results.sort(key=lambda r: r.score, reverse=True)
     paginated = results[request.offset: request.offset + request.limit]

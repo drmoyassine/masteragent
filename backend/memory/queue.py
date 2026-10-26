@@ -174,6 +174,12 @@ async def _run_extract_skills(job: Job, run_id) -> None:
     from memory_system.distill.skills import run_skill_check
     await run_skill_check()
 
+async def _run_knowledge_outcome_attribution(job: Job, run_id) -> dict:
+    # Learning loop section 3 — pure SQL attribution (no LLM, so no
+    # ai_gate); to_thread per the 504 doctrine.
+    from memory_system.maintain.learning import run_outcome_attribution
+    return await asyncio.to_thread(run_outcome_attribution, trigger="manual")
+
 
 async def _run_consolidation(job: Job, run_id):
     # Legacy job name kept as a backward-compatible alias: it now starts
@@ -319,6 +325,8 @@ JOBS: dict = {
                                     ai_gate=True, rpm_llm_config="knowledge_generation"),
     "extract_skills": JobSpec("extract_skills", _run_extract_skills,
                              ai_gate=True, singleton=True),
+    "knowledge_outcome_attribution": JobSpec("knowledge_outcome_attribution", _run_knowledge_outcome_attribution,
+                                             ai_gate=False, singleton=True),
     "knowledge_hygiene_run": JobSpec("knowledge_hygiene_run", _run_knowledge_hygiene,
                                      ai_gate=True, controls_key="knowledge_hygiene_run",
                                      singleton=True, refresh_metrics_on_complete=True),

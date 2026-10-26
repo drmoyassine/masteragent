@@ -1,6 +1,6 @@
 # Plan: Closing the Knowledge Learning Loop
 
-**Status:** Proposed
+**Status:** Implemented — phases 0–3 shipped behind settings flags (capture ON, attribution ON, blend OFF at 0.0)
 **Date:** 2026-10-26
 **Depends on:** unified knowledge table, `recalculate_knowledge_quality` (PR #48-era), nightly scheduler + per-day claims, `memory_pipeline_runs` ledger, migration 007 (playbook removal)
 

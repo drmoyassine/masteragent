@@ -263,6 +263,16 @@ class MemorySettingsUpdate(BaseModel):
     knowledge_hygiene_default_canonical_strategy: Optional[Literal["update_existing", "create_new"]] = "update_existing"
     knowledge_hygiene_creation_time_enabled: Optional[bool] = False
     knowledge_hygiene_category_policies: Optional[Dict[str, str]] = None
+    # ── Knowledge learning loop (docs/plans/knowledge-learning-loop.md §5) ──
+    knowledge_learning_usage_capture: Optional[bool] = True
+    knowledge_learning_max_events_per_call: Optional[int] = Field(50, ge=1, le=200)
+    knowledge_learning_attribution_enabled: Optional[bool] = True
+    knowledge_learning_negative_window_days: Optional[int] = Field(7, ge=1, le=90)
+    knowledge_learning_negative_similarity: Optional[float] = Field(0.80, ge=0, le=1)
+    knowledge_learning_min_signal_age_hours: Optional[int] = Field(6, ge=0, le=168)
+    knowledge_learning_retire_after_days: Optional[int] = Field(90, ge=7, le=3650)
+    knowledge_learning_refine_min_failures: Optional[int] = Field(2, ge=1, le=100)
+    knowledge_retrieval_quality_weight: Optional[float] = Field(0.0, ge=0, le=1)
     # Unified Knowledge generation policy + pre-generation evidence routing.
     knowledge_generation_enabled: Optional[bool] = True
     knowledge_generation_max_tokens: Optional[int] = Field(1200, ge=256, le=32000)
@@ -357,6 +367,16 @@ class MemorySettingsResponse(BaseModel):
     # Knowledge hygiene & consolidation
     knowledge_hygiene_enabled: bool = True
     knowledge_hygiene_enabled_categories: List[str] = ["best_practices", "lessons_learned", "trade_knowledge", "skill"]
+    # Knowledge learning loop (§5)
+    knowledge_learning_usage_capture: bool = True
+    knowledge_learning_max_events_per_call: int = 50
+    knowledge_learning_attribution_enabled: bool = True
+    knowledge_learning_negative_window_days: int = 7
+    knowledge_learning_negative_similarity: float = 0.80
+    knowledge_learning_min_signal_age_hours: int = 6
+    knowledge_learning_retire_after_days: int = 90
+    knowledge_learning_refine_min_failures: int = 2
+    knowledge_retrieval_quality_weight: float = 0.0
     knowledge_hygiene_similarity_threshold: float = 0.82
     knowledge_hygiene_min_cluster_size: int = 2
     knowledge_hygiene_max_cluster_size: Optional[int] = 5
@@ -375,6 +395,16 @@ class MemorySettingsResponse(BaseModel):
         "trade_knowledge": "manual_only",
         "skill": "manual_only",
     }
+    # ── Knowledge learning loop (§5) — defaults mirror migration 008 ──
+    knowledge_learning_usage_capture: bool = True
+    knowledge_learning_max_events_per_call: int = 50
+    knowledge_learning_attribution_enabled: bool = True
+    knowledge_learning_negative_window_days: int = 7
+    knowledge_learning_negative_similarity: float = 0.80
+    knowledge_learning_min_signal_age_hours: int = 6
+    knowledge_learning_retire_after_days: int = 90
+    knowledge_learning_refine_min_failures: int = 2
+    knowledge_retrieval_quality_weight: float = 0.0
     knowledge_generation_enabled: bool = True
     knowledge_generation_max_tokens: int = 1200
     knowledge_generation_min_confidence: float = 0.60

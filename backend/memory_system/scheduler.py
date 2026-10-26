@@ -197,6 +197,24 @@ async def _background_loop():
                         await asyncio.to_thread(fail_job_date, "telemetry_reflection_schedule", today, exc)
                         raise
 
+            # ── Knowledge learning loop: nightly outcome attribution ──────────
+            # Resolves knowledge_usage_events into outcomes (lessons_learned echo /
+            # recurrence — docs/plans/knowledge-learning-loop.md §3). Pure SQL job
+            # (no ai_gate); scheduled after the generation windows.
+            if settings.get("knowledge_learning_attribution_enabled", True) and \
+               _time_reached(now_utc, settings.get("knowledge_generation_time", "02:00"), (3, 30)):
+                if await asyncio.to_thread(claim_job_date, "knowledge_outcome_attribution_schedule", today):
+                    logger.info("Firing nightly knowledge outcome attribution")
+                    try:
+                        await knowledge_queue.add(
+                            "knowledge_outcome_attribution",
+                            {"job_claim": {"name": "knowledge_outcome_attribution_schedule",
+                                           "date": today.isoformat()}},
+                            job_options("knowledge_outcome_attribution", priority=4))
+                    except Exception as exc:
+                        await asyncio.to_thread(fail_job_date, "knowledge_outcome_attribution_schedule", today, exc)
+                        raise
+
             # ── Consolidation: periodic maintenance (weekly, not nightly) ─────
             consolidation_interval = settings.get("consolidation_run_interval_days", 7)
             last_consol = await asyncio.to_thread(get_job_last_date, "consolidation")
