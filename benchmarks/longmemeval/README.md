@@ -45,9 +45,10 @@ pip install -r requirements.txt
 # 1. one-time dataset dump (needs the `datasets` package)
 python download_dataset.py --split LongMemEval_s --out longmemeval_s.jsonl
 
-# 2. smoke run: ingest + footprint only, no LLM calls
+# 2. smoke run: ingest + footprint only, no LLM calls (bench_smoke.jsonl is a
+#    committed 3-question fixture; the real dataset needs step 1)
 python adapter.py --base-url http://localhost:8084 --email ... --password ... `
-    --agent-key ... --dataset longmemeval_s.jsonl --limit 5 --skip-judge
+    --agent-key ... --dataset bench_smoke.jsonl --skip-judge
 
 # 3. full run (needs reader/judge env: READER_* and JUDGE_* below)
 $env:READER_BASE_URL="https://api.openai.com/v1"; $env:READER_MODEL="gpt-4o-mini"; $env:READER_API_KEY="..."
@@ -60,6 +61,11 @@ Reader and judge are any OpenAI-compatible chat endpoints (the Z.AI/GLM
 endpoints used elsewhere in this setup work via their OpenAI-compatible base
 URLs). Reader and judge should be DIFFERENT models, or the judge is grading
 its own family's phrasing.
+
+`--agent-key` is a **memory agent** key (`mem_...`), not a prompt-manager
+`pm_` key — memory endpoints authenticate against `memory_agents`
+(Settings → Memory Agents in the UI, or `POST /api/memory/config/agents`
+as admin).
 
 ## Ablations (the paper's core experiment)
 
