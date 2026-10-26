@@ -2,18 +2,15 @@
 
 Runs periodically (configurable interval) to:
 1. Merge semantically similar knowledge records
-2. Refine playbooks with new evidence
-3. Retire stale records based on decay gauges
-4. Recompute quality scores for all active records
+2. Retire stale records based on decay gauges
+3. Recompute quality scores for all active records
 """
-import json
 import logging
 from datetime import datetime, timezone
 from typing import Optional
 
 from core.storage import get_memory_db_context
 from services import get_memory_settings
-from services.llm import parse_llm_json
 from memory_system.store.helpers import _get_entity_type_config
 
 logger = logging.getLogger(__name__)
@@ -66,78 +63,6 @@ async def _consolidate_duplicates(threshold: float):  # pragma: no cover - legac
     return
 
 
-async def _refine_playbook(keep_id: str):
-    """Re-run LLM to update a playbook's steps and trigger_conditions after a merge event."""
-    with get_memory_db_context() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT name, content, metadata, merge_count, category, version FROM knowledge WHERE id = %s",
-            (keep_id,),
-        )
-        row = cursor.fetchone()
-    if not row or row.get("category") != "playbook":
-        return
-
-    metadata = row["metadata"] or {}
-    existing_steps = metadata.get("steps", [])
-
-    system_prompt = (
-        "You are refining an existing playbook based on accumulated evidence. "
-        "Review the current playbook and update steps and trigger conditions if the new evidence "
-        "warrants changes. Keep existing structure unless clearly superseded.\n\n"
-        'Return JSON: {"steps": [{"order": N, "action": "..."}], '
-        '"trigger_conditions": [...], "confidence": 0.0-1.0}'
-    )
-
-    try:
-        from services import call_llm
-        result_text = await call_llm(
-            f"Current playbook: {row['content']}\n"
-            f"Existing steps: {json.dumps(existing_steps)}\n"
-            f"Merge count (evidence accumulations): {row['merge_count']}",
-            system_prompt=system_prompt,
-            max_tokens=600,
-            task_type="knowledge_generation",
-        )
-        result = parse_llm_json(result_text, context="playbook_refinement")
-        metadata["steps"] = result.get("steps", existing_steps)
-        metadata["trigger_conditions"] = result.get(
-            "trigger_conditions", metadata.get("trigger_conditions", [])
-        )
-
-        # Re-render the SKILL.md document so the content column stays the
-        # canonical standard-format representation after refinement.
-        from memory_system.maintain.skill_md import parse_skill_md, render_skill_md, is_skill_md
-        body = row["content"] or ""
-        description = ""
-        if is_skill_md(body):
-            try:
-                parsed = parse_skill_md(body)
-                description = parsed["description"]
-                body = parsed["body"]
-            except ValueError:
-                pass
-        new_content = render_skill_md(
-            name=row["name"],
-            category="playbook",
-            description=description or (body or "")[:1024],
-            body="",  # steps/triggers carry the procedure; keep body from description sections
-            metadata=metadata,
-            version=(row.get("version") or 1) + 1,
-        )
-
-        now = datetime.now(timezone.utc).isoformat()
-        with get_memory_db_context() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "UPDATE knowledge SET metadata = %s, content = %s, version = version + 1, updated_at = %s WHERE id = %s",
-                (json.dumps(metadata), new_content, now, keep_id),
-            )
-        logger.info(f"Refined playbook {keep_id} after merge")
-    except Exception as e:
-        logger.warning(f"Playbook refinement failed for {keep_id}: {e}")
-
-
 def _apply_decay():
     """Retire stale knowledge records based on configurable decay gauges."""
     now = datetime.now(timezone.utc)
@@ -158,12 +83,12 @@ def _apply_decay():
 
         with get_memory_db_context() as conn:
             cursor = conn.cursor()
-            # Retire playbook-category records for this entity type that haven't been updated
+            # Retire skill-category records for this entity type that haven't been updated
             cursor.execute("""
                 UPDATE knowledge
                 SET status = 'retired', updated_at = %s
                 WHERE status = 'active'
-                  AND category IN ('playbook', 'skill')
+                  AND category = 'skill'
                   AND metadata->>'entity_type' = %s
                   AND updated_at < %s
             """, (now.isoformat(), entity_type, cutoff))

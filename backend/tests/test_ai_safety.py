@@ -5,7 +5,7 @@ Part 1 (structural injection defense):
     fails structurally), limit keeps the frame intact.
   - scan_untrusted_output: the six directive patterns + clean-text pass.
   - record_injection_flag: merge semantics, None-sink log-only path.
-  - resolve_creation_status: externally-derived skills/playbooks forced to
+  - resolve_creation_status: externally-derived skills forced to
     draft; internal pathways and informational categories keep policy control.
   - approval_policy default is approve_immediately (the gap the forced-draft
     rule exists to defend against — pinned so a silent default change is seen).
@@ -121,8 +121,8 @@ def test_record_injection_flag_none_sink_still_logs_and_returns():
 
 # ── Part 1: content trust / forced draft ─────────────────────────────────────
 
-def test_external_playbook_forced_to_draft():
-    status, ai_safety = resolve_creation_status("experiential", "playbook", "active")
+def test_external_skill_forced_to_draft():
+    status, ai_safety = resolve_creation_status("experiential", "skill", "active")
     assert status == "draft"
     assert ai_safety["content_trust"] == "external"
     assert "forced_draft_reason" in ai_safety
@@ -134,8 +134,8 @@ def test_decomposed_skill_forced_to_draft():
     assert ai_safety["content_trust"] == "external"
 
 
-def test_telemetry_reflected_playbook_forced_to_draft():
-    status, _ = resolve_creation_status("telemetry_reflected", "playbook", "active")
+def test_telemetry_reflected_skill_forced_to_draft():
+    status, _ = resolve_creation_status("telemetry_reflected", "skill", "active")
     assert status == "draft"
 
 
@@ -156,7 +156,7 @@ def test_internal_pathways_keep_policy_even_for_skills():
 
 
 def test_draft_policy_stays_draft():
-    status, ai_safety = resolve_creation_status("experiential", "playbook", "draft")
+    status, ai_safety = resolve_creation_status("experiential", "skill", "draft")
     assert status == "draft"
     assert "forced_draft_reason" not in ai_safety  # nothing was overridden
 
@@ -172,7 +172,7 @@ def test_approval_policy_default_is_approve_immediately():
 def test_content_trust_pathway_sets_are_sane():
     assert {"experiential", "decomposed", "telemetry_reflected",
             "declarative_knowledge"} <= EXTERNAL_DERIVED_PATHWAYS
-    assert BEHAVIOR_CHANGING_CATEGORIES == {"skill", "playbook"}
+    assert BEHAVIOR_CHANGING_CATEGORIES == {"skill"}
 
 
 # ── Part 1: SKILL.md provenance ──────────────────────────────────────────────

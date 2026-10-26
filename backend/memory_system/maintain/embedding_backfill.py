@@ -27,7 +27,7 @@ from memory_system.maintain.embedding import (
 logger = logging.getLogger(__name__)
 
 # Modest by design: this removes per-record HTTP overhead while keeping
-# payloads safe for long playbook and skill records.
+# payloads safe for long skill records.
 EMBEDDING_API_BATCH_SIZE = 25
 
 
@@ -66,7 +66,7 @@ def _select_stale_rows(
             SELECT id, name, category, content, summary, signals, tags, metadata, created_at
             FROM knowledge
             WHERE status = 'active'
-              AND category IN ('best_practices','lessons_learned','trade_knowledge','skill','playbook')
+              AND category IN ('best_practices','lessons_learned','trade_knowledge','skill')
               AND NOT (id = ANY(%s))
               AND (%s::timestamptz IS NULL OR (created_at, id) > (%s::timestamptz, %s))
               AND (
@@ -427,7 +427,7 @@ def preview_backfill(configured_version: Optional[int] = None) -> Dict[str, Any]
                  OR COALESCE(metadata->'embedding'->>'model', '') <> %s
                  OR metadata->'embedding'->>'dimensions' IS DISTINCT FROM vector_dims(embedding)::text) AS stale
             FROM knowledge
-            WHERE category IN ('best_practices','lessons_learned','trade_knowledge','skill','playbook')
+            WHERE category IN ('best_practices','lessons_learned','trade_knowledge','skill')
             """,
             (str(cv), configured_model or "", str(cv), configured_model or ""),
         )

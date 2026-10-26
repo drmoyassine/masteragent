@@ -44,7 +44,6 @@ export const TASK_TYPE_LABELS = {
     summarization: { label: "Summarization", icon: FileText, color: "bg-blue-500" },
     intelligence_generation: { label: "Intelligence Generation", icon: Sparkles, color: "bg-teal-500" },
     knowledge_generation: { label: "Knowledge Generation", icon: GraduationCap, color: "bg-green-500" },
-    playbook_generation: { label: "Playbook Extraction", icon: Brain, color: "bg-orange-500" },
     skill_generation: { label: "Skill Decomposition", icon: Scissors, color: "bg-pink-500" },
     telemetry_reflection: { label: "Telemetry Reflection", icon: Sparkles, color: "bg-cyan-500" },
 };

@@ -13,9 +13,9 @@ pipeline (the in-app agent doctrine applied to MasterAgent):
      directives. Flag-only: the marker lands in the row's processing_errors /
      metadata for human review; nothing is silently dropped.
   3. content trust: knowledge created by the AUTO pathways (telemetry
-     reflection, skill/playbook extraction, declarative knowledge) is
+     reflection, skill extraction, declarative knowledge) is
      externally-derived by construction — every interaction in MasterAgent
-     enters from outside — so behavior-changing artifacts (skills, playbooks)
+     enters from outside — so behavior-changing artifacts (skills)
      from those pathways are forced to draft status regardless of the
      approval policy (DEC-091 posture: human activation is a Settings action).
   4. emit_safety_alert(): human-visible contamination signal via the
@@ -151,14 +151,13 @@ def record_injection_flag(
 EXTERNAL_DERIVED_PATHWAYS = frozenset({
     "telemetry_reflection", "telemetry_reflected",
     "declarative_knowledge",
-    "playbook_extraction", "experiential",
-    "skill_extraction", "decomposed",
+    "experiential", "skill_extraction", "decomposed",
 })
 
 # Behavior-changing artifact categories: these change what downstream agents
 # DO, so external derivation must force human approval (draft) even when a
 # deployment's approval policy says approve_immediately.
-BEHAVIOR_CHANGING_CATEGORIES = frozenset({"skill", "playbook"})
+BEHAVIOR_CHANGING_CATEGORIES = frozenset({"skill"})
 
 
 def content_trust_for(pathway: str, category: str) -> str:
@@ -179,7 +178,7 @@ def resolve_creation_status(pathway: str, category: str, policy_status: str) -> 
     ai_safety = {"content_trust": trust}
     if trust == "external" and policy_status != "draft":
         ai_safety["forced_draft_reason"] = (
-            "externally-derived content must not auto-activate a skill/playbook "
+            "externally-derived content must not auto-activate a skill "
             "(DEC-091 posture: human activation)"
         )
         return "draft", ai_safety

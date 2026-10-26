@@ -172,7 +172,7 @@ def insert_knowledge(
 ) -> None:
     """INSERT a row into knowledge (unified table for all categories).
 
-    For category 'skill'/'playbook' the content column stores the full
+    For category 'skill' the content column stores the full
     agent-skills-standard SKILL.md document. If the caller passed plain text
     (LLM output or admin input), it is rendered into SKILL.md here; content
     that already carries frontmatter (e.g. marketplace imports) is stored

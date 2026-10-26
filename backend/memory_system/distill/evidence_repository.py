@@ -181,7 +181,7 @@ def apply_canonical_revision(
             raise RuntimeError("Canonical changed after evidence-revision preview")
         previous = dict(row)
         stored_content = approved["content"]
-        if row.get("category") in ("skill", "playbook"):
+        if row.get("category") == "skill":
             from memory_system.maintain.skill_md import is_skill_md, render_skill_md
             if not is_skill_md(stored_content):
                 stored_content = render_skill_md(

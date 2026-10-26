@@ -1,6 +1,6 @@
-"""Telemetry reflection: AI agent telemetry → skill / playbook / knowledge (option B).
+"""Telemetry reflection: AI agent telemetry → skill / knowledge (option B).
 
-The playbook pathway (memory_system.distill.playbooks.py) subordinates telemetry to cross-entity
+The skill-extraction pathway (memory_system.distill.skills.py) subordinates telemetry to cross-entity
 intelligence clustering — telemetry only enriches a prompt and cannot initiate
 anything, so a single-entity discovery is lost. This module gives telemetry a
 FIRST-CLASS, per-entity nightly path to knowledge.
@@ -43,7 +43,7 @@ from memory_system.distill.facets import facet_prompt_instructions, validate_gen
 logger = logging.getLogger(__name__)
 
 TELEMETRY_TYPES = ("internal_ai_thought", "internal_ai_tool_call")
-_VALID_TARGETS = ("skill", "playbook", "best_practices", "lessons_learned", "trade_knowledge")
+_VALID_TARGETS = ("skill", "best_practices", "lessons_learned", "trade_knowledge")
 
 
 async def _dedup_check_and_confirm(*, embedding: list, category: str) -> Optional[str]:
@@ -106,7 +106,6 @@ _REFLECTION_SYSTEM_PROMPT = (
     "genuinely reusable, generalizable learnings — not play-by-play. Zero is a valid answer.\n\n"
     "For each learning, choose a target type:\n"
     "- skill: a discrete reusable capability the agent exercised (e.g. an effective way to query a tool)\n"
-    "- playbook: an ordered procedure that worked (only if a clear multi-step sequence achieved an outcome)\n"
     "- best_practices: a behavioral rule that worked\n"
     "- lessons_learned: something that went wrong + why\n"
     "- trade_knowledge: a durable fact discovered mid-action (e.g. a tool returned a rule/requirement)\n\n"
@@ -114,7 +113,7 @@ _REFLECTION_SYSTEM_PROMPT = (
     "WHAT it is and WHEN to use it. Internal thoughts alone are not durable trade knowledge unless "
     "corroborated by tool output, outcome evidence, or another reliable source.\n\n"
     'Return ONLY a JSON array (empty [] if nothing reusable): '
-    '[{"target": "skill|playbook|best_practices|lessons_learned|trade_knowledge", '
+    '[{"target": "skill|best_practices|lessons_learned|trade_knowledge", '
     '"name": "...", "summary": "what it is and when to use it (<=1024 chars)", '
     '"content": "the full reusable learning", "signals": [], "tags": [], "facets": {}, '
     '"qualifications": [], "contradictions": [], "source_support": [], '
@@ -122,9 +121,7 @@ _REFLECTION_SYSTEM_PROMPT = (
     '"inputs": [], "outputs": [], "tools": [], "prerequisites": [], "permissions": [], '
     '"environments": [], "agent_types": [], "side_effects": [], "failure_conditions": [], '
     '"recovery": [], "safety_requirements": [] (skill only), '
-    '"trigger_conditions": [], "steps": [{"order": 1, "action": "..."}], "branches": [], '
-    '"escalation_rules": [], "rollback": [], "completion_criteria": [], "exit_conditions": [] '
-    '(playbook only), "confidence": 0.0-1.0, "schema_version": "knowledge-generation-v2"}]'
+    '"confidence": 0.0-1.0, "schema_version": "knowledge-generation-v2"}]'
 )
 
 
@@ -328,24 +325,14 @@ async def _reflect_entity_day(entity_type: str, entity_id: str, day: str, confid
                         "environments": c.get("environments", []), "agent_types": c.get("agent_types", []),
                         "side_effects": c.get("side_effects", []), "failure_conditions": c.get("failure_conditions", []),
                         "recovery": c.get("recovery", []), "safety_requirements": c.get("safety_requirements", []),
-                        "entity_types": [entity_type], "playbook_ids": []}
-        elif target == "playbook":
-            metadata = {"entity_type": entity_type, "signal_type": None,
-                        "trigger_conditions": c.get("trigger_conditions", []),
-                        "steps": c.get("steps", []), "purpose": c.get("purpose", ""),
-                        "expected_outcome": c.get("expected_outcome", ""), "prerequisites": c.get("prerequisites", []),
-                        "required_inputs": c.get("required_inputs", []), "responsible_roles": c.get("responsible_roles", []),
-                        "tools": c.get("tools", []), "branches": c.get("branches", []),
-                        "escalation_rules": c.get("escalation_rules", []), "failure_conditions": c.get("failure_conditions", []),
-                        "rollback": c.get("rollback", []), "safety_requirements": c.get("safety_requirements", []),
-                        "completion_criteria": c.get("completion_criteria", []), "exit_conditions": c.get("exit_conditions", []), "skill_ids": []}
+                        "entity_types": [entity_type], "skill_ids": []}
 
         facets, facet_state = validate_generated_facets(c.get("facets") or {})
         metadata["facets"] = facets
         metadata["facet_extraction"] = facet_state
-        # TASK-262: skill/playbook candidates reflected from telemetry are
+        # TASK-262: skill candidates reflected from telemetry are
         # externally-derived — forced draft + scan + alert (same doctrine as
-        # the playbook pathway); informational targets keep policy control.
+        # the skill-extraction pathway); informational targets keep policy control.
         status, ai_safety = resolve_creation_status(
             "telemetry_reflected", target, approval_status(policy["approval_policy"]),
         )

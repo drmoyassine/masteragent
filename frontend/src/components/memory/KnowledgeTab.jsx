@@ -16,7 +16,6 @@ const SUBTABS = [
   { value: "best_practices", label: "Best Practices" },
   { value: "lessons_learned", label: "Lessons" },
   { value: "trade_knowledge", label: "Trade" },
-  { value: "playbook", label: "Playbooks" },
   { value: "skill", label: "Skills" },
 ];
 
@@ -25,7 +24,6 @@ const CATEGORY_COLORS = {
   lessons_learned: "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-300",
   trade_knowledge: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300",
   skill: "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300",
-  playbook: "bg-rose-100 text-rose-800 dark:bg-rose-900 dark:text-rose-300",
 };
 
 const CATEGORY_OPTIONS = [
@@ -34,7 +32,6 @@ const CATEGORY_OPTIONS = [
   { value: "lessons_learned", label: "Lessons Learned" },
   { value: "trade_knowledge", label: "Trade Knowledge" },
   { value: "skill", label: "Skills" },
-  { value: "playbook", label: "Playbooks" },
 ];
 
 export default function KnowledgeTab({
@@ -47,7 +44,7 @@ export default function KnowledgeTab({
   loading, visCols, renderColumnToggle,
   page, pageSize, total, onPageChange, onPageSizeChange,
 }) {
-  const showInstall = categoryFilter === "skill" || categoryFilter === "playbook";
+  const showInstall = categoryFilter === "skill";
   const selectedRows = (knowledge || []).filter((k) => selectedIds.includes(k.id));
   const selectedCategories = new Set(selectedRows.map((k) => k.category));
   const sameCategory = selectedCategories.size === 1;
@@ -58,7 +55,7 @@ export default function KnowledgeTab({
         <div className="flex flex-row items-center justify-between">
           <div>
             <CardTitle>Knowledge Base</CardTitle>
-            <CardDescription>Global experiential knowledge, playbooks & skills. Toggle "Always On" to pin a record into every agent's context (e.g. limited-time offers, announcements).</CardDescription>
+            <CardDescription>Global experiential knowledge & skills. Toggle "Always On" to pin a record into every agent's context (e.g. limited-time offers, announcements).</CardDescription>
           </div>
           <div className="flex items-center gap-2">
             {selectedIds.length > 0 && (

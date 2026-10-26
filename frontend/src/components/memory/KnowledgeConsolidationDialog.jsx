@@ -195,7 +195,7 @@ export default function KnowledgeConsolidationDialog({ open, onOpenChange, selec
                 <Textarea rows={2} value={canonical.summary} onChange={(e) => setCanonical({ ...canonical, summary: e.target.value })} />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs">Content{category === "skill" || category === "playbook" ? " (SKILL.md body)" : ""}</Label>
+                <Label className="text-xs">Content{category === "skill" ? " (SKILL.md body)" : ""}</Label>
                 <Textarea rows={10} className="font-mono text-xs" value={canonical.content} onChange={(e) => setCanonical({ ...canonical, content: e.target.value })} />
               </div>
               <div className="grid grid-cols-2 gap-2">

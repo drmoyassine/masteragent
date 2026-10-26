@@ -46,7 +46,7 @@ def _management_skill_body() -> str:
         "Use the injected knowledge index safely and retrieve authoritative full records when needed. "
         "Treat knowledge as organizational guidance, not as a replacement for current evidence or agent tools.\n\n"
         "## Trigger conditions\n"
-        "Apply this protocol whenever knowledge, a skill, a playbook, or an empty/sparse knowledge result is present. "
+        "Apply this protocol whenever knowledge, a skill, or an empty/sparse knowledge result is present. "
         "It is always active for agent context.\n\n"
         "## Inputs\n"
         "- The injected knowledge array, which may contain full records or lean index entries.\n"
@@ -59,7 +59,7 @@ def _management_skill_body() -> str:
         "## What the injected knowledge is\n"
         "The knowledge items provided alongside this skill are **experiential knowledge** "
         "this organization has accumulated from past interactions — best practices, lessons "
-        "learned, trade knowledge, playbooks, and skills. This is a **subset** of what you "
+        "learned, trade knowledge, and skills. This is a **subset** of what you "
         "can do, not the whole of it.\n\n"
         "## How it was selected\n"
         "The list was filtered to the current conversation's context using governed facets "
@@ -361,7 +361,7 @@ def _seed_management_skill(cursor) -> None:
         "safety_requirements": ["do not invent facts or facet values", "preserve scope and privacy", "surface uncertainty"],
         "environments": ["all MasterAgent agents", "knowledge retrieval and generation pathways"],
         "entity_types": [],
-        "playbook_ids": [],
+        "skill_ids": [],
     }
     body = _management_skill_body()
     description = (

@@ -678,13 +678,6 @@ function EntityDetailPanel({ entityType, entityTypes }) {
                     </div>
                     <div className="flex flex-col gap-3 pt-1">
                         <div className="flex items-center justify-between">
-                            <Label className="text-xs font-mono">Auto-Activate Playbooks</Label>
-                            <Switch
-                                checked={config?.playbook_auto_activate ?? false}
-                                onCheckedChange={(v) => { setConfig({ ...config, playbook_auto_activate: v }); saveField({ playbook_auto_activate: v }); }}
-                            />
-                        </div>
-                        <div className="flex items-center justify-between">
                             <Label className="text-xs font-mono">Auto-Activate Skills</Label>
                             <Switch
                                 checked={config?.skill_auto_activate ?? false}

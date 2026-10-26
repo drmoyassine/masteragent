@@ -16,7 +16,6 @@ const CATEGORY_COLORS = {
   lessons_learned: "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-300",
   trade_knowledge: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300",
   skill: "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300",
-  playbook: "bg-rose-100 text-rose-800 dark:bg-rose-900 dark:text-rose-300",
 };
 
 export default function KnowledgeInspector({ editingKnowledge, setEditingKnowledge, onUpdate, onApprove, onDelete, onFeedback, onOpenKnowledge }) {
@@ -197,51 +196,6 @@ export default function KnowledgeInspector({ editingKnowledge, setEditingKnowled
             </div>
 
             {/* Category-specific metadata */}
-            {cat === "playbook" && (
-              <>
-                <Separator />
-                <div>
-                  <Label className="text-xs text-muted-foreground">Playbook Details</Label>
-                  <div className="mt-2 space-y-3">
-                    {meta.trigger_conditions?.length > 0 && (
-                      <div>
-                        <Label className="text-sm font-medium">Trigger Conditions</Label>
-                        <ul className="mt-1 space-y-1">
-                          {meta.trigger_conditions.map((tc, i) => (
-                            <li key={i} className="text-sm bg-muted/50 rounded px-2 py-1">{typeof tc === "string" ? tc : JSON.stringify(tc)}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                    {meta.steps?.length > 0 && (
-                      <div>
-                        <Label className="text-sm font-medium">Steps ({meta.steps.length})</Label>
-                        <ol className="mt-1 space-y-1">
-                          {meta.steps.map((step, i) => (
-                            <li key={i} className="text-sm flex gap-2">
-                              <span className="font-mono text-muted-foreground">{step.order || i + 1}.</span>
-                              <span>{step.action || step}</span>
-                              {step.skill_id && <Badge variant="outline" className="text-xs ml-auto">skill: {step.skill_id.slice(0, 8)}</Badge>}
-                            </li>
-                          ))}
-                        </ol>
-                      </div>
-                    )}
-                    {meta.skill_ids?.length > 0 && (
-                      <div>
-                        <Label className="text-sm font-medium">Linked Skills</Label>
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {meta.skill_ids.map((sid, i) => (
-                            <Badge key={i} variant="outline" className="font-mono text-xs">{sid.slice(0, 8)}...</Badge>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </>
-            )}
-
             {cat === "skill" && (
               <>
                 <Separator />
@@ -262,16 +216,6 @@ export default function KnowledgeInspector({ editingKnowledge, setEditingKnowled
                       <div>
                         <Label className="text-sm font-medium">Procedure</Label>
                         <p className="text-sm mt-1 bg-muted/50 rounded p-2">{meta.procedure}</p>
-                      </div>
-                    )}
-                    {meta.playbook_ids?.length > 0 && (
-                      <div>
-                        <Label className="text-sm font-medium">Linked Playbooks</Label>
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {meta.playbook_ids.map((pid, i) => (
-                            <Badge key={i} variant="outline" className="font-mono text-xs">{pid.slice(0, 8)}...</Badge>
-                          ))}
-                        </div>
                       </div>
                     )}
                   </div>

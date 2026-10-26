@@ -7,7 +7,6 @@ from typing import Any, Dict, Optional
 PATHWAYS = {
     "declarative_knowledge",
     "telemetry_reflection",
-    "playbook_extraction",
     "skill_extraction",
     "manual_creation",
     "import",

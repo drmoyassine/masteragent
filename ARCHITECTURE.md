@@ -97,7 +97,7 @@ Tier 1: Memories (chunked, embedded, searchable)
     ↓  (threshold-based compaction)
 Tier 2: Intelligence (patterns + trends, draft → confirmed)
     ↓  (admin promotion)
-Tier 3: Knowledge (organization-wide skills, playbooks, and trade knowledge)
+Tier 3: Knowledge (organization-wide skills and trade knowledge)
 ```
 
 ---
@@ -203,7 +203,7 @@ FROM that content is externally-derived by construction. The pipeline
    Payloads containing the delimiters are defanged, so an injected close-tag
    cannot escape the frame structurally. Wired into: memory generation
    (prior context, raw interactions, NER output), summarization, PII scrub,
-   intelligence/knowledge synthesis, telemetry reflection, playbook/skill
+   intelligence/knowledge synthesis, telemetry reflection, skill
    generation, consolidation proposals.
 2. **No-instructions output invariant.** Distillation OUTPUTS are scanned for
    directive-shaped text (`scan_untrusted_output`) — flag-only, never dropped.
@@ -212,7 +212,7 @@ FROM that content is externally-derived by construction. The pipeline
    column, so that stage logs the flag (durable flags land downstream).
 3. **Content trust at artifact creation.** `resolve_creation_status()` forces
    status=`draft` (with `metadata.ai_safety.forced_draft_reason`) for
-   skills/playbooks produced by external pathways
+   skills produced by external pathways
    (`telemetry_reflected`/`experiential`/`decomposed`), regardless of the
    `approve_immediately` default (DEC-091 posture: activation is a human
    Settings action). Internal pathways (admin-authored) and informational
