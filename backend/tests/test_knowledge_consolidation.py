@@ -289,7 +289,7 @@ class TestProposalValidation:
         assert "GROUPING METRICS" in user and "trade_knowledge" in user
 
     def test_prompt_version_pinned(self):
-        assert CONSOLIDATION_PROMPT_VERSION == "v1"
+        assert CONSOLIDATION_PROMPT_VERSION == "v2"
 
 
 # ─── canonical field aggregation (§14.4) ─────────────────────────────────────
