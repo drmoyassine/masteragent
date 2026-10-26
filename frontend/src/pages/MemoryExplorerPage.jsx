@@ -790,6 +790,7 @@ export default function MemoryExplorerPage() {
         <CountCard label="Knowledge" value={stats?.knowledge?.total} sub={joinSubs(
           stats?.knowledge?.active != null ? `${stats.knowledge.active} active` : null,
           last24hSub(stats?.knowledge?.last_24h),
+          stats?.knowledge?.usage_covered != null ? `${(stats.knowledge.usage_covered * 100).toFixed(0)}% served (30d)` : null,
         )} active={activeTab === "knowledge"} />
       </div>
 
