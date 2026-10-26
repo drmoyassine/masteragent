@@ -41,11 +41,10 @@ class MasterAgentClient:
         done = 0
         for i in range(0, len(interactions), BULK_BATCH):
             page = interactions[i:i + BULK_BATCH]
-            r = self.agent.post(f"{self.base}/api/memory/interactions/bulk", json=page, timeout=self.timeout)
+            r = self.agent.post(f"{self.base}/api/memory/interactions/bulk", json={"items": page}, timeout=self.timeout)
             if r.status_code not in (200, 202):
                 raise RuntimeError(f"bulk ingest failed ({r.status_code}): {r.text[:300]}")
-            body = r.json()
-            done += body.get("ingested", body.get("accepted", len(page)))
+            done += r.json().get("count", len(page))
         return done
 
     def get_context(self, entity_id):
