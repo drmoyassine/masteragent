@@ -1,11 +1,42 @@
 """Interaction ingestion pipeline: process_interaction + entity profile sync."""
 import json
 import logging
+import re
 
 from core.storage import get_memory_db_context, flush_interaction_cache, cache_interaction
 from memory_system.store.helpers import _get_entity_type_config
 
 logger = logging.getLogger(__name__)
+
+# Voice notes arrive from n8nclaw with "[Sent|Incoming voice note — transcript
+# pending]" as the entire content; enrichment appends the real transcript under
+# an [Attachment (...)] block but nothing ever removed the placeholder, so every
+# enriched voice note kept it forever (escalation #871). Covers both writers'
+# variants (Sent/Incoming) and both dash forms.
+VOICE_NOTE_PLACEHOLDER_RE = re.compile(
+    r"^\s*\[(?:Sent|Incoming) voice note\s*[—-]\s*transcript pending\]\s*"
+)
+
+
+def _strip_pending_voice_note_placeholder(content: str, attachment_refs: list) -> str:
+    """Drop the leading 'transcript pending' placeholder once every attachment
+    has settled and at least one yielded its text (parsed_content marker, set
+    by this or a prior enrichment attempt). Requiring all-settled keeps the
+    placeholder while a retriable attachment (fetch_error, no marker yet) can
+    still land its block on a later duplicate delivery. Anchored + count=1 so
+    re-runs over already-clean content are no-ops; a strip that would empty
+    the content is refused (externally-clobbered rows keep the placeholder
+    rather than saving '').
+    """
+    attachments = [a for a in attachment_refs if isinstance(a, dict)]
+    if not attachments:
+        return content
+    settled = all(a.get("parsed_content") or a.get("parse_failed") for a in attachments)
+    if settled and any(a.get("parsed_content") for a in attachments):
+        stripped = VOICE_NOTE_PLACEHOLDER_RE.sub("", content, count=1)
+        if stripped:
+            return stripped
+    return content
 
 
 async def process_interaction(interaction_id: str):
@@ -61,6 +92,7 @@ async def process_interaction(interaction_id: str):
 
     # Document OCR parsing logic
     from services import parse_document
+    webhook_fires = []  # (mime_type, filename, url, parsed_text) — fired post-save below
     for attachment in attachment_refs:
         if not isinstance(attachment, dict):
             continue
@@ -76,6 +108,7 @@ async def process_interaction(interaction_id: str):
         attach_type = attachment.get("type", "base64")
         raw_blob = None
         url = attachment.get("url")
+        fetch_error = None
 
         if attach_type == "url":
             if url:
@@ -86,7 +119,13 @@ async def process_interaction(interaction_id: str):
                         resp.raise_for_status()
                         raw_blob = resp.content
                 except Exception as e:
+                    # Network-class failure (timeout, 5xx, media not yet
+                    # propagated): retriable — recorded, NOT parse_failed, so
+                    # a duplicate job delivery can re-fetch cleanly.
+                    fetch_error = str(e)
                     logger.warning(f"Failed to fetch attachment URL {url}: {e}")
+            else:
+                fetch_error = "url-type attachment carries no url"
         else:
             b64_data = attachment.get("data") or attachment.get("raw_bytes")
             if b64_data:
@@ -95,8 +134,24 @@ async def process_interaction(interaction_id: str):
                     raw_blob = base64.b64decode(b64_data)
                 except Exception as e:
                     logger.warning(f"Failed to decode base64 attachment: {e}")
+                    fetch_error = f"base64 decode failed: {e}"
+            else:
+                fetch_error = "attachment carries no data payload"
 
         if not raw_blob:
+            # Deterministic miss (structurally nothing to fetch / undecodable
+            # payload / empty body): persist parse_failed so the loss is
+            # visible instead of silently vanishing — the attachment used to
+            # be indistinguishable from "no attachments". Transient fetch
+            # errors keep only fetch_error above and stay retriable.
+            if fetch_error and attach_type == "url" and url:
+                attachment["fetch_error"] = fetch_error
+            else:
+                logger.warning(
+                    f"Attachment {attachment.get('filename', 'attachment')} yielded no "
+                    f"content ({fetch_error or 'empty body'}); marking parse_failed"
+                )
+                attachment["parse_failed"] = True
             continue
 
         import filetype
@@ -121,25 +176,10 @@ async def process_interaction(interaction_id: str):
         if parsed.get("text"):
             content += f"\n\n---\n[Attachment ({mime_type}): {filename}]{url_context}{pages_context}\n{parsed['text']}"
             attachment["parsed_content"] = parsed["text"]
-
-            # Fire optional vision completion webhooks (best-effort, no retry).
-            # Done inline so consumers can rely on the post-parse timestamp.
-            try:
-                from datetime import datetime, timezone
-                from services.vision_webhooks import fire_vision_completion_webhooks
-                await fire_vision_completion_webhooks(
-                    entity_type=interaction["primary_entity_type"],
-                    entity_id=interaction["primary_entity_id"],
-                    interaction_id=interaction_id,
-                    doc_url=url,
-                    filename=filename,
-                    mime_type=mime_type,
-                    parsed_text=parsed["text"],
-                    source=interaction.get("source"),
-                    parsed_at=datetime.now(timezone.utc).isoformat(),
-                )
-            except Exception as e:
-                logger.warning(f"vision completion webhooks failed for {interaction_id}: {e}")
+            # Deferred until after the enrichment save below: consumers used to
+            # be notified before the transcript was durable — n8n's Wait 10s
+            # node exists to paper over exactly that race.
+            webhook_fires.append((mime_type, filename, url, parsed["text"]))
         else:
             err_msg = processing_errors.get("vision", "Parsing Failed or Document is Empty")
             content += f"\n\n---\n[Attachment ({mime_type}): {filename}]{url_context}{pages_context}\n[Error: {err_msg}]"
@@ -151,6 +191,8 @@ async def process_interaction(interaction_id: str):
     # (the full uncompacted payload reaches the LLM's own context) and fulltext
     # search; vectors live on the distilled tiers (memories / intelligence /
     # knowledge) only.
+
+    content = _strip_pending_voice_note_placeholder(content, attachment_refs)
 
     # Save outputs to Database. status='pending' releases the enrichment claim
     # in the same statement — distillation selects pending/failed, so the row
@@ -184,6 +226,30 @@ async def process_interaction(interaction_id: str):
         })
     except Exception as e:
         logger.warning(f"Cache update failed for interaction {interaction_id}: {e}")
+
+    # Fire optional vision completion webhooks (best-effort, no retry) now that
+    # the enrichment save and cache update have landed — consumers querying
+    # memory after the callback always see durable data. Imports stay inside
+    # the per-fire try so a module-load failure is contained exactly as it was
+    # when firing inline.
+    if webhook_fires:
+        for mime_type, filename, url, parsed_text in webhook_fires:
+            try:
+                from datetime import datetime, timezone
+                from services.vision_webhooks import fire_vision_completion_webhooks
+                await fire_vision_completion_webhooks(
+                    entity_type=interaction["primary_entity_type"],
+                    entity_id=interaction["primary_entity_id"],
+                    interaction_id=interaction_id,
+                    doc_url=url,
+                    filename=filename,
+                    mime_type=mime_type,
+                    parsed_text=parsed_text,
+                    source=interaction.get("source"),
+                    parsed_at=datetime.now(timezone.utc).isoformat(),
+                )
+            except Exception as e:
+                logger.warning(f"vision completion webhooks failed for {interaction_id}: {e}")
 
     # Threshold-triggered memory generation: if the count of pending interactions
     # for this entity has hit the configured threshold AND the latest interaction
