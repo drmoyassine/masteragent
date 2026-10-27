@@ -58,8 +58,11 @@ services:
       - ENABLE_GLINER=${ENABLE_GLINER:-false}
       - GLINER_URL=${GLINER_URL:-http://gliner:8002}
       # TASK-260: outbound alert delivery (n8n webhook routes by severity).
-      # Default = the live n8n-main receiver (panel env can override).
-      - ALERT_WEBHOOK_URL=${ALERT_WEBHOOK_URL:-https://n8n.studygram.me/webhook/masteragent-alerts}
+      # Interpolation var deliberately renamed 10-27: an Easypanel deploy-
+      # workspace artifact kept injecting the stale n88n host under the old
+      # ALERT_WEBHOOK_URL name through every panel-level env refresh. The
+      # fresh name cannot exist in that artifact, so the default/store wins.
+      - ALERT_WEBHOOK_URL=${ALERT_WEBHOOK_N8N_URL:-https://n8n.studygram.me/webhook/masteragent-alerts}
       - ALERT_DELIVERY_WINDOW_SECONDS=${ALERT_DELIVERY_WINDOW_SECONDS:-900}
       # DEC-110: liteparse parse runner delegation. Values live in the panel
       # env; unset = in-process parser (byte-identical legacy behavior).
