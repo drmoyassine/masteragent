@@ -75,7 +75,10 @@ _INTERACTIONS_DEDUP_TAIL = """
     ON CONFLICT (COALESCE(metadata->>'crm_dedup_key', ''))
         WHERE COALESCE(metadata->>'crm_dedup_key', '') <> ''
     DO UPDATE SET
-        content = EXCLUDED.content,
+        -- Replay-clobber protection (verified review finding 10-27): a duplicate
+        -- comm fire landing after enrichment would clobber the stored transcript
+        -- back to the bare placeholder, permanently (replays are never re-enqueued).
+        content = CASE WHEN interactions.is_enriched THEN interactions.content ELSE EXCLUDED.content END,
         source = EXCLUDED.source,
         metadata = interactions.metadata || jsonb_build_object(
             'crm_replays',
@@ -130,9 +133,10 @@ async def ingest_interaction(
         )
         if _extract_crm_dedup_key(body.metadata):
             # TASK-258: a duplicate comm fire collapses onto the existing row —
-            # content/source refreshed, original timestamp/status/created_at kept,
-            # crm_replays stamped — and is NOT re-enqueued (the pipeline already
-            # processed, or is processing, that row).
+            # source refreshed (content kept once enriched, see the tail guard),
+            # original timestamp/status/created_at kept, crm_replays stamped —
+            # and is NOT re-enqueued (the pipeline already processed, or is
+            # processing, that row).
             cursor.execute(_INTERACTIONS_INSERT_SQL + _INTERACTIONS_DEDUP_TAIL, insert_params)
             row = cursor.fetchone()
             interaction_id = row["id"]

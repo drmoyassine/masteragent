@@ -25,8 +25,8 @@ def _strip_pending_voice_note_placeholder(content: str, attachment_refs: list) -
     placeholder while a retriable attachment (fetch_error, no marker yet) can
     still land its block on a later duplicate delivery. Anchored + count=1 so
     re-runs over already-clean content are no-ops; a strip that would empty
-    the content is refused (externally-clobbered rows keep the placeholder
-    rather than saving '').
+    the content — or leave only whitespace — is refused (externally-clobbered
+    rows keep the placeholder rather than saving '' or a blank string).
     """
     attachments = [a for a in attachment_refs if isinstance(a, dict)]
     if not attachments:
@@ -34,7 +34,7 @@ def _strip_pending_voice_note_placeholder(content: str, attachment_refs: list) -
     settled = all(a.get("parsed_content") or a.get("parse_failed") for a in attachments)
     if settled and any(a.get("parsed_content") for a in attachments):
         stripped = VOICE_NOTE_PLACEHOLDER_RE.sub("", content, count=1)
-        if stripped:
+        if stripped.strip():
             return stripped
     return content
 

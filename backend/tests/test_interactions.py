@@ -8,6 +8,8 @@ Tests:
   - POST /api/memory/search         (agent key)
   - GET  /api/memory/admin/timeline/{type}/{id}   (admin JWT)
 """
+import os
+
 import pytest  # noqa: F401  (marker parity with the other suite files)
 
 
@@ -64,6 +66,65 @@ class TestInteractionIngestion:
         })
         assert resp.status_code == 422, f"Expected 422, got {resp.status_code}"
         print("✓ Missing required fields returns 422")
+
+
+class TestCrmDedupReplay:
+    """TASK-258 conflict-replay path (metadata.crm_dedup_key).
+
+    Regression (verified review finding 10-27): a duplicate comm fire landing
+    AFTER enrichment must NOT clobber the stored transcript back to the bare
+    placeholder — replays are never re-enqueued, so the loss would be permanent.
+    Exercises the real ON CONFLICT tail against the real partial unique index
+    (both built at hermetic boot), so it needs the hermetic stack's direct DB
+    access to simulate the enrichment UPDATE.
+    """
+
+    def test_replay_preserves_enriched_content(self, agent, base_url):
+        if os.environ.get("MEMORY_TEST_BASE_URL") or not os.environ.get("DATABASE_URL"):
+            pytest.skip("hermetic-only: needs direct DB access to simulate enrichment")
+        import psycopg2
+
+        entity = "test-contact-dedup-replay"
+        payload = {
+            "interaction_type": "whatsapp_message",
+            "content": "[Incoming voice note — transcript pending]",
+            "primary_entity_type": "contact",
+            "primary_entity_id": entity,
+            "metadata": {"crm_dedup_key": f"pytest-dedup-replay|c-{entity}|whatsapp_message"},
+            "source": "n8n:whatsapp_agent",
+        }
+        first = agent.post(f"{base_url}/api/memory/interactions", json=payload)
+        assert first.status_code == 202, first.text
+        original_id = first.json()["id"]
+
+        # Simulate the enrichment UPDATE (memory_system/ingest/ingestion.py):
+        # the transcript lands and is_enriched flips — the exact state a late
+        # duplicate comm fire replays against.
+        enriched = (
+            "[Incoming voice note — transcript pending]"
+            "\n\n---\n[Attachment (audio/ogg): voice_note.ogg]\nthe real transcript"
+        )
+        conn = psycopg2.connect(os.environ["DATABASE_URL"])
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE interactions SET content = %s, is_enriched = TRUE WHERE id = %s",
+                    (enriched, original_id),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+        replay = agent.post(f"{base_url}/api/memory/interactions", json=payload)
+        assert replay.status_code == 202, replay.text
+        assert replay.json()["id"] == original_id, "replay must collapse onto the existing row"
+
+        listed = agent.get(f"{base_url}/api/memory/interactions",
+                           params={"entity_type": "contact", "entity_id": entity})
+        assert listed.status_code == 200, listed.text
+        row = next(r for r in listed.json()["interactions"] if r["id"] == original_id)
+        assert row["content"] == enriched, "dedup replay clobbered enriched content"
+        print("✓ Dedup replay kept enriched content")
 
 
 class TestInteractionBulkIngestion:

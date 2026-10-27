@@ -78,3 +78,11 @@ def test_strip_refuses_to_empty_content():
     # rather than saving an empty string.
     assert strip("[Incoming voice note — transcript pending]", [{"parsed_content": "x"}]) == \
         "[Incoming voice note — transcript pending]"
+
+
+def test_strip_refuses_whitespace_only_remainder():
+    # Companion to the empty refusal: a remainder of just whitespace must not
+    # be saved either — the guard is stripped.strip(), not bare truthiness, so
+    # an externally-clobbered row keeps its placeholder over a blank string.
+    body = "[Incoming voice note — transcript pending]  \n\t "
+    assert strip(body, [{"parsed_content": "x"}]) == body
