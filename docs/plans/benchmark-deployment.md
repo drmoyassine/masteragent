@@ -19,18 +19,11 @@ Related: `benchmarks/longmemeval/` (harness, PRs #62/#63),
 
 ## Blockers (do these first)
 
-1. **Migration 009 — fresh-install prompt-console gap (real product bug).**
-   Since TASK-257 §3 phase-2, `db_init.init_db()` creates only `users`; the
-   eight prompt-console tables (`settings`, `prompts`, `prompt_versions`,
-   `pm_files`, `templates`, `api_keys`, `account_variables`,
-   `prompt_variables`) have **no creation path on a fresh database**.
-   Migration 001 is the memory-schema dump only; 002's comment claiming
-   init_db still creates them is stale. Symptom on any fresh deploy: 500 on
-   `/api/keys`, `/api/prompts`, etc. (LLM configs are unaffected — they live
-   in `memory_llm_configs`, which 001 creates.)
-   Fix: `backend/migrations/009_prompt_console.sql` with `CREATE TABLE IF
-   NOT EXISTS` DDL recovered from `git show 1d5bfb9^:backend/db_init.py`.
-   This blocks ANY fresh tenant deployment, not just the bench.
+1. ~~**Migration 009 — fresh-install prompt-console gap.**~~ **RESOLVED** —
+   `backend/migrations/009_prompt_console.sql` shipped (2026-10-27): creates
+   the eight prompt-console tables idempotently on fresh installs and seeds
+   the four default templates; regression-tested by the hermetic suite
+   (`test_fresh_install_prompt_console.py`).
 2. **LLM provider config** — the bench needs its own embedding + pipeline
    providers configured in-DB (`memory_llm_configs` + provider credentials
    via admin UI) before ingest produces anything beyond tier 1.
