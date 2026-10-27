@@ -58,7 +58,8 @@ services:
       - ENABLE_GLINER=${ENABLE_GLINER:-false}
       - GLINER_URL=${GLINER_URL:-http://gliner:8002}
       # TASK-260: outbound alert delivery (n8n webhook routes by severity).
-      - ALERT_WEBHOOK_URL=${ALERT_WEBHOOK_URL:-}
+      # Default = the live n8n-main receiver (panel env can override).
+      - ALERT_WEBHOOK_URL=${ALERT_WEBHOOK_URL:-https://n8n.studygram.me/webhook/masteragent-alerts}
       - ALERT_DELIVERY_WINDOW_SECONDS=${ALERT_DELIVERY_WINDOW_SECONDS:-900}
       # DEC-110: liteparse parse runner delegation. Values live in the panel
       # env; unset = in-process parser (byte-identical legacy behavior).
