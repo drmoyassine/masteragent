@@ -31,17 +31,23 @@ class ProviderStopError(RuntimeError):
 
 
 def provider_stop_from_response(status_code: int, body: str, retry_after: Optional[str] = None) -> Optional[ProviderStopError]:
-    """Classify only provider responses that require the whole job to stop."""
+    """Classify only provider responses that require the whole job to stop.
+
+    Credit/quota markers are checked BEFORE the 429 branch: OpenAI delivers
+    insufficient-quota AS a 429, and classifying it as a rate limit mislabels a
+    billing outage as transient throttling — the Nov-2026 credit exhaustion
+    surfaced as a week of "rate limit reached" alerts while the account was
+    simply out of credits."""
     text = (body or "").lower()
+    credit_markers = ("insufficient_quota", "insufficient quota", "credit", "billing", "quota exceeded")
+    if status_code in (402, 403) or any(marker in text for marker in credit_markers):
+        return ProviderStopError("provider_credits_exhausted", "AI provider credits or quota are exhausted")
     if status_code == 429 or "rate limit" in text or "ratelimit" in text:
         try:
             seconds = max(1, int(float(retry_after))) if retry_after else 900
         except (TypeError, ValueError):
             seconds = 900
         return ProviderStopError("provider_rate_limited", "AI provider rate limit reached", retry_after_seconds=seconds)
-    credit_markers = ("insufficient_quota", "insufficient quota", "credit", "billing", "quota exceeded")
-    if status_code in (402, 403) or any(marker in text for marker in credit_markers):
-        return ProviderStopError("provider_credits_exhausted", "AI provider credits or quota are exhausted")
     return None
 
 
